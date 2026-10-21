@@ -2,11 +2,18 @@ node_modules/
 dist/
 coverage/
 .npm-cache/
+.pnpm-store/
 *.tsbuildinfo
 *.log
 .DS_Store
 .env
 .env.*
+
+# 测试 / 冒烟脚本产物（按任务隔离，不提交）
+**/test/.artifacts/
+**/test/.fixtures/
+scripts/spike/.artifacts/
+examples/*/dist/
 
 # 本地参考源码与素材，不纳入版本管理
 references/

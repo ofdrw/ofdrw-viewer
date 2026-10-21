@@ -1,0 +1,22 @@
+packages:
+  - 'packages/*'
+  - 'examples/*'
+# 本机 home 目录可能只读：把内容寻址仓库固定在工作区内，保证 install 可复现。
+storeDir: .pnpm-store
+allowBuilds:
+  esbuild: true
+  '@napi-rs/canvas': true
+minimumReleaseAgeExclude:
+  - '@napi-rs/canvas-android-arm64@1.0.13'
+  - '@napi-rs/canvas-darwin-arm64@1.0.13'
+  - '@napi-rs/canvas-darwin-x64@1.0.13'
+  - '@napi-rs/canvas-linux-arm-gnueabihf@1.0.13'
+  - '@napi-rs/canvas-linux-arm64-gnu@1.0.13'
+  - '@napi-rs/canvas-linux-arm64-musl@1.0.13'
+  - '@napi-rs/canvas-linux-riscv64-gnu@1.0.13'
+  - '@napi-rs/canvas-linux-x64-gnu@1.0.13'
+  - '@napi-rs/canvas-linux-x64-musl@1.0.13'
+  - '@napi-rs/canvas-win32-arm64-msvc@1.0.13'
+  - '@napi-rs/canvas-win32-x64-msvc@1.0.13'
+  - '@napi-rs/canvas@1.0.13'
+  - vite@8.3.5

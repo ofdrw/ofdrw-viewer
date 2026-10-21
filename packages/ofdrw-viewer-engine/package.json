@@ -3,5 +3,46 @@
   "version": "0.1.0",
   "private": true,
   "description": "平台无关的 OFD 页面渲染引擎",
-  "type": "module"
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:golden": "vitest run test/golden --passWithNoTests",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "fontkit": "^2.0.4",
+    "saxes": "^6.0.0"
+  },
+  "devDependencies": {
+    "@napi-rs/canvas": "^1.0.13",
+    "@types/node": "^26.6.5",
+    "@types/pixelmatch": "^7.1.0",
+    "@types/pngjs": "^6.0.5",
+    "pixelmatch": "^8.0.0",
+    "pngjs": "^7.0.0",
+    "tsup": "^9.0.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  }
 }

@@ -9,7 +9,12 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "ofdrw-viewer-engine": ["./src/index.ts"]
+    }
   },
-  "include": ["src"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "../../test/**/*.ts"]
 }

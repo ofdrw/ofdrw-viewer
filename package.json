@@ -2,12 +2,23 @@
   "name": "ofdrw-view",
   "version": "0.1.0",
   "private": true,
-  "description": "OFD 页面渲染引擎",
+  "description": "OFD 页面渲染引擎（pnpm monorepo 根）",
   "type": "module",
-  "workspaces": [
-    "packages/*"
-  ],
+  "packageManager": "pnpm@11.24.0",
   "engines": {
     "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "test": "pnpm -C packages/ofdrw-viewer-engine exec vitest run",
+    "test:smoke": "pnpm -C packages/ofdrw-viewer-engine exec vitest run test/smoke",
+    "test:golden": "pnpm -C packages/ofdrw-viewer-engine exec vitest run test/golden --passWithNoTests",
+    "build": "pnpm -r --if-present run build",
+    "demo:web": "pnpm -C examples/web run dev"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
   }
 }
