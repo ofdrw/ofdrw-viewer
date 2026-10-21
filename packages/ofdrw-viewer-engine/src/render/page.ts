@@ -5,7 +5,7 @@
  * 注释 → endPage。不解析 DrawParam、不查资源、不直接调用 Canvas（除透传 ctx）。
  */
 
-import type { PreparedPage } from '../model/types';
+import type { PreparedPageBundle } from './prepare';
 import type { Renderer, CanvasRenderingContext2DLike } from '../renderer/types';
 import type { Viewport } from '../common/types';
 import type { WarningHandler } from '../warnings';
@@ -26,14 +26,14 @@ export interface DrawPageOptions {
 /**
  * 绘制已准备的页面。
  *
- * @param prepared 准备阶段产物。
+ * @param prepared 准备阶段产物（含模板、字体、图片与独立块运行时）。
  * @param renderer 目标渲染器。
  * @param canvasContext 宿主 2D 上下文，仅透传给 renderer。
  * @param viewport 页面像素尺寸与 DPI。
  * @param options 图层顺序、取消与 warning 选项。
  */
 export function drawPage(
-  prepared: PreparedPage,
+  prepared: PreparedPageBundle,
   renderer: Renderer,
   canvasContext: CanvasRenderingContext2DLike,
   viewport: Viewport,

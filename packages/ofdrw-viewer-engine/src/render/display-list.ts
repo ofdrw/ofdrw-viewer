@@ -7,6 +7,10 @@
 
 import type { DisplayList, DrawCommand } from '../common/display-list';
 import type { Box, DrawStyle, FillRule, ImageHandle, Matrix, ResolvedPaint } from '../common/types';
+import type { Renderer } from '../renderer/types';
+
+/** 斜接限制的安全默认值（设计方案附录 A）。 */
+const DEFAULT_MITER_LIMIT = 4.234;
 
 /** 可变的 DisplayList 构建器；`build()` 后不应继续复用。 */
 export class DisplayListBuilder {
@@ -200,5 +204,126 @@ export class DisplayListBuilder {
   private push(command: DrawCommand): this {
     this.commands.push(command);
     return this;
+  }
+}
+
+/**
+ * 归一化绘制线型，只保留渲染器可安全消费的字段。
+ *
+ * 规则：线宽/斜接限制/虚线偏移必须是有限数；虚线至少两段、非负且至少一段为正，
+ * 否则按实线处理（此时偏移强制为 0）。函数不修改入参，返回新的普通对象。
+ *
+ * @param style 已结算或记录在显示列表中的线型；长度单位与当前对象空间一致（通常 mm）。
+ * @returns 可安全传给渲染器的线型。
+ */
+export function normalizeDrawStyle(style: DrawStyle): DrawStyle {
+  const lineWidth = Number.isFinite(style.lineWidth) && style.lineWidth >= 0 ? style.lineWidth : 0;
+  const miterLimit =
+    Number.isFinite(style.miterLimit) && style.miterLimit > 0
+      ? style.miterLimit
+      : DEFAULT_MITER_LIMIT;
+  const rawDash = Array.isArray(style.dashPattern) ? style.dashPattern : [];
+  const dashPattern = rawDash.filter((value) => Number.isFinite(value) && value >= 0);
+  const hasDash =
+    dashPattern.length === rawDash.length &&
+    dashPattern.length >= 2 &&
+    dashPattern.some((value) => value > 0);
+  const dashOffset =
+    hasDash && Number.isFinite(style.dashOffset) ? style.dashOffset : 0;
+  return {
+    lineWidth,
+    lineCap: style.lineCap,
+    lineJoin: style.lineJoin,
+    miterLimit,
+    dashOffset,
+    dashPattern: hasDash ? dashPattern.slice() : [],
+  };
+}
+
+/**
+ * 回放目标无关的绘制命令到渲染器。
+ *
+ * 调用方负责在回放前设置正确的变换与裁剪；列表中的 `setTransform/transform/translate`
+ * 会按记录顺序执行，但不会替调用方补页面矩阵。
+ *
+ * @param renderer 目标渲染器。
+ * @param list 已构建的显示列表；命令按数组顺序执行。
+ */
+export function replayDisplayList(renderer: Renderer, list: DisplayList): void {
+  for (const command of list.commands) {
+    switch (command.op) {
+      case 'save':
+        renderer.save();
+        break;
+      case 'restore':
+        renderer.restore();
+        break;
+      case 'setTransform':
+        renderer.setTransform(command.matrix);
+        break;
+      case 'transform':
+        renderer.transform(command.matrix);
+        break;
+      case 'translate':
+        renderer.translate(command.x, command.y);
+        break;
+      case 'multiplyAlpha':
+        renderer.multiplyAlpha(command.alpha);
+        break;
+      case 'clear':
+        renderer.clear();
+        break;
+      case 'beginPath':
+        renderer.beginPath();
+        break;
+      case 'moveTo':
+        renderer.moveTo(command.x, command.y);
+        break;
+      case 'lineTo':
+        renderer.lineTo(command.x, command.y);
+        break;
+      case 'quadraticCurveTo':
+        renderer.quadraticCurveTo(command.cpx, command.cpy, command.x, command.y);
+        break;
+      case 'cubicCurveTo':
+        renderer.cubicCurveTo(
+          command.cp1x,
+          command.cp1y,
+          command.cp2x,
+          command.cp2y,
+          command.x,
+          command.y,
+        );
+        break;
+      case 'rect':
+        renderer.rect(command.x, command.y, command.w, command.h);
+        break;
+      case 'closePath':
+        renderer.closePath();
+        break;
+      case 'clip':
+        renderer.clip(command.rule);
+        break;
+      case 'fill':
+        renderer.fill(command.style, command.paint, command.rule);
+        break;
+      case 'stroke':
+        renderer.stroke(command.style, command.paint);
+        break;
+      case 'drawImage':
+        renderer.drawImage(
+          command.image,
+          command.transform,
+          command.alpha,
+          command.smoothing,
+          command.mask,
+        );
+        break;
+      default: {
+        // 穷尽检查：新增 DrawCommand 时此处会编译报错，避免静默漏画。
+        const exhaustive: never = command;
+        void exhaustive;
+      }
+    }
   }
 }

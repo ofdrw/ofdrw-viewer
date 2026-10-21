@@ -5,6 +5,8 @@
  */
 
 import type { PathCommand } from '../common/types';
+import type { WarningCode } from '../warnings';
+import type { FontAliasTable } from './aliases';
 
 /** 字形。 */
 export interface Glyph {
@@ -34,6 +36,10 @@ export interface FontFace {
   weightClass?: number;
   /** post.italicAngle（若存在）。 */
   italicAngle?: number;
+  /** 字体本身是否已是粗体（OS/2、macStyle 或字体名判定）。 */
+  bold?: boolean;
+  /** 字体本身是否已是斜体（macStyle、italicAngle 或字体名判定）。 */
+  italic?: boolean;
   /**
    * 按 Unicode 码点取字形；无 cmap 或缺失时返回 null。
    *
@@ -56,6 +62,13 @@ export interface FontFaceSet {
   fallbacks: FontFace[];
 }
 
+/** 字体层 warning 回调；上下文只携带资源 ID，去重由上层 WarningCollector 负责。 */
+export type FontWarningCallback = (
+  code: WarningCode,
+  message: string,
+  context?: { resourceId?: string },
+) => void;
+
 /** 字体面创建选项。 */
 export interface FontFaceCreateOptions {
   /** 缓存键；缺省由实现生成。 */
@@ -66,4 +79,14 @@ export interface FontFaceCreateOptions {
   familyName?: string;
   /** TTC 面索引；缺省按名称匹配，匹配不到取 0。 */
   index?: number;
+  /** 宿主扩展字体别名表；缺省使用内置表。 */
+  aliases?: FontAliasTable;
+  /** 字体资源 ID，仅用于 warning 上下文。 */
+  resourceId?: string;
+  /** 字体资源声明的粗体标志；与字体内部检测结果取并集。 */
+  bold?: boolean;
+  /** 字体资源声明的斜体标志；与字体内部检测结果取并集。 */
+  italic?: boolean;
+  /** 字体层 warning 回调（例如 TTC 未匹配到期望字体面）。 */
+  onWarning?: FontWarningCallback;
 }

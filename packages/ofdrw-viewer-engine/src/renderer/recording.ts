@@ -1,7 +1,8 @@
 /**
- * 记录渲染器（实现由 T5/dev-renderer 完成）。
+ * 记录渲染器。
  *
- * 记录路径/样式/矩阵/group 调用，不真正绘制，用于测试与命令导出。
+ * 记录路径/样式/矩阵/group 调用，不执行任何像素绘制；用于渲染器契约测试、
+ * 绘制管线调用序列断言与命令导出。记录内容只包含目标无关类型，不依赖 Canvas 实现。
  */
 
 import type {
@@ -18,140 +19,178 @@ import type {
   ResolvedPaint,
   Viewport,
 } from '../common/types';
-import { notImplemented } from '../common/not-implemented';
+
+/** 一条记录调用；`op` 与 Renderer 方法一一对应。 */
+export type RecordingCall =
+  | { op: 'beginPage'; viewport: Viewport }
+  | { op: 'endPage' }
+  | { op: 'save' }
+  | { op: 'restore' }
+  | { op: 'setTransform'; matrix: Matrix }
+  | { op: 'transform'; matrix: Matrix }
+  | { op: 'translate'; x: number; y: number }
+  | { op: 'multiplyAlpha'; alpha: number }
+  | { op: 'clear' }
+  | { op: 'beginPath' }
+  | { op: 'moveTo'; x: number; y: number }
+  | { op: 'lineTo'; x: number; y: number }
+  | { op: 'quadraticCurveTo'; cpx: number; cpy: number; x: number; y: number }
+  | {
+      op: 'cubicCurveTo';
+      cp1x: number;
+      cp1y: number;
+      cp2x: number;
+      cp2y: number;
+      x: number;
+      y: number;
+    }
+  | { op: 'rect'; x: number; y: number; w: number; h: number }
+  | { op: 'closePath' }
+  | { op: 'clip'; rule: FillRule }
+  | { op: 'fill'; style: DrawStyle; paint: ResolvedPaint; rule: FillRule }
+  | { op: 'stroke'; style: DrawStyle; paint: ResolvedPaint }
+  | {
+      op: 'createImage';
+      width: number;
+      height: number;
+      handle: ImageHandle;
+    }
+  | {
+      op: 'drawImage';
+      image: ImageHandle;
+      transform: Matrix;
+      alpha: number;
+      smoothing: boolean;
+      mask?: ImageHandle;
+    }
+  | { op: 'beginGroup'; options: GroupOptions }
+  | { op: 'endGroup' }
+  | { op: 'close' };
 
 /** 不执行像素绘制的 Renderer 实现。 */
 export class RecordingRenderer implements Renderer {
+  /** 按调用顺序记录的全部操作。 */
+  readonly calls: RecordingCall[] = [];
+
+  /** 最近一次 `beginPage` 的 viewport；便于测试断言。 */
+  lastViewport: Viewport | null = null;
+
+  /** 是否已调用 `close`。 */
+  closed = false;
+
+  /** 清空记录（不改变 closed 状态）。 */
+  reset(): void {
+    this.calls.length = 0;
+    this.lastViewport = null;
+  }
+
   /** @inheritdoc */
   beginPage(context: CanvasRenderingContext2DLike, viewport: Viewport): void {
     void context;
-    void viewport;
-    return notImplemented('RecordingRenderer.beginPage');
+    this.lastViewport = viewport;
+    this.calls.push({ op: 'beginPage', viewport: { ...viewport } });
   }
 
   /** @inheritdoc */
   endPage(): void {
-    return notImplemented('RecordingRenderer.endPage');
+    this.calls.push({ op: 'endPage' });
   }
 
   /** @inheritdoc */
   save(): void {
-    return notImplemented('RecordingRenderer.save');
+    this.calls.push({ op: 'save' });
   }
 
   /** @inheritdoc */
   restore(): void {
-    return notImplemented('RecordingRenderer.restore');
+    this.calls.push({ op: 'restore' });
   }
 
   /** @inheritdoc */
   setTransform(m: Matrix): void {
-    void m;
-    return notImplemented('RecordingRenderer.setTransform');
+    this.calls.push({ op: 'setTransform', matrix: m });
   }
 
   /** @inheritdoc */
   transform(m: Matrix): void {
-    void m;
-    return notImplemented('RecordingRenderer.transform');
+    this.calls.push({ op: 'transform', matrix: m });
   }
 
   /** @inheritdoc */
   translate(x: number, y: number): void {
-    void x;
-    void y;
-    return notImplemented('RecordingRenderer.translate');
+    this.calls.push({ op: 'translate', x, y });
   }
 
   /** @inheritdoc */
   multiplyAlpha(alpha: number): void {
-    void alpha;
-    return notImplemented('RecordingRenderer.multiplyAlpha');
+    this.calls.push({ op: 'multiplyAlpha', alpha });
   }
 
   /** @inheritdoc */
   clear(): void {
-    return notImplemented('RecordingRenderer.clear');
+    this.calls.push({ op: 'clear' });
   }
 
   /** @inheritdoc */
   beginPath(): void {
-    return notImplemented('RecordingRenderer.beginPath');
+    this.calls.push({ op: 'beginPath' });
   }
 
   /** @inheritdoc */
   moveTo(x: number, y: number): void {
-    void x;
-    void y;
-    return notImplemented('RecordingRenderer.moveTo');
+    this.calls.push({ op: 'moveTo', x, y });
   }
 
   /** @inheritdoc */
   lineTo(x: number, y: number): void {
-    void x;
-    void y;
-    return notImplemented('RecordingRenderer.lineTo');
+    this.calls.push({ op: 'lineTo', x, y });
   }
 
   /** @inheritdoc */
   quadraticCurveTo(cpx: number, cpy: number, x: number, y: number): void {
-    void cpx;
-    void cpy;
-    void x;
-    void y;
-    return notImplemented('RecordingRenderer.quadraticCurveTo');
+    this.calls.push({ op: 'quadraticCurveTo', cpx, cpy, x, y });
   }
 
   /** @inheritdoc */
   cubicCurveTo(cp1x: number, cp1y: number, cp2x: number, cp2y: number, x: number, y: number): void {
-    void cp1x;
-    void cp1y;
-    void cp2x;
-    void cp2y;
-    void x;
-    void y;
-    return notImplemented('RecordingRenderer.cubicCurveTo');
+    this.calls.push({ op: 'cubicCurveTo', cp1x, cp1y, cp2x, cp2y, x, y });
   }
 
   /** @inheritdoc */
   rect(x: number, y: number, w: number, h: number): void {
-    void x;
-    void y;
-    void w;
-    void h;
-    return notImplemented('RecordingRenderer.rect');
+    this.calls.push({ op: 'rect', x, y, w, h });
   }
 
   /** @inheritdoc */
   closePath(): void {
-    return notImplemented('RecordingRenderer.closePath');
+    this.calls.push({ op: 'closePath' });
   }
 
   /** @inheritdoc */
   clip(rule: FillRule): void {
-    void rule;
-    return notImplemented('RecordingRenderer.clip');
+    this.calls.push({ op: 'clip', rule });
   }
 
   /** @inheritdoc */
   fill(style: DrawStyle, paint: ResolvedPaint, rule: FillRule): void {
-    void style;
-    void paint;
-    void rule;
-    return notImplemented('RecordingRenderer.fill');
+    this.calls.push({ op: 'fill', style, paint, rule });
   }
 
   /** @inheritdoc */
   stroke(style: DrawStyle, paint: ResolvedPaint): void {
-    void style;
-    void paint;
-    return notImplemented('RecordingRenderer.stroke');
+    this.calls.push({ op: 'stroke', style, paint });
   }
 
-  /** @inheritdoc */
+  /**
+   * 记录图像创建并返回不透明句柄；不接触任何像素。
+   *
+   * @param image 平台解码结果。
+   * @returns 只含宽高的句柄。
+   */
   createImage(image: DecodedImage): ImageHandle {
-    void image;
-    return notImplemented('RecordingRenderer.createImage');
+    const handle: ImageHandle = { width: image.width, height: image.height };
+    this.calls.push({ op: 'createImage', width: image.width, height: image.height, handle });
+    return handle;
   }
 
   /** @inheritdoc */
@@ -162,27 +201,22 @@ export class RecordingRenderer implements Renderer {
     smoothing: boolean,
     mask?: ImageHandle,
   ): void {
-    void image;
-    void transform;
-    void alpha;
-    void smoothing;
-    void mask;
-    return notImplemented('RecordingRenderer.drawImage');
+    this.calls.push({ op: 'drawImage', image, transform, alpha, smoothing, mask });
   }
 
   /** @inheritdoc */
   beginGroup(options: GroupOptions): void {
-    void options;
-    return notImplemented('RecordingRenderer.beginGroup');
+    this.calls.push({ op: 'beginGroup', options: { ...options, bounds: { ...options.bounds } } });
   }
 
   /** @inheritdoc */
   endGroup(): void {
-    return notImplemented('RecordingRenderer.endGroup');
+    this.calls.push({ op: 'endGroup' });
   }
 
   /** @inheritdoc */
   close(): void {
-    return notImplemented('RecordingRenderer.close');
+    this.calls.push({ op: 'close' });
+    this.closed = true;
   }
 }
