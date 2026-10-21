@@ -1,0 +1,13 @@
+{
+  "name": "ofdrw-view",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OFD 页面渲染引擎",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  }
+}
