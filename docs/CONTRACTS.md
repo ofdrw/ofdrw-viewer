@@ -410,7 +410,7 @@ interface ResourceIndex {
   - `substitution` 是高分辨率替换图资源 ID；T6a 通过 `ImageDrawContext.substitutionMode?: 'auto' | 'always' | 'never'`（默认 `auto`）与 `dpi?: number` 选择：auto 时 dpi>200 用替换图，否则主图；always/never 强制；
   - `imageMask` 是蒙版图片资源 ID；解码为 mask `ImageHandle` 后由 context 传给渲染器，H5 在内部 scratch 走 `destination-in`，engine 不接触 scratch；
   - 替换图/蒙版都按单位正方形 + CTM 绘制。
-- `TemplateRef.zOrder?: 'Background' | 'Body' | 'Foreground'`：缺省按 Body 处理；`PageModel.templates` 保持 ID + 可选 loc，loc 通过 `DocumentModel.templatePages` 解析。
+- `TemplateRef.zOrder?: 'Background' | 'Body' | 'Foreground'`：页面 `Template/@ZOrder` 优先于 `TemplatePage/@ZOrder`；页面引用缺省为 **Background**（GB/T 33190—2016 默认值，设计 10.4）。`Body` 仅为设计兼容扩展，只有显式出现时才使用；`PageModel.templates` 保持 ID + 可选 loc，loc 通过 `DocumentModel.templatePages` 解析。
 - `CommonData.templatePages` 与 `DocumentModel.templatePages` 使用 `Record<ResourceId, TemplatePageDef>`，避免数组线性查找。
 
 ### 7.10 渲染器能力子集
@@ -516,6 +516,7 @@ interface ResourceIndex {
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
 | v1.0 | T1 | 初始冻结：工程骨架、模块接口、错误/warning 码、并行规则 |
+| v1.0-r6 | T6c 复审 | 修正 §7.9 模板 `ZOrder` 口径：页面 `Template/@ZOrder` 优先，页面引用缺省 `Background`（标准/设计 10.4）；`Body` 仅显式使用 |
 | v1.0-r5 | T6b | 明确 displayList deferred 图像句柄/replay resolver 与嵌套 composite group 规则；不新增公共字段，group 不进入 DisplayList |
 | v1.0-r4 | T6b | 明确准备阶段运行时：`PreparePageLoader`（字体/图片/模板/注释）注入，`PreparedPageBundle` 携带 page/templates/fonts/images/blocks，`drawPage` 接收 bundle；`PreparedPage` 保持 model 形状，不用 WeakMap |
 | v1.0-r3 | T2/T4 | 记录 ST_Array `g N V` 重复展开语义（`0 g 3 5 2` → `0,5,5,5,2`）与 DeltaX/DeltaY “先展开、再按码点消费”约定 |

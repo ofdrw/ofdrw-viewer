@@ -241,6 +241,49 @@ export function normalizeDrawStyle(style: DrawStyle): DrawStyle {
 }
 
 /**
+ * 显示列表图片解析器。
+ *
+ * 准备阶段构建独立块时没有渲染器，无法创建真实 `ImageHandle`，因此显示列表里
+ * 可能保存占位句柄；绘制阶段在调用 `renderer.drawImage` 前通过该回调物化。
+ *
+ * @param handle 显示列表中的图片/蒙版句柄。
+ * @param role 句柄用途：主图或蒙版。
+ * @returns 当前渲染器可直接消费的句柄。
+ */
+export type DisplayListImageResolver = (
+  handle: ImageHandle,
+  role: 'image' | 'mask',
+) => ImageHandle;
+
+/**
+ * 物化显示列表中的图片/蒙版占位句柄。
+ *
+ * 底纹 tile 在准备阶段没有渲染器，图片命令只能保存占位句柄；绘制阶段在把 tile
+ * 交给渲染器前用该函数生成新的显示列表，避免占位句柄进入 `Renderer.drawImage`。
+ * 原显示列表保持不变，可继续作为缓存复用。
+ *
+ * @param list 原显示列表。
+ * @param resolveImage 占位句柄物化函数。
+ * @returns 图片/蒙版已替换的新显示列表。
+ */
+export function materializeDisplayListImages(
+  list: DisplayList,
+  resolveImage: DisplayListImageResolver,
+): DisplayList {
+  return {
+    bounds: list.bounds,
+    commands: list.commands.map((command) => {
+      if (command.op !== 'drawImage') return command;
+      return {
+        ...command,
+        image: resolveImage(command.image, 'image'),
+        ...(command.mask ? { mask: resolveImage(command.mask, 'mask') } : {}),
+      };
+    }),
+  };
+}
+
+/**
  * 回放目标无关的绘制命令到渲染器。
  *
  * 调用方负责在回放前设置正确的变换与裁剪；列表中的 `setTransform/transform/translate`
@@ -248,8 +291,13 @@ export function normalizeDrawStyle(style: DrawStyle): DrawStyle {
  *
  * @param renderer 目标渲染器。
  * @param list 已构建的显示列表；命令按数组顺序执行。
+ * @param resolveImage 可选的图片/蒙版句柄物化函数；省略时原样传给渲染器。
  */
-export function replayDisplayList(renderer: Renderer, list: DisplayList): void {
+export function replayDisplayList(
+  renderer: Renderer,
+  list: DisplayList,
+  resolveImage?: DisplayListImageResolver,
+): void {
   for (const command of list.commands) {
     switch (command.op) {
       case 'save':
@@ -310,15 +358,20 @@ export function replayDisplayList(renderer: Renderer, list: DisplayList): void {
       case 'stroke':
         renderer.stroke(command.style, command.paint);
         break;
-      case 'drawImage':
+      case 'drawImage': {
+        const image = resolveImage ? resolveImage(command.image, 'image') : command.image;
+        const mask = command.mask
+          ? (resolveImage ? resolveImage(command.mask, 'mask') : command.mask)
+          : undefined;
         renderer.drawImage(
-          command.image,
+          image,
           command.transform,
           command.alpha,
           command.smoothing,
-          command.mask,
+          mask,
         );
         break;
+      }
       default: {
         // 穷尽检查：新增 DrawCommand 时此处会编译报错，避免静默漏画。
         const exhaustive: never = command;

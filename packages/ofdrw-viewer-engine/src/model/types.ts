@@ -29,7 +29,7 @@ export interface PageSize {
 export interface TemplateRef {
   id: ResourceId;
   loc?: string;
-  /** 默认 Body；缺省由页面组织规则处理。 */
+  /** 页面引用缺省 Background；Body 仅在显式出现时使用。 */
   zOrder?: 'Background' | 'Body' | 'Foreground';
 }
 

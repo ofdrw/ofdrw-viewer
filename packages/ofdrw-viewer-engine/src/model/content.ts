@@ -599,12 +599,12 @@ function decodeTemplates(root: XmlNode, context: ContentDecodeContext): Template
     }
     const templateContext = withObject(context, id);
     const template: TemplateRef = { id };
-    const zOrderRaw = (attr(templateNode, 'ZOrder') ?? 'Body').trim();
+    const zOrderRaw = (attr(templateNode, 'ZOrder') ?? 'Background').trim();
     if (zOrderRaw === 'Background' || zOrderRaw === 'Body' || zOrderRaw === 'Foreground') {
       template.zOrder = zOrderRaw;
     } else {
-      emitWarning(templateContext, 'W_LAYER_ORDER', `未知 Template ZOrder：${zOrderRaw}，按 Body 处理`);
-      template.zOrder = 'Body';
+      emitWarning(templateContext, 'W_LAYER_ORDER', `未知 Template ZOrder：${zOrderRaw}，按 Background 处理`);
+      template.zOrder = 'Background';
     }
     result.push(template);
   }
