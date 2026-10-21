@@ -184,6 +184,25 @@ toNumberArray(raw, fallback, onBad?): number[]
 toBoolean(raw, fallback, onBad?): boolean
 ```
 
+### 6.2.1 ST_Array 与 `g` 压缩组（TextCode.DeltaX/DeltaY）
+
+OFD 的 `ST_Array` 是空白/逗号分隔的数值数组，支持 `g <count> <value>` 压缩组：
+
+- 语义：`g N V` 表示把数值 `V` 重复展开 `N` 次；
+- 示例：`0 g 3 5 2` → `0,5,5,5,2`；`g 3 3.1305` → `3.1305, 3.1305, 3.1305`；
+- `N` 必须是正整数；展开后总长度上限 `100_000`（`MAX_EXPANDED_ARRAY_LENGTH`），超限按 `W_BAD_NUMBER` 处理并停止展开；
+- 非法的 `g` 组（缺 count/value、count≤0、value 非数值）按 `W_BAD_NUMBER` 跳过，不得让整页失败；合法的 `g` 组不能当坏 token 丢弃；
+- `g` 只作用于数值数组，不改变 XML 其他属性。
+
+实现分层约定：
+
+- `xml/numbers.ts` 的 `toNumberArray` 在 XML 解析层完成 `g` 展开（T2）；
+- `TextCode.DeltaX/DeltaY` 的消费方必须**先展开为数值队列，再按字符位置消费**（T4）：
+  - 字符位置按 Unicode 码点计数（`Array.from(text)`），不按 UTF-16 `string.length`；
+  - `DeltaX[i]` 是从第 i 个字符推进到第 i+1 个字符的步进；最后一个值只描述最后一个字位，多余值忽略并 warning；
+  - 数量不足时后面的字符回退字体 advance；缺失/全 0 时按字体 advance × `Size/upem` × `HScale`；
+  - `DeltaY` 同理，竖排常用。
+
 ### 6.3 model / resource / style
 
 ```ts
@@ -214,15 +233,40 @@ resolvePaint(...): PaintSpec | undefined
 ```ts
 // 准备阶段
 preparePage(input: PreparePageInput): Promise<PreparedPageBundle>
-drawPage(prepared, renderer, canvasContext, viewport, options?): void
+drawPage(prepared: PreparedPageBundle, renderer, canvasContext, viewport, options?): void
+
+// 准备阶段契约（T6b；loader 由 T12 注入）
+interface PreparePageInput {
+  page: PageModel;
+  resources: PageResourceScope;
+  loader: PreparePageLoader;
+  strictImageCtm?: boolean;
+  signal?: AbortSignal;
+  onWarning?: WarningHandler;
+}
+interface PreparePageLoader {
+  loadFontFaces(resources: readonly FontResource[]): Promise<ReadonlyMap<ResourceId, FontFaceSet>>;
+  decodeImage(resource: ImageResource): Promise<DecodedImage>;
+  loadTemplatePage(ref: TemplateRef): Promise<PageModel>;
+  loadAnnotations(page: PageModel): Promise<readonly Annotation[]>;
+}
+interface PreparedPageBundle {
+  page: PreparedPage;                         // styles + annotationBlocks
+  templates: readonly PageModel[];            // 按 page.templates 顺序
+  fonts: ReadonlyMap<ResourceId, FontFaceSet>;
+  images: ReadonlyMap<ResourceId, DecodedImage>; // 主图/替换图/蒙版
+  blocks: ReadonlyMap<string, IndependentBlock>;  // composite/pattern，key=资源 ID
+}
 
 // 绘制管线
 parseAbbreviatedData(data: string): PathCommand[]
 emitPathCommands(renderer: Renderer, commands: readonly PathCommand[]): void
+replayDisplayList(renderer, list, resolveImage?): void   // 可选 resolver 物化 deferred ImageHandle
 drawPathObject(context: PathDrawContext, object: PathObject, style: ResolvedStyle): void
 applyClips(context: ClipContext, clips): void
 computeImageTransform(object: ImageObject, strictImageCtm: boolean): Matrix
 drawImageObject(context: ImageDrawContext, object: ImageObject, style: ResolvedStyle): void
+// ImageDrawContext { renderer; image; mask?; substitutionImage?; substitutionMode?: 'auto'|'always'|'never'; dpi?; strictImageCtm?; smoothing?; onWarning? }
 createPaintBinder(renderer, context?): PaintBinder
 buildIndependentBlock(input: BuildBlockInput, buildDisplayList): IndependentBlock
 drawIndependentBlock(context, block): void
@@ -339,7 +383,7 @@ interface DocumentModel {
 
 - T3 解码 Document.xml/CommonData 时建立 `templatePages`；`PageModel.templates` 仍为 `TemplateRef`（ID + loc），通过 `DocumentModel.templatePages` 解析。
 - T3 在文档解码阶段只解析 `Annotations.xml` 索引，不加载页面注释内容；`PageModel.annotationFile` 由 `pageAnnotIndex[page.id]` 填充。
-- T10 按 `page.id` 懒加载 `PageModel.annotationFile`，再构建注释块。
+- T10 在 prepare 中调用 `loader.loadAnnotations(page)` 懒加载注释；T12 实现 loader（读取 `PageModel.annotationFile`）并返回文件顺序的 `Annotation[]`，T10 负责构建注释块。
 
 ### 7.7 资源颜色空间
 
@@ -362,9 +406,10 @@ interface ResourceIndex {
 
 ### 7.9 图片与模板字段
 
-- `ImageObject.substitution: boolean`、`ImageObject.imageMask: boolean`：对应 XML 布尔属性；不再用资源 ID 表示。
-  - `substitution=true` 表示高 DPI 输出时优先使用替换图（替换图选择由 API 选项/渲染策略决定）；
-  - `imageMask=true` 表示按蒙版解释，具体黑白/透明映射由图片管线处理。
+- `ImageObject.substitution?: ResourceId`、`ImageObject.imageMask?: ResourceId`：对应 XML `Substitution`/`ImageMask`，两者均为 `ST_RefID`（GB/T 33190—2016 CT_ImageObject），不是布尔。
+  - `substitution` 是高分辨率替换图资源 ID；T6a 通过 `ImageDrawContext.substitutionMode?: 'auto' | 'always' | 'never'`（默认 `auto`）与 `dpi?: number` 选择：auto 时 dpi>200 用替换图，否则主图；always/never 强制；
+  - `imageMask` 是蒙版图片资源 ID；解码为 mask `ImageHandle` 后由 context 传给渲染器，H5 在内部 scratch 走 `destination-in`，engine 不接触 scratch；
+  - 替换图/蒙版都按单位正方形 + CTM 绘制。
 - `TemplateRef.zOrder?: 'Background' | 'Body' | 'Foreground'`：缺省按 Body 处理；`PageModel.templates` 保持 ID + 可选 loc，loc 通过 `DocumentModel.templatePages` 解析。
 - `CommonData.templatePages` 与 `DocumentModel.templatePages` 使用 `Record<ResourceId, TemplatePageDef>`，避免数组线性查找。
 
@@ -379,6 +424,30 @@ interface ResourceIndex {
 - 不直接依赖 DOM；默认工厂用 `globalThis.document.createElement('canvas')`，Node 由 `createCanvas` 注入。
 - `createImageData?(width,height)` / `putImageData?(data,dx,dy)` 是可选像素读写能力，供 Gouraud/LaGouraud 软件光栅化使用；缺失时 H5 渲染器降级为平均色并上报 `W_GOURAUD_APPROX`，最小 Canvas mock 不强制实现。
 - **画布状态唯一入口**：engine/绘制管线只能通过 `Renderer` 方法（`setTransform/transform/translate/multiplyAlpha/save/restore/clip/...`）改变画布状态，禁止直接操作 `canvasContext` 的 CTM、`globalAlpha`、`globalCompositeOperation` 或 clip。`H5Canvas2DRenderer` 自行维护 CTM/alpha/clip 栈，用于 group AABB 求交、底纹像素密度和 shading 设备空间光栅化；`beginPage` 后由 renderer 统一接管并重置状态，`endPage` 恢复。
+
+### 7.11 准备阶段运行时（T6b）
+
+`PreparedPage` 保持 model 形状（`page/styles/annotationBlocks`）；所有运行时资源放入显式 `PreparedPageBundle`，不使用 WeakMap：
+
+- `templates`：`loader.loadTemplatePage` 按 `page.templates` 顺序解码，供 drawPage 按图层类型合并；
+- `fonts`：`loader.loadFontFaces` 并行加载，key 为 Font 资源 ID；
+- `images`：`loader.decodeImage` 并行解码，key 为 Image 资源 ID（含主图/Substitution/ImageMask）；`ImageHandle` 在 drawPage 内按 Renderer 创建并缓存，prepare 不碰 Renderer；
+- `blocks`：composite/pattern 的 `IndependentBlock`（displayList 必填），key 为资源 ID；注释块仍在 `page.annotationBlocks`；
+- 递归收集 composite/pattern 内部字体/图片，深度 16、循环检测；单资源失败 warning 后跳过，不整页失败；
+- `loader` 由 T12 用 document/font/image 服务实现，render 不解析 XML、不 import container。
+
+
+### 7.12 显示列表中的图像与嵌套块
+
+`DisplayList` 保持目标无关，不新增 `group` 命令；以下为 render 内部实现约定（不改变公共字段）：
+
+- **图像 deferred 句柄**：prepare 构建 block 显示列表时还没有 Renderer，无法得到真实 `ImageHandle`。仅允许 render 内部的 block DisplayList 放入带有效 `width/height` 的 deferred 占位句柄，并通过 render 内部 `WeakMap<ImageHandle, DeferredImagePlan>` 关联主图/替换图/蒙版与 `ImageObject`；`DeferredImagePlan` 不进入 `common` 类型。任何公开回放/自定义渲染器路径必须先 resolver 物化，不能把占位句柄暴露出去。
+- **回放期物化**：`replayDisplayList(renderer, list, resolveImage?)` 增加可选 resolver；遇到 `drawImage` 时对 `image` 与 `mask` 调用 resolver。resolver 在 `drawPage` 闭包内按 renderer 缓存 `renderer.createImage(DecodedImage)` 结果；Substitution 的 auto/always/never 与 dpi 在 resolver 中决定，不使用 prepare 阶段未知的 dpi。不得修改或按 renderer 重写原 DisplayList；用 resolver 保持 list 不可变。
+- 占位句柄必须带有效像素宽高；没有 resolver 就到达 `renderer.drawImage` 视为实现错误（assert/warning），不得静默把假句柄交给渲染器。
+- **嵌套 composite**：不允许用“逐子对象 `multiplyAlpha`”近似嵌套 composite 的组 alpha；重叠区域会叠加变深，isolated/blend/mask 也无法表达。规则：
+  - 嵌套 composite 的 alpha=255 且无需 isolation/blend/mask 时，可 flatten 进父 DisplayList（结果等价）；
+  - alpha<1、isolated、blend、mask 或子块自身需要 group 时，标记该 block 为“绘制期递归”，由 `drawIndependentBlock`/`drawObject` 在 draw 期递归并 `beginGroup`，组 alpha 只在 `endGroup` 乘一次；该 block 的父 DisplayList 复用降级为 best-effort，正确性优先；
+  - 外层 block 的 alpha 仍按 §11.7 在 `drawIndependentBlock` 统一开 group，不能预先乘到父 list 的子命令上。
 
 ## 8. 错误码与 warning 码
 
@@ -447,4 +516,8 @@ interface ResourceIndex {
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
 | v1.0 | T1 | 初始冻结：工程骨架、模块接口、错误/warning 码、并行规则 |
+| v1.0-r5 | T6b | 明确 displayList deferred 图像句柄/replay resolver 与嵌套 composite group 规则；不新增公共字段，group 不进入 DisplayList |
+| v1.0-r4 | T6b | 明确准备阶段运行时：`PreparePageLoader`（字体/图片/模板/注释）注入，`PreparedPageBundle` 携带 page/templates/fonts/images/blocks，`drawPage` 接收 bundle；`PreparedPage` 保持 model 形状，不用 WeakMap |
+| v1.0-r3 | T2/T4 | 记录 ST_Array `g N V` 重复展开语义（`0 g 3 5 2` → `0,5,5,5,2`）与 DeltaX/DeltaY “先展开、再按码点消费”约定 |
+| v1.0-r2 | T6a | 依据 GB/T 33190—2016 CT_ImageObject 与设计方案 8.2，纠正 `ImageObject.substitution/imageMask` 为可选 `ResourceId`（`ST_RefID`）；T6a 通过 `ImageDrawContext.substitutionMode/dpi` 实现 auto/always/never |
 | v1.0-r1 | T1 | 按 T3 反馈补齐：`PatternSpec.cell/styleRoot/tile`、`IndependentBlock.boundary/displayList`、`CommonData.defaultColorSpaceId`、`DocumentModel.templatePages/pageAnnotIndex/annotationsFile`、`ResourceIndex.colorSpaces/defaultColorSpace`、`DecodeOptions` 末位参数、`decodeAnnotationsIndex`、`flattenPageTree` options；`ImageObject.substitution/imageMask` 定为 boolean；`TemplateRef.zOrder` 改为可选 |

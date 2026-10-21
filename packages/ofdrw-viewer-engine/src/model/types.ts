@@ -172,10 +172,10 @@ export interface ImageObject extends GraphicUnitBase {
   kind: 'image';
   /** 图片资源 ID。 */
   resourceId: ResourceId;
-  /** 是否优先使用高分辨率替换图（XML `Substitution`）。 */
-  substitution: boolean;
-  /** 是否按图片蒙版解释（XML `ImageMask`）。 */
-  imageMask: boolean;
+  /** 高分辨率替换图资源 ID（XML `Substitution`，ST_RefID）；缺省表示无替换图。 */
+  substitution?: ResourceId;
+  /** 蒙版图片资源 ID（XML `ImageMask`，ST_RefID）；缺省表示无蒙版。 */
+  imageMask?: ResourceId;
   /** 可选边框。 */
   border?: ImageBorder;
 }

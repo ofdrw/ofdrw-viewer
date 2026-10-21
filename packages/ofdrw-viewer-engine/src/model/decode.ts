@@ -70,7 +70,10 @@ export function decodeOfdRoot(root: XmlNode): OfdRootInfo {
   for (const docBody of children(root, 'DocBody')) {
     pushDocRoot(childText(docBody, 'DocRoot'));
   }
-  if (docRoots.length === 0) pushDocRoot(childText(root, 'DocRoot'));
+  // 简化文件可能把 DocRoot 直接放在 OFD 根下；支持多个。
+  for (const docRoot of children(root, 'DocRoot')) {
+    pushDocRoot((docRoot.text ?? '').trim());
+  }
   return { version, docRoots, docRootIndex: 0 };
 }
 

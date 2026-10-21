@@ -858,7 +858,7 @@ interface XmlNode {
   - 去空白、支持科学计数法；
   - `NaN`/`Infinity`/空串 → fallback + warning；
   - 数组解析按空白/逗号分割，坏 token 跳过并 warning。
-  - `DeltaX/DeltaY` 支持 `g <count> <value>` 压缩组：`g 3 3.1305` 展开为 3 个 `3.1305`；`count` 必须为正整数，展开后总长度设上限（默认 100,000）防炸。`g` 组只对数值数组生效，不改变 XML 其他属性。
+  - `DeltaX/DeltaY`（常见于 `TextCode`）支持 `g <count> <value>` 压缩组：`g N V` 表示把后面的数值 `V` 重复展开 `N` 次；例如 `0 g 3 5 2` 展开为 `0, 5, 5, 5, 2`，`g 3 3.1305` 展开为 3 个 `3.1305`。`count` 必须为正整数，展开后总长度设上限（默认 100,000）防炸。`g` 组只对数值数组生效，不改变 XML 其他属性。
 - 布尔解析：`true/1/yes` 为 true，`false/0/no` 为 false；其他 fallback。
 
 ### 8.2 核心类型

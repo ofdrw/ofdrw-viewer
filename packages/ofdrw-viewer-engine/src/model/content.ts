@@ -306,9 +306,11 @@ export function decodeImageNode(node: XmlNode, context: ContentDecodeContext): I
     ...base,
     kind: 'image',
     resourceId,
-    substitution: booleanAttr(node, 'Substitution', false, objectContext),
-    imageMask: booleanAttr(node, 'ImageMask', false, objectContext),
   };
+  const substitution = normalizeResourceId(attr(node, 'Substitution'));
+  if (substitution) result.substitution = substitution;
+  const imageMask = normalizeResourceId(attr(node, 'ImageMask'));
+  if (imageMask) result.imageMask = imageMask;
   const borderNode = child(node, 'Border');
   if (borderNode) result.border = decodeBorder(borderNode, objectContext);
   return result;
@@ -547,7 +549,7 @@ export function decodePageContentNode(
   const contentNode = child(root, 'Content');
   const layers = contentNode ? decodeLayersNode(contentNode, context) : [];
   return {
-    id: pageId,
+    id: normalizeResourceId(pageId),
     area: physical,
     size,
     layers,

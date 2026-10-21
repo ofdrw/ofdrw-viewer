@@ -21,7 +21,7 @@ import type {
 import { normalizeResourceId } from './ids';
 import { badNumberHandler, child, children, emitWarning } from './decode-utils';
 import type { DecodeWarningContext } from './decode-utils';
-import { attr, childText, numberAttr, parseMatrix, parsePoint } from './decode-utils';
+import { attr, attrAny, childText, numberAttr, parseMatrix, parsePoint } from './decode-utils';
 
 /** Paint 解码上下文。 */
 export interface PaintDecodeContext extends DecodeWarningContext {
@@ -439,7 +439,7 @@ export function decodeGouraudShade(
     const color = colorNode ? decodeBasicColor(colorNode, context) : { r: 0, g: 0, b: 0, a: 255 };
     points.push(edgeFlag === undefined ? { x: point.x, y: point.y, color } : { x: point.x, y: point.y, color, edgeFlag });
   }
-  const vertexRaw = attr(node, 'VerticesPerRow');
+  const vertexRaw = attrAny(node, ['VerticesPerRow', 'VverticesPcrRow']);
   let verticesPerRow: number | undefined;
   if (vertexRaw !== undefined) {
     const parsed = Number.parseInt(vertexRaw.trim(), 10);

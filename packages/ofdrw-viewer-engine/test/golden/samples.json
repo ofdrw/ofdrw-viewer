@@ -1,0 +1,1642 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-21T08:20:06.378Z",
+  "sourceDir": "ofd_pdf_match",
+  "count": 56,
+  "samples": [
+    {
+      "name": "1",
+      "groups": [
+        "basic-text-path",
+        "scan-jbig2"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/1.ofd",
+      "pdf": "ofd_pdf_match/1.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 396.85
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 140
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 1,
+      "jb2Entries": 1,
+      "sha256": "bf41627e626a0cd194c19c37e258f6d9b74b56d8e66541e82f543ae047ab8ad9",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "1-1",
+      "groups": [
+        "basic-text-path"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/1-1.ofd",
+      "pdf": "ofd_pdf_match/1-1.pdf",
+      "pdfPages": 3,
+      "ofdDeclaredPages": 3,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "2be07ec79d05c702b1b11bc49122019ce0d7f8646949a2d3c19448850e8fe7ac",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "20240531141733",
+      "groups": [
+        "annotation-seal"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/20240531141733.ofd",
+      "pdf": "ofd_pdf_match/20240531141733.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 396.85
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 140
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 2,
+      "jb2Entries": 0,
+      "sha256": "757c576d18e5f2278b42a7a6c99c4e5ec2b4196e1f7ed129db4f614acfccdfdc",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "999",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/999.ofd",
+      "pdf": "ofd_pdf_match/999.pdf",
+      "pdfPages": 5,
+      "ofdDeclaredPages": 5,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 396.85
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 140
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 1,
+      "jb2Entries": 0,
+      "sha256": "a2b9080ae35184135160c48ce45fb609c35d5ecfdb538ebc16132c48a2186a80",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "AddAttachment",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/AddAttachment.ofd",
+      "pdf": "ofd_pdf_match/AddAttachment.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 1,
+      "jb2Entries": 0,
+      "sha256": "089e05d5953fd893dca5777f668f08dde9c568aff5c8cf380479e9f2db3f1a91",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "AddAttachment_relativepathversion",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/AddAttachment_relativepathversion.ofd",
+      "pdf": "ofd_pdf_match/AddAttachment_relativepathversion.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 1,
+      "jb2Entries": 0,
+      "sha256": "284c4d43fbc70494eb05f5689f69a018417d050890553e239982074fd694630c",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "AddWatermarkAnnot",
+      "groups": [
+        "annotation-seal"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/AddWatermarkAnnot.ofd",
+      "pdf": "ofd_pdf_match/AddWatermarkAnnot.pdf",
+      "pdfPages": 6,
+      "ofdDeclaredPages": 6,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 1,
+      "jb2Entries": 0,
+      "sha256": "dfed483fa08c30d0ee1326cff1b7bd158a5cc29a8dffa9c8425d5a830f21a125",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "DigitalSign",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/DigitalSign.ofd",
+      "pdf": "ofd_pdf_match/DigitalSign.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "5b5bec16c539aa041ef3784d47a5665c03cf7f2e228551df87f13ee28d122989",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "Page5",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/Page5.ofd",
+      "pdf": "ofd_pdf_match/Page5.pdf",
+      "pdfPages": 5,
+      "ofdDeclaredPages": 5,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "ad57abde3dafc7fd0d2845e42b3767ba0eb900514148e1cce2205da2d97b89c0",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "SESV4SignDoc",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/SESV4SignDoc.ofd",
+      "pdf": "ofd_pdf_match/SESV4SignDoc.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "fac9e5a186917e203de2f9ebd916ac8510d53a633724f0f4c9b9b6ea71b2e119",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "SignScaleError",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/SignScaleError.ofd",
+      "pdf": "ofd_pdf_match/SignScaleError.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 396.85
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 140
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "7999a96a8426eecde425e020dfcab7ed4bfa5e2d00f24482418e12596b4247c3",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "V4RideRight",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/V4RideRight.ofd",
+      "pdf": "ofd_pdf_match/V4RideRight.pdf",
+      "pdfPages": 5,
+      "ofdDeclaredPages": 5,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "3011c7b0c3c73f74433d0068a3e67c3b5d71b077627b2fb54933f0a66eba0473",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "VPage7",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/VPage7.ofd",
+      "pdf": "ofd_pdf_match/VPage7.pdf",
+      "pdfPages": 5,
+      "ofdDeclaredPages": 5,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "c2cedf3f88a9826510f16efa99edfc6b630527f02ed29591954f06e64fc997ac",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "allprotected",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/allprotected.ofd",
+      "pdf": "ofd_pdf_match/allprotected.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "c46847b171d10896e636e14408b1ea19f344a6ad87ccf86393f1b90e0941c53a",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "ano",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/ano.ofd",
+      "pdf": "ofd_pdf_match/ano.pdf",
+      "pdfPages": 2,
+      "ofdDeclaredPages": 2,
+      "pageSizePt": {
+        "width": 595.32,
+        "height": 841.92
+      },
+      "sizeMm": {
+        "width": 210.016,
+        "height": 297.011
+      },
+      "embeddedFonts": true,
+      "fontEntries": 8,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "c7398b2984e8a9a42f6fd736ca6f3b4006a45e115ab78f46559859463de9a817",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "areaholder_fields",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/areaholder_fields.ofd",
+      "pdf": "ofd_pdf_match/areaholder_fields.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "09cff60df3e503a25f8f9c008ba72596051b0e91264211ba8a0123c59d826a02",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "chineseDir",
+      "groups": [
+        "horizontal-delta"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/chineseDir.ofd",
+      "pdf": "ofd_pdf_match/chineseDir.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "c6defec84b241c74679a0d424634ff4a8605ccecc480d9736ef89218d806ac09",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "containsJPEG",
+      "groups": [
+        "image"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/containsJPEG.ofd",
+      "pdf": "ofd_pdf_match/containsJPEG.pdf",
+      "pdfPages": 2,
+      "ofdDeclaredPages": 2,
+      "pageSizePt": {
+        "width": 595.169,
+        "height": 841.714
+      },
+      "sizeMm": {
+        "width": 209.962,
+        "height": 296.938
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 2,
+      "jb2Entries": 0,
+      "sha256": "2cb4f2c28b2593a803f7f2516fc100ba6277a48816c4175e8636e0ed25c800bb",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "doc1File",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/doc1File.ofd",
+      "pdf": "ofd_pdf_match/doc1File.pdf",
+      "pdfPages": 11,
+      "ofdDeclaredPages": 11,
+      "pageSizePt": {
+        "width": 595,
+        "height": 841
+      },
+      "sizeMm": {
+        "width": 209.903,
+        "height": 296.686
+      },
+      "embeddedFonts": true,
+      "fontEntries": 1,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "92a655b3966aae0b44dc9ca666849f68ee26028e12f537669e58489271f06f95",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "draw_param_ref",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/draw_param_ref.ofd",
+      "pdf": "ofd_pdf_match/draw_param_ref.pdf",
+      "pdfPages": 5,
+      "ofdDeclaredPages": 5,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 396.85
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 140
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 1,
+      "jb2Entries": 0,
+      "sha256": "525eba2e09a4d7ac01a05bc176146ee9ecf5b1184fa3b909cc15599803493700",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "fptpl",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/fptpl.ofd",
+      "pdf": "ofd_pdf_match/fptpl.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 396.85
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 140
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 1,
+      "jb2Entries": 0,
+      "sha256": "247b54077c806b2e60df9f15f0118813d8d09f48fb718480360b3e8f7174fbbb",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "h",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/h.ofd",
+      "pdf": "ofd_pdf_match/h.pdf",
+      "pdfPages": 5,
+      "ofdDeclaredPages": 5,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "76fd71cbcab2bcdd582fc24fcf32c7f1a2575af1bd11fcd7b3e88319b42c37c1",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "hello",
+      "groups": [
+        "basic-text-path"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/hello.ofd",
+      "pdf": "ofd_pdf_match/hello.pdf",
+      "pdfPages": 2,
+      "ofdDeclaredPages": 2,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "1df1080b49774a4084a2b42b18e6cb866eb514d6ad158613c6b389b16eb4136c",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "hello-integrity",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/hello-integrity.ofd",
+      "pdf": "ofd_pdf_match/hello-integrity.pdf",
+      "pdfPages": 2,
+      "ofdDeclaredPages": 2,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "d1a6c278e04e26108dc8efaf75fb728bc6a92cf01b289d27f5c630bf7653c91f",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "hello_watermark",
+      "groups": [
+        "annotation-seal"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/hello_watermark.ofd",
+      "pdf": "ofd_pdf_match/hello_watermark.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "8d75dc0ff61af4146d13ee62b03d7000b7c6c330e6ec94e0a42eaf2f5843f30f",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "helloworld",
+      "groups": [
+        "basic-text-path"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/helloworld.ofd",
+      "pdf": "ofd_pdf_match/helloworld.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "74b53c91d6911df820456661ded8a22154b8aed28e30c3403d44aa91c738e146",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "helloworld_with_pageblock",
+      "groups": [
+        "clip-composite"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/helloworld_with_pageblock.ofd",
+      "pdf": "ofd_pdf_match/helloworld_with_pageblock.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "8b122bd9de7647b911189ca99212e07f7db151b58482b22495c35534d129c91e",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "intro-数科",
+      "groups": [
+        "clip-composite"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/intro-数科.ofd",
+      "pdf": "ofd_pdf_match/intro-数科.pdf",
+      "pdfPages": 42,
+      "ofdDeclaredPages": 42,
+      "pageSizePt": {
+        "width": 907.087,
+        "height": 680.315
+      },
+      "sizeMm": {
+        "width": 320,
+        "height": 240
+      },
+      "embeddedFonts": true,
+      "fontEntries": 12,
+      "imageEntries": 66,
+      "jb2Entries": 0,
+      "sha256": "df7bf847df8c6e6416180ee5cbcfdc13b3bf6ab5314b12958588c709329374f3",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "keyword",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/keyword.ofd",
+      "pdf": "ofd_pdf_match/keyword.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 802.205,
+        "height": 555.591
+      },
+      "sizeMm": {
+        "width": 283,
+        "height": 196
+      },
+      "embeddedFonts": true,
+      "fontEntries": 1,
+      "imageEntries": 1,
+      "jb2Entries": 0,
+      "sha256": "1bd9c65727beee5f66b69bb1cfc998874bdc3e2a6eea2e14335f1a1d2d70841c",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "keyword2",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/keyword2.ofd",
+      "pdf": "ofd_pdf_match/keyword2.pdf",
+      "pdfPages": 2,
+      "ofdDeclaredPages": 2,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "0513fdb8d410f41f6b2c45ee23ce4ee58c62306ebddb1fe8d7d65cd389138f06",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "manual",
+      "groups": [
+        "scan-image-ctm"
+      ],
+      "priority": "P0",
+      "optional": true,
+      "available": true,
+      "ofd": "ofd_pdf_match/manual.ofd",
+      "pdf": "ofd_pdf_match/manual.pdf",
+      "pdfPages": 89,
+      "ofdDeclaredPages": 89,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": true,
+      "fontEntries": 8,
+      "imageEntries": 201,
+      "jb2Entries": 5,
+      "sha256": "ebc04e4796a5c44e18380bb10f30142994ae9f32dfd071cb15c032efda3d97c8",
+      "goldenPages": [
+        1,
+        23,
+        45,
+        67,
+        89
+      ],
+      "notes": [
+        "89 页 A4，整页 JPG 图片为主（ImageObject 带非单位 CTM），含 5 个 JBIG2、8 个 TTF；不提交仓库，本地存在时才跑。"
+      ]
+    },
+    {
+      "name": "multiKeywordInTextCode",
+      "groups": [
+        "horizontal-delta"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/multiKeywordInTextCode.ofd",
+      "pdf": "ofd_pdf_match/multiKeywordInTextCode.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "7a75782bb2ee91f84f999101fbcee7cde85c24f2abcc3ea98467509b97329c7e",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "n",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/n.ofd",
+      "pdf": "ofd_pdf_match/n.pdf",
+      "pdfPages": 2,
+      "ofdDeclaredPages": 2,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "306dba9b790fe29af0cd1b365ef259c427319e0ba39c3a5f08dc8eaa2d63147c",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "namespace_no_std",
+      "groups": [
+        "irregular-structure"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/namespace_no_std.ofd",
+      "pdf": "ofd_pdf_match/namespace_no_std.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "dd5b7b92933e0e2e9c97d9ece8cc03b8988f05e579bb13b02aad98f76a30bde1",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "no_page_container",
+      "groups": [
+        "scan-jbig2",
+        "irregular-structure"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/no_page_container.ofd",
+      "pdf": "ofd_pdf_match/no_page_container.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 396.85
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 140
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 1,
+      "jb2Entries": 1,
+      "sha256": "e7cac8d149ef0d5f836f12f902ec913b470c20a48d54629d6efe7a4903c0fe47",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "page1",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/page1.ofd",
+      "pdf": "ofd_pdf_match/page1.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "5bee1ff9836f5ebbff49a3136e4cf9d9cb0c8292220d9f9af185d521f082351f",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "page2",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/page2.ofd",
+      "pdf": "ofd_pdf_match/page2.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "a55a1d3837d3c2cb6834c247c685bd94df871efd867cd1c08f64b20ce0636727",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "page3",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/page3.ofd",
+      "pdf": "ofd_pdf_match/page3.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "0d60255d2815a9b29f8448f12c07326ab432bca43ba0aebd9e4f4d210c0647fa",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "path_unstd",
+      "groups": [
+        "irregular-structure"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/path_unstd.ofd",
+      "pdf": "ofd_pdf_match/path_unstd.pdf",
+      "pdfPages": 2,
+      "ofdDeclaredPages": 2,
+      "pageSizePt": {
+        "width": 595.152,
+        "height": 841.968
+      },
+      "sizeMm": {
+        "width": 209.956,
+        "height": 297.028
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "fcb3a8488704e354a0736d60750264d3dac0d1fd9847ffbc1e39da34859baf5d",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "pattern类型",
+      "groups": [
+        "pattern"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/pattern类型.ofd",
+      "pdf": "ofd_pdf_match/pattern类型.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.32,
+        "height": 841.92
+      },
+      "sizeMm": {
+        "width": 210.016,
+        "height": 297.011
+      },
+      "embeddedFonts": true,
+      "fontEntries": 6,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "580b21a5e3ad52844eef70a3cfd4e073f4f42882f29206ca45f863e80f78ddaf",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "signedFile",
+      "groups": [
+        "scan-jbig2"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/signedFile.ofd",
+      "pdf": "ofd_pdf_match/signedFile.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 396.85
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 140
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 1,
+      "jb2Entries": 1,
+      "sha256": "bff244b1133ad553648537c395db97baa4f35d9a959afc7c938735a3f8b2b8a1",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "signout",
+      "groups": [
+        "annotation-seal"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/signout.ofd",
+      "pdf": "ofd_pdf_match/signout.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.31,
+        "height": 841.91
+      },
+      "sizeMm": {
+        "width": 210.012,
+        "height": 297.007
+      },
+      "embeddedFonts": true,
+      "fontEntries": 4,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "ed321ed91a2b27c875ec60dcab5e409715a3d7d51735bd06616ba14a64866abb",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "testImageNotFound",
+      "groups": [
+        "image"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/testImageNotFound.ofd",
+      "pdf": "ofd_pdf_match/testImageNotFound.pdf",
+      "pdfPages": 2,
+      "ofdDeclaredPages": 2,
+      "pageSizePt": {
+        "width": 1037.48,
+        "height": 737.008
+      },
+      "sizeMm": {
+        "width": 366,
+        "height": 260
+      },
+      "embeddedFonts": true,
+      "fontEntries": 3,
+      "imageEntries": 1,
+      "jb2Entries": 0,
+      "sha256": "1fbdf67be374c2b453ef8a07051a697dcbbb32117cc7835d2639552101ca953c",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "testImageOverridePage",
+      "groups": [
+        "image"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/testImageOverridePage.ofd",
+      "pdf": "ofd_pdf_match/testImageOverridePage.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 1047,
+        "height": 734
+      },
+      "sizeMm": {
+        "width": 369.358,
+        "height": 258.939
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 2,
+      "jb2Entries": 0,
+      "sha256": "2ea354ac77289de7baf0170dd96dc8505577b00f6807898a50c1776cd44fd217",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "testPathClip",
+      "groups": [
+        "clip-composite"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/testPathClip.ofd",
+      "pdf": "ofd_pdf_match/testPathClip.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 1190.55,
+        "height": 836.221
+      },
+      "sizeMm": {
+        "width": 420,
+        "height": 295
+      },
+      "embeddedFonts": true,
+      "fontEntries": 3,
+      "imageEntries": 3,
+      "jb2Entries": 0,
+      "sha256": "ecfb92f9ab4d394cd574713f5efe2b8836d9ad60de616c043e7b4c702244f87e",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "testPathFillOpacity",
+      "groups": [
+        "transparency-blend"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/testPathFillOpacity.ofd",
+      "pdf": "ofd_pdf_match/testPathFillOpacity.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": true,
+      "fontEntries": 2,
+      "imageEntries": 1,
+      "jb2Entries": 0,
+      "sha256": "054a863d6791867589235fa5b4e7ecd79f13edcae7c0d8f919c74672fcfad7bf",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "v4signed",
+      "groups": [
+        "annotation-seal"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/v4signed.ofd",
+      "pdf": "ofd_pdf_match/v4signed.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 396.85
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 140
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 1,
+      "jb2Entries": 0,
+      "sha256": "8d9baae6f5f6f52a51f3402eef4cbf373c1e601950772d880819b42970e704f3",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "y",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/y.ofd",
+      "pdf": "ofd_pdf_match/y.pdf",
+      "pdfPages": 3,
+      "ofdDeclaredPages": 3,
+      "pageSizePt": {
+        "width": 578.27,
+        "height": 748.35
+      },
+      "sizeMm": {
+        "width": 204.001,
+        "height": 264.001
+      },
+      "embeddedFonts": true,
+      "fontEntries": 6,
+      "imageEntries": 4,
+      "jb2Entries": 0,
+      "sha256": "c1a8c3b55335fbbb8a71ff5aef2844cc0883cdf571727a1a74f1f9bd0a928d48",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "z",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/z.ofd",
+      "pdf": "ofd_pdf_match/z.pdf",
+      "pdfPages": 4,
+      "ofdDeclaredPages": 4,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": true,
+      "fontEntries": 1,
+      "imageEntries": 3,
+      "jb2Entries": 0,
+      "sha256": "ae942157e68402aced7c604d0d17b6421f276cadbab363fa781fea5f948b3596",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "zsbk",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/zsbk.ofd",
+      "pdf": "ofd_pdf_match/zsbk.pdf",
+      "pdfPages": 2,
+      "ofdDeclaredPages": 2,
+      "pageSizePt": {
+        "width": 841.89,
+        "height": 595.276
+      },
+      "sizeMm": {
+        "width": 297,
+        "height": 210
+      },
+      "embeddedFonts": true,
+      "fontEntries": 11,
+      "imageEntries": 3,
+      "jb2Entries": 0,
+      "sha256": "c010c33b10ad91786eaad2de63f9a18ef4a91f96b5e41ba731505fcde9073845",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "不规范资源路径",
+      "groups": [
+        "irregular-structure"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/不规范资源路径.ofd",
+      "pdf": "ofd_pdf_match/不规范资源路径.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 1152,
+        "height": 648
+      },
+      "sizeMm": {
+        "width": 406.4,
+        "height": 228.6
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 1,
+      "jb2Entries": 0,
+      "sha256": "11e999be300882eebb730e68ef96666b921a15e8f624380bf8b302d2ad729830",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "发票监制章-数科",
+      "groups": [
+        "annotation-seal"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/发票监制章-数科.ofd",
+      "pdf": "ofd_pdf_match/发票监制章-数科.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 609.44,
+        "height": 394.01
+      },
+      "sizeMm": {
+        "width": 214.997,
+        "height": 138.998
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 1,
+      "jb2Entries": 0,
+      "sha256": "6cf19b83504d726c6e410a1dc1932110796273cb008712a798d605e644a75f2e",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "发票示例",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/发票示例.ofd",
+      "pdf": "ofd_pdf_match/发票示例.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 396.85
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 140
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 2,
+      "jb2Entries": 0,
+      "sha256": "757c576d18e5f2278b42a7a6c99c4e5ec2b4196e1f7ed129db4f614acfccdfdc",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "拿来主义_page6",
+      "groups": [
+        "other"
+      ],
+      "priority": "P1",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/拿来主义_page6.ofd",
+      "pdf": "ofd_pdf_match/拿来主义_page6.pdf",
+      "pdfPages": 2,
+      "ofdDeclaredPages": 2,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "1df1080b49774a4084a2b42b18e6cb866eb514d6ad158613c6b389b16eb4136c",
+      "goldenPages": [],
+      "notes": [
+        "未列入 19.3 分组，作为补充回归（P1）。"
+      ]
+    },
+    {
+      "name": "文字横向-数科",
+      "groups": [
+        "horizontal-delta"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/文字横向-数科.ofd",
+      "pdf": "ofd_pdf_match/文字横向-数科.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.3,
+        "height": 841.9
+      },
+      "sizeMm": {
+        "width": 210.009,
+        "height": 297.004
+      },
+      "embeddedFonts": true,
+      "fontEntries": 2,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "af966418d8dbab115e97efcb6f0ba58e684441bdca148315eaf59b1bcf239956",
+      "goldenPages": [],
+      "notes": []
+    },
+    {
+      "name": "透明度文字",
+      "groups": [
+        "transparency-blend"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/透明度文字.ofd",
+      "pdf": "ofd_pdf_match/透明度文字.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "ccdb9dbfc0ff35f6dfee3270add0b1bb774f1286efe63b04e6d0b80078590d69",
+      "goldenPages": [],
+      "notes": []
+    }
+  ]
+}
