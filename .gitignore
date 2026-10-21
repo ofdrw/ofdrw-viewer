@@ -18,3 +18,10 @@ examples/*/dist/
 # 本地参考源码与素材，不纳入版本管理
 references/
 src_material/
+
+# 用户本地补充的回归样本，不纳入版本管理
+ofd_pdf_match/manual.ofd
+ofd_pdf_match/manual.pdf
+
+# AgentTeams 运行状态，不纳入版本管理
+.agent-teams/
