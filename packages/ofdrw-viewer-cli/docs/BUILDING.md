@@ -6,7 +6,8 @@
 
 - 采用 Node SEA（Single Executable Application）：每个产物内嵌 Node 运行时、CLI/engine JS 与当前平台的 `@napi-rs/canvas` 原生模块。
 - 一平台一架构一产物，不做 universal binary，不做跨平台交叉构建。
-- 支持矩阵固定为 6 个目标；国产 Linux ARM 复用 `linux-arm64-gnu` 产物，但需在目标发行版上验收。
+- 支持矩阵固定为 6 个目标；国产 Linux ARM64 复用 `linux-arm64-gnu` 产物，但需在目标发行版上验收。
+- 所有 ARM 目标均为 ARM64（aarch64）；不提供 32 位 ARM / ARMv7 / armhf 产物。
 - 不支持 LoongArch（龙芯）：Node 与 canvas 生态均缺少可用预编译/稳定 SEA 支持。
 - macOS 与 Windows 暂不签名、不公证。
 
@@ -15,7 +16,7 @@
 | 目标 | 产物后缀 | 构建 runner | 说明 |
 |---|---|---|---|
 | Linux x86_64 glibc | `linux-x64-gnu` | `ubuntu-24.04` | GitHub 托管 x64 runner |
-| Linux ARM64 glibc | `linux-arm64-gnu` | `ubuntu-24.04-arm` | 国产 ARM Linux 使用同一 ABI，需在麒麟/UOS/openEuler 验收 |
+| Linux ARM64 glibc | `linux-arm64-gnu` | `ubuntu-24.04-arm` | 国产 ARM64 Linux 使用同一 ABI，需在麒麟/UOS/openEuler 验收 |
 | macOS Intel | `darwin-x64` | `macos-13` | 不签名、不公证 |
 | macOS Apple Silicon | `darwin-arm64` | `macos-14` | 不签名、不公证 |
 | Windows x64 | `win32-x64` | `windows-2022` | 不签名 |
@@ -24,7 +25,8 @@
 明确不支持：
 
 - LoongArch64 / 龙芯；
-- Linux musl（Alpine）、ARMv7、RISC-V；
+- 32 位 ARM（ARMv7 / armhf）；所有 ARM 产物均为 ARM64；
+- Linux musl（Alpine）、RISC-V；
 - macOS universal binary；
 - 在 x64 机器上直接生成 arm64 SEA。
 

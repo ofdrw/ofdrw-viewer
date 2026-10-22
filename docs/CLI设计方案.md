@@ -503,6 +503,7 @@ LICENSE
 ### 8.6 已知限制
 
 - Linux 仅 glibc；musl/Alpine 不提供；
+- 所有 ARM 目标均为 ARM64；不提供 32 位 ARM / ARMv7 / armhf；
 - LoongArch/龙芯不提供，Node 与 canvas 生态缺少稳定构建链；
 - macOS 只编译可执行文件，不签名、不公证；首次运行可能被 Gatekeeper 拦截；
 - Windows 未签名，可能触发 SmartScreen；
