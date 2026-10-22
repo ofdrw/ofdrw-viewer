@@ -11,6 +11,7 @@ import {
   decodeSignature,
   decodeSignatureBundle,
   decodeSignaturesIndex,
+  signatureIndexCandidates,
   signaturesFilePath,
 } from '../../src/model/signature';
 import type { OFDWarning } from '../../src/warnings';
@@ -29,11 +30,14 @@ async function openSampleSignatures(name: string) {
     'Doc_0/Document.xml',
   );
   const warnings: OFDWarning[] = [];
-  const index = parseXml(await zip.readEntry(signaturesFilePath('Doc_0/Document.xml')));
+  const documentPath = 'Doc_0/Document.xml';
+  const indexFilePath = signatureIndexCandidates(documentPath).find((path) => zip.hasEntry(path));
+  if (!indexFilePath) throw new Error(`${name} 缺少 Signatures.xml`);
+  const index = parseXml(await zip.readEntry(indexFilePath));
   const bundle = await decodeSignatureBundle(
     {
       index,
-      indexFilePath: 'Doc_0/Signs/Signatures.xml',
+      indexFilePath,
       pageIds: document.pages.map((page) => page.id),
       readFile: (path) => zip.readEntry(path),
     },
@@ -66,6 +70,8 @@ describe('签章模型（T14a）', () => {
     expect(first.stamps[0]?.clip).toEqual({ x: 0, y: 0, w: 8, h: 40 });
     expect(first.stamps[4]?.clip).toEqual({ x: 32, y: 0, w: 8, h: 40 });
     expect(first.seal?.version).toBe('v4');
+    expect(first.seal?.source).toBe('seal-esl');
+    expect(first.seal?.cacheKey).toBeTruthy();
     expect(first.seal?.type).toBe('PNG');
     expect(first.seal?.width).toBe(40);
     expect(first.seal?.height).toBe(40);
@@ -114,12 +120,62 @@ describe('签章模型（T14a）', () => {
       }),
     );
     expect(sealSignature.seal?.version).toBe('v4');
+    expect(sealSignature.seal?.source).toBe('seal-esl');
     expect(sealSignature.seal?.type).toBe('PNG');
     expect(sealSignature.seal?.width).toBe(42);
     expect(sealSignature.seal?.height).toBe(42);
     expect(bundle.signatures[1]?.seal).toBeUndefined();
     expect(bundle.signatures[1]?.stamps).toEqual([]);
     expect(bundle.pageIndex[0]).toHaveLength(1);
+  });
+
+  it('n.ofd：索引在 Document.xml 同级 Signatures.xml，Seal 仍可解码', async () => {
+    const { document, bundle } = await openSampleSignatures('n.ofd');
+    expect(document.pages.map((page) => page.id)).toEqual(['1001', '1021']);
+    expect(bundle.entries).toEqual([
+      { id: '0', type: '', baseLoc: 'Doc_0/Signs/Sign_0/Signature.xml' },
+    ]);
+    const signature = bundle.signatures[0]!;
+    expect(signature.stamps).toHaveLength(1);
+    expect(signature.stamps[0]).toEqual(
+      expect.objectContaining({ pageId: '1021', pageIndex: 1, boundary: { x: 122.94, y: 37, w: 33, h: 33 } }),
+    );
+    expect(signature.seal?.version).toBe('v1');
+    expect(signature.seal?.source).toBe('seal-esl');
+    expect(signature.seal?.type).toBe('PNG');
+    expect(signature.seal?.width).toBe(33);
+    expect(signature.seal?.height).toBe(33);
+    expect(bundle.pageIndex[1]).toHaveLength(1);
+  });
+
+  it('不规范资源路径.ofd：无 Seal，从 SignValue.dat 的 SES_Signature 提取 PNG', async () => {
+    const { bundle, warnings } = await openSampleSignatures('不规范资源路径.ofd');
+    const signature = bundle.signatures[0]!;
+    expect(signature.sealFile).toBeUndefined();
+    expect(signature.signedValueFile).toBe('Doc_0/Signs/Sign_0/SignValue.dat');
+    expect(signature.seal?.version).toBe('v4');
+    expect(signature.seal?.source).toBe('signed-value');
+    expect(signature.seal?.type).toBe('PNG');
+    expect(signature.seal?.width).toBe(40);
+    expect(signature.seal?.height).toBe(40);
+    expect(signature.seal && isPng(signature.seal.data)).toBe(true);
+    expect(signature.stamps[0]?.pageIndex).toBe(0);
+    expect(warnings).toEqual([]);
+  });
+
+  it('SignScaleError.ofd：SignedValue.dat 的 picture.type=ofd 提取内嵌 ZIP 并保留字节', async () => {
+    const { bundle, warnings } = await openSampleSignatures('SignScaleError.ofd');
+    const signature = bundle.signatures[0]!;
+    expect(signature.seal?.version).toBe('v4');
+    expect(signature.seal?.source).toBe('signed-value');
+    expect(signature.seal?.type).toBe('OFD');
+    expect(signature.seal?.width).toBe(34);
+    expect(signature.seal?.height).toBe(26);
+    const data = signature.seal?.data ?? new Uint8Array();
+    expect(data.length).toBeGreaterThan(100);
+    expect([0x50, 0x4b].every((byte, index) => data[index] === byte)).toBe(true);
+    expect(signature.stamps[0]?.pageIndex).toBe(0);
+    expect(warnings).toEqual([]);
   });
 
   it('坏 Seal.esl/签名 XML warning 降级，不抛出', async () => {
@@ -190,12 +246,19 @@ describe('签章模型（T14a）', () => {
         seq(),
         seq(ia5('PNG'), octet(png), int(30), int(40)),
       );
-    const expectImage = (data: Uint8Array, version: 'v1' | 'v4' | 'v5') => {
-      const image = decodeSealImage(data);
+    const expectImage = (
+      data: Uint8Array,
+      version: 'v1' | 'v4' | 'v5',
+      source: 'seal-esl' | 'signed-value' = 'seal-esl',
+    ) => {
+      const image = decodeSealImage(data, { source });
       expect(image?.version).toBe(version);
+      expect(image?.source).toBe(source);
+      expect(image?.cacheKey).toBeTruthy();
       expect(image?.type).toBe('PNG');
       expect(image?.width).toBe(30);
       expect(image?.height).toBe(40);
+      return image!;
     };
     expectImage(seq(info(1), seq()), 'v1');
     expectImage(seq(info(4), octet(new Uint8Array([1])), octet(new Uint8Array([2])), octet(new Uint8Array([3]))), 'v4');
@@ -203,15 +266,63 @@ describe('签章模型（T14a）', () => {
       seq(info(5), octet(new Uint8Array([1])), octet(new Uint8Array([2])), octet(new Uint8Array([3])), octet(new Uint8Array([4]))),
       'v5',
     );
-    // SES_Signature：顶层 4/5 字段，版本看 TBS_Sign[0]→eseal[1] 的 Header。
+    // SES_Signature（SignedValue.dat）：顶层 2/4/5 字段，版本看 TBS_Sign[0]→eseal[1] 的 Header。
+    expectImage(seq(seq(int(1), seq(info(1), seq())), octet(new Uint8Array([1]))), 'v1', 'signed-value');
     expectImage(
       seq(seq(int(4), seq(info(4), seq())), octet(new Uint8Array([1])), octet(new Uint8Array([2])), octet(new Uint8Array([3]))),
       'v4',
+      'signed-value',
     );
     expectImage(
       seq(seq(int(5), seq(info(5), seq())), octet(new Uint8Array([1])), octet(new Uint8Array([2])), octet(new Uint8Array([3])), octet(new Uint8Array([4]))),
       'v5',
+      'signed-value',
     );
+  });
+
+  it('picture.type=ofd 保留 ZIP 字节，来源与缓存 key 稳定', () => {
+    const zip = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3, 4]);
+    const sealInfo = seq(
+      seq(ia5('ES'), int(4), ia5('V')),
+      ia5('id'),
+      seq(),
+      seq(ia5('ofd'), octet(zip), int(34), int(26)),
+    );
+    const data = seq(
+      seq(int(4), seq(sealInfo, seq())),
+      octet(new Uint8Array([9])),
+      octet(new Uint8Array([8])),
+      octet(new Uint8Array([7])),
+    );
+    const first = decodeSealImage(data, { source: 'signed-value' });
+    const second = decodeSealImage(data, { source: 'signed-value' });
+    expect(first?.version).toBe('v4');
+    expect(first?.source).toBe('signed-value');
+    expect(first?.type).toBe('OFD');
+    expect(first?.width).toBe(34);
+    expect(first?.height).toBe(26);
+    expect(Array.from(first?.data ?? [])).toEqual(Array.from(zip));
+    expect(first?.cacheKey).toBe(second?.cacheKey);
+    expect(first?.cacheKey).not.toBe(decodeSealImage(data)?.cacheKey);
+
+    const jpegInfo = seq(
+      seq(ia5('ES'), int(4), ia5('V')),
+      ia5('id'),
+      seq(),
+      seq(ia5('jpeg'), octet(new Uint8Array([0xff, 0xd8, 0xff, 0xe0])), int(10), int(20)),
+    );
+    const jpeg = decodeSealImage(
+      seq(
+        seq(int(4), seq(jpegInfo, seq())),
+        octet(new Uint8Array([1])),
+        octet(new Uint8Array([2])),
+        octet(new Uint8Array([3])),
+      ),
+      { source: 'signed-value' },
+    );
+    expect(jpeg?.type).toBe('JPEG');
+    expect(jpeg?.width).toBe(10);
+    expect(jpeg?.height).toBe(20);
   });
 
   it('未知顶层结构 warning 并返回 undefined', () => {
@@ -220,9 +331,17 @@ describe('签章模型（T14a）', () => {
     expect(warnings.some((warning) => warning.code === 'W_BAD_NUMBER')).toBe(true);
   });
 
-  it('signaturesFilePath 支持 Document.xml 路径与目录', () => {
+  it('signaturesFilePath 支持 Document.xml 路径与目录；候选索引优先同级 Signatures.xml', () => {
     expect(signaturesFilePath('Doc_0/Document.xml')).toBe('Doc_0/Signs/Signatures.xml');
     expect(signaturesFilePath('Doc_0')).toBe('Doc_0/Signs/Signatures.xml');
+    expect(signatureIndexCandidates('Doc_0/Document.xml')).toEqual([
+      'Doc_0/Signatures.xml',
+      'Doc_0/Signs/Signatures.xml',
+    ]);
+    expect(signatureIndexCandidates('Doc_0')).toEqual([
+      'Doc_0/Signatures.xml',
+      'Doc_0/Signs/Signatures.xml',
+    ]);
   });
 });
 /** DER TLV 编码（测试用）。 */

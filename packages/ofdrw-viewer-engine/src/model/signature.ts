@@ -61,6 +61,24 @@ export function signaturesFilePath(documentPath: string): string {
 }
 
 /**
+ * 返回签章索引的候选路径，供 API 按 ZIP 条目存在性探测。
+ *
+ * 标准路径为 `Doc_0/Signs/Signatures.xml`；部分真实文件把索引放在
+ * 与 Document.xml 同级的 `Doc_0/Signatures.xml`。
+ *
+ * @param documentPath Document.xml 的包内路径，或 DocRoot 目录。
+ * @returns 候选路径，同级 `Signatures.xml` 优先，其后为标准 `Signs/Signatures.xml`。
+ */
+export function signatureIndexCandidates(documentPath: string): string[] {
+  const normalized = normalizePathSeparators(documentPath).replace(/^\/+|\/+$/g, '');
+  const baseDir = /\.xml$/i.test(normalized) ? dirnameOf(normalized) : normalized;
+  return [
+    resolvePackagePath(baseDir, 'Signatures.xml'),
+    resolvePackagePath(baseDir, SIGNATURES_RELATIVE_PATH),
+  ];
+}
+
+/**
  * 解码 Signs/Signatures.xml 的索引项。
  *
  * @param root Signatures.xml 根节点。
@@ -109,7 +127,7 @@ export function decodeSignaturesIndex(
  * @param root Signature.xml 根节点。
  * @param filePath Signature.xml 的包内路径。
  * @param options 解码选项；`id`/`type` 通常来自 Signatures.xml 索引。
- * @returns 签章模型；Seal.esl 尚未读取，`seal` 由调用方填充。
+ * @returns 签章模型；Seal.esl/SignedValue.dat 尚未读取，`seal` 由调用方填充。
  */
 export function decodeSignature(
   root: XmlNode,
@@ -136,15 +154,31 @@ export function decodeSignature(
       if (sealFile) model.sealFile = sealFile;
     }
   }
+  const signedValueNode =
+    child(root, 'SignedValue') ?? (signedInfo ? child(signedInfo, 'SignedValue') : undefined);
+  if (signedValueNode) {
+    const rawSignedValue =
+      (signedValueNode.text ?? '').trim() ||
+      childText(signedValueNode, 'BaseLoc') ||
+      (attr(signedValueNode, 'BaseLoc') ?? '').trim();
+    if (!rawSignedValue) {
+      emitWarning(options, 'W_BAD_NUMBER', `Signature ${id} 的 SignedValue 缺少路径`, {
+        resourceId: id,
+      });
+    } else {
+      const signedValueFile = resolveSignaturePath(baseDir, rawSignedValue, options, id);
+      if (signedValueFile) model.signedValueFile = signedValueFile;
+    }
+  }
   return model;
 }
 
 /**
- * 读取并解码所有 Signature.xml 与 Seal.esl，生成按页索引。
+ * 读取并解码所有 Signature.xml 与 Seal.esl/SignedValue.dat，生成按页索引。
  *
  * @param input 索引、页 ID 与文件读取器。
  * @param options 解码选项。
- * @returns 签章集合；单个签章/印章损坏时 warning 后继续。
+ * @returns 签章集合；Seal 优先、SignedValue 兜底，单个签章/印章损坏时 warning 后继续。
  */
 export async function decodeSignatureBundle(
   input: SignatureBundleInput,
@@ -169,18 +203,23 @@ export async function decodeSignatureBundle(
       continue;
     }
     if (model.sealFile) {
-      try {
-        const bytes = await input.readFile(model.sealFile);
-        const seal: SealImage | undefined = decodeSealImage(bytes, {
-          ...(options.onWarning ? { onWarning: options.onWarning } : {}),
-          resourceId: model.id,
-        });
-        if (seal) model.seal = seal;
-      } catch (error) {
-        emitWarning(options, 'W_IMAGE_DECODE', `Seal.esl 读取失败：${String(error)}`, {
-          resourceId: model.id,
-        });
-      }
+      model.seal = await readSealImage(
+        input.readFile,
+        model.sealFile,
+        'seal-esl',
+        model.id,
+        options,
+      );
+    }
+    // 标准文件优先 Seal.esl；无 Seal 或 Seal 损坏时退回 SignedValue.dat 的 SES_Signature。
+    if (!model.seal && model.signedValueFile) {
+      model.seal = await readSealImage(
+        input.readFile,
+        model.signedValueFile,
+        'signed-value',
+        model.id,
+        options,
+      );
     }
     signatures.push(model);
   }
@@ -189,6 +228,36 @@ export async function decodeSignatureBundle(
     signatures,
     pageIndex: buildSignaturePageIndex(signatures, input.pageIds, options),
   };
+}
+
+/**
+ * 读取并解码一个印章来源文件；失败只 warning。
+ *
+ * @param readFile 包内文件读取器。
+ * @param file 来源文件路径。
+ * @param source 来源枚举。
+ * @param resourceId 签章 ID。
+ * @param options 解码选项。
+ * @returns 印章图片；读取或结构损坏时返回 undefined。
+ */
+async function readSealImage(
+  readFile: SignatureBundleInput['readFile'],
+  file: string,
+  source: 'seal-esl' | 'signed-value',
+  resourceId: ResourceId,
+  options: SignatureDecodeOptions,
+): Promise<SealImage | undefined> {
+  try {
+    const bytes = await readFile(file);
+    return decodeSealImage(bytes, {
+      ...(options.onWarning ? { onWarning: options.onWarning } : {}),
+      source,
+      resourceId,
+    });
+  } catch (error) {
+    emitWarning(options, 'W_IMAGE_DECODE', `${file} 读取失败：${String(error)}`, { resourceId });
+    return undefined;
+  }
 }
 
 /**

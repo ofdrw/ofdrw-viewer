@@ -253,11 +253,18 @@ export interface SignatureEntry {
   baseLoc: string;
 }
 
-/** Seal.esl 内嵌的印章图片。 */
+/** 签章图片/矢量章来源。 */
+export type SealImageSource = 'seal-esl' | 'signed-value';
+
+/** Seal.esl 或 SignedValue.dat 内嵌的印章图片/矢量章。 */
 export interface SealImage {
   /** 识别出的签章结构版本；仅魔术字节兜底时为 unknown。 */
   version: 'v1' | 'v4' | 'v5' | 'unknown';
-  /** 图片格式，例如 `PNG`/`GIF`/`JPG`/`BMP`。 */
+  /** 图片/矢量章来源；旧调用方构造 SealImage 时可能缺省。 */
+  source?: SealImageSource;
+  /** 稳定缓存 key；相同来源与字节内容可复用。 */
+  cacheKey?: string;
+  /** 图片格式或矢量章标记，例如 `PNG`/`JPEG`/`GIF`/`BMP`/`OFD`。 */
   type: string;
   /** 图片原始字节。 */
   data: Uint8Array;
@@ -291,7 +298,9 @@ export interface SignatureModel {
   baseLoc: string;
   /** Seal.esl 的包内路径。 */
   sealFile?: string;
-  /** Seal.esl 解码出的印章图片；损坏时为缺省。 */
+  /** SignedValue.dat 的包内路径；无 Seal.esl 时作为图片兜底。 */
+  signedValueFile?: string;
+  /** Seal.esl/SignedValue.dat 解码出的印章图片；损坏时为缺省。 */
   seal?: SealImage;
   /** 该签章的所有戳记，保持 XML 顺序。 */
   stamps: SignatureStamp[];

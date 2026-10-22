@@ -1,12 +1,12 @@
 /**
- * `Seal.esl` 的 SESeal 解码。
+ * `Seal.esl`/`SignedValue.dat` 的 SESeal/SES_Signature 解码。
  *
- * 只提取静态红章图片（SES_ESPictrueInfo）；不校验证书链、签名值或时间戳。
+ * 只提取静态红章图片或矢量 OFD 字节（SES_ESPictrueInfo）；不校验证书链、签名值或时间戳。
  * 结构约定见 GMT 0031-2014 与 ofdrw-gm 的 SESeal/SES_SealInfo。
  */
 
 import type { OFDWarning } from '../warnings';
-import type { ResourceId, SealImage } from './types';
+import type { ResourceId, SealImage, SealImageSource } from './types';
 import { derInteger, derString, parseDer, type DerNode } from './asn1';
 import { emitWarning } from './decode-utils';
 
@@ -16,15 +16,17 @@ export interface SealDecodeOptions {
   onWarning?: (warning: OFDWarning) => void;
   /** 所属签章资源 ID，用于 warning 定位。 */
   resourceId?: ResourceId;
+  /** 数据来源；缺省按 Seal.esl。 */
+  source?: SealImageSource;
 }
 
 /** 支持的印章图片格式。 */
-const SUPPORTED_TYPES = new Set(['PNG', 'GIF', 'JPG', 'JPEG', 'BMP']);
+const SUPPORTED_TYPES = new Set(['PNG', 'GIF', 'JPG', 'JPEG', 'BMP', 'OFD']);
 
 /**
- * 解码 Seal.esl 并提取内嵌印章图片。
+ * 解码 Seal.esl/SignedValue.dat 并提取内嵌印章图片或矢量 OFD 字节。
  *
- * @param data Seal.esl 字节。
+ * @param data 来源文件字节。
  * @param options 解码选项。
  * @returns 印章图片；DER 损坏、缺少图片节点或图片为空时返回 undefined。
  */
@@ -32,63 +34,71 @@ export function decodeSealImage(
   data: Uint8Array,
   options: SealDecodeOptions = {},
 ): SealImage | undefined {
+  const source = options.source ?? 'seal-esl';
+  const label = source === 'seal-esl' ? 'Seal.esl' : 'SignedValue.dat';
   if (data.length === 0) {
-    emitWarning(options, 'W_IMAGE_DECODE', 'Seal.esl 为空');
+    emitWarning(options, 'W_IMAGE_DECODE', `${label} 数据为空`);
     return undefined;
   }
   let tops: DerNode[];
   try {
     tops = parseDer(data);
   } catch (error) {
-    emitWarning(options, 'W_BAD_NUMBER', `Seal.esl DER 解析失败：${String(error)}`);
-    return magicFallback(data, options);
+    emitWarning(options, 'W_BAD_NUMBER', `${label} DER 解析失败：${String(error)}`);
+    return magicFallback(data, options, source);
   }
   const structure = findSealStructure(tops);
   if (!structure) {
-    emitWarning(options, 'W_BAD_NUMBER', 'Seal.esl 结构不是已知的 v1/v4/v5 签章数据');
-    return magicFallback(data, options);
+    emitWarning(options, 'W_BAD_NUMBER', `${label} 结构不是已知的 v1/v4/v5 签章数据`);
+    return magicFallback(data, options, source);
   }
   const picture = findPicture(structure.sealInfo);
   if (!picture) {
-    emitWarning(options, 'W_BAD_NUMBER', 'Seal.esl 缺少 SES_ESPictrueInfo');
+    emitWarning(options, 'W_BAD_NUMBER', `${label} 缺少 SES_ESPictrueInfo`);
     return undefined;
   }
   const dataNode = picture.children[1];
   const imageBytes = dataNode?.value;
   if (!imageBytes || imageBytes.length === 0) {
-    emitWarning(options, 'W_IMAGE_DECODE', 'Seal.esl 印章图片数据为空');
+    emitWarning(options, 'W_IMAGE_DECODE', `${label} 印章图片数据为空`);
     return undefined;
   }
   let declared = (derString(picture.children[0]) ?? '').trim().toUpperCase();
   const detected = detectImageType(imageBytes);
   if (!declared) {
     declared = detected ?? '';
-    emitWarning(options, 'W_IMAGE_DECODE', 'Seal.esl 缺少图片类型，按魔术字节识别');
+    emitWarning(options, 'W_IMAGE_DECODE', `${label} 缺少图片类型，按魔术字节识别`);
   } else if (!SUPPORTED_TYPES.has(declared)) {
     if (detected) {
       emitWarning(
         options,
         'W_IMAGE_DECODE',
-        `Seal.esl 图片类型 ${JSON.stringify(declared)} 不支持，按魔术字节识别为 ${detected}`,
+        `${label} 图片类型 ${JSON.stringify(declared)} 不支持，按魔术字节识别为 ${detected}`,
       );
       declared = detected;
     } else {
-      emitWarning(options, 'W_IMAGE_DECODE', `Seal.esl 图片类型 ${JSON.stringify(declared)} 不支持`);
+      emitWarning(options, 'W_IMAGE_DECODE', `${label} 图片类型 ${JSON.stringify(declared)} 不支持`);
     }
+  }
+  if (declared === 'OFD' && !startsWith(imageBytes, [0x50, 0x4b])) {
+    emitWarning(options, 'W_IMAGE_DECODE', `${label} picture.type=ofd 但数据不是 ZIP，保留原始字节`);
   }
   let width = derInteger(picture.children[2]);
   let height = derInteger(picture.children[3]);
   if (width === undefined || width <= 0) {
-    emitWarning(options, 'W_BAD_NUMBER', `Seal.esl 图片宽度非法：${String(width)}，按 0 mm 处理`);
+    emitWarning(options, 'W_BAD_NUMBER', `${label} 图片宽度非法：${String(width)}，按 0 mm 处理`);
     width = 0;
   }
   if (height === undefined || height <= 0) {
-    emitWarning(options, 'W_BAD_NUMBER', `Seal.esl 图片高度非法：${String(height)}，按 0 mm 处理`);
+    emitWarning(options, 'W_BAD_NUMBER', `${label} 图片高度非法：${String(height)}，按 0 mm 处理`);
     height = 0;
   }
+  const type = declared || 'UNKNOWN';
   return {
     version: structure.version,
-    type: declared || 'UNKNOWN',
+    source,
+    cacheKey: sealCacheKey(source, structure.version, type, width, height, imageBytes),
+    type,
     data: imageBytes,
     width,
     height,
@@ -194,15 +204,55 @@ function isPicture(node: DerNode | undefined): node is DerNode {
 /**
  * DER 结构不可用时，按图片魔术字节兜底；尺寸未知按 0 mm。
  *
- * @param data Seal.esl 原始字节。
+ * @param data 来源文件原始字节。
  * @param options 解码选项。
  * @returns 兜底图片；不是已知图片格式时返回 undefined。
  */
-function magicFallback(data: Uint8Array, options: SealDecodeOptions): SealImage | undefined {
+function magicFallback(
+  data: Uint8Array,
+  options: SealDecodeOptions,
+  source: SealImageSource,
+): SealImage | undefined {
   const type = detectImageType(data);
   if (!type) return undefined;
-  emitWarning(options, 'W_IMAGE_DECODE', `Seal.esl DER 结构不可用，按魔术字节识别为 ${type}，尺寸未知`);
-  return { version: 'unknown', type, data, width: 0, height: 0 };
+  const label = source === 'seal-esl' ? 'Seal.esl' : 'SignedValue.dat';
+  emitWarning(options, 'W_IMAGE_DECODE', `${label} DER 结构不可用，按魔术字节识别为 ${type}，尺寸未知`);
+  return {
+    version: 'unknown',
+    source,
+    cacheKey: sealCacheKey(source, 'unknown', type, 0, 0, data),
+    type,
+    data,
+    width: 0,
+    height: 0,
+  };
+}
+
+/**
+ * 生成稳定缓存 key；使用内容 FNV-1a 哈希 + 来源/版本/尺寸，避免同一印章重复解码。
+ *
+ * @param source 数据来源。
+ * @param version 结构版本。
+ * @param type 图片类型。
+ * @param width 显示宽度，单位 mm。
+ * @param height 显示高度，单位 mm。
+ * @param data 原始字节。
+ * @returns 稳定 key。
+ */
+function sealCacheKey(
+  source: SealImageSource,
+  version: SealImage['version'],
+  type: string,
+  width: number,
+  height: number,
+  data: Uint8Array,
+): string {
+  let hash = 0x811c9dc5;
+  for (const byte of data) {
+    hash ^= byte;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `${source}:${version}:${type}:${width}x${height}:${data.length}:${hash.toString(16).padStart(8, '0')}`;
 }
 
 /**
