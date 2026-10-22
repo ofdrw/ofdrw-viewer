@@ -271,4 +271,61 @@ describe('OFDViewer 核心', () => {
     expect(scrollRemoveIndex).toBeGreaterThanOrEqual(0);
     expect(removeSpy.mock.contexts[scrollRemoveIndex]).toBe(main);
   });
+
+  it('A4 小数页高下 goToPage/lastPage 不因整数 scrollTop 落回上一页', async () => {
+    engineMocks.open.mockImplementation(async () => makeDocument(5));
+    const viewer = new OFDViewer({
+      container: document.body,
+      source: new ArrayBuffer(8),
+      initialScale: 1,
+    });
+    await viewer.ready;
+
+    const main = viewer.getElements().main;
+    // 模拟 Chromium：scrollTop 按整数像素保存，2285.039 的页顶会被截断为 2285。
+    let storedTop = Math.trunc(main.scrollTop);
+    Object.defineProperty(main, 'scrollTop', {
+      configurable: true,
+      get: () => storedTop,
+      set: (value: number) => {
+        storedTop = Math.trunc(Math.max(0, value));
+      },
+    });
+
+    // 复现 t11 的 A4 五页小数页顶（scale=1）。
+    expect(pageTop(viewer, 3)).toBeCloseTo(2285.0393700787404, 6);
+    expect(pageTop(viewer, 5)).toBeCloseTo(4546.078740157481, 6);
+
+    viewer.goToPage(3);
+    await vi.waitFor(() => {
+      expect(viewer.getPageNumber()).toBe(3);
+      expect(viewer.getState().view.scrollTop).toBe(2286);
+    });
+    expect(viewer.getPageView(3)?.element.dataset.current).toBe('true');
+    expect(viewer.getPageView(4)?.element.dataset.current).toBeUndefined();
+
+    viewer.goToPage(5);
+    await vi.waitFor(() => {
+      expect(viewer.getPageNumber()).toBe(5);
+      expect(viewer.getState().view.scrollTop).toBe(4547);
+    });
+    expect(viewer.getPageView(4)?.element.dataset.current).toBeUndefined();
+    expect(viewer.getPageView(5)?.element.dataset.current).toBe('true');
+
+    viewer.goToPage(1);
+    await vi.waitFor(() => expect(viewer.getPageNumber()).toBe(1));
+    viewer.lastPage();
+    await vi.waitFor(() => {
+      expect(viewer.getPageNumber()).toBe(5);
+      expect(viewer.getState().view.scrollTop).toBe(4547);
+    });
+
+    // 缩放/旋转按锚点恢复，整数化后仍应停在第 5 页而不是落回第 4 页。
+    viewer.setScale(2);
+    await vi.waitFor(() => expect(viewer.getPageNumber()).toBe(5));
+    viewer.setRotation(90);
+    await vi.waitFor(() => expect(viewer.getPageNumber()).toBe(5));
+    expect(viewer.getPageView(5)?.element.dataset.current).toBe('true');
+    viewer.destroy();
+  });
 });

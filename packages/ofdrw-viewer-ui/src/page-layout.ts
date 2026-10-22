@@ -26,6 +26,14 @@ export const DEFAULT_PAGE_GAP = 8;
 /** 桌面端页面上下留白，单位 px。 */
 export const DEFAULT_PAGE_PADDING = 24;
 
+/**
+ * 整数 scrollTop 与小数页顶的容差，单位 px。
+ *
+ * 浏览器按整数像素保存 `scrollTop`：例如页顶 2285.039 被截断为 2285。
+ * `getPageAtOffset` 允许 1px 容差，避免这类截断把当前页回落到上一页。
+ */
+export const SCROLL_TOP_TOLERANCE = 1;
+
 /** 默认 A4 页宽，单位 mm。 */
 export const A4_WIDTH_MM = 210;
 
@@ -300,7 +308,9 @@ export class PageLayout {
   /**
    * 计算指定滚动位置所在页。
    *
-   * 滚动超过内容末尾时返回最后一页；内容为空返回 0。
+   * 滚动超过内容末尾时返回最后一页；内容为空返回 0。浏览器会把小数滚动位置
+   * 截断为整数像素，因此比较页顶时允许 {@link SCROLL_TOP_TOLERANCE} 的容差，
+   * 避免 2285.039 的页顶在 scrollTop=2285 时被判为上一页。
    *
    * @param scrollTop 滚动位置，单位 px。
    * @returns 页索引，0-based。
@@ -311,11 +321,12 @@ export class PageLayout {
     if (scrollTop <= this.boxes[0]!.top) return 0;
     const last = this.boxes[count - 1]!;
     if (scrollTop >= last.top + last.height + this.paddingPx) return count - 1;
+    const offset = Math.max(0, scrollTop) + SCROLL_TOP_TOLERANCE;
     let low = 0;
     let high = count - 1;
     while (low < high) {
       const mid = Math.ceil((low + high) / 2);
-      if (this.boxes[mid]!.top <= scrollTop) low = mid;
+      if (this.boxes[mid]!.top <= offset) low = mid;
       else high = mid - 1;
     }
     return low;

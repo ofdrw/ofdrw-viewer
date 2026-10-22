@@ -151,6 +151,22 @@ const extensions = new Set<ViewerExtension>();
 /** 活跃实例；后注册的扩展会补应用到这些实例。 */
 const activeViewers = new Set<OFDViewer>();
 
+/** 浮点页顶的舍入容差，避免整数页顶因浮点误差多进 1px。单位：px。 */
+const SCROLL_TOP_EPSILON = 1e-6;
+
+/**
+ * 将排版偏移量转换为浏览器可稳定保存的整数 scrollTop。
+ *
+ * 浏览器按整数像素读写 scrollTop；小数页顶（如 2285.039）直接写入会被截断为
+ * 2285，导致 `getPageAtOffset` 回落到上一页，因此统一向上取整。单位：px。
+ *
+ * @param offset 排版偏移量，单位 px。
+ * @returns 非负整数滚动位置，单位 px。
+ */
+function toIntegerScrollTop(offset: number): number {
+  return Math.max(0, Math.ceil(offset - SCROLL_TOP_EPSILON));
+}
+
 /** 判断是否为 PromiseLike。 */
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   return !!value && typeof (value as PromiseLike<unknown>).then === 'function';
@@ -1102,7 +1118,8 @@ export class OFDViewer implements UIShellHost {
   }
 
   private set mainScrollTop(value: number) {
-    this.elements.main.scrollTop = Math.max(0, value);
+    // 浏览器只保留整数 scrollTop；向上取整避免小数页顶被截断后落回上一页。
+    this.elements.main.scrollTop = toIntegerScrollTop(value);
   }
 
   /** 应用缩放并保持滚动锚点。 */
@@ -1133,7 +1150,7 @@ export class OFDViewer implements UIShellHost {
 
   /** 滚动到指定页；保留页顶。 */
   private scrollToPageInternal(index: number, smooth: boolean): void {
-    const top = this.layout.getPageTop(index);
+    const top = toIntegerScrollTop(this.layout.getPageTop(index));
     if (smooth && typeof this.elements.main.scrollTo === 'function') {
       try {
         this.elements.main.scrollTo({ top, behavior: 'smooth' });
