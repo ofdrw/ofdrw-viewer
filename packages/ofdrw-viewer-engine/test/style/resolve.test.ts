@@ -130,6 +130,7 @@ describe('StyleResolver 底纹', () => {
   it('子元素 Pattern 生成 PatternSpec，styleRoot 为默认样式', () => {
     const cell = { kind: 'block' as const, children: [] };
     const pattern: Pattern = {
+      id: 'pat1',
       width: 10,
       height: 10,
       xStep: 5,
@@ -146,6 +147,7 @@ describe('StyleResolver 底纹', () => {
     });
     expect(style.fillPaint?.kind).toBe('pattern');
     if (style.fillPaint?.kind === 'pattern') {
+      expect(style.fillPaint.spec.patternId).toBe('pat1');
       expect(style.fillPaint.spec.xStep).toBe(10);
       expect(style.fillPaint.spec.yStep).toBe(10);
       expect(style.fillPaint.spec.cell).toBe(cell);

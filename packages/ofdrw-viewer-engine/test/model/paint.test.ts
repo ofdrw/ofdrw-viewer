@@ -124,6 +124,7 @@ describe('复杂 Paint', () => {
     expect(paint.pattern.reflectMethod).toBe('Row');
     expect(paint.pattern.relativeTo).toBe('Page');
     expect(paint.pattern.cell.children[0]?.kind).toBe('path');
+    expect(paint.pattern.id).toBe('20');
     expect(patterns.get('20')).toBe(paint.pattern);
   });
 

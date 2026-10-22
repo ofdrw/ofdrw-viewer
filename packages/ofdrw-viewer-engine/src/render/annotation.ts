@@ -9,10 +9,7 @@
 import type { Annotation, IndependentBlock, PageBlock } from '../model/types';
 import type { Box } from '../common/types';
 import type { ResolvedStyle } from '../style/types';
-import type { Renderer } from '../renderer/types';
-import type { PaintBinder } from './paint';
 import { normalizeBox } from '../common/matrix';
-import { drawIndependentBlock } from './block';
 
 /** 注释块构建上下文。 */
 export interface AnnotationBuildContext {
@@ -83,40 +80,5 @@ export function buildAnnotationBlocks(
   return blocks;
 }
 
-/**
- * 按文件顺序绘制注释块。
- *
- * 该重载只用于没有字体/图片运行时缓存的简单场景；页面绘制应走
- * `drawPage`，由它提供完整 bundle 与图片物化回调。
- *
- * @param renderer 目标渲染器。
- * @param binder PaintBinder。
- * @param blocks 注释独立块。
- * @param onWarning warning 回调。
- */
-export function drawAnnotationBlocks(
-  renderer: Renderer,
-  binder: PaintBinder,
-  blocks: readonly IndependentBlock[],
-  onWarning?: (code: string, message: string, objectId?: string) => void,
-): void {
-  for (const block of blocks) {
-    renderer.save();
-    try {
-      if (block.boundary) renderer.translate(block.boundary.x, block.boundary.y);
-      drawIndependentBlock({ renderer, binder, onWarning }, block);
-    } catch (error) {
-      onWarning?.(
-        'W_UNSUPPORTED_PAINT',
-        `注释块绘制失败：${error instanceof Error ? error.message : String(error)}`,
-        block.id,
-      );
-    } finally {
-      try {
-        renderer.restore();
-      } catch {
-        // 忽略 restore 失败，继续后续注释。
-      }
-    }
-  }
-}
+/** 公开注释回放入口；与 block.ts 共用同一实现及图片 resolver。 */
+export { drawAnnotationBlocks } from './block';

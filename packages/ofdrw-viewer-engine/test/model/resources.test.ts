@@ -95,6 +95,19 @@ describe('decodePageResources', () => {
     expect(set.compositeGraphicUnits[0]?.content.children[0]?.kind).toBe('path');
   });
 
+  it('BaseLoc/MediaFile 大小写原样保留，不做全局小写化', () => {
+    const root = node('Res', { BaseLoc: 'DOC_0/Res' }, [
+      node('MultiMedias', {}, [
+        node('MultiMedia', { ID: '4', Type: 'Image', Format: 'JPEG' }, [
+          leaf('MediaFile', 'Image_4.JPEG'),
+        ]),
+      ]),
+    ]);
+    const set = decodePageResources(root, 'DocumentRes.xml');
+    expect(set.images[0]?.mediaFile).toBe('DOC_0/Res/Image_4.JPEG');
+    expect(set.images[0]?.format).toBe('jpeg');
+  });
+
   it('非法路径/缺少 MediaFile 时 warning 并跳过', () => {
     const onWarning = vi.fn();
     const root = node('Res', { BaseLoc: 'Res' }, [

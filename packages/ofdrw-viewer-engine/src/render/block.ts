@@ -12,6 +12,7 @@ import type { IndependentBlock, PageBlock } from '../model/types';
 import type { ResolvedStyle } from '../style/types';
 import type { CompositeMode, Renderer } from '../renderer/types';
 import type { PaintBinder } from './paint';
+import type { DisplayListImageResolver } from './display-list';
 import { IDENTITY_MATRIX } from '../common/matrix';
 import { replayDisplayList } from './display-list';
 
@@ -60,6 +61,8 @@ export interface BlockDrawContext {
    * 非 group 回放直接使用调用方已设置好的当前变换，不需要该矩阵。
    */
   matrix?: Matrix;
+  /** 可选的图片/蒙版占位句柄物化回调。 */
+  resolveImage?: DisplayListImageResolver;
   onWarning?: (code: string, message: string, objectId?: string) => void;
 }
 
@@ -219,13 +222,13 @@ export function drawIndependentBlock(context: BlockDrawContext, block: Independe
         composite,
       });
       try {
-        replayDisplayList(renderer, displayList);
+        replayDisplayList(renderer, displayList, context.resolveImage);
       } finally {
         // 组透明度只在 endGroup 乘一次；即使回放异常也必须关闭组。
         renderer.endGroup();
       }
     } else {
-      replayDisplayList(renderer, displayList);
+      replayDisplayList(renderer, displayList, context.resolveImage);
     }
   } catch (error) {
     warn('W_UNSUPPORTED_PAINT', `独立块回放失败：${String(error)}`);
@@ -250,12 +253,13 @@ export function drawAnnotationBlocks(
   binder: PaintBinder,
   blocks: readonly IndependentBlock[],
   onWarning?: (code: string, message: string, objectId?: string) => void,
+  resolveImage?: DisplayListImageResolver,
 ): void {
   for (const block of blocks) {
     renderer.save();
     try {
       if (block.boundary) renderer.translate(block.boundary.x, block.boundary.y);
-      drawIndependentBlock({ renderer, binder, onWarning }, block);
+      drawIndependentBlock({ renderer, binder, onWarning, resolveImage }, block);
     } catch (error) {
       onWarning?.('W_UNSUPPORTED_PAINT', `注释块绘制失败：${String(error)}`, block.id);
     } finally {

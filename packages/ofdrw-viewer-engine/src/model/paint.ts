@@ -499,9 +499,18 @@ export function decodePattern(node: XmlNode, context: PaintDecodeContext): Patte
   } else if (cellNode) {
     emitWarning(context, 'W_UNSUPPORTED_PAINT', 'Pattern.CellContent 无解码器，底纹将为空');
   }
-  const pattern: Pattern = { width, height, xStep, yStep, reflectMethod, relativeTo, cell };
-  if (ctm) pattern.ctm = ctm;
   const id = normalizeResourceId(attr(node, 'ID'));
+  const pattern: Pattern = {
+    ...(id ? { id } : {}),
+    width,
+    height,
+    xStep,
+    yStep,
+    reflectMethod,
+    relativeTo,
+    cell,
+  };
+  if (ctm) pattern.ctm = ctm;
   if (id && context.patterns) context.patterns.set(id, pattern);
   return pattern;
 }

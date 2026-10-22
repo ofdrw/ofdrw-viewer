@@ -243,6 +243,70 @@ export interface Annotation {
   boundary?: Box;
 }
 
+/** Signs/Signatures.xml 中的签章索引项。 */
+export interface SignatureEntry {
+  /** Signature ID。 */
+  id: ResourceId;
+  /** 签章类型，例如 `Seal`/`Sign`。 */
+  type: string;
+  /** Signature.xml 的包内路径。 */
+  baseLoc: string;
+}
+
+/** Seal.esl 内嵌的印章图片。 */
+export interface SealImage {
+  /** 识别出的签章结构版本；仅魔术字节兜底时为 unknown。 */
+  version: 'v1' | 'v4' | 'v5' | 'unknown';
+  /** 图片格式，例如 `PNG`/`GIF`/`JPG`/`BMP`。 */
+  type: string;
+  /** 图片原始字节。 */
+  data: Uint8Array;
+  /** 显示宽度，单位 mm。 */
+  width: number;
+  /** 显示高度，单位 mm。 */
+  height: number;
+}
+
+/** 页面上的签章戳记；由 Signature.xml 的 StampAnnot 解码。 */
+export interface SignatureStamp {
+  /** StampAnnot ID。 */
+  id?: ResourceId;
+  /** 页面 ID（PageRef），不是页索引。 */
+  pageId: ResourceId;
+  /** 页索引；PageRef 未匹配页面时缺省。 */
+  pageIndex?: number;
+  /** 戳记边界，单位 mm。 */
+  boundary: Box;
+  /** 裁剪区域，单位 mm。 */
+  clip?: Box;
+}
+
+/** 单个签章；只描述静态外观所需信息，不含签名值验证。 */
+export interface SignatureModel {
+  /** Signature ID。 */
+  id: ResourceId;
+  /** 签章类型，例如 `Seal`/`Sign`。 */
+  type: string;
+  /** Signature.xml 的包内路径。 */
+  baseLoc: string;
+  /** Seal.esl 的包内路径。 */
+  sealFile?: string;
+  /** Seal.esl 解码出的印章图片；损坏时为缺省。 */
+  seal?: SealImage;
+  /** 该签章的所有戳记，保持 XML 顺序。 */
+  stamps: SignatureStamp[];
+}
+
+/** 文档签章集合与按页索引。 */
+export interface SignatureBundle {
+  /** Signatures.xml 中的索引项，保持 XML 顺序。 */
+  entries: SignatureEntry[];
+  /** 成功解码的签章。 */
+  signatures: SignatureModel[];
+  /** 页索引 → 该页戳记；同一页按签章/戳记顺序。 */
+  pageIndex: Record<number, SignatureStamp[]>;
+}
+
 /** 独立空间块：复合对象、注释外观、底纹 cell、普通 PageBlock 的统一表示。 */
 export interface IndependentBlock {
   id?: ResourceId;
@@ -302,6 +366,8 @@ export interface GouraudShade {
 
 /** 底纹资源；`cell` 为 CellContent 页面块。 */
 export interface Pattern {
+  /** 底纹资源 ID；内联底纹未写 ID 时缺省。 */
+  id?: ResourceId;
   /** tile 宽度，对象空间单位（通常 mm）。 */
   width: number;
   /** tile 高度，对象空间单位（通常 mm）。 */

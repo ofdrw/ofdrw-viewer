@@ -81,6 +81,7 @@ function jbig2Fixture(): Uint8Array {
 describe('detectImageFormat', () => {
   it('优先使用扩展名，大小写与 query 不敏感', () => {
     expect(detectImageFormat(png(2, 3), 'a.JPG')).toBe('jpeg');
+    expect(detectImageFormat(png(2, 3), 'DOC_0/Res/Image_4.JPEG')).toBe('jpeg');
     expect(detectImageFormat(png(2, 3), 'a.png?v=1')).toBe('png');
     expect(detectImageFormat(jbig2Fixture(), 'Doc_0/Res/image_78.jb2')).toBe('jbig2');
     expect(detectImageFormat(new Uint8Array([1, 2, 3]), 'a.tif')).toBe('tiff');

@@ -5,15 +5,16 @@
  * 注释 → endPage。不解析 DrawParam、不查资源、不直接调用 Canvas（除透传 ctx）。
  */
 
-import type { PageModel, Layer } from '../model/types';
+import type { PageModel, Layer, ResourceId } from '../model/types';
 import type { PreparedPageBundle } from './prepare';
 import type { Renderer, CanvasRenderingContext2DLike } from '../renderer/types';
 import type { Matrix, Viewport } from '../common/types';
 import type { WarningHandler } from '../warnings';
-import { IDENTITY_MATRIX, multiplyMatrix, translateMatrix } from '../common/matrix';
+import { IDENTITY_MATRIX, invertMatrix, multiplyMatrix, translateMatrix } from '../common/matrix';
 import { createPaintBinder } from './paint';
 import { drawBlock, drawObjects, resolveDisplayImage } from './object';
 import { wrapPatternBinder } from './prepare';
+import type { ImageSubstitutionMode } from './image';
 
 /** 页面图层类型顺序（设计方案图 16）。 */
 const LAYER_TYPES: readonly Layer['type'][] = ['Background', 'Body', 'Foreground', 'Custom'];
@@ -24,6 +25,8 @@ export interface DrawPageOptions {
   layerOrder?: 'document' | 'type';
   /** 图片缺 CTM 时是否严格 identity，默认 true。 */
   strictImageCtm?: boolean;
+  /** 替换图选择模式，默认 auto。 */
+  substitutionMode?: ImageSubstitutionMode;
   /** 取消信号；每个对象检查一次。 */
   signal?: AbortSignal;
   /** warning 回调。 */
@@ -74,6 +77,8 @@ export function drawPage(
     );
   }
 
+  let currentObjectMatrix: Matrix | null = null;
+  const inversePageMatrix = invertMatrix(pageMatrix);
   const binder = wrapPatternBinder(
     createPaintBinder(renderer, {
       dpi: viewport.dpi,
@@ -82,6 +87,11 @@ export function drawPage(
         resolvePatternTile(patternId) {
           return prepared.blocks.get(patternId)?.displayList;
         },
+      },
+      // 当前对象空间 → 页面空间；供 RelativeTo=Page 的底纹计算页面原点。
+      objectToPage: () => {
+        const matrix = currentObjectMatrix;
+        return matrix && inversePageMatrix ? multiplyMatrix(inversePageMatrix, matrix) : null;
       },
     }),
     // 底纹 tile 在 prepare 阶段没有渲染器，图片只能存占位句柄；绘制前按当前
@@ -97,6 +107,10 @@ export function drawPage(
     styles: prepared.page.styles,
     deviceMatrix: pageMatrix,
     strictImageCtm: options.strictImageCtm ?? true,
+    substitutionMode: options.substitutionMode ?? 'auto',
+    setObjectMatrix: (matrix: Matrix | null) => {
+      currentObjectMatrix = matrix;
+    },
     dpi: viewport.dpi,
     ...(options.pageIndex !== undefined ? { pageIndex: options.pageIndex } : {}),
     signal: options.signal,
@@ -108,7 +122,7 @@ export function drawPage(
     warn('W_LAYER_ORDER', `未知图层顺序 ${String(layerOrder)}，已按 type 处理`);
   }
 
-  const templateEntries = resolveTemplates(page, prepared.templates);
+  const templateEntries = resolveTemplates(page, prepared.templates, warn);
   renderer.beginPage(canvasContext, viewport);
   try {
     renderer.setTransform(IDENTITY_MATRIX);
@@ -151,6 +165,10 @@ export function drawPage(
             matrix: blockMatrix,
             alpha: 1,
             strictImageCtm: options.strictImageCtm ?? true,
+            substitutionMode: options.substitutionMode ?? 'auto',
+            setObjectMatrix: (matrix: Matrix | null) => {
+              currentObjectMatrix = matrix;
+            },
             dpi: viewport.dpi,
             onWarning: warn,
           },
@@ -187,13 +205,19 @@ export function drawPage(
 function resolveTemplates(
   page: PageModel,
   templates: readonly PageModel[],
+  warn: (code: string, message: string, objectId?: ResourceId) => void,
 ): { ref: PageModel['templates'][number]; model: PageModel }[] {
   const byId = new Map(templates.map((template) => [template.id, template]));
   const result: { ref: PageModel['templates'][number]; model: PageModel }[] = [];
-  page.templates.forEach((ref, index) => {
-    const model = byId.get(ref.id) ?? templates[index];
-    if (model) result.push({ ref, model });
-  });
+  for (const ref of page.templates) {
+    const model = byId.get(ref.id);
+    if (!model) {
+      // 加载失败的模板只能跳过；禁止按数组位置回退，否则会错画/重复其他模板。
+      warn('W_UNSUPPORTED_PAINT', `模板 ${ref.id} 未加载，已跳过`, ref.id);
+      continue;
+    }
+    result.push({ ref, model });
+  }
   return result;
 }
 

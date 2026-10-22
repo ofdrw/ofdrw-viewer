@@ -56,4 +56,39 @@ describe('resolvePaint', () => {
     expect(resolvePaint(paint, onWarning)).toBeUndefined();
     expect(onWarning).toHaveBeenCalledWith('W_GOURAUD_APPROX', expect.any(String));
   });
+
+  it('Pattern 分支填写 patternId；内联无 ID 时保留缺省', () => {
+    const cell = { kind: 'block' as const, children: [] };
+    const withId: Paint = {
+      type: 'pattern',
+      pattern: {
+        id: '42',
+        width: 10,
+        height: 10,
+        xStep: 10,
+        yStep: 10,
+        reflectMethod: 'Normal',
+        relativeTo: 'Object',
+        cell,
+      },
+    };
+    const spec = resolvePaint(withId);
+    expect(spec?.kind).toBe('pattern');
+    if (spec?.kind === 'pattern') expect(spec.spec.patternId).toBe('42');
+
+    const withoutId: Paint = {
+      type: 'pattern',
+      pattern: {
+        width: 10,
+        height: 10,
+        xStep: 10,
+        yStep: 10,
+        reflectMethod: 'Normal',
+        relativeTo: 'Object',
+        cell,
+      },
+    };
+    const fallback = resolvePaint(withoutId);
+    if (fallback?.kind === 'pattern') expect(fallback.spec.patternId).toBeUndefined();
+  });
 });

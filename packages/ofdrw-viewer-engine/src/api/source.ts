@@ -14,8 +14,23 @@ import {
   ArrayBufferSource,
   BlobSource,
   HttpRangeSource,
+  type FetchLike,
 } from '../container/byte-source';
 import { OFDError } from '../errors';
+
+/**
+ * 构造绑定到 `globalThis` 的全局 fetch 包装。
+ *
+ * 浏览器把 `fetch` 解构后直接调用会抛 `Illegal invocation`；包装函数内以
+ * 方法形式调用，保证 `this` 始终是全局对象。环境没有 fetch 时返回 undefined，
+ * 由 `HttpRangeSource` 给出统一错误。
+ *
+ * @returns 绑定后的 fetch，或 undefined。
+ */
+function bindGlobalFetch(): FetchLike | undefined {
+  if (typeof globalThis.fetch !== 'function') return undefined;
+  return (input, init) => globalThis.fetch(input, init);
+}
 
 /**
  * 把公共来源描述解析为按需字节源。
@@ -43,8 +58,10 @@ export async function openByteSource(source: OFDSource): Promise<ByteSource> {
     }
     case 'url': {
       if (!source.url.trim()) throw new OFDError('OFD_INVALID_PACKAGE', 'url 来源不能为空');
+      const fetchImpl = bindGlobalFetch();
       return new HttpRangeSource(source.url, {
         ...(source.headers ? { headers: source.headers } : {}),
+        ...(fetchImpl ? { fetch: fetchImpl } : {}),
       });
     }
     case 'custom': {

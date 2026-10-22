@@ -45,6 +45,36 @@ describe('container/zip-reader', () => {
     await expectCode(reader.readEntry('Doc_0/stored.txt'), 'OFD_CLOSED');
   });
 
+  it('精确路径失败时按唯一大小写匹配回退，保留条目原始大小写', async () => {
+    const zip = buildZip([
+      { name: 'DOC_0/Res/Image_4.JPEG', data: 'jpeg-bytes' },
+      { name: 'Doc_0/Document.xml', data: '<Document/>' },
+    ]);
+    const reader = await ZipReader.open(new ArrayBufferSource(zip));
+    expect(reader.getEntry('Doc_0/Res/Image_4.JPEG')?.name).toBe('DOC_0/Res/Image_4.JPEG');
+    expect(reader.hasEntry('Doc_0/Res/Image_4.JPEG')).toBe(true);
+    expect(new TextDecoder().decode(await reader.readEntry('Doc_0/Res/Image_4.JPEG'))).toBe(
+      'jpeg-bytes',
+    );
+    // 精确路径仍优先，不会被回退改写。
+    expect(reader.getEntry('Doc_0/Document.xml')?.name).toBe('Doc_0/Document.xml');
+    expect(reader.getEntry('doc_0/document.xml')?.name).toBe('Doc_0/Document.xml');
+    reader.close();
+  });
+
+  it('仅大小写不同的条目存在时，歧义路径不回退', async () => {
+    const zip = buildZip([
+      { name: 'Doc_0/Res/A.JPG', data: 'upper' },
+      { name: 'Doc_0/Res/a.jpg', data: 'lower' },
+    ]);
+    const reader = await ZipReader.open(new ArrayBufferSource(zip));
+    expect(reader.getEntry('Doc_0/Res/A.JPG')?.name).toBe('Doc_0/Res/A.JPG');
+    expect(reader.getEntry('Doc_0/Res/a.jpg')?.name).toBe('Doc_0/Res/a.jpg');
+    expect(reader.getEntry('DOC_0/RES/A.JPG')).toBeUndefined();
+    expect(reader.hasEntry('DOC_0/RES/a.JPG')).toBe(false);
+    reader.close();
+  });
+
   it('支持 ZIP64 EOCD/entry extra', async () => {
     const zip = buildZip(
       [

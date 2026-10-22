@@ -7,6 +7,7 @@ import type {
   Annotation,
   ImageResource,
   PageModel,
+  Pattern,
   PageObject,
 } from '../../src/model/types';
 import type { PageResourceScope } from '../../src/resource/types';
@@ -43,9 +44,10 @@ function path(id: string, x: number, y = 0, w = 10, h = 10): PageObject {
 }
 
 /** 构造空资源作用域。 */
-function scope(input: { images?: ImageResource[] } = {}): PageResourceScope {
+function scope(input: { images?: ImageResource[]; patterns?: [string, Pattern][] } = {}): PageResourceScope {
   const empty = new Map();
   const images = new Map((input.images ?? []).map((item) => [item.id, item]));
+  const patterns = new Map(input.patterns ?? []);
   return {
     pageId: 'p1',
     templateIds: [],
@@ -53,13 +55,13 @@ function scope(input: { images?: ImageResource[] } = {}): PageResourceScope {
     images,
     drawParams: empty,
     compositeGraphicUnits: empty,
-    patterns: empty,
+    patterns,
     colorSpaces: empty,
     getFont: () => undefined,
     getImage: (id: string) => images.get(id),
     getDrawParam: (_id: string) => undefined,
     getComposite: () => undefined,
-    getPattern: (_id: string) => undefined,
+    getPattern: (id: string) => patterns.get(id),
   };
 }
 
@@ -67,7 +69,7 @@ function scope(input: { images?: ImageResource[] } = {}): PageResourceScope {
 function loader(input: {
   templates?: PageModel[];
   annotations?: Annotation[];
-}): PreparePageLoader {
+} = {}): PreparePageLoader {
   return {
     async loadFontFaces() {
       return new Map();
@@ -251,6 +253,75 @@ describe('drawPage', () => {
     expect(translatedXs(renderer)).toEqual([1, 2, 11, 12, 13]);
   });
 
+  it('Pattern RelativeTo=Page 使用对象→页面矩阵定位页面原点', async () => {
+    const pattern: Pattern = {
+      width: 5,
+      height: 5,
+      xStep: 5,
+      yStep: 5,
+      reflectMethod: 'Normal',
+      relativeTo: 'Page',
+      cell: { kind: 'block', children: [path('cell', 0)] },
+    };
+    const model = page([
+      {
+        type: 'Body',
+        children: [
+          {
+            kind: 'path',
+            id: 'pattern-object',
+            boundary: { x: 5, y: 6, w: 10, h: 10 },
+            alpha: 255,
+            visible: true,
+            data: 'M0 0 L10 0 L10 10 Z',
+            fill: true,
+            stroke: false,
+            rule: 'nonzero',
+            fillColor: { type: 'pattern', pattern },
+          },
+        ],
+      },
+    ]);
+    const bundle = await preparePage({ page: model, resources: scope(), loader: loader() });
+    const renderer = new FakeRenderer();
+    drawPage(bundle, renderer, {} as never, { width: 794, height: 1123, dpi: 96 });
+    const fill = renderer.callsOf('fill').find((call) => {
+      const paint = call.args[1] as { kind?: string };
+      return paint.kind === 'pattern';
+    });
+    expect(fill).toBeDefined();
+    const paint = fill!.args[1] as { ctm: [number, number, number, number, number, number] };
+    // 对象原点在 (5,6)，页面原点在对象空间为 (-5,-6)。
+    expect(paint.ctm[4]).toBeCloseTo(-5);
+    expect(paint.ctm[5]).toBeCloseTo(-6);
+  });
+
+  it('模板加载失败只跳过并 warning，不按位置回退到其他模板', async () => {
+    const second = page([{ type: 'Background', children: [path('second', 2)] }]);
+    second.id = 'tpl2';
+    const model = page(
+      [{ type: 'Body', children: [path('pb', 11)] }],
+      [
+        { id: 'tpl1', zOrder: 'Background' },
+        { id: 'tpl2', zOrder: 'Background' },
+      ],
+    );
+    const bundle = await preparePage({
+      page: model,
+      resources: scope(),
+      loader: loader({ templates: [second] }),
+    });
+    expect(bundle.templates.map((item) => item.id)).toEqual(['tpl2']);
+    const warnings: { code: string; message: string; objectId?: string }[] = [];
+    const renderer = new FakeRenderer();
+    drawPage(bundle, renderer, {} as never, { width: 794, height: 1123, dpi: 96 }, {
+      onWarning: (warning) => warnings.push(warning),
+    });
+    // tpl1 加载失败应跳过；旧 positional fallback 会把 tpl2 画两次。
+    expect(translatedXs(renderer)).toEqual([2, 11]);
+    expect(warnings.some((warning) => warning.objectId === 'tpl1')).toBe(true);
+  });
+
   it('document 模式按模板引用顺序 + 页图层 XML 顺序绘制', async () => {
     const template = page([
       { type: 'Foreground', children: [path('tf', 3)] },
@@ -372,5 +443,85 @@ describe('drawPage', () => {
     expect(warnings).toContain('W_NEGATIVE_BOUNDARY');
     expect(translatedXs(renderer)).toEqual([20]);
     expect(renderer.callsOf('restore').length).toBeGreaterThan(0);
+  });
+});
+
+describe('drawPage 图片 Clips 顺序', () => {
+  it('图片 Clips 在对象 CTM 之后应用，兼容 manual p23 的逆 CTM 裁剪', async () => {
+    const clipPath = {
+      kind: 'path' as const,
+      boundary: { x: 0, y: 0, w: 100, h: 50 },
+      alpha: 255,
+      visible: true,
+      data: 'M 0 0 L 200 0 L 200 100 L 0 100 C',
+      fill: true,
+      stroke: false,
+      rule: 'nonzero' as const,
+      ctm: [0.005, 0, 0, 0.01, -0.1, -0.2] as const,
+    };
+    const image: PageObject = {
+      kind: 'image',
+      id: 'img1',
+      boundary: { x: 10, y: 20, w: 100, h: 50 },
+      alpha: 255,
+      visible: true,
+      resourceId: '4',
+      ctm: [100, 0, 0, 50, 0, 0],
+      clips: [{ areas: [{ kind: 'path', path: clipPath }] }],
+    };
+    const model = page([{ type: 'Body', children: [image] }]);
+    const bundle = await preparePage({
+      page: model,
+      resources: scope({ images: [{ id: '4', mediaFile: 'Res/a.png', format: 'png' }] }),
+      loader: loader(),
+    });
+    const renderer = new FakeRenderer();
+    drawPage(bundle, renderer, {} as never, { width: 794, height: 1123, dpi: 96 });
+
+    const ops = renderer.ops();
+    const firstClip = ops.indexOf('clip');
+    const transform = ops.indexOf('transform');
+    const lastClip = ops.lastIndexOf('clip');
+    // 第一次 clip 是 Boundary 矩形裁剪；对象 CTM 必须早于图片自己的 Clips。
+    expect(firstClip).toBeGreaterThanOrEqual(0);
+    expect(transform).toBeGreaterThan(firstClip);
+    expect(lastClip).toBeGreaterThan(transform);
+  });
+
+  it('非图片对象的 Clips 仍保持在对象 CTM 之前', async () => {
+    const clippedPath = {
+      ...path('p1', 10, 20, 100, 50),
+      ctm: [100, 0, 0, 50, 0, 0] as const,
+      clips: [
+        {
+          areas: [
+            {
+              kind: 'path' as const,
+              path: {
+                kind: 'path' as const,
+                boundary: { x: 0, y: 0, w: 100, h: 50 },
+                alpha: 255,
+                visible: true,
+                data: 'M 0 0 L 100 0 L 100 50 L 0 50 C',
+                fill: true,
+                stroke: false,
+                rule: 'nonzero' as const,
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const model = page([{ type: 'Body', children: [clippedPath] }]);
+    const bundle = await preparePage({
+      page: model,
+      resources: scope(),
+      loader: loader(),
+    });
+    const renderer = new FakeRenderer();
+    drawPage(bundle, renderer, {} as never, { width: 794, height: 1123, dpi: 96 });
+
+    const ops = renderer.ops();
+    expect(ops.lastIndexOf('clip')).toBeLessThan(ops.indexOf('transform'));
   });
 });

@@ -39,12 +39,44 @@ import type { PaintBinder } from './paint';
 import { applyClips } from './clip';
 import { DisplayListBuilder, replayDisplayList } from './display-list';
 import { drawImageObject } from './image';
+import type { ImageSubstitutionMode } from './image';
 import { drawPathObject } from './path';
 import { buildTextPath, drawTextObject } from './text';
 import { IDENTITY_MATRIX, multiplyMatrix, normalizeBox, translateMatrix } from '../common/matrix';
 
 /** 独立块内容最大递归深度（PageBlock 规则）。 */
 export const MAX_OBJECT_BLOCK_DEPTH = 32;
+
+/** 已结算样式的稳定缓存键；按对象身份分配，同一准备周期内稳定。 */
+const RESOLVED_STYLE_KEYS = new WeakMap<ResolvedStyle, string>();
+let resolvedStyleKeySequence = 0;
+
+/**
+ * 取已结算样式的缓存键。
+ *
+ * @param style 准备阶段结算出的最终样式。
+ * @returns 稳定字符串键（在同一进程内单调递增）。
+ */
+export function resolvedStyleCacheKey(style: ResolvedStyle): string {
+  let key = RESOLVED_STYLE_KEYS.get(style);
+  if (!key) {
+    resolvedStyleKeySequence += 1;
+    key = `s${resolvedStyleKeySequence}`;
+    RESOLVED_STYLE_KEYS.set(style, key);
+  }
+  return key;
+}
+
+/**
+ * 复合独立块的 variant 键：资源 ID + styleRoot（内含 DrawParam 结算结果）。
+ *
+ * @param id 复合资源 ID。
+ * @param style 引用该复合对象的已结算样式。
+ * @returns 块缓存键。
+ */
+export function compositeBlockCacheKey(id: string, style: ResolvedStyle): string {
+  return `composite:${id}:${resolvedStyleCacheKey(style)}`;
+}
 
 /** 对象绘制上下文。 */
 export interface DrawObjectContext {
@@ -64,6 +96,10 @@ export interface DrawObjectContext {
   pageIndex?: number;
   /** 是否把图片句柄记录为准备阶段占位句柄。 */
   deferredImages?: boolean;
+  /** 替换图选择模式，默认 auto。 */
+  substitutionMode?: ImageSubstitutionMode;
+  /** 设置当前对象空间 → device 矩阵；供底纹 RelativeTo=Page 使用。 */
+  setObjectMatrix?: (matrix: Matrix | null) => void;
   /** 构建显示列表时的回调；存在时 composite 走 flatten/动态标记而不是立即绘制。 */
   build?: BlockBuildCallbacks;
   /** 取消信号；每个对象检查一次。 */
@@ -84,6 +120,8 @@ export interface BlockBuildCallbacks {
 interface DeferredImagePlan {
   object: ImageObject;
   role: 'main' | 'substitution' | 'mask';
+  /** 构建期替换图选择模式；绘制期按该模式物化。 */
+  mode: ImageSubstitutionMode;
 }
 
 /** 占位句柄 → 图片计划。 */
@@ -154,12 +192,13 @@ export function createDeferredImageHandle(
   object: ImageObject,
   image: DecodedImage,
   role: DeferredImagePlan['role'],
+  mode: ImageSubstitutionMode = 'auto',
 ): ImageHandle {
   const handle: ImageHandle = {
     width: Math.max(1, Math.ceil(image.width)),
     height: Math.max(1, Math.ceil(image.height)),
   };
-  DEFERRED_IMAGE_PLANS.set(handle, { object, role });
+  DEFERRED_IMAGE_PLANS.set(handle, { object, role, mode });
   return handle;
 }
 
@@ -235,6 +274,10 @@ export function resolveDisplayImage(
   if (plan.role === 'mask' || role === 'mask') {
     if (!object.imageMask) return handle;
     resourceId = object.imageMask;
+  } else if (plan.mode === 'always') {
+    resourceId = object.substitution ?? object.resourceId;
+  } else if (plan.mode === 'never') {
+    resourceId = object.resourceId;
   } else {
     resourceId = selectImageResource(object, dpi);
   }
@@ -308,12 +351,11 @@ export function drawObject(
   );
   const { renderer } = context;
   const textPath = textPathProvider(context);
-  renderer.save();
-  try {
-    renderer.translate(boundary.x, boundary.y);
-    renderer.beginPath();
-    renderer.rect(0, 0, boundary.w, boundary.h);
-    renderer.clip('nonzero');
+  // 实际 OFD 生产工具（如 manual）会用图片 CTM 的逆矩阵编码图片 Clips，
+  // 使裁剪路径在页面坐标系中表达；因此 image 的 Clips 必须在对象 CTM 之后应用，
+  // 其他对象仍保持设计方案 10.4.1 的“Clips 在 CTM 之前”顺序。
+  const imageClipsAfterCtm = object.kind === 'image' && object.ctm !== undefined;
+  const applyObjectClips = (): void => {
     applyClips(
       {
         renderer,
@@ -322,10 +364,20 @@ export function drawObject(
       },
       object.clips,
     );
+  };
+  renderer.save();
+  try {
+    renderer.translate(boundary.x, boundary.y);
+    renderer.beginPath();
+    renderer.rect(0, 0, boundary.w, boundary.h);
+    renderer.clip('nonzero');
+    if (!imageClipsAfterCtm) applyObjectClips();
     if (object.ctm) renderer.transform(object.ctm);
+    if (imageClipsAfterCtm) applyObjectClips();
     if (object.kind !== 'composite') {
       renderer.multiplyAlpha(object.alpha / 255);
     }
+    context.setObjectMatrix?.(objectMatrix);
 
     switch (object.kind) {
       case 'path':
@@ -361,6 +413,7 @@ export function drawObject(
       object.id,
     );
   } finally {
+    context.setObjectMatrix?.(null);
     try {
       renderer.restore();
     } catch {
@@ -466,18 +519,19 @@ function drawImage(context: DrawObjectContext, object: ImageObject, style: Resol
     context.onWarning?.('W_IMAGE_DECODE', `图片蒙版 ${object.imageMask} 未解码，已忽略`, object.id);
   }
 
+  const substitutionMode = context.substitutionMode ?? 'auto';
   const mainHandle = context.deferredImages
-    ? createDeferredImageHandle(object, decoded, 'main')
+    ? createDeferredImageHandle(object, decoded, 'main', substitutionMode)
     : getImageHandle(context.renderer, object.resourceId, decoded);
   const substitutionHandle =
     context.deferredImages && substitution
-      ? createDeferredImageHandle(object, substitution, 'substitution')
+      ? createDeferredImageHandle(object, substitution, 'substitution', substitutionMode)
       : substitution
         ? getImageHandle(context.renderer, object.substitution!, substitution)
         : undefined;
   const maskHandle =
     context.deferredImages && mask
-      ? createDeferredImageHandle(object, mask, 'mask')
+      ? createDeferredImageHandle(object, mask, 'mask', substitutionMode)
       : mask
         ? getImageHandle(context.renderer, object.imageMask!, mask)
         : undefined;
@@ -488,7 +542,7 @@ function drawImage(context: DrawObjectContext, object: ImageObject, style: Resol
       image: mainHandle,
       ...(maskHandle ? { mask: maskHandle } : {}),
       ...(substitutionHandle ? { substitutionImage: substitutionHandle } : {}),
-      substitutionMode: context.deferredImages ? 'never' : 'auto',
+      substitutionMode,
       dpi: context.dpi ?? 96,
       strictImageCtm: context.strictImageCtm,
       ...(context.onWarning ? { onWarning: context.onWarning } : {}),
@@ -512,12 +566,13 @@ function drawComposite(
   style: ResolvedStyle,
   objectMatrix: Matrix,
 ): void {
-  void style;
   if (context.build) {
     flattenComposite(context, object);
     return;
   }
-  const block = context.prepared.blocks.get(object.resourceId);
+  const block =
+    context.prepared.blocks.get(compositeBlockCacheKey(object.resourceId, style)) ??
+    context.prepared.blocks.get(object.resourceId);
   if (!block) {
     context.onWarning?.(
       'W_COMPOSITE_DEPTH',
@@ -533,6 +588,8 @@ function drawComposite(
       prepared: context.prepared,
       matrix: objectMatrix,
       alpha: object.alpha / 255,
+      ...(context.substitutionMode ? { substitutionMode: context.substitutionMode } : {}),
+      ...(context.setObjectMatrix ? { setObjectMatrix: context.setObjectMatrix } : {}),
       strictImageCtm: context.strictImageCtm,
       ...(context.dpi !== undefined ? { dpi: context.dpi } : {}),
       ...(context.onWarning ? { onWarning: context.onWarning } : {}),
@@ -583,8 +640,12 @@ export interface BlockDrawResources {
   alpha?: number;
   isolated?: boolean;
   composite?: CompositeMode;
+  /** 替换图选择模式，默认 auto。 */
+  substitutionMode?: ImageSubstitutionMode;
   /** 图片缺 CTM 时是否严格 identity。 */
   strictImageCtm?: boolean;
+  /** 设置当前对象空间 → device 矩阵；供底纹 RelativeTo=Page 使用。 */
+  setObjectMatrix?: (matrix: Matrix | null) => void;
   dpi?: number;
   onWarning?: (code: string, message: string, objectId?: string) => void;
 }
@@ -689,6 +750,8 @@ function drawDynamicBlock(context: BlockDrawResources, block: IndependentBlock):
           styles,
           deviceMatrix: context.matrix,
           strictImageCtm: context.strictImageCtm ?? true,
+          ...(context.substitutionMode ? { substitutionMode: context.substitutionMode } : {}),
+          ...(context.setObjectMatrix ? { setObjectMatrix: context.setObjectMatrix } : {}),
           ...(context.dpi !== undefined ? { dpi: context.dpi } : {}),
           ...(context.onWarning ? { onWarning: context.onWarning } : {}),
         },
@@ -730,6 +793,7 @@ export function buildBlockDisplayList(
     binder: PaintBinder;
     styles: WeakMap<GraphicUnitBase, ResolvedStyle>;
     strictImageCtm: boolean;
+    substitutionMode?: ImageSubstitutionMode;
     dpi?: number;
     onWarning?: (code: string, message: string, objectId?: string) => void;
     resolveComposite(object: CompositeObject): IndependentBlock | undefined;
@@ -746,6 +810,7 @@ export function buildBlockDisplayList(
     deviceMatrix: IDENTITY_MATRIX,
     strictImageCtm: context.strictImageCtm,
     deferredImages: true,
+    ...(context.substitutionMode ? { substitutionMode: context.substitutionMode } : {}),
     ...(context.dpi !== undefined ? { dpi: context.dpi } : {}),
     ...(context.onWarning ? { onWarning: context.onWarning } : {}),
     build: {

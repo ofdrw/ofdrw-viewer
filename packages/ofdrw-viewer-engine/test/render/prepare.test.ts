@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type {
   Annotation,
   CompositeGraphicUnit,
+  DrawParam,
   FontResource,
   ImageResource,
   PageModel,
@@ -16,6 +17,8 @@ import type { DecodedImage } from '../../src/common/types';
 import type { FontFaceSet } from '../../src/font/types';
 import type { PreparePageLoader } from '../../src/render/prepare';
 import { preparePage } from '../../src/render/prepare';
+import { drawPage } from '../../src/render/page';
+import { FakeRenderer } from './path/fake-renderer';
 
 /** 构造最小页面。 */
 function page(layers: PageModel['layers'], templates: PageModel['templates'] = []): PageModel {
@@ -63,23 +66,28 @@ function scope(input: {
   fonts?: FontResource[];
   images?: ImageResource[];
   composites?: CompositeGraphicUnit[];
+  drawParams?: DrawParam[];
 }): PageResourceScope {
   const fonts = new Map((input.fonts ?? []).map((item) => [item.id, item]));
   const images = new Map((input.images ?? []).map((item) => [item.id, item]));
   const composites = new Map((input.composites ?? []).map((item) => [item.id, item]));
+  const drawParams = new Map<string, DrawParam>();
+  for (const item of input.drawParams ?? []) {
+    if (item.id) drawParams.set(item.id, item);
+  }
   const empty = new Map();
   return {
     pageId: 'p1',
     templateIds: [],
     fonts,
     images,
-    drawParams: empty,
+    drawParams,
     compositeGraphicUnits: composites,
     patterns: empty,
     colorSpaces: empty,
     getFont: (id: string) => fonts.get(id),
     getImage: (id: string) => images.get(id),
-    getDrawParam: (_id: string) => undefined,
+    getDrawParam: (id: string) => drawParams.get(id),
     getComposite: (id: string) => composites.get(id),
     getPattern: (_id: string) => undefined,
   };
@@ -102,7 +110,7 @@ function loader(input: {
   images?: Record<string, DecodedImage>;
   fonts?: Record<string, FontFaceSet>;
   onTemplate?: (ref: unknown) => void;
-}): PreparePageLoader {
+} = {}): PreparePageLoader {
   return {
     async loadFontFaces(resources) {
       const result = new Map();
@@ -213,6 +221,98 @@ describe('preparePage', () => {
     expect(bundle.blocks.get('c1')?.source).toBe('composite');
     expect(bundle.blocks.get('c1')?.space).toEqual({ width: 35.28, height: 17.64 });
     expect(bundle.page.annotationBlocks).toEqual([]);
+  });
+
+  it('同一复合资源按 styleRoot/DrawParam 构建独立 variant，嵌套复合样式不串', async () => {
+    const red: DrawParam = {
+      id: 'dp-red',
+      fillColor: { type: 'color', color: { r: 255, g: 0, b: 0, a: 255 } },
+    };
+    const blue: DrawParam = {
+      id: 'dp-blue',
+      fillColor: { type: 'color', color: { r: 0, g: 0, b: 255, a: 255 } },
+    };
+    const nested: CompositeGraphicUnit = {
+      id: 'c2',
+      width: 10,
+      height: 10,
+      content: { kind: 'block', children: [path('nested-path')] },
+    };
+    const outer: CompositeGraphicUnit = {
+      id: 'c1',
+      width: 10,
+      height: 10,
+      content: {
+        kind: 'block',
+        children: [
+          {
+            kind: 'composite',
+            id: 'nested-ref',
+            resourceId: 'c2',
+            boundary: { x: 0, y: 0, w: 5, h: 5 },
+            alpha: 255,
+            visible: true,
+          },
+        ],
+      },
+    };
+    const composite = (id: string, drawParam: string): PageObject => ({
+      kind: 'composite',
+      id,
+      resourceId: 'c1',
+      drawParam,
+      boundary: { x: 0, y: 0, w: 10, h: 10 },
+      alpha: 255,
+      visible: true,
+    });
+    const model = page([
+      { type: 'Body', children: [composite('a', 'dp-red'), composite('b', 'dp-blue')] },
+    ]);
+    const bundle = await preparePage({
+      page: model,
+      resources: scope({ composites: [outer, nested], drawParams: [red, blue] }),
+      loader: loader(),
+    });
+    const uniqueBlocks = [...new Map([...bundle.blocks.values()].map((block) => [block.cacheKey, block])).values()];
+    const variants = uniqueBlocks.filter((block) => block.id === 'c1');
+    expect(variants).toHaveLength(2);
+    expect(new Set(variants.map((block) => block.cacheKey)).size).toBe(2);
+    const colors = variants.map((block) => {
+      const paint = block.styleRoot.fillPaint;
+      return paint?.kind === 'color' ? paint.rgba.b : -1;
+    });
+    expect(new Set(colors).size).toBe(2);
+    const nestedVariants = uniqueBlocks.filter((block) => block.id === 'c2');
+    const nestedColors = nestedVariants
+      .map((block) => block.styleRoot.fillPaint)
+      .filter((paint) => paint?.kind === 'color')
+      .map((paint) => (paint?.kind === 'color' ? paint.rgba.b : -1));
+    expect(new Set(nestedColors)).toEqual(new Set([0, 255]));
+    const renderer = new FakeRenderer();
+    drawPage(bundle, renderer, {} as never, { width: 794, height: 1123, dpi: 96 });
+    const fills = renderer.callsOf('fill').map((call) => {
+      const paint = call.args[1] as { kind?: string; rgba?: { b: number } };
+      return paint.kind === 'color' ? paint.rgba?.b : -1;
+    });
+    expect(fills).toContain(0);
+    expect(fills).toContain(255);
+  });
+
+  it('图片解码失败时上报 W_IMAGE_DECODE，页面继续绘制', async () => {
+    const warnings: string[] = [];
+    const broken: ImageResource = { id: 'broken', mediaFile: 'Res/missing.jpg', format: 'jpeg' };
+    const model = page([{ type: 'Body', children: [image('im1', 'broken')] }]);
+    const bundle = await preparePage({
+      page: model,
+      resources: scope({ images: [broken] }),
+      loader: loader(), // 未提供 decoded 数据，decodeImage 抛错
+      onWarning: (warning) => warnings.push(warning.code),
+    });
+    expect(warnings).toContain('W_IMAGE_DECODE');
+    const renderer = new FakeRenderer();
+    drawPage(bundle, renderer, {} as never, { width: 794, height: 1123, dpi: 96 });
+    expect(renderer.callsOf('drawImage')).toHaveLength(0);
+    expect(renderer.ops().at(-1)).toBe('endPage');
   });
 
   it('注释为空/不可见/无边界时跳过并 warning', async () => {

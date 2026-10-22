@@ -111,6 +111,12 @@ interface DirectoryInfo {
  */
 export class ZipReader {
   private readonly entries: Map<string, ZipEntryMeta>;
+  /**
+   * 小写路径索引，仅用于精确查找失败后的兼容回退。
+   *
+   * 值 `null` 表示存在多个仅大小写不同的条目，回退有歧义，必须继续失败。
+   */
+  private readonly entriesByLower = new Map<string, ZipEntryMeta | null>();
   private readonly limits: ZipLimits;
   private closed = false;
 
@@ -165,7 +171,12 @@ export class ZipReader {
   getEntry(path: string): ZipEntryMeta | undefined {
     if (this.closed) return undefined;
     try {
-      return this.entries.get(normalizePackagePath(path));
+      const normalized = normalizePackagePath(path);
+      const exact = this.entries.get(normalized);
+      if (exact) return exact;
+      // OFD 生产工具常见 Doc_0/DOC_0、Res/res 大小写漂移；仅在唯一匹配时回退，
+      // 避免全局 lowercase 或歧义条目改变精确路径语义。
+      return this.entriesByLower.get(normalized.toLowerCase()) ?? undefined;
     } catch {
       return undefined;
     }
@@ -490,7 +501,7 @@ export class ZipReader {
         throw new OFDError('OFD_INVALID_PACKAGE', `条目 ${name} 局部头偏移越界`);
       }
 
-      this.entries.set(name, {
+      const meta: ZipEntryMeta = {
         name,
         compressedSize,
         uncompressedSize,
@@ -498,7 +509,11 @@ export class ZipReader {
         localHeaderOffset,
         crc32: crc,
         flags,
-      });
+      };
+      this.entries.set(name, meta);
+      const lower = name.toLowerCase();
+      // 首次出现建立索引；仅大小写不同的第二个条目把索引标为歧义。
+      this.entriesByLower.set(lower, this.entriesByLower.has(lower) ? null : meta);
       offset = entryEnd;
     }
   }

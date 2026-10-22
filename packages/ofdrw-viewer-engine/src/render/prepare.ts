@@ -31,7 +31,12 @@ import { createDefaultStyle } from '../style/defaults';
 import { DrawParamGraph } from '../style/draw-param';
 import { StyleResolver } from '../style/resolve';
 import { resolveBlockStyles, resolvePageStyles } from '../style/page-styles';
-import { buildBlockDisplayList, markBlockDynamic, setBlockStyles } from './object';
+import {
+  buildBlockDisplayList,
+  compositeBlockCacheKey,
+  markBlockDynamic,
+  setBlockStyles,
+} from './object';
 import { materializeDisplayListImages } from './display-list';
 import type { DisplayListImageResolver } from './display-list';
 import { createPaintBinder } from './paint';
@@ -94,6 +99,8 @@ export interface PreparePageInput {
   strictImageCtm?: boolean;
   /** 输出精度，单位 DPI；用于替换图选择与缓存分桶。 */
   dpi?: number;
+  /** 替换图选择模式，默认 auto。 */
+  substitutionMode?: 'auto' | 'always' | 'never';
   /** 取消信号。 */
   signal?: AbortSignal;
   /** warning 回调。 */
@@ -315,30 +322,34 @@ export async function preparePage(input: PreparePageInput): Promise<PreparedPage
   });
   const binder = wrapPatternBinder(buildBinder);
 
-  const compositeStyles = new Map<ResourceId, ResolvedStyle>();
+  // 同一复合资源在不同父样式/DrawParam 下需要独立 variant；只按资源 ID 缓存会串样式。
+  const compositeVariants = new Map<string, { id: ResourceId; style: ResolvedStyle }>();
   const visitCompositeStyles = (objects: readonly import('../model/types').PageObject[]): void => {
     for (const object of objects) {
       if (object.kind === 'block') {
         visitCompositeStyles(object.children);
       } else if (object.kind === 'composite') {
         const style = preparedPage.styles.get(object);
-        if (style && !compositeStyles.has(object.resourceId)) {
-          compositeStyles.set(object.resourceId, style);
+        if (!style) continue;
+        const key = compositeBlockCacheKey(object.resourceId, style);
+        if (!compositeVariants.has(key)) {
+          compositeVariants.set(key, { id: object.resourceId, style });
         }
       }
     }
   };
   visitCompositeStyles(styleLayers.flatMap((layer) => layer.children));
 
-  const buildingComposites = new Set<ResourceId>();
+  const buildingComposites = new Set<string>();
   const buildComposite = (
     id: ResourceId,
     styleRoot: ResolvedStyle,
     depth: number,
   ): IndependentBlock | undefined => {
-    const cached = blocks.get(id);
+    const cacheKey = compositeBlockCacheKey(id, styleRoot);
+    const cached = blocks.get(cacheKey);
     if (cached) return cached;
-    if (depth > MAX_BLOCK_DEPTH || buildingComposites.has(id)) {
+    if (depth > MAX_BLOCK_DEPTH || buildingComposites.has(cacheKey)) {
       warn('W_COMPOSITE_DEPTH', `复合资源 ${id} 递归/循环超限，已跳过`, id);
       return undefined;
     }
@@ -347,7 +358,7 @@ export async function preparePage(input: PreparePageInput): Promise<PreparedPage
       warn('W_COMPOSITE_DEPTH', `复合资源 ${id} 不存在`, id);
       return undefined;
     }
-    buildingComposites.add(id);
+    buildingComposites.add(cacheKey);
     try {
       const space = { width: unit.width * 0.3528, height: unit.height * 0.3528 };
       const styles = resolveBlockStyles(
@@ -363,7 +374,7 @@ export async function preparePage(input: PreparePageInput): Promise<PreparedPage
         space,
         content: unit.content,
         styleRoot,
-        cacheKey: `composite:${id}`,
+        cacheKey,
         displayList: { commands: [], bounds: { x: 0, y: 0, w: space.width, h: space.height } },
       };
       setBlockStyles(block, styles);
@@ -373,25 +384,30 @@ export async function preparePage(input: PreparePageInput): Promise<PreparedPage
         binder,
         styles,
         strictImageCtm: input.strictImageCtm ?? true,
+        ...(input.substitutionMode ? { substitutionMode: input.substitutionMode } : {}),
         ...(input.dpi !== undefined ? { dpi: input.dpi } : {}),
         onWarning: warn,
         resolveComposite: (object: CompositeObject) =>
-          buildComposite(object.resourceId, styleRoot, depth + 1),
+          buildComposite(object.resourceId, styles.get(object) ?? styleRoot, depth + 1),
         markDynamic: () => {
           dynamic = true;
         },
       });
       if (dynamic) markBlockDynamic(block);
-      blocks.set(id, block);
+      blocks.set(cacheKey, block);
+      if (!blocks.has(id)) blocks.set(id, block);
       return block;
     } finally {
-      buildingComposites.delete(id);
+      buildingComposites.delete(cacheKey);
     }
   };
 
-  for (const [id, style] of compositeStyles) buildComposite(id, style, 0);
-  // 兜底：收集到但未被样式遍历覆盖的复合资源（例如被不可见对象引用）。
-  for (const id of compositeIds) buildComposite(id, defaultStyle, 0);
+  for (const variant of compositeVariants.values()) buildComposite(variant.id, variant.style, 0);
+  // 兜底：收集到但未被样式遍历覆盖的复合资源（例如仅出现在底纹/注释中）。
+  const variantIds = new Set([...compositeVariants.values()].map((variant) => variant.id));
+  for (const id of compositeIds) {
+    if (!variantIds.has(id)) buildComposite(id, defaultStyle, 0);
+  }
 
   // 底纹 tile：按 cell 缓存，供各对象绑定时复用。
   const patternStyles = new WeakSet<PageBlock>();
@@ -408,10 +424,11 @@ export async function preparePage(input: PreparePageInput): Promise<PreparedPage
         binder,
         styles,
         strictImageCtm: input.strictImageCtm ?? true,
+        ...(input.substitutionMode ? { substitutionMode: input.substitutionMode } : {}),
         ...(input.dpi !== undefined ? { dpi: input.dpi } : {}),
         onWarning: warn,
         resolveComposite: (object: CompositeObject) =>
-          buildComposite(object.resourceId, defaultStyle, 0),
+          buildComposite(object.resourceId, styles.get(object) ?? defaultStyle, 0),
         markDynamic: () => {
           dynamic = true;
           warn('W_UNSUPPORTED_PAINT', '底纹 cell 含需 group 的嵌套复合对象，已跳过该 tile', pattern.cell.id);
@@ -467,10 +484,11 @@ export async function preparePage(input: PreparePageInput): Promise<PreparedPage
         binder,
         styles,
         strictImageCtm: input.strictImageCtm ?? true,
+        ...(input.substitutionMode ? { substitutionMode: input.substitutionMode } : {}),
         ...(input.dpi !== undefined ? { dpi: input.dpi } : {}),
         onWarning: warn,
         resolveComposite: (object: CompositeObject) =>
-          buildComposite(object.resourceId, defaultStyle, 0),
+          buildComposite(object.resourceId, styles.get(object) ?? defaultStyle, 0),
         markDynamic: () => {
           dynamic = true;
         },

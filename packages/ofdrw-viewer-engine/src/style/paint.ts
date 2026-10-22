@@ -74,6 +74,7 @@ function averageColor(segments: readonly { color: Rgba }[]): Rgba {
  */
 function toPatternSpec(pattern: Pattern, styleRoot: ResolvedStyle): PaintSpec {
   const spec = {
+    ...(pattern.id ? { patternId: pattern.id } : {}),
     width: pattern.width,
     height: pattern.height,
     xStep: Math.max(pattern.xStep, pattern.width),

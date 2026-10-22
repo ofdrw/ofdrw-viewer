@@ -9,6 +9,19 @@ import { ArrayBufferSource } from '../../src/container/byte-source';
 const SAMPLE_DIR = fileURLToPath(new URL('../../../../ofd_pdf_match/', import.meta.url));
 
 describe('container/zip-reader 真实样本', () => {
+  it.skipIf(!existsSync(join(SAMPLE_DIR, 'containsJPEG.ofd')))(
+    'containsJPEG 的 DOC_0/Res 路径可通过大小写唯一回退读取',
+    async () => {
+      const bytes = readFileSync(join(SAMPLE_DIR, 'containsJPEG.ofd'));
+      const reader = await ZipReader.open(new ArrayBufferSource(bytes));
+      expect(reader.listEntries().some((entry) => entry.name === 'DOC_0/Res/Image_4.JPEG')).toBe(true);
+      const data = await reader.readEntry('Doc_0/Res/Image_4.JPEG');
+      expect(data[0]).toBe(0xff);
+      expect(data[1]).toBe(0xd8);
+      reader.close();
+    },
+  );
+
   it.skipIf(!existsSync(SAMPLE_DIR))('可打开 55 对样本中的全部 OFD 并读取入口 XML', async () => {
     const files = readdirSync(SAMPLE_DIR);
     const ofdFiles = files.filter((name) => name.toLowerCase().endsWith('.ofd')).sort();
