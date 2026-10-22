@@ -122,6 +122,7 @@ OFDPage#index: number
 OFDPage#getSize(): PageSize                 // mm
 OFDPage#getViewport(options?: ViewportOptions): Viewport // px
 OFDPage#render(params: PageRenderParameters): RenderTask
+OFDPage#exportImage(options?: PageImageExportOptions): Promise<PageImageResult>
 
 RenderTask#promise: Promise<void>
 RenderTask#cancel(): void
@@ -143,27 +144,78 @@ WARNING_CODES
 OFDError、isOFDError、toOFDError
 ```
 
-公共类型包括 `OFDOpenOptions`、`OFDSource`、`PageRenderParameters`、`ResourceLimits`、`CacheOptions`、`FontInput`、`FontProvider`、`ImageDecoderPlugin`、`Renderer`/`Canvas2DLike`/`CanvasRenderingContext2DLike`、`Viewport`、`Matrix`、`Box`、`DrawStyle`、`PaintSpec`、`ResolvedPaint`、`PatternSpec`、`PatternPaint`、`DisplayList`、`DrawCommand`、`OFDWarning`、`OFDErrorCode`、`WarningCode` 等。
+公共类型包括 `OFDOpenOptions`、`OFDSource`、`PageRenderParameters`、`PageImageExportOptions`、`PageImageResult`、`PageImageFormat`、`PageImageMime`、`CanvasImageEncodeSource`、`EncodeImage`、`ResourceLimits`、`CacheOptions`、`FontInput`、`FontProvider`、`ImageDecoderPlugin`、`Renderer`/`Canvas2DLike`/`CanvasRenderingContext2DLike`、`Viewport`、`Matrix`、`Box`、`DrawStyle`、`PaintSpec`、`ResolvedPaint`、`PatternSpec`、`PatternPaint`、`DisplayList`、`DrawCommand`、`OFDWarning`、`OFDErrorCode`、`WarningCode` 等。
 
 **不导出** `CanvasFactory`（渲染器内部结构）。自定义画布的两个公共入口：
 
 - 直接构造渲染器时传 `H5Canvas2DRendererOptions.createCanvas`；
-- 使用默认 H5 渲染器时传 `OFDOpenOptions.createCanvas`（v1.0-r7，见 §5.1）。
+- 使用默认 H5 渲染器或 `page.exportImage` 时传 `OFDOpenOptions.createCanvas`（v1.0-r7/r8，见 §5.1、§5.2）。
 
-### 5.1 `OFDOpenOptions.createCanvas`（v1.0-r7）
+### 5.1 `OFDOpenOptions.createCanvas`（v1.0-r7，r8 扩展）
 
 ```ts
 interface OFDOpenOptions {
-  /** 临时画布工厂；仅内部默认 H5 渲染器使用；单位像素。 */
+  /** 临时画布工厂；供默认 H5、嵌套矢量章与 exportImage 使用；单位像素。 */
   createCanvas?: (width: number, height: number) => Canvas2DLike;
 }
 ```
 
-- **向后兼容**：字段可选；未提供时 `OFDDocument.open` 仍创建 `new H5Canvas2DRenderer()`，H5CanvasFactory 继续按 `globalThis.document.createElement('canvas')` → `OffscreenCanvas` 兜底；行为与 r6 完全一致。
+- **向后兼容**：字段可选；未提供时 `OFDDocument.open` 仍创建 `new H5Canvas2DRenderer()`，H5CanvasFactory 继续按 `globalThis.document.createElement('canvas')` → `OffscreenCanvas` 兜底；页面 render 行为与 r6 一致。
 - **接线**：`OFDDocument.open` 未收到 `renderer` 时，把该函数作为 `H5Canvas2DRendererOptions.createCanvas` 传给内部 H5 渲染器；最终由 `H5CanvasFactory.create(width,height)` 使用，并统一写入像素宽高。`CanvasFactory` 仍不导出，宿主只接触 `Canvas2DLike`。
-- **优先级**：显式 `renderer` 优先；此时 `createCanvas` 不由 engine 使用，自定义渲染器自行管理临时画布。
+- **`exportImage` 复用（r8）**：`page.exportImage` 不经过 `Renderer`，而是直接用 `OFDOpenOptions.createCanvas` 创建整页离屏 canvas。显式 `renderer` 只接管 `page.render`；即使传了自定义 renderer，Node 宿主仍必须提供 `createCanvas`，否则导出走 document/OffscreenCanvas 兜底。
+- **优先级**：页面 render 以显式 `renderer` 为准；`exportImage` 始终以 `createCanvas` 为准，不读取 `H5Canvas2DRendererOptions.createCanvas`。
 - **矢量签章嵌套渲染**：t55 打开 `Seal.esl`/`SignedValue.dat` 内嵌 OFD 时，必须把同一 `createCanvas` 继续传给嵌套 `OFDDocument.open`；父/子文档共用宿主工厂，不另建 DOM/Node 工厂，也不把 Canvas 暴露给 engine 渲染层。
 - **缺省回退**：浏览器/Worker 未注入时仍走 document/OffscreenCanvas；两者都不可用时由 H5CanvasFactory 抛既有 `OFD_RENDERER_UNSUPPORTED`，不新增错误码。
+
+### 5.2 页面图片导出（v1.0-r8）
+
+```ts
+export type PageImageFormat = 'png' | 'jpeg' | 'webp';
+export type PageImageMime = 'image/png' | 'image/jpeg' | 'image/webp';
+
+export interface PageImageExportOptions {
+  dpi?: number;                 // 默认 96；非有限/<=0 回退 96
+  format?: PageImageFormat;     // 默认 png
+  quality?: number;             // jpeg/webp 0..1，默认 0.92；png 忽略
+  background?: string | null;   // 默认 #ffffff；png null 透明；jpeg/webp null 视为白
+  signal?: AbortSignal;
+}
+
+export interface PageImageResult {
+  data: Uint8Array;
+  mime: PageImageMime;
+  width: number;                // 设备像素
+  height: number;               // 设备像素
+  dpi: number;
+}
+
+export interface CanvasImageEncodeSource extends Canvas2DLike {
+  convertToBlob?(options?: { type?: string; quality?: number }): Promise<Blob>;
+  toBlob?(callback: (blob: Blob | null) => void, type?: string, quality?: number): void;
+}
+
+export type EncodeImage = (
+  canvas: CanvasImageEncodeSource,
+  format: PageImageFormat,
+  quality: number,
+) => Promise<Uint8Array>;
+
+// OFDOpenOptions
+encodeImage?: EncodeImage;      // 不传时浏览器默认 convertToBlob/toBlob；Node 宿主注入
+
+// OFDPage
+exportImage(options?: PageImageExportOptions): Promise<PageImageResult>;
+```
+
+- **整页**：使用 `page.getViewport({ dpi })` 的整个 viewport；`width = Math.ceil(viewport.width)`、`height = Math.ceil(viewport.height)`，输出完整页面内容，不含阅读器缩放/旋转/裁剪/UI。`width*height > limits.maxCanvasPixels` 时在创建画布前抛 `OFD_CANVAS_TOO_LARGE`。
+- **画布**：用 `OFDOpenOptions.createCanvas(width,height)` 创建独立离屏 canvas；创建后写入并校验尺寸，不足/不符抛 `OFD_CANVAS_SIZE_MISMATCH`。不经过 `Renderer`；显式 `renderer` 只影响 `page.render`。Node/小程序必须注入 `createCanvas`（或依赖 document/OffscreenCanvas 兜底）；未注入且无兜底时抛 `OFD_RENDERER_UNSUPPORTED`。
+- **背景**：默认 `#ffffff`；先在 identity 变换下填满背景，再调用 `page.render`（其 `M_page` 覆盖 CTM）。PNG 传 `background: null` 时先 `clearRect` 保证透明（复用画布也透明）；JPEG/WebP 不支持 alpha，`null` 按白底处理。非法 CSS 颜色按白底处理，不沿用旧 `fillStyle`。
+- **格式/质量**：`format` 默认 `png`；`quality` 仅 JPEG/WebP 使用，0..1，默认 `0.92`；PNG 忽略质量。MIME 固定映射为 `image/png`/`image/jpeg`/`image/webp`。`encodeImage` 的 `quality` 参数：PNG 传 1，JPEG/WebP 传规范化后的值。
+- **编码**：优先 `encodeImage(canvas,format,quality)`；未提供时浏览器默认优先 `canvas.convertToBlob({type,quality})`，否则 `canvas.toBlob(cb,type,quality)`；不使用 `toDataURL`。编码器返回必须是非空 `Uint8Array`。编码器缺失、格式不支持、抛错/空结果/类型错误统一抛 `OFD_RENDERER_UNSUPPORTED`，原始异常放 `cause`。engine 不新增编码运行时依赖。
+- **取消**：开始、render 前后、encode 前后检查 `signal`；中止抛 `OFD_ABORTED`，不返回部分结果。`encodeImage` 无 signal 参数，已开始的编码不可中断，但结束后仍以取消状态拒绝。
+- **close**：调用前文档已关闭抛 `OFD_CLOSED`；导出期间 close 与 render 竞争时按现有 close 语义以 `OFD_CLOSED` 拒绝，绝不返回编码结果。`close()` 可重复。
+- **错误**：`page.render` 的尺寸/像素/资源限制/取消错误原样传播；编码阶段不新增错误码，不裸抛第三方异常。结果 `data` 归调用方，engine 不缓存。
+- **导出面**：`PageImageExportOptions`、`PageImageResult`、`PageImageFormat`、`PageImageMime`、`CanvasImageEncodeSource`、`EncodeImage` 与 `OFDPage#exportImage` 属于 T15b 实现面；`src/index.ts` 由 T12/T15b 在不破坏既有导出的前提下追加。
 
 ## 6. 单元/分层签名索引
 
@@ -440,6 +492,7 @@ interface ResourceIndex {
 - `beginGroup/endGroup` 用离屏画布实现混合/裁切，结束再合成；
 - 图片通过 `createImage/ drawImage` 走 `ImageHandle`；
 - 不直接依赖 DOM；默认工厂用 `globalThis.document.createElement('canvas')`，Node 由 `createCanvas` 注入。
+- `page.exportImage` 的整页离屏 canvas 同样由文档级 `OFDOpenOptions.createCanvas` 提供，不经过 `Renderer`；编码由 `OFDOpenOptions.encodeImage` 或浏览器 `convertToBlob`/`toBlob` 完成。
 - `createImageData?(width,height)` / `putImageData?(data,dx,dy)` 是可选像素读写能力，供 Gouraud/LaGouraud 软件光栅化使用；缺失时 H5 渲染器降级为平均色并上报 `W_GOURAUD_APPROX`，最小 Canvas mock 不强制实现。
 - **画布状态唯一入口**：engine/绘制管线只能通过 `Renderer` 方法（`setTransform/transform/translate/multiplyAlpha/save/restore/clip/...`）改变画布状态，禁止直接操作 `canvasContext` 的 CTM、`globalAlpha`、`globalCompositeOperation` 或 clip。`H5Canvas2DRenderer` 自行维护 CTM/alpha/clip 栈，用于 group AABB 求交、底纹像素密度和 shading 设备空间光栅化；`beginPage` 后由 renderer 统一接管并重置状态，`endPage` 恢复。
 
@@ -479,11 +532,11 @@ interface ResourceIndex {
 | `OFD_ENCRYPTED` | 加密条目/文档 |
 | `OFD_XML_PARSE` | XML 解析失败 |
 | `OFD_PAGE_NOT_FOUND` | 页索引越界 |
-| `OFD_CANVAS_TOO_LARGE` | viewport 超过 `maxCanvasPixels` |
-| `OFD_CANVAS_SIZE_MISMATCH` | 传入 canvas 尺寸与 viewport 不一致 |
-| `OFD_RENDERER_UNSUPPORTED` | 渲染器缺少必需能力 |
-| `OFD_ABORTED` | 渲染/打开被取消 |
-| `OFD_CLOSED` | 文档已关闭后继续使用 |
+| `OFD_CANVAS_TOO_LARGE` | render/exportImage 的 viewport 超过 `maxCanvasPixels` |
+| `OFD_CANVAS_SIZE_MISMATCH` | 传入 canvas 尺寸与 viewport 不一致，或 exportImage 工厂返回尺寸不符 |
+| `OFD_RENDERER_UNSUPPORTED` | 渲染器/导出缺少必需能力；exportImage 无画布/编码器、格式不支持或编码失败 |
+| `OFD_ABORTED` | 渲染/打开/exportImage 被取消 |
+| `OFD_CLOSED` | 文档已关闭后继续 render/exportImage |
 | `OFD_LIMIT_EXCEEDED` | 资源限制超限 |
 | `OFD_FONT_PARSE` | 字体解析失败 |
 | `OFD_IMAGE_DECODE` | 图片解码失败 |
@@ -533,7 +586,8 @@ interface ResourceIndex {
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
-| v1.0-r7 | T14m | 新增可选 `OFDOpenOptions.createCanvas`（`Canvas2DLike`），仅用于 engine 内部默认 H5 渲染器；未注入保持 document/OffscreenCanvas 兜底；显式 `renderer` 优先。用于 t55 矢量签章嵌套 OFD 离屏渲染。 |
+| v1.0-r8 | T15a | 新增 `OFDPage.exportImage(options)` 与 `OFDOpenOptions.encodeImage(canvas,format,quality)`；整页 + dpi + 白底/PNG 透明；浏览器默认 convertToBlob/toBlob，Node 注入，不新增编码依赖；错误码复用 OFD_CANVAS_TOO_LARGE/OFD_CANVAS_SIZE_MISMATCH/OFD_RENDERER_UNSUPPORTED/OFD_ABORTED/OFD_CLOSED。 |
+| v1.0-r7 | T14m | 新增可选 `OFDOpenOptions.createCanvas`（`Canvas2DLike`），用于默认 H5 渲染器与矢量签章嵌套 OFD 离屏渲染；未注入保持 document/OffscreenCanvas 兜底。r8 起也供 `exportImage` 使用。 |
 | v1.0-r6 | T6c 复审 | 修正 §7.9 模板 `ZOrder` 口径：页面 `Template/@ZOrder` 优先，页面引用缺省 `Background`（标准/设计 10.4）；`Body` 仅显式使用 |
 | v1.0-r5 | T6b | 明确 displayList deferred 图像句柄/replay resolver 与嵌套 composite group 规则；不新增公共字段，group 不进入 DisplayList |
 | v1.0-r4 | T6b | 明确准备阶段运行时：`PreparePageLoader`（字体/图片/模板/注释）注入，`PreparedPageBundle` 携带 page/templates/fonts/images/blocks，`drawPage` 接收 bundle；`PreparedPage` 保持 model 形状，不用 WeakMap |

@@ -104,6 +104,70 @@ export interface PageRenderParameters {
   signal?: AbortSignal;
 }
 
+/** 页面图片导出格式。 */
+export type PageImageFormat = 'png' | 'jpeg' | 'webp';
+
+/** 页面图片导出结果的 MIME 类型。 */
+export type PageImageMime = 'image/png' | 'image/jpeg' | 'image/webp';
+
+/** 页面图片导出参数；整页导出，不包含阅读器缩放/旋转。 */
+export interface PageImageExportOptions {
+  /** 输出精度 DPI，默认 96；非有限或 <=0 时回退 96。 */
+  dpi?: number;
+  /** 输出格式，默认 `png`。 */
+  format?: PageImageFormat;
+  /** JPEG/WebP 质量，0..1，默认 0.92；PNG 忽略。 */
+  quality?: number;
+  /**
+   * 背景色 CSS 字符串，默认 `#ffffff`。
+   * PNG 可传 `null` 得到透明背景；JPEG/WebP 不支持透明，`null` 按白底处理。
+   */
+  background?: string | null;
+  /** 取消信号；中止后 promise 以 `OFD_ABORTED` 拒绝。 */
+  signal?: AbortSignal;
+}
+
+/** 页面图片导出结果。 */
+export interface PageImageResult {
+  /** 编码后的图片字节；归调用方所有。 */
+  data: Uint8Array;
+  /** 与所选 format 对应的 MIME 类型。 */
+  mime: PageImageMime;
+  /** 输出宽度，设备像素。 */
+  width: number;
+  /** 输出高度，设备像素。 */
+  height: number;
+  /** 实际使用的输出 DPI。 */
+  dpi: number;
+}
+
+/**
+ * 浏览器 Canvas 的可选编码能力。
+ *
+ * engine 默认编码器优先用 `convertToBlob`，其次 `toBlob`；Node/小程序宿主可
+ * 通过 `OFDOpenOptions.encodeImage` 注入自己的编码器。
+ */
+export interface CanvasImageEncodeSource extends Canvas2DLike {
+  /** 浏览器原生编码入口；返回 Blob。 */
+  convertToBlob?(options?: { type?: string; quality?: number }): Promise<Blob>;
+  /** 传统 Canvas 编码入口；回调参数为 null 表示编码失败。 */
+  toBlob?(callback: (blob: Blob | null) => void, type?: string, quality?: number): void;
+}
+
+/**
+ * 页面图片编码钩子。
+ *
+ * @param canvas 已绘制整页的 Canvas，设备像素。
+ * @param format 请求的编码格式。
+ * @param quality 0..1；PNG 固定 1，JPEG/WebP 缺省 0.92。
+ * @returns 编码后的图片字节；不得返回空数组。
+ */
+export type EncodeImage = (
+  canvas: CanvasImageEncodeSource,
+  format: PageImageFormat,
+  quality: number,
+) => Promise<Uint8Array>;
+
 /** 打开文档参数。 */
 export interface OFDOpenOptions {
   /** 文档字节来源。 */
@@ -127,7 +191,8 @@ export interface OFDOpenOptions {
   /** 图层顺序：默认 `type`（设计方案图 16），`document` 为严格 XML 顺序。 */
   layerOrder?: 'document' | 'type';
   /**
-   * 临时画布工厂；仅当未提供 `renderer` 时由 engine 内部 H5Canvas2DRenderer 使用。
+   * 临时画布工厂；供默认 H5 渲染器和 `page.exportImage` 使用。
+   * 页面 render 传了 `renderer` 时以 renderer 为准；exportImage 仍使用本工厂。
    * 未注入时保持 H5 默认的 document/OffscreenCanvas 兜底；Node/小程序宿主应注入。
    *
    * @param width 画布宽度，像素。
@@ -135,7 +200,12 @@ export interface OFDOpenOptions {
    * @returns 宿主画布。
    */
   createCanvas?: (width: number, height: number) => Canvas2DLike;
-  /** 渲染器扩展点；不传时由 engine 内部创建 H5Canvas2DRenderer。自定义 renderer 时本项优先，createCanvas 不参与。 */
+  /**
+   * 页面图片编码钩子，供 `OFDPage.exportImage` 使用。
+   * 不传时浏览器默认用 `canvas.convertToBlob`/`canvas.toBlob`；Node/小程序宿主应注入。
+   */
+  encodeImage?: EncodeImage;
+  /** 页面渲染器扩展点；不传时由 engine 内部创建 H5Canvas2DRenderer。自定义 renderer 只接管 render，exportImage 仍用 createCanvas。 */
   renderer?: Renderer;
 }
 
