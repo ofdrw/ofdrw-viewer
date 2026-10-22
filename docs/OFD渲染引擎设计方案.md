@@ -14,6 +14,7 @@
 > 0.5-r8 变更：新增 `OFDPage.exportImage` 与 `OFDOpenOptions.encodeImage` 页面图片导出契约（详见 15.1.1）；engine 不新增编码依赖。
 > 0.5-r9 变更（2026-10-22）：落地并文档化阅读器 UI API（P0/P1）：PageInfo/Outline/Bookmark/签章 XML 元数据/SignedValue/DocumentMetadata/prepare/TextContent；不解析 ASN.1/证书、不暴露 Seal.esl；P2 权限/附件/局部渲染/导出旋转延后。
 > 0.5-r10 变更（2026-10-22）：记录非标准兼容扩展 `Clips@TransFlag`（缺省 false=裁剪区不受外部对象 CTM 影响；true=受外部 CTM 影响、在对象 CTM 后应用），并明确其优先于 t48 图片 manual 逆 CTM 兼容路径；`CT_Clip` 标准 schema 无此属性，不作为标准能力。
+> 0.5-r10 P2 变更（2026-10-22）：权限只读声明不做 DRM、附件元信息/原始字节不解析内容、`exportImage.rotation` 仅导出方向；`page.renderRegion` 按用户决定不实现/不导出。
 > 0.4 变更：采用 Monorepo 子包 `ofdrw-viewer-engine`；`Renderer` 改为 `beginGroup/endGroup`，H5 的 `CanvasFactory`/scratch 完全内部化，公开 API 不再有 `RenderSurface`；`fallbackFonts` 更名为 `supplementaryFonts`；删除 engine 级独立块栅格缓存，改为复用 display list。
 
 1. **引擎做成一个独立、平台无关的 TypeScript 库**：以 Monorepo 子包 `ofdrw-viewer-engine` 交付；公开 API 按 pdf.js 形态收敛为 `open → getPage → page.getViewport/page.render（可选 page.exportImage） → close`；核心只定义 `ByteSource`、Canvas、图片解码器、字体来源等接口，`Renderer` 作为正式扩展点但默认实现由 engine 提供，**v1 不实现任何端适配器**。
@@ -116,7 +117,7 @@ M_page = S(dpi / 25.4) × T(-PhysicalBox.x, -PhysicalBox.y)
        = [s, 0, 0, s, -s·PhysicalBox.x, -s·PhysicalBox.y]    // s = dpi / 25.4
 ```
 
-其中 `dpi` 是输出精度，默认 96 DPI（1 mm = 96/25.4 px ≈ 3.7795 px）；`dpi=144/300` 即更高精度。**没有 scale、pixelRatio、rotation**——这些是阅读器控制参数，不属于 engine。
+其中 `dpi` 是输出精度，默认 96 DPI（1 mm = 96/25.4 px ≈ 3.7795 px）；`dpi=144/300` 即更高精度。`page.render` **没有 scale、pixelRatio、rotation**——这些是阅读器控制参数，不属于页面渲染；`exportImage` 的导出旋转是独立选项，见 15.1.1。
 
 `PhysicalBox` 的 `x/y` 按标准规范应为 0（表 7：物理盒左上角即页面空间原点）；保留平移项只为兼容少数把内容坐标写成绝对坐标的文件，非零时按“绝对坐标”解读并 warning（见 10.5）。
 
@@ -1411,7 +1412,7 @@ canvas.height = Math.ceil(viewport.height);
 const task = page.render({ canvasContext: canvas.getContext('2d')!, viewport });
 ```
 
-- `dpi=96` 是默认精度；`dpi=144/300` 用于更高精度输出。没有 `scale`/`rotation`/`pixelRatio`。
+- `dpi=96` 是默认精度；`dpi=144/300` 用于更高精度输出。`page.render` 没有 `scale`/`rotation`/`pixelRatio`；`exportImage` 可按 `rotation` 旋转最终图片。
 - 页面到 viewport 的变换固定为：
 
 ```
@@ -1423,7 +1424,7 @@ M_page = S(dpi / 25.4) × T(-PhysicalBox.x, -PhysicalBox.y)
 - `page.render` 校验 `canvasContext.canvas` 的 `width/height` 至少覆盖 `viewport.width/height`；不足时抛 `OFD_CANVAS_SIZE_MISMATCH`，不静默裁剪。
 - 按兼容口径（x/y 非零）时，内容已经由 `T(-x,-y)` 平移到 0 起，`viewport` 尺寸仍按宽高计算，不额外加上 `x/y`。
 - `maxCanvasPixels` 仍然生效：`viewport.width * viewport.height` 超限直接拒绝。
-- 不旋转页面；`rotation` 是阅读器视图控制，不是页面内容。
+- 不旋转页面内容；`page.render` 的 `rotation` 是阅读器视图控制，不是页面内容。`exportImage.rotation` 仅旋转导出图片。
 
 ### 10.7 原子性与取消
 
@@ -2407,6 +2408,7 @@ export interface PageImageExportOptions {
   dpi?: number;                       // 默认 96；非有限/<=0 回退 96
   format?: PageImageFormat;           // 默认 png
   quality?: number;                   // jpeg/webp 0..1，默认 0.92；png 忽略
+  rotation?: 0 | 90 | 180 | 270;      // 仅导出方向，默认 0；90/270 宽高互换
   background?: string | null;         // 默认 #ffffff；png 可 null 透明
   signal?: AbortSignal;
 }
@@ -2471,6 +2473,12 @@ export class OFDDocument {
   getSignatureEntries(options?: { signal?: AbortSignal }): Promise<readonly SignatureEntryInfo[]>;
   /** SignedValue.dat 原始字节；未声明/缺失返回 undefined（P0） */
   getSignedValue(signatureId: string, options?: { signal?: AbortSignal }): Promise<SignedValueFile | undefined>;
+  /** 权限声明；只读，不做 DRM 强制（P2） */
+  getPermissions(options?: { signal?: AbortSignal }): Promise<DocumentPermissions>;
+  /** 附件元信息；不读取/解析附件内容（P2） */
+  getAttachments(options?: { signal?: AbortSignal }): Promise<readonly AttachmentInfo[]>;
+  /** 附件原始字节；不解析内容（P2） */
+  getAttachmentData(attachmentId: string, options?: { signal?: AbortSignal }): Promise<Uint8Array | undefined>;
 
   /** 关闭并释放所有缓存；可重复调用 */
   close(): Promise<void>;
@@ -2487,11 +2495,12 @@ export class OFDDocument {
 
 `page.exportImage` 是 `page.render` 的整页离屏封装，不是第二条渲染路径：
 
-- **整页**：`viewport = page.getViewport({ dpi })`；输出 `width = Math.ceil(viewport.width)`、`height = Math.ceil(viewport.height)`，覆盖整页内容，不含阅读器缩放/旋转/裁剪/标注 UI。页面内容仍由 `page.render` 以 `M_page` 绘制。
+- **整页**：`viewport = page.getViewport({ dpi })`；输出 `width = Math.ceil(viewport.width)`、`height = Math.ceil(viewport.height)`，覆盖整页内容，不含阅读器缩放/裁剪/标注 UI。页面内容仍由 `page.render` 以 `M_page` 绘制；可选 `rotation` 只旋转最终导出图，不改变页面渲染。
 - **画布**：通过文档的 `createCanvas(width, height)` 创建独立离屏 canvas，不影响宿主主 canvas；Node/小程序未注入时沿用 H5 的 document/OffscreenCanvas 兜底。导出前写入/校验 canvas 宽高；不足时抛 `OFD_CANVAS_SIZE_MISMATCH`，不能静默裁剪。
-- **像素上限**：`width * height > limits.maxCanvasPixels` 时在创建画布前拒绝，抛 `OFD_CANVAS_TOO_LARGE`（沿用打开文档时的资源限制）。
+- **像素上限**：`outputWidth * outputHeight > limits.maxCanvasPixels` 时在创建画布前拒绝，抛 `OFD_CANVAS_TOO_LARGE`（沿用打开文档时的资源限制）；90/270 按宽高互换后的输出尺寸判断。
 - **背景**：`background` 为 CSS 颜色，默认 `#ffffff`；先用 identity 变换填满背景，再开始页面渲染。PNG 可传 `null` 得到透明背景（先 `clearRect`，保证复用画布也透明）；JPEG/WebP 不支持 alpha，`null` 按白底处理，不报错。非法 CSS 颜色按默认白底处理，不能复用上一个 `fillStyle`。
 - **格式与质量**：`format` 默认 `png`，可选 `jpeg`/`webp`，MIME 分别为 `image/png`/`image/jpeg`/`image/webp`；`quality` 仅对 JPEG/WebP 生效，0..1，默认 `0.92`；PNG 忽略质量。非法 `dpi`（非有限或 <=0）回退 96；非法 `quality` 回退默认值并夹取到 0..1。
+- **导出旋转**：`rotation` 默认 0，只接受 0/90/180/270（顺时针），90/270 输出 `width/height` 互换；先按原方向渲染，再旋转绘制到输出画布，透明背景仍透明。非法值 warning `W_BAD_NUMBER`（objectId=`exportImage.rotation`）后回退 0，不中断导出。
 - **编码**：优先调用 `OFDOpenOptions.encodeImage(canvas, format, quality)`，宿主可注入平台编码器（Node 的 `@napi-rs/canvas`/`node-canvas` 等）。未提供时，浏览器默认优先 `canvas.convertToBlob({ type, quality })`，其次 `canvas.toBlob(cb, type, quality)`；不使用 `toDataURL`。engine 不新增任何编码运行时依赖。
 - **编码结果**：`encodeImage` 必须返回非空 `Uint8Array`；编码器抛错、返回空/非 `Uint8Array`，或浏览器两个编码入口都不可用，均抛 `OFD_RENDERER_UNSUPPORTED`，原始异常放 `cause`。
 - **返回**：`{ data, mime, width, height, dpi }`；`width/height/dpi` 是实际输出值，`data` 归调用方所有，engine 不缓存。
@@ -2501,9 +2510,9 @@ export class OFDDocument {
 
 `exportImage` 复用同一套 `createCanvas` 与 `page.render`，因此 H5、Node 宿主和矢量签章嵌套 OFD 共用相同的画布/像素限制语义。
 
-### 15.1.2 阅读器 UI API（r9）
+### 15.1.2 阅读器 UI API（r9/r10）
 
-面向 `ofdrw-viewer-ui` 的 P0/P1 数据读取接口；完整字段/单位/错误见 `docs/公开API.md` §3/§4 与 `docs/ofdrw-viewer-ui-engine-api.md`。
+面向 `ofdrw-viewer-ui` 的 P0/P1/P2 数据读取接口；完整字段/单位/错误见 `docs/公开API.md` §3/§4 与 `docs/ofdrw-viewer-ui-engine-api.md`。
 
 | 优先级 | API | 说明 |
 | --- | --- | --- |
@@ -2514,7 +2523,10 @@ export class OFDDocument {
 | P0 | `page.getTextContent(options?)` | 文本层，px；复用 layoutText，不调用 Canvas 文字 API |
 | P1 | `document.getMetadata(options?)` | DocInfo/版本/页数，日期保留原文 |
 | P1 | `page.prepare(options?)` | 预取页面资源，不创建 canvas、不绘制 |
-| P2 | `getPermissions`/`getAttachments`/`renderRegion`/`exportImage.rotation` | v1 不实现，延后到后续版本 |
+| P2 | `document.getPermissions(options?)` | 权限声明；只读、不执行 DRM 强制；缺省全部允许（已实现） |
+| P2 | `document.getAttachments`/`getAttachmentData` | 附件元信息/原始字节；不解析附件内容（已实现） |
+| P2 | `exportImage.rotation` | 仅导出方向；0/90/180/270，90/270 宽高互换（已实现） |
+| P2 | `page.renderRegion` | 局部/瓦片渲染；**暂不实现/无排期、不导出** |
 
 边界：
 
@@ -2523,7 +2535,14 @@ export class OFDDocument {
 - `getSignatureEntries` 只返回 `Signature.xml` 元数据；`getSignedValue` 只返回原始字节；未声明/文件缺失返回 `undefined`，不抛 `OFD_ENTRY_NOT_FOUND`。
 - 文本层几何 px，内部 mm 缓存；`CacheOptions.textPages` 默认 4，缓存键不含 dpi；超限截断 + `W_TEXT_ITEM_LIMIT`/`W_TEXT_CHAR_LIMIT`。
 - 取消统一 `OFD_ABORTED`、关闭 `OFD_CLOSED`；可选数据缺失返回空数组/`undefined`，不是错误。
-- P2 的权限/附件/局部渲染/导出旋转不进入 r9 调用面；不得据此声称已实现。
+- P2 权限/附件/导出旋转已实现；权限只读声明不做 DRM、附件不解析内容、rotation 仅导出方向。`page.renderRegion` 不实现、不导出、无排期，UI 不得依赖。
+
+### 15.1.3 P2 实现与边界（r10）
+
+- **权限**：`getPermissions` 读取 `Document.xml/Permissions`，六项布尔缺省 true，`print.printable` 缺省 true、`copies` 省略=不限、0=不允许打印；`validPeriod` 日期保留原文。非法字段 warning `W_PERMISSION_FIELD` 后回退默认。引擎不因权限声明拒绝 `exportImage`/打印，不做 DRM。
+- **附件**：`getAttachments` 按需解析 `Attachments.xml` 并缓存元信息；`Size` 按 GB/T 33190 的 KB ×1024 换算为 byte；`Visible` 缺省 true、`Usage` 缺省 `none`；不暴露 `FileLoc`。`getAttachmentData` 返回原始 `Uint8Array`，不解析附件内容；不存在/文件缺失 warning `W_ATTACHMENT_RESOURCE` 后返回 `undefined`，包级错误原样抛出。字段/路径非法 warning `W_ATTACHMENT_FIELD`。
+- **导出旋转**：`exportImage({ rotation })` 只改变最终图片方向，不改变 `page.render`/页面模型；90/270 宽高互换；非法值 warning `W_BAD_NUMBER` 后回退 0。
+- **局部渲染**：用户决定不实现 `page.renderRegion`，不进入 `src/index.ts` 与 `OFDPage`；未来若排期需重新评审，保持整页图层/对象顺序，仅改变 CTM/clip。
 
 ### 15.2 为什么用 `page.getViewport`
 

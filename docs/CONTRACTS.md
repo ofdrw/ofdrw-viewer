@@ -3,7 +3,7 @@
 > 适用范围：`ofdrw-viewer-engine` v1（Web 优先）。
 > 依据：`docs/OFD渲染引擎设计方案.md` v0.4 第 6/8/10/14/15/19 节。
 > 冻结时间：T1 完成时。冻结后本文件与下列公共契约文件只读；变更必须先由架构负责人（architect）评估并同步 captain。
-> 最近修订：v1.0-r10（2026-10-22，T18e）。
+> 最近修订：v1.0-r10（2026-10-22，T18e/P2）。
 
 ## 1. 冻结范围与变更规则
 
@@ -226,14 +226,14 @@ exportImage(options?: PageImageExportOptions): Promise<PageImageResult>;
 - **错误**：`page.render` 的尺寸/像素/资源限制/取消错误原样传播；编码阶段不新增错误码，不裸抛第三方异常。结果 `data` 归调用方，engine 不缓存。
 - **导出面**：`PageImageExportOptions`、`PageImageResult`、`PageImageFormat`、`PageImageMime`、`CanvasImageEncodeSource`、`EncodeImage` 与 `OFDPage#exportImage` 属于 T15b 实现面；`src/index.ts` 由 T12/T15b 在不破坏既有导出的前提下追加。
 
-### 5.3 UI API 类型与签名（v1.0-r9）
+### 5.3 UI API 类型与签名（v1.0-r9/r10）
 
-本组类型依据 `docs/ofdrw-viewer-ui-engine-api.md` 与 `docs/text-content-api.md`，由 `src/api/ui-types.ts` 定义并从 `src/index.ts` 导出；t67/t68/t70/t71 已实现，t72 接线文本层，t73 同步公开 API 文档。
+本组类型依据 `docs/ofdrw-viewer-ui-engine-api.md` 与 `docs/text-content-api.md`，由 `src/api/ui-types.ts` 定义并从 `src/index.ts` 导出；t67/t68/t70/t71 已实现，t72 接线文本层，t73 同步 P0/P1 文档；t86/t87/t89 实现 P2 权限/附件/导出旋转，t90 同步 P2 文档。
 
 **边界**：引擎只读取 OFD XML 与 `SignedValue.dat` 原始字节；不解析 ASN.1/DER/X.509/CMS、不验签、不判断签章有效性；`Seal.esl` 不进入公开 API。`getSignatureEntries` 只返回 `Signature.xml` 元数据；`getSignedValue` 只返回 `SignedValue.dat` 字节。
 
 ```ts
-// P0/P1 文档与页面
+// P0/P1/P2 文档与页面
 interface PageInfoOptions { start?: number; count?: number; signal?: AbortSignal }
 interface PageInfo { index; widthMm; heightMm; xMm?; yMm?; source?: 'page'|'template'|'default' }
 type DestinationType = 'XYZ' | 'Fit' | 'FitH' | 'FitV' | 'FitR';
@@ -246,6 +246,8 @@ interface SignatureStampInfo { id?; pageId; pageIndex?; boundary: Box; clip?: Bo
 interface SignatureEntryInfo { id; type; baseLoc; provider?; signatureDateTime?; references; stamps; signedValuePath?; hasSignedValue }
 interface SignedValueFile { signatureId; path; data: Uint8Array; byteLength }
 interface DocumentMetadata { version; pageCount; packageSize?; title?; author?; subject?; abstract?; creationDate?; modDate?; creator?; creatorVersion?; keywords?; docId?; customData? }
+interface DocumentPermissions { edit; annot; export; signature; watermark; printScreen; print?: { printable; copies? }; validPeriod?: { start?; end? } }
+interface AttachmentInfo { id; name; format?; size?: number /* byte */; creationDate?; modDate?; visible?; usage? }
 interface PagePrepareOptions { signal?: AbortSignal }
 
 // P0 文本层：全部几何单位 px，原点 PhysicalBox 左上角，y 向下
@@ -263,12 +265,14 @@ interface TextContentOptions { dpi?; includeChars?; includeAnnotations?; include
 
 文本公开类型统一在 `src/api/ui-types.ts`；`src/render/text-content.ts` 只定义内部 mm 结构并提供 `collectTextPageMm`/`toTextPagePx`，不得反向 import `api/**`。
 
-`OFDDocumentApi`/`OFDPageApi` 通过 class/interface 声明合并挂到 `OFDDocument`/`OFDPage`，P0/P1 方法已实现：
+`OFDDocumentApi`/`OFDPageApi` 通过 class/interface 声明合并挂到 `OFDDocument`/`OFDPage`，P0/P1/P2 方法已实现：
 
 - `OFDDocument#getPageInfos(options?)`：页尺寸/页区域，mm；不加载页面内容。
 - `OFDDocument#getOutline(options?)` / `getBookmarks(options?)`：保持 XML 顺序；无结果返回空数组。
 - `OFDDocument#getSignatureEntries(options?)` / `getSignedValue(id, options?)`：只读签章 XML/原始字节。
 - `OFDDocument#getMetadata(options?)`：文档属性，日期保留原文。
+- `OFDDocument#getPermissions(options?)`：只读权限声明，不做 DRM 强制；缺省全部允许。
+- `OFDDocument#getAttachments(options?)` / `getAttachmentData(id, options?)`：附件元信息/原始字节；不解析内容，不暴露 FileLoc。
 - `OFDPage#getTextContent(options?)`：px 文本层，复用 `layoutText`；不调用 Canvas 文字 API。
 - `OFDPage#prepare(options?)`：预取页面资源，不创建 canvas、不绘制。
 
@@ -277,7 +281,7 @@ interface TextContentOptions { dpi?; includeChars?; includeAnnotations?; include
 - `CacheOptions.textPages?: number`：文本层 mm 数据缓存页数，默认 4；t71/t72 已实现按页 LRU，缓存键不含 `dpi`。现有缓存字段/行为不变。
 - 取消统一 `OFD_ABORTED`，关闭后统一 `OFD_CLOSED`；可选结果缺失（无大纲/书签/签章/附件）返回空数组/`undefined`，不是错误。
 - 文本超限按页截断并走 `W_TEXT_ITEM_LIMIT`/`W_TEXT_CHAR_LIMIT`，不抛错；`W_LAYER_ORDER` 沿用绘制口径。
-- P0/P1 已实现：`getPageInfos`/`prepare`（t67）、`getOutline`/`getBookmarks`/`getMetadata`（t68）、签章条目/SignedValue（t71）、`getTextContent`（t70/t72）。P2 的权限/附件/局部渲染/导出旋转仍未实现，不在 r9 调用面内。
+- P0/P1 已实现：`getPageInfos`/`prepare`（t67）、`getOutline`/`getBookmarks`/`getMetadata`（t68）、签章条目/SignedValue（t71）、`getTextContent`（t70/t72）。P2 已实现权限/附件/`exportImage.rotation`（t86/t87/t89）；`page.renderRegion` 按用户决定不实现、不导出、无排期。
 
 ## 6. 单元/分层签名索引
 
@@ -638,7 +642,7 @@ interface Clip {
 
 ### 8.2 warning 码（`WarningCode`）
 
-`W_FONT_MISSING`、`W_GLYPH_MISSING`、`W_IMAGE_DECODE`、`W_UNSUPPORTED_PAINT`、`W_UNSUPPORTED_CLIP`、`W_BAD_NUMBER`、`W_BAD_PATH`、`W_DUPLICATE_RESOURCE`、`W_COMPOSITE_DEPTH`、`W_PATTERN_LIMIT`、`W_ZERO_BOUNDARY`、`W_PHYSICALBOX_ORIGIN`、`W_IMAGE_NO_CTM`、`W_NEGATIVE_BOUNDARY`、`W_LAYER_ORDER`、`W_BLEND_MODE`、`W_RADIAL_UNSUPPORTED`、`W_GOURAUD_APPROX`、`W_ANNOT_EMPTY`、`W_JBIG2_DECODE`。
+`W_FONT_MISSING`、`W_GLYPH_MISSING`、`W_IMAGE_DECODE`、`W_UNSUPPORTED_PAINT`、`W_UNSUPPORTED_CLIP`、`W_BAD_NUMBER`、`W_BAD_PATH`、`W_DUPLICATE_RESOURCE`、`W_COMPOSITE_DEPTH`、`W_PATTERN_LIMIT`、`W_ZERO_BOUNDARY`、`W_PHYSICALBOX_ORIGIN`、`W_IMAGE_NO_CTM`、`W_NEGATIVE_BOUNDARY`、`W_LAYER_ORDER`、`W_BLEND_MODE`、`W_RADIAL_UNSUPPORTED`、`W_GOURAUD_APPROX`、`W_ANNOT_EMPTY`、`W_JBIG2_DECODE`、`W_PERMISSION_FIELD`、`W_ATTACHMENT_FIELD`、`W_ATTACHMENT_RESOURCE`。
 
 约定：warning 不中断渲染；同一 `(code,pageIndex,objectId)` 由 `WarningCollector` 去重；未安装 handler 时静默。
 
@@ -679,7 +683,7 @@ interface Clip {
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
-| v1.0-r10 | 2026-10-22（T18e） | 记录 `Clips@TransFlag` 非标准兼容扩展：标准 `CT_Clip` 无此属性；缺省/false 按对象空间在对象 CTM 前裁剪，true 在对象 CTM 后裁剪；true 优先于 t48 图片 manual 逆 CTM 兼容；模型 `Clip.transFlag?` 容器级复制、非法值 `W_BAD_NUMBER` 后 false。不涉及公开 API。 |
+| v1.0-r10 | 2026-10-22（T18e/P2） | 记录 `Clips@TransFlag` 非标准兼容扩展：标准 `CT_Clip` 无此属性；缺省/false 按对象空间在对象 CTM 前裁剪，true 在对象 CTM 后裁剪；true 优先于 t48 图片 manual 逆 CTM 兼容；模型 `Clip.transFlag?` 容器级复制、非法值 `W_BAD_NUMBER` 后 false。不涉及公开 API。同时登记 P2 公开 API：权限只读声明不做 DRM、附件元信息/原始字节不解析内容、`exportImage.rotation` 仅导出方向；`renderRegion` 不实现/不导出；新增 `W_PERMISSION_FIELD`/`W_ATTACHMENT_FIELD`/`W_ATTACHMENT_RESOURCE`。 |
 | v1.0-r9 | T17a/T17h | 冻结并落地 ofdrw-viewer-ui 引擎 P0/P1 API：PageInfo/Outline/Bookmark/签章 XML 元数据/SignedValueFile/DocumentMetadata/PagePrepareOptions/TextContent 全家族；`CacheOptions.textPages?` 默认 4（按页 LRU，键不含 dpi）；ASN.1/Seal.esl 不进入公共 API，P2 权限/附件/局部渲染/导出旋转延后。t67/t68/t70/t71 实现，t72 接线文本，t73 同步文档。 |
 | v1.0-r8 | T15a | 新增 `OFDPage.exportImage(options)` 与 `OFDOpenOptions.encodeImage(canvas,format,quality)`；整页 + dpi + 白底/PNG 透明；浏览器默认 convertToBlob/toBlob，Node 注入，不新增编码依赖；错误码复用 OFD_CANVAS_TOO_LARGE/OFD_CANVAS_SIZE_MISMATCH/OFD_RENDERER_UNSUPPORTED/OFD_ABORTED/OFD_CLOSED。 |
 | v1.0-r7 | T14m | 新增可选 `OFDOpenOptions.createCanvas`（`Canvas2DLike`），用于默认 H5 渲染器与矢量签章嵌套 OFD 离屏渲染；未注入保持 document/OffscreenCanvas 兜底。r8 起也供 `exportImage` 使用。 |

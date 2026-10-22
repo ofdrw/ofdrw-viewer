@@ -26,7 +26,7 @@
 
 同步检查：`test/smoke/public-api-doc.test.ts` 会读取 `src/index.ts` 的全部导出名，并断言每个名字都出现在本文档附录中；新增导出未补文档时 smoke 失败。
 
-**不在本文档范围**：阅读器 UI 布局/交互、缩放/旋转/打印筛选、签章密码学验证（ASN.1/证书/验签）、Node/微信宿主适配器、P2 的权限/附件/局部渲染/导出旋转。
+**不在本文档范围**：阅读器 UI 布局/交互、缩放/旋转/打印筛选、签章密码学验证（ASN.1/证书/验签）、Node/微信宿主适配器；`page.renderRegion` 按用户决定暂不实现/无排期。
 
 ---
 
@@ -102,13 +102,17 @@ Node/小程序没有浏览器 `document`/`OffscreenCanvas` 时必须注入 `crea
 | `document.getMetadata(options?)` | `Promise<DocumentMetadata>` | 文档属性（P1） |
 | `document.getSignatureEntries(options?)` | `Promise<readonly SignatureEntryInfo[]>` | 签章 XML 元数据（P0） |
 | `document.getSignedValue(id, options?)` | `Promise<SignedValueFile \| undefined>` | SignedValue.dat 原始字节（P0） |
+| `document.getPermissions(options?)` | `Promise<DocumentPermissions>` | 权限声明，只读不强制（P2） |
+| `document.getAttachments(options?)` | `Promise<readonly AttachmentInfo[]>` | 附件元信息（P2） |
+| `document.getAttachmentData(id, options?)` | `Promise<Uint8Array \| undefined>` | 附件原始字节（P2） |
 | `document.close()` | `Promise<void>` | 关闭并释放缓存/句柄，幂等 |
 | `page.getSize()` | `PageSize` | 页尺寸，单位 mm |
 | `page.getViewport(options?)` | `Viewport` | 指定 DPI 的设备像素尺寸 |
 | `page.prepare(options?)` | `Promise<void>` | 预取页面资源，不绘制（P1） |
 | `page.getTextContent(options?)` | `Promise<TextContent>` | 阅读器文本层，px（P0） |
 | `page.render(params)` | `RenderTask` | 绘制到宿主 canvas context |
-| `page.exportImage(options?)` | `Promise<PageImageResult>` | 整页离屏编码导出 |
+| `page.exportImage(options?)` | `Promise<PageImageResult>` | 整页离屏编码导出，可旋转 |
+| `page.renderRegion(...)` | — | **暂不实现/无排期，未导出** |
 | `RenderTask.promise` | `Promise<void>` | 渲染完成/失败/取消 |
 | `RenderTask.cancel()` | `void` | 请求取消，可重复调用 |
 | `H5Canvas2DRenderer` | class | 默认 Canvas 2D 渲染器，可显式构造 |
@@ -339,7 +343,69 @@ interface SignedValueFile {
 - `OFD_LIMIT_EXCEEDED`/`OFD_INVALID_PACKAGE` 原样抛出；取消 `OFD_ABORTED`、关闭 `OFD_CLOSED`。
 - 每次调用重新读取，不做长期缓存；UI 解析后自行缓存结构化详情。
 
-### 3.11 `document.close(): Promise<void>`
+### 3.11 `document.getPermissions(options?: { signal?: AbortSignal }): Promise<DocumentPermissions>`
+
+读取 `Document.xml/Permissions` 的权限声明。**只读声明，不做 DRM/权限强制**：引擎不会因 `export:false` 拒绝 `exportImage`，也不会因 `print:false` 阻止宿主打印；是否禁用由 UI 自行决定。
+
+```ts
+interface DocumentPermissions {
+  edit: boolean;                 // 是否允许编辑，默认 true
+  annot: boolean;                // 是否允许添加/修改标注，默认 true
+  export: boolean;               // 是否允许导出，默认 true
+  signature: boolean;            // 是否允许数字签名，默认 true
+  watermark: boolean;            // 是否允许添加水印，默认 true
+  printScreen: boolean;          // 是否允许截屏，默认 true
+  print?: {
+    printable: boolean;          // 是否允许打印；未声明 Print 时默认 true
+    copies?: number;             // 允许份数；省略=不限；0=不允许打印
+  };
+  validPeriod?: {
+    start?: string;              // 开始日期原文，不转换时区
+    end?: string;                // 结束日期原文
+  };
+}
+```
+
+- 无 `Permissions` 节点：六项布尔均为 `true`，`print`/`validPeriod` 省略（表示可打印且不限、无有效期限制）。
+- 缺失字段按默认允许；非法布尔/份数 warning `W_PERMISSION_FIELD` 后回退默认（份数不限）。
+- `print.copies` 为 0 表示不允许打印；正整数为份数；负值/非法值按不限处理。
+- 日期保留 XML 原文；不判断当前时间是否在有效期内。
+- 错误：取消 `OFD_ABORTED`、关闭 `OFD_CLOSED`。
+
+### 3.12 `document.getAttachments(options?: { signal?: AbortSignal }): Promise<readonly AttachmentInfo[]>`
+
+读取 `Attachments.xml` 的附件元信息；首次调用按需解析并缓存到 `close()`。**不读取附件内容、不解析附件格式**。无 `Attachments.xml` 返回空数组。
+
+```ts
+interface AttachmentInfo {
+  id: string;                    // Attachment@ID，已规范化
+  name: string;                  // Attachment@Name
+  format?: string;               // Attachment@Format；未声明时省略
+  size?: number;                 // 附件大小，byte；XML 的 Size 以 KB 声明，引擎换算后给出
+  creationDate?: string;         // 原文，不转换时区
+  modDate?: string;              // 原文
+  visible?: boolean;             // Attachment@Visible；缺省 true
+  usage?: string;                // Attachment@Usage；缺省 'none'
+}
+```
+
+- 保持 XML 顺序；重复 ID 保留先出现者并 warning `W_DUPLICATE_RESOURCE`。
+- 缺 `ID`/`Name` 的条目跳过并 warning `W_ATTACHMENT_FIELD`；`FileLoc` 路径非法时 warning 后该附件仍可列出，但取数据会失败。
+- `Size` 为 XML 的 KB 值 × 1024 后四舍五入为 byte；非法/负数/超范围 warning `W_ATTACHMENT_FIELD` 并省略。
+- 不暴露 `FileLoc`（包内路径属于实现细节）。
+- 错误：取消 `OFD_ABORTED`、关闭 `OFD_CLOSED`；索引读取/解析失败 warning `W_ATTACHMENT_RESOURCE` 后返回空数组。
+
+### 3.13 `document.getAttachmentData(attachmentId: string, options?: { signal?: AbortSignal }): Promise<Uint8Array | undefined>`
+
+按附件 ID 返回附件条目**原始字节**；不解析内容、不校验格式/签名。ID 按资源 ID 规则匹配。
+
+- 未声明 `Attachments.xml`、附件 ID 不存在或未声明可用 `FileLoc`：返回 `undefined`。
+- 声明但文件缺失/读取失败：warning `W_ATTACHMENT_RESOURCE`，返回 `undefined`；不抛 `OFD_ENTRY_NOT_FOUND`。
+- `OFD_LIMIT_EXCEEDED`/`OFD_INVALID_PACKAGE` 等包级错误原样抛出；取消 `OFD_ABORTED`、关闭 `OFD_CLOSED`。
+- 返回的 `Uint8Array` 归调用方；每次调用重新读取，不做长期字节缓存。
+- 附件内容可能是任意格式（PDF/图片/压缩包等），引擎不解析、不执行、不验证。
+
+### 3.14 `document.close(): Promise<void>`
 
 关闭文档，释放 ZIP/XML/字体/图片缓存与图像句柄；可重复调用。进行中的渲染/导出会先被中止，并等待其结束；`close()` 不向调用方抛错。
 
@@ -397,6 +463,7 @@ interface SignedValueFile {
 | `dpi` | `number` | `96` | 有限且 >0；非法回退 96 |
 | `format` | `'png'\|'jpeg'\|'webp'` | `'png'` | 输出格式 |
 | `quality` | `number` | `0.92` | JPEG/WebP 质量，裁剪到 0..1；PNG 忽略（按 1） |
+| `rotation` | `0 \| 90 \| 180 \| 270` | `0` | 仅导出方向，顺时针；90/270 输出宽高互换；非法值 warning `W_BAD_NUMBER` 后回退 0 |
 | `background` | `string \| null` | `'#ffffff'` | CSS 颜色；PNG 传 `null` 得透明；JPEG/WebP 的 `null` 按白底 |
 | `signal` | `AbortSignal` | 无 | 中止后 `OFD_ABORTED`；不返回部分结果 |
 
@@ -406,8 +473,8 @@ interface SignedValueFile {
 interface PageImageResult {
   data: Uint8Array;      // 编码后的图片字节，归调用方所有
   mime: 'image/png' | 'image/jpeg' | 'image/webp';
-  width: number;         // 设备像素
-  height: number;        // 设备像素
+  width: number;         // 设备像素；rotation=90/270 时为旋转后宽
+  height: number;        // 设备像素；rotation=90/270 时为旋转后高
   dpi: number;           // 实际输出 DPI
 }
 ```
@@ -415,8 +482,10 @@ interface PageImageResult {
 约束：
 
 - 需要文档级 `createCanvas`；Node/自定义 Canvas 还需要 `encodeImage`。
-- 像素超限 `OFD_CANVAS_TOO_LARGE`；画布尺寸不符 `OFD_CANVAS_SIZE_MISMATCH`；缺画布/编码器/格式不支持/编码失败 `OFD_RENDERER_UNSUPPORTED`；取消 `OFD_ABORTED`；关闭 `OFD_CLOSED`。
-- 不包含阅读器缩放/旋转/裁剪/多页拼接；区域导出、多页导出不在 v1。
+- 像素超限 `OFD_CANVAS_TOO_LARGE`（按旋转后输出尺寸判断）；画布尺寸不符 `OFD_CANVAS_SIZE_MISMATCH`；缺画布/编码器/格式不支持/编码失败 `OFD_RENDERER_UNSUPPORTED`；取消 `OFD_ABORTED`；关闭 `OFD_CLOSED`。
+- `rotation` 只影响导出图片方向，不改变页面模型、`page.render` 或其他页面状态；90/270 时 `width/height` 与默认方向互换，内容按顺时针旋转。
+- 非法 `rotation`（非 0/90/180/270）只 warning `W_BAD_NUMBER` 并回退 0，不中断导出；`W_BAD_NUMBER.objectId = 'exportImage.rotation'`。
+- 不包含阅读器缩放/裁剪/多页拼接；区域导出、多页导出不在 v1。
 - 导出结果不自动释放；`data` 归调用方，编码中间 canvas 由 engine 释放。
 
 ### 4.6 `page.prepare(options?: PagePrepareOptions): Promise<void>`
@@ -531,6 +600,30 @@ interface TextChar {
 | `cancel()` | `void` | 请求取消；可重复调用；不抛错 |
 
 `cancel()` 后 `promise` 以 `OFD_ABORTED` 拒绝；取消是协作式的，已进入的同步绘制会在下一个对象/边界退出。
+
+### 4.9 `page.renderRegion`（暂不实现/无排期）
+
+按用户决定，v1 **不实现**局部/瓦片渲染 API；`OFDPage` 上没有 `renderRegion` 方法，`src/index.ts` 也不导出 `PageRenderRegionParameters` 或相关类型。当前调用属于宿主类型错误/运行时错误，engine 不提供兼容桩。
+
+以下仅为未来设计草案（**非公开契约、不导出、不可调用**），不是 v1 签名：
+
+```ts
+// 规划草案：v1 不导出，以下类型/方法均不存在于 src/index.ts / OFDPage
+interface PageRenderRegionParameters {
+  xMm: number;                   // 区域左上角 x，mm
+  yMm: number;                   // 区域左上角 y，mm
+  widthMm: number;               // 区域宽，mm
+  heightMm: number;              // 区域高，mm
+  dpi: number;                   // 输出 DPI
+  canvasContext: CanvasRenderingContext2DLike; // 尺寸由宿主设置，单位 px
+  signal?: AbortSignal;
+}
+
+renderRegion(params: PageRenderRegionParameters): RenderTask;
+```
+
+- 原因：1000 页 A4 @4x 约 14.3MP，低于默认 32MP 画布上限；先降 DPI + CSS 放大可满足当前阅读器。
+- 未来若排期，必须保持与整页渲染相同的图层/对象顺序，仅改变 CTM 与 clip，并重新走契约评审。
 
 ---
 
@@ -754,7 +847,7 @@ interface OFDWarning {
 | `W_ANNOT_EMPTY` | 注释外观为空/索引缺失 |
 | `W_JBIG2_DECODE` | JBIG2 解码失败/超限，跳过 |
 
-P0/P1 UI API 还会产生以下扩展码（`OFDWarning.code` 类型允许 `string`；宿主按字符串处理，`WARNING_CODES` 冻结表暂未列入这些新增码）：
+P0/P1/P2 UI API 还会产生以下扩展码（`OFDWarning.code` 类型允许 `string`；宿主按字符串处理，`WARNING_CODES` 冻结表暂未列入这些新增码）：
 
 | `code` | 含义 |
 | --- | --- |
@@ -764,6 +857,9 @@ P0/P1 UI API 还会产生以下扩展码（`OFDWarning.code` 类型允许 `strin
 | `W_SIGNATURE_RESOURCE` | 声明了 SignedValue.dat 但读取失败，`getSignedValue` 返回 `undefined` |
 | `W_TEXT_ITEM_LIMIT` | 文本项达到 `maxTextItems`，停止加入后续项 |
 | `W_TEXT_CHAR_LIMIT` | 下一个文本项会超过 `maxTextChars`，整项不加入 |
+| `W_PERMISSION_FIELD` | Permissions 布尔/份数字段非法，按默认允许回退 |
+| `W_ATTACHMENT_FIELD` | 附件 ID/Name/Visible/Size/FileLoc 等字段非法；按规则跳过或回退 |
+| `W_ATTACHMENT_RESOURCE` | 附件索引加载失败、附件不存在、FileLoc 缺失或附件文件读取失败 |
 
 ---
 
@@ -804,12 +900,13 @@ P0/P1 UI API 还会产生以下扩展码（`OFDWarning.code` 类型允许 `strin
 - 页面/对象空间：**mm**；页面原点由 `PhysicalBox` 归一化。PageInfo、大纲/书签目标、签章戳记边界均为 **mm**。
 - Viewport/画布/图片：**设备像素**；颜色 RGBA 0..255。
 - 文本层：**px**，由 mm 布局按 `dpi/25.4` 换算；`TextContent.unit` 固定 `'px'`。
+- 附件：`AttachmentInfo.size` 为 **byte**；XML 的 `Size` 以 KB 声明，引擎按 ×1024 换算。
 - 日期/签章时间：保留 OFD 原文，不做时区推断。
 - 矩阵：2×3 列主序 `[a,b,c,d,e,f]`，`x' = a·x + c·y + e`，`y' = b·x + d·y + f`。
-- 生命周期：`open → getPage/getPageInfos → getViewport/prepare/render/exportImage/getTextContent → close`；`close` 后不可复用。
+- 生命周期：`open → getPage/getPageInfos/getPermissions/getAttachments → getViewport/prepare/render/exportImage/getTextContent → close`；`close` 后不可复用。
 - 并发：同一 canvas 渲染串行；不同 canvas 可并行；同一页的 prepare/文本构建并发去重；`close` 中止进行中的渲染/导出/准备/文本任务。
 - 背景/清屏/画布尺寸由宿主负责；`page.render` 不填白底。
-- v1 不含：径向渐变（warning 降级）、ICC/BlendMode 完整支持、加密文档、签名密码学验证、Node/微信宿主适配器、P2 的权限/附件/局部渲染/导出旋转。
+- v1 不含：径向渐变（warning 降级）、ICC/BlendMode 完整支持、加密文档、签名密码学验证、Node/微信宿主适配器；`page.renderRegion` 暂不实现/无排期。权限/附件/`exportImage.rotation` 已实现（r10）。
 
 ---
 
@@ -821,7 +918,7 @@ P0/P1 UI API 还会产生以下扩展码（`OFDWarning.code` 类型允许 `strin
 
 | 名称 | 说明 |
 | --- | --- |
-| `OFDDocument` | 文档入口；`open/getPage/getPageInfos/getOutline/getBookmarks/getMetadata/getSignatureEntries/getSignedValue/close` |
+| `OFDDocument` | 文档入口；`open/getPage/getPageInfos/getOutline/getBookmarks/getMetadata/getSignatureEntries/getSignedValue/getPermissions/getAttachments/getAttachmentData/close` |
 | `OFDPage` | 页面入口；`getSize/getViewport/prepare/getTextContent/render/exportImage` |
 | `RenderTask` | 渲染句柄；`promise/cancel` |
 | `H5Canvas2DRenderer` | 默认 Canvas 2D 渲染器 |
@@ -936,6 +1033,8 @@ P0/P1 UI API 还会产生以下扩展码（`OFDWarning.code` 类型允许 `strin
 | `OFDPageApi` | 页面 UI API 形状（与 `OFDPage` 声明合并） |
 | `PageInfoOptions` | `getPageInfos` 参数（start/count/signal） |
 | `PageInfo` | 页尺寸/页区域，mm |
+| `DocumentPermissions` | 权限声明（只读，不做 DRM 强制） |
+| `AttachmentInfo` | 附件元信息（size 单位 byte） |
 | `DestinationType` | 大纲/书签目标类型 |
 | `DocumentDestination` | 跳转目标，mm/zoom |
 | `OutlineNode` | 大纲节点与子节点 |
@@ -964,6 +1063,7 @@ P0/P1 UI API 还会产生以下扩展码（`OFDWarning.code` 类型允许 `strin
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
+| v1.0-r10 | 2026-10-22 | 同步 P2：`getPermissions`（只读声明，不做 DRM）、`getAttachments`/`getAttachmentData`（原始字节，不解析内容）、`exportImage.rotation`（仅导出方向，90/270 宽高互换）；登记 `W_PERMISSION_FIELD`/`W_ATTACHMENT_FIELD`/`W_ATTACHMENT_RESOURCE`；`page.renderRegion` 暂不实现/无排期且不导出 |
 | v1.0-r9 | 2026-10-22 | 同步 P0/P1 阅读器 UI API：getPageInfos/getOutline/getBookmarks/getMetadata/getSignatureEntries/getSignedValue/page.prepare/page.getTextContent；新增 PageInfo/Outline/Bookmark/签章/SignedValue/Metadata/TextContent 类型与 `CacheOptions.textPages`；明确不解析 ASN.1/不暴露 Seal.esl/P2 延后 |
 | v1.0-r8 | 2026-10-22 | 初版公开 API 文档：document/page/render/exportImage、平台注入、错误/warning、限制/缓存、类型附录；建立与 `src/index.ts` 的同步检查 |
 | v1.0-r7 | 2026-10-22 | 增加 `OFDOpenOptions.createCanvas`（矢量签章/导出） |

@@ -2,8 +2,8 @@
 
 | 项 | 内容 |
 |---|---|
-| 状态 | 已确认并实现（P0/P1；P2 延后） |
-| 版本 | 0.2 |
+| 状态 | 已确认并实现（P0/P1 + P2 权限/附件/导出旋转；renderRegion 暂不实现） |
+| 版本 | 0.3 |
 | 日期 | 2026-10-22 |
 | 使用方 | `ofdrw-viewer-ui` |
 | 提供方 | `ofdrw-viewer-engine` |
@@ -25,7 +25,7 @@
 - 不把 `Seal.esl` 作为公开资源；印章信息由 UI 从 `SignedValue.dat` 的 `TBS_Sign.eseal` 获取。
 - 不判断签章时间、签署人、证书主题、印章类型、签章有效性。
 - 不做证书链、CRL/OCSP、时间戳、签名值验证。
-- 不实现阅读器 UI、布局、缩放、打印、导出图片（导出能力已有，但打印/旋转由 UI 组织）。
+- 不实现阅读器 UI、布局、缩放、打印编排；提供整页 `exportImage`（含可选导出旋转），但不负责阅读器交互旋转/裁剪。
 
 ### 0.3 签章数据的分工
 
@@ -56,20 +56,20 @@ UI：签章列表、页面覆盖层、详情面板、“未验证”标识
 
 ## 1. API 总览
 
-| API | 优先级 | 功能 | 读取 | 是否解析 ASN.1 |
-|---|---|---|---|---|
-| `document.getPageInfos(options?)` | P0 | 批量页尺寸/页区域 | 页树、`Page.xml` 的 `Area`、模板回退 | 否 |
-| `page.getTextContent(options?)` | P0 | 页面文本与空间信息 | 页面模型、字体、文本布局 | 否 |
-| `document.getOutline(options?)` | P0 | 大纲树 + 跳转目标 | `Document.xml` 的 `Outlines` | 否 |
-| `document.getBookmarks(options?)` | P0 | 书签列表 + 跳转目标 | `Document.xml` 的 `Bookmarks` | 否 |
-| `document.getSignatureEntries(options?)` | P0 | 签章 XML 元数据、页面位置、资源路径 | `Signatures.xml`、`Signature.xml` | **否** |
-| `document.getSignedValue(id, options?)` | P0 | 返回 `SignedValue.dat` 原始字节；印章信息在该文件的 `TBS_Sign.eseal` 中 | ZIP 条目 | **否** |
-| `document.getMetadata()` | P1 | 文档属性 | `OFD.xml` 的 `DocInfo` | 否 |
-| `page.prepare(options?)` | P1 | 预取页面模型/字体/图片 | 页面资源 | 否 |
-| `document.getPermissions()` | P2 | 文档权限声明 | `Document.xml` 的 `Permissions` | 否 |
-| `document.getAttachments()` / `getAttachmentData()` | P2 | 附件列表/字节 | `Attachments.xml`、附件条目 | 否 |
-| `page.renderRegion(...)` | P2 | 局部/瓦片渲染 | 页面 | 否 |
-| `exportImage({ rotation })` | P2 | 导出时旋转 | 页面 | 否 |
+| API | 优先级 | 状态 | 功能 | 读取 | 是否解析 ASN.1 |
+|---|---|---|---|---|---|
+| `document.getPageInfos(options?)` | P0 | 已实现 | 批量页尺寸/页区域 | 页树、`Page.xml` 的 `Area`、模板回退 | 否 |
+| `page.getTextContent(options?)` | P0 | 已实现 | 页面文本与空间信息 | 页面模型、字体、文本布局 | 否 |
+| `document.getOutline(options?)` | P0 | 已实现 | 大纲树 + 跳转目标 | `Document.xml` 的 `Outlines` | 否 |
+| `document.getBookmarks(options?)` | P0 | 已实现 | 书签列表 + 跳转目标 | `Document.xml` 的 `Bookmarks` | 否 |
+| `document.getSignatureEntries(options?)` | P0 | 已实现 | 签章 XML 元数据、页面位置、资源路径 | `Signatures.xml`、`Signature.xml` | **否** |
+| `document.getSignedValue(id, options?)` | P0 | 已实现 | 返回 `SignedValue.dat` 原始字节；印章信息在该文件的 `TBS_Sign.eseal` 中 | ZIP 条目 | **否** |
+| `document.getMetadata()` | P1 | 已实现 | 文档属性 | `OFD.xml` 的 `DocInfo` | 否 |
+| `page.prepare(options?)` | P1 | 已实现 | 预取页面模型/字体/图片 | 页面资源 | 否 |
+| `document.getPermissions()` | P2 | 已实现 | 文档权限声明（只读，不强制） | `Document.xml` 的 `Permissions` | 否 |
+| `document.getAttachments()` / `getAttachmentData()` | P2 | 已实现 | 附件元信息/原始字节（不解析内容） | `Attachments.xml`、附件条目 | 否 |
+| `exportImage({ rotation })` | P2 | 已实现 | 仅导出方向旋转 | 页面 | 否 |
+| `page.renderRegion(...)` | P2 | **暂不实现/无排期** | 局部/瓦片渲染；不导出、不在 `OFDPage` 上 | 页面 | 否 |
 
 ---
 
@@ -592,7 +592,7 @@ prepare(options?: PagePrepareOptions): Promise<void>;
 
 ---
 
-## 11. `document.getPermissions`（P2）
+## 11. `document.getPermissions`（已实现，P2）
 
 ### 11.1 签名
 
@@ -614,10 +614,10 @@ interface DocumentPermissions {
   print?: {
     /** 是否允许打印，默认 true。 */
     printable: boolean;
-    /** 允许份数；未声明表示不限。 */
+    /** 允许份数；未声明表示不限；0 表示不允许打印。 */
     copies?: number;
   };
-  /** 访问有效期；未声明表示不受限。 */
+  /** 访问有效期；未声明表示不受限，日期保留 XML 原文。 */
   validPeriod?: {
     start?: string;
     end?: string;
@@ -629,25 +629,26 @@ getPermissions(options?: { signal?: AbortSignal }): Promise<DocumentPermissions>
 
 ### 11.2 功能说明
 
-- 读取 `Document.xml` 的 `Permissions`；缺省全部 `true`。
-- UI 仅据此禁用打印/导出按钮，不做 DRM 强制。
-- P2；MVP 可不实现。
-- 非法字段 warning `W_PERMISSION_FIELD`，按默认 `true`。
+- 读取 `Document.xml` 的 `Permissions`；缺省全部 `true`，`print`/`validPeriod` 省略表示可打印不限、无有效期限制。
+- **只读声明，不做 DRM 强制**：引擎不会因 `export:false` 拒绝 `exportImage`，也不会阻止打印；UI 仅据此禁用按钮/提示。
+- 非法字段 warning `W_PERMISSION_FIELD`，按默认允许回退（份数非法按不限）。
+- `copies=0` 表示不允许打印；负值/非法值按不限处理；日期不判断当前是否在有效期内。
+- 取消 `OFD_ABORTED`、关闭 `OFD_CLOSED`。
 
 ---
 
-## 12. 附件（P2）
+## 12. 附件（已实现，P2）
 
 ```ts
 interface AttachmentInfo {
-  id: string;
+  id: string;                    // 已规范化
   name: string;
   format?: string;
-  size?: number; // byte
-  creationDate?: string;
-  modDate?: string;
-  visible?: boolean;
-  usage?: string;
+  size?: number;                 // byte；XML Size 以 KB 声明，引擎换算
+  creationDate?: string;         // 原文
+  modDate?: string;              // 原文
+  visible?: boolean;             // 缺省 true
+  usage?: string;                // 缺省 'none'
 }
 
 getAttachments(options?: { signal?: AbortSignal }): Promise<readonly AttachmentInfo[]>;
@@ -658,56 +659,39 @@ getAttachmentData(
 ): Promise<Uint8Array | undefined>;
 ```
 
-- 读取 `Attachments.xml` 与附件条目；`getAttachmentData` 返回原始字节。
-- MVP 未选附件，列为 P2；引擎不需要解析附件内容。
-- 缺 `Attachments.xml` 返回空数组；条目缺失 warning。
+- 读取 `Attachments.xml` 的元信息；`getAttachmentData` 返回附件原始字节，**不解析附件内容/格式**，不执行附件。
+- 无 `Attachments.xml` 返回空数组；保持 XML 顺序；重复 ID 保留先到者并 warning `W_DUPLICATE_RESOURCE`。
+- `Size` 由 XML 的 KB 换算为 byte（×1024 四舍五入）；缺失/非法 warning `W_ATTACHMENT_FIELD` 后省略。
+- 缺 ID/Name 跳过并 warning `W_ATTACHMENT_FIELD`；FileLoc 路径非法 warning 后仍列出元信息，但取数据失败。
+- `getAttachmentData`：附件不存在/无 FileLoc/文件读取失败 warning `W_ATTACHMENT_RESOURCE` 并返回 `undefined`；`OFD_LIMIT_EXCEEDED`/`OFD_INVALID_PACKAGE` 原样抛出；取消 `OFD_ABORTED`、关闭 `OFD_CLOSED`。
+- 不暴露 FileLoc；不缓存大文件字节，调用方自行缓存结构化结果。
 
 ---
 
-## 13. 局部渲染（P2，可选）
+## 13. 局部渲染（暂不实现/无排期）
 
-```ts
-interface PageRenderRegionParameters {
-  /** 区域左上角 x，mm。 */
-  xMm: number;
-  /** 区域左上角 y，mm。 */
-  yMm: number;
-  /** 区域宽，mm。 */
-  widthMm: number;
-  /** 区域高，mm。 */
-  heightMm: number;
-  /** 输出 DPI。 */
-  dpi: number;
-  /** 宿主 canvas 2D 上下文；尺寸由宿主设置。 */
-  canvasContext: CanvasRenderingContext2DLike;
-  /** 取消信号。 */
-  signal?: AbortSignal;
-}
+按用户决定，`page.renderRegion` **不实现、不导出**：`OFDPage` 上没有该方法，`src/index.ts` 不导出 `PageRenderRegionParameters` 或相关类型；本节不提供可调用的公开签名，避免被误当作已实现契约。
 
-renderRegion(params: PageRenderRegionParameters): RenderTask;
-```
-
-- 只绘制指定 mm 区域，用于超大页面/高倍缩放的瓦片。
-- **1000 页 MVP 不需要**：A4@4x 约 14.3MP，低于 32MP 上限；先降 DPI + CSS 放大即可。
-- 如未来实现，必须保持与整页渲染相同的图层/对象顺序，仅改变 CTM 与 clip。
-- P2，不阻塞 UI。
+- 原因：1000 页 A4@4x 约 14.3MP，低于 32MP 上限；先降 DPI + CSS 放大可满足当前阅读器。
+- 如未来排期，必须保持与整页渲染相同的图层/对象顺序，仅改变 CTM 与 clip，并重新走契约评审。
+- 当前 UI 不得调用/声明该 API；engine 不提供兼容桩。
 
 ---
 
-## 14. 导出旋转（P2，可选）
-
-现有 `page.exportImage` 明确“不包含阅读器缩放/旋转”。UI 可以在离屏 canvas 上二次旋转；如果引擎愿意提供：
+## 14. 导出旋转（已实现，P2）
 
 ```ts
 interface PageImageExportOptions {
-  // 现有字段...
-  /** 导出旋转，默认 0；90/180/270。 */
+  // 其他字段见公开 API §4.5
+  /** 导出旋转，默认 0；仅 0/90/180/270，顺时针。 */
   rotation?: 0 | 90 | 180 | 270;
 }
 ```
 
-- 仅影响导出图片方向，不改变页面模型/渲染。
-- P2；UI 自做也不阻塞。
+- 仅影响导出图片方向，不改变页面模型、`page.render` 或页面状态。
+- 90/270 输出 `PageImageResult.width/height` 互换；内容按顺时针旋转；透明背景保持透明。
+- 非法 rotation warning `W_BAD_NUMBER`（objectId=`exportImage.rotation`）后回退 0，不中断导出。
+- 90/270 的像素上限按旋转后输出尺寸判断；`encodeImage` 收到最终旋转画布。
 
 ---
 
@@ -757,13 +741,14 @@ interface PageImageExportOptions {
 
 ### 16.2 实现备注
 
-- `getPageInfos` 可复用 `getPageEntry` 的“仅页区域”模式，或新增轻量 `loadPageArea(index)`；不要走完整 `preparePage`。
+- `getPageInfos` 已使用 `model/page-info.ts` 只扫描页头 Area/模板引用；不要走完整 `preparePage`。
 - `getTextContent` 按 v1.1 设计实现；复用 `layoutText`/`preparePage`/`drawPage` 的遍历顺序，不复制一套。
 - 大纲/书签订阅已解析的 `Document.xml` 模型；不要重复读 XML。
 - `getSignatureEntries` 复用 `model/signature.ts` 的 `decodeSignaturesIndex`/`decodeSignature`（它们已解析 `Signature.xml`，且不读 ASN.1）；补齐 Provider/SignatureDateTime/References 字段。
 - `getSignedValue` 复用现有 `readSignatureFile`/ZIP 读取；只返回 `SignedValue.dat` 字节，不调用 `decodeSealImage`。
-- `getMetadata` 新增 `DocInfo` 解码；`CT_DocInfo` 字段注意 `Title`（ofdrw 的 `getTile` 是拼写问题，不是字段名）。
-- `getPermissions`/`getAttachments` 是加法，不影响现有打开流程。
+- `getMetadata` 已接入 `DocInfo` 解码；`CT_DocInfo` 字段注意 `Title`（ofdrw 的 `getTile` 是拼写问题，不是字段名）。
+- `getPermissions`/`getAttachments` 已实现且为加法，不影响现有打开流程；`getAttachmentData` 按需读取，不解析内容。
+- `exportImage.rotation` 在导出侧二次绘制，仅改变输出方向；正常 `page.render` 不变。`renderRegion` 不实现、不导出。
 - 不要为了这些 API 在引擎里引入 `asn1js`/`asn1.js`/`@peculiar/*`；ASN.1 是 UI 包的依赖。
 
 ### 16.3 测试夹具
@@ -788,10 +773,11 @@ interface PageImageExportOptions {
 | P0 | `getSignedValue` | 供 UI 解析 ASN.1；只取 SignedValue.dat |
 | P1 | `getMetadata` | 文档属性 |
 | P1 | `page.prepare` | 滚动预取 |
-| P2 | `getPermissions` / `getAttachments` | 权限/附件 |
-| P2 | `renderRegion` / `exportImage.rotation` | 大页/导出增强 |
+| P2 | `getPermissions` / `getAttachments` / `getAttachmentData` | 权限/附件；**已实现** |
+| P2 | `exportImage.rotation` | 导出方向增强；**已实现** |
+| P2 | `renderRegion` | 局部/瓦片渲染；**暂不实现/无排期，不导出** |
 
-**P0 完成定义**：类型从 `src/index.ts` 导出；单测覆盖上表验收项；1000 页/签章样本通过；无新增 ASN.1 依赖；`pnpm typecheck`/`test` 通过。**r9 状态：P0/P1 已实现并通过公开 API 文档同步；P2 未实现。**
+**P0 完成定义**：类型从 `src/index.ts` 导出；单测覆盖上表验收项；1000 页/签章样本通过；无新增 ASN.1 依赖；`pnpm typecheck`/`test` 通过。**r10 状态：P0/P1 与 P2 权限/附件/导出旋转已实现并经公开 API 文档同步；`renderRegion` 不实现、不导出。**
 
 ---
 
@@ -809,9 +795,9 @@ interface PageImageExportOptions {
 1. `getSignatureEntries` 命名采用，`Entries` 强调“只读 XML 条目，不是解析后的签章”；不再使用 `getSignatureInfos`/`getSignatureMetadata`。
 2. `getPageInfos` 采用 `start/count` 分片，并已实现；默认 `start=0`、`count=剩余全部`，越界空/截断，结果按索引升序。
 3. `getMetadata` 进入 P1 并已实现；无 `DocInfo` 仍返回版本/页数。
-4. `getPermissions`/附件/局部渲染/导出旋转保留 P2，r9 不实现；不据此阻塞 MVP。
+4. `getPermissions`/附件/`exportImage.rotation` 已实现；`renderRegion` 按用户决定不实现、不导出、无排期，不作为 MVP 依赖。
 
-## 19. 实现状态（r9，2026-10-22）
+## 19. 实现状态（r10，2026-10-22）
 
 | API | 状态 | 实现要点 |
 |---|---|---|
@@ -822,6 +808,9 @@ interface PageImageExportOptions {
 | `getMetadata` | 已实现（P1） | DocInfo 字段；日期原文；无 DocInfo 仍返回版本/页数 |
 | `page.prepare` | 已实现（P1） | 96 DPI bundle；幂等/并发去重；不创建 canvas；abort/close |
 | `page.getTextContent` | 已实现（P0） | 复用 `layoutText`；px 输出/mm 缓存；`textPages=4`，缓存键不含 dpi；超限截断 warning |
-| `getPermissions`/`getAttachments`/`renderRegion`/`exportImage.rotation` | 未实现（P2） | 延后；r9 调用面不包含 |
+| `getPermissions` | 已实现（P2） | 只读 `Document.xml/Permissions`；默认全 true；不做 DRM 强制；`W_PERMISSION_FIELD` |
+| `getAttachments` / `getAttachmentData` | 已实现（P2） | 按需解析并缓存元信息；Size KB→byte；原始字节；不解析内容；`W_ATTACHMENT_FIELD`/`W_ATTACHMENT_RESOURCE` |
+| `exportImage.rotation` | 已实现（P2） | 0/90/180/270；仅导出方向；90/270 宽高互换；非法值 `W_BAD_NUMBER` 回退 0 |
+| `renderRegion` | **暂不实现/无排期** | 不导出、不在 `OFDPage` 上；UI 不得依赖 |
 
 边界复核：引擎不新增 ASN.1/X.509/CMS 依赖；`Seal.esl` 不进入公开 API；`SignedValue.dat` 只作为原始字节返回。公开文档以 `docs/公开API.md` 和 `src/index.ts` 为准。
