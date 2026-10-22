@@ -18,7 +18,8 @@ import type { FontInput } from 'ofdrw-viewer-engine';
  *
  * 第一组是 CJK 主字体（中文样本），第二组是西文衬线回退（Nimbus Roman，
  * 缺失时用 Noto Serif CJK），第三组是宿主 SimSun/宋体，第四组是宿主
- * FangSong/仿宋，第五组是宿主小标宋；存在才注入。
+ * FangSong/仿宋，第五组是宿主小标宋，第六组是真实 Times New Roman
+ * （精确 family，避免 Nimbus 的 glyph191/Otilde 冒充 fi 连字）；存在才注入。
  * 各组都注入，按字体名评分选择，避免只取第一个导致特定 family 落空。
  */
 const FONT_CANDIDATE_GROUPS: ReadonlyArray<
@@ -89,6 +90,19 @@ const FONT_CANDIDATE_GROUPS: ReadonlyArray<
         join(homedir(), '.local/share/fonts/HGXBS_CNKI.TTF'),
         '/mnt/c/Windows/Fonts/HGXBS_CNKI.TTF',
         'C:\\Windows\\Fonts\\HGXBS_CNKI.TTF',
+      ],
+    },
+  ],
+  [
+    {
+      family: 'Times New Roman',
+      paths: [
+        join(homedir(), '.local/share/fonts/times.ttf'),
+        '/mnt/c/Windows/Fonts/times.ttf',
+        'C:\\Windows\\Fonts\\times.ttf',
+        '/usr/share/fonts/truetype/msttcorefonts/Times_New_Roman.ttf',
+        '/usr/share/fonts/truetype/msttcorefonts/times.ttf',
+        '/usr/share/fonts/TTF/Times_New_Roman.ttf',
       ],
     },
   ],
