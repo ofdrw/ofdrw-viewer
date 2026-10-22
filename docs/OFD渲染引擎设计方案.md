@@ -2341,6 +2341,12 @@ export interface OFDOpenOptions {
   layerOrder?: 'document' | 'type';    // 默认 type（先类型后出现顺序）
   /** 渲染器扩展点；默认 H5Canvas2DRenderer，普通用户无需传 */
   renderer?: Renderer;
+  /**
+   * 默认 H5 渲染器/矢量签章嵌套渲染使用的临时画布工厂。
+   * 传了 renderer 时以 renderer 为准；不传时未注入则走 document/OffscreenCanvas。
+   * 参数/返回值单位均为像素。
+   */
+  createCanvas?: (width: number, height: number) => Canvas2DLike;
 }
 
 export type OFDSource =
@@ -2401,7 +2407,7 @@ export class OFDDocument {
 }
 ```
 
-- `Renderer` 是公开扩展点（见 6.3）；**默认实现 `H5Canvas2DRenderer` 由 engine 内部创建**，普通用户不传 `renderer`。Node/小程序需要 `createCanvas` 时，显式构造 `H5Canvas2DRenderer` 并传入。
+- `Renderer` 是公开扩展点（见 6.3）；**默认实现 `H5Canvas2DRenderer` 由 engine 内部创建**，普通用户不传 `renderer`。Node/小程序需要临时画布时传 `createCanvas`；显式 `renderer` 优先。矢量签章打开内嵌 OFD 时必须复用同一个 `createCanvas`。
 - `page.render` 不接收 `scale/rotation/pixelRatio/background/annotations`；这些是阅读器控制或宿主画布设置。
 - `page.render` 只画页面内容；canvas.width/height、CSS 尺寸、清屏、白底/背景色全部由用户负责。
 - `page.render` 返回 `RenderTask`；`cancel()` 后 `promise` 以 `OFD_ABORTED` 拒绝；与 pdf.js 的 `RenderTask` 形状一致。
