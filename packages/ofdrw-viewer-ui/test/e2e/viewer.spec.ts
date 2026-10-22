@@ -9,6 +9,8 @@ test('连续滚动更新当前页并触发下一页渲染', async ({ page, issue
   await expect(page.locator('.ofd-page')).toHaveCount(2);
 
   await page.locator('.ofd-viewer__main').hover();
+  // 全套件运行时首个 wheel 偶发被浏览器丢弃，补一次以确保滚动事件已进入主容器。
+  await page.mouse.wheel(0, 1400);
   await page.mouse.wheel(0, 1400);
 
   await expect
