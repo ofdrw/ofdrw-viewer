@@ -315,6 +315,43 @@ export function drawObjects(context: DrawObjectContext, objects: readonly PageOb
 }
 
 /**
+ * 判断图片 Clips 是否使用图片 CTM 的逆矩阵编码。
+ *
+ * 标准 ImageObject 的 Clips 位于对象空间，必须在对象 CTM 之前应用；manual 等
+ * 生产工具会把 Clips 预先乘上图片 CTM 的逆矩阵，使裁剪路径在页面坐标系中
+ * 表达。若 Clips 面积矩阵与图片 CTM 的面积比在 0.2..5 内（矩阵互逆时约 1），
+ * 则判定为逆矩阵编码。
+ *
+ * @param object 图片对象。
+ * @returns 需要在对象 CTM 之后应用 Clips 时返回 true。
+ */
+function imageClipsUseInverseCtm(object: ImageObject): boolean {
+  if (!object.ctm || !object.clips || object.clips.length === 0) return false;
+  const ctmDet = Math.abs(
+    object.ctm[0] * object.ctm[3] - object.ctm[1] * object.ctm[2],
+  );
+  if (!(ctmDet > 0)) return false;
+  let checked = 0;
+  for (const clip of object.clips) {
+    for (const area of clip.areas ?? []) {
+      const localCtm = area.kind === 'path' ? area.path.ctm : area.text.ctm;
+      const clipCtm = clip.ctm;
+      const clipDet = clipCtm
+        ? Math.abs(clipCtm[0] * clipCtm[3] - clipCtm[1] * clipCtm[2])
+        : 1;
+      const localDet = localCtm
+        ? Math.abs(localCtm[0] * localCtm[3] - localCtm[1] * localCtm[2])
+        : 1;
+      if (!(clipDet > 0) || !(localDet > 0)) continue;
+      const areaRatio = ctmDet * clipDet * localDet;
+      if (areaRatio < 0.2 || areaRatio > 5) return false;
+      checked += 1;
+    }
+  }
+  return checked > 0;
+}
+
+/**
  * 绘制单个对象/块。
  *
  * @param context 绘制上下文。
@@ -351,10 +388,11 @@ export function drawObject(
   );
   const { renderer } = context;
   const textPath = textPathProvider(context);
-  // 实际 OFD 生产工具（如 manual）会用图片 CTM 的逆矩阵编码图片 Clips，
-  // 使裁剪路径在页面坐标系中表达；因此 image 的 Clips 必须在对象 CTM 之后应用，
-  // 其他对象仍保持设计方案 10.4.1 的“Clips 在 CTM 之前”顺序。
-  const imageClipsAfterCtm = object.kind === 'image' && object.ctm !== undefined;
+  // 标准 ImageObject 的 Clips 与 Boundary 同在对象空间，必须在 CTM 之前应用。
+  // 少数生产工具（如 manual）把 Clips 预先乘了图片 CTM 的逆矩阵，只有这类
+  // 逆矩阵编码的图片裁剪才需要在 CTM 之后应用。
+  const imageClipsAfterCtm =
+    object.kind === 'image' && imageClipsUseInverseCtm(object);
   const applyObjectClips = (): void => {
     applyClips(
       {

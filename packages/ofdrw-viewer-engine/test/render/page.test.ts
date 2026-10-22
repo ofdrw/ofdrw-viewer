@@ -488,6 +488,44 @@ describe('drawPage 图片 Clips 顺序', () => {
     expect(lastClip).toBeGreaterThan(transform);
   });
 
+  it('标准图片 Clips 在对象 CTM 之前应用（intro p12 照片）', async () => {
+    const clipPath = {
+      kind: 'path' as const,
+      boundary: { x: 2.56, y: 3.24, w: 907.09, h: 680.32 },
+      alpha: 255,
+      visible: true,
+      data: 'M 0 680.32 L 907.09 680.32 L 907.09 0 L 0 0 C',
+      fill: true,
+      stroke: false,
+      rule: 'nonzero' as const,
+      // Area CTM=0.353 在解析时折叠进裁剪 Path.CTM。
+      ctm: [0.353, 0, 0, 0.353, 0, 0] as const,
+    };
+    const image: PageObject = {
+      kind: 'image',
+      id: '349',
+      boundary: { x: -0.9, y: -1.14, w: 321.78, h: 242.26 },
+      alpha: 255,
+      visible: true,
+      resourceId: '348',
+      ctm: [321.255, -0.7009, 0.527, 241.5607, 0, 0.7009],
+      clips: [{ areas: [{ kind: 'path', path: clipPath }] }],
+    };
+    const model = page([{ type: 'Body', children: [image] }]);
+    const bundle = await preparePage({
+      page: model,
+      resources: scope({ images: [{ id: '348', mediaFile: 'Res/image_347.jpg', format: 'jpeg' }] }),
+      loader: loader(),
+    });
+    const renderer = new FakeRenderer();
+    drawPage(bundle, renderer, {} as never, { width: 1210, height: 908, dpi: 96 });
+
+    const ops = renderer.ops();
+    // 第一次 clip 是 Boundary；图片 Clips 必须在对象 CTM 之前，否则会被放大成空交集。
+    expect(ops.lastIndexOf('clip')).toBeLessThan(ops.indexOf('transform'));
+    expect(ops.indexOf('drawImage')).toBeGreaterThan(ops.indexOf('transform'));
+  });
+
   it('非图片对象的 Clips 仍保持在对象 CTM 之前', async () => {
     const clippedPath = {
       ...path('p1', 10, 20, 100, 50),
