@@ -28,6 +28,7 @@ import type {
   ResourceId,
   SealImage,
   SignatureBundle,
+  SignatureModel,
   TemplateRef,
 } from '../model/types';
 import type { DocumentResourceIndex, PageResourceScope, ResourceIndex } from '../resource/types';
@@ -55,6 +56,9 @@ import type {
   PageInfo,
   PageInfoOptions,
   PagePrepareOptions,
+  SignatureEntryInfo,
+  SignatureStampInfo,
+  SignedValueFile,
 } from './ui-types';
 import type { FontInputLoader } from '../font/provider';
 import type { FontFaceSet } from '../font/types';
@@ -73,10 +77,11 @@ import {
   createPageWarningHandler,
 } from './warnings';
 import { DisposableLruCache } from './cache';
-import { OFDError } from '../errors';
+import { isOFDError, OFDError } from '../errors';
 import { ZipReader } from '../container/zip-reader';
 import type { ZipLimits } from '../container/zip-reader';
 import { dirnameOf } from '../container/path';
+import { normalizeResourceId } from '../model/ids';
 import { parseXml } from '../xml/parser';
 import type { XmlNode } from '../xml/types';
 import {
@@ -88,7 +93,12 @@ import {
   decodePageResources,
 } from '../model/decode';
 import { resolvePageArea, applyPageArea } from '../model/page-area';
-import { decodeSignatureBundle, signatureIndexCandidates } from '../model/signature';
+import {
+  decodeSignature,
+  decodeSignatureBundle,
+  decodeSignaturesIndex,
+  signatureIndexCandidates,
+} from '../model/signature';
 import {
   buildDocumentResourceIndex,
   ResourceStore,
@@ -370,6 +380,10 @@ export class OFDDocument {
   private readonly annotationCache = new Map<string, Promise<readonly Annotation[]>>();
   /** 文档级签章集合缓存；无 Signatures.xml 时为已解析的 undefined。 */
   private signatureBundlePromise: Promise<SignatureBundle | undefined> | undefined;
+  /** 公开签章 XML 条目缓存；只含 XML 元数据，不读取 Seal/SignedValue。 */
+  private signatureEntriesCache: readonly SignatureEntryInfo[] | undefined;
+  /** 公开签章条目并发加载去重。 */
+  private signatureEntriesPending: Promise<readonly SignatureEntryInfo[]> | undefined;
   /** 按 SealImage.cacheKey（缺省实例）缓存印章解码结果，避免骑缝章逐页重复解码。 */
   private readonly signatureSealPromises = new Map<string | SealImage, Promise<DecodedImage>>();
   /** 本文档解码出的印章图片，关闭时释放 ImageBitmap。 */
@@ -948,6 +962,103 @@ export class OFDDocument {
   }
 
   /**
+   * 读取签章 XML 元数据；按 Signatures.xml 顺序返回并缓存到 close。
+   *
+   * 只读取 Signatures.xml / Signature.xml；不读取 Seal.esl 或 SignedValue.dat，
+   * 不解析 ASN.1/证书/签名值。单个 Signature.xml 损坏时 warning 后跳过。
+   *
+   * @param options 取消信号。
+   * @returns 签章条目；无签章索引或索引损坏时为空数组。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED。
+   */
+  async getSignatureEntries(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<readonly SignatureEntryInfo[]> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    const cached = this.signatureEntriesCache;
+    if (cached) return cached;
+    if (!this.signatureIndexPath) {
+      this.signatureEntriesCache = [];
+      return [];
+    }
+    let pending = this.signatureEntriesPending;
+    if (!pending) {
+      pending = this.loadSignatureEntries();
+      this.signatureEntriesPending = pending;
+      this.trackActiveRun(pending);
+      void pending
+        .then(
+          () => undefined,
+          () => undefined,
+        )
+        .finally(() => {
+          if (this.signatureEntriesPending === pending) this.signatureEntriesPending = undefined;
+        });
+    }
+    return waitForAbort(pending, options.signal);
+  }
+
+  /**
+   * 读取 SignedValue.dat 原始字节；不解析内容、不读取 Seal.esl。
+   *
+   * 未声明 SignedValue 时返回 undefined 且不 warning；声明但读取失败时
+   * warning W_SIGNATURE_RESOURCE 并返回 undefined。每次调用重新读取，不缓存大文件。
+   *
+   * @param signatureId 签章 ID。
+   * @param options 取消信号。
+   * @returns 原始字节与包内路径；未声明或读取失败时 undefined。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED / OFD_LIMIT_EXCEEDED / OFD_INVALID_PACKAGE。
+   */
+  async getSignedValue(
+    signatureId: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<SignedValueFile | undefined> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    const entries = await this.getSignatureEntries(options);
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    const normalizedId = normalizeResourceId(signatureId);
+    const entry = entries.find((item) => item.id === normalizedId);
+    if (!entry || !entry.hasSignedValue || !entry.signedValuePath) return undefined;
+    const path = entry.signedValuePath;
+    const combined = combineAbortSignals([options.signal, this.closeController.signal]);
+    const run = (async (): Promise<SignedValueFile | undefined> => {
+      try {
+        throwIfAborted(combined.signal);
+        let bytes: Uint8Array;
+        try {
+          bytes = await this.readSignatureFile(path);
+        } catch (error) {
+          if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭', { cause: error });
+          if (combined.signal.aborted) throw createAbortError();
+          if (
+            isOFDError(error) &&
+            (error.code === 'OFD_LIMIT_EXCEEDED' || error.code === 'OFD_INVALID_PACKAGE')
+          ) {
+            throw error;
+          }
+          this.documentWarningHandler({
+            code: 'W_SIGNATURE_RESOURCE',
+            message: `签章 ${entry.id} 的 SignedValue 读取失败：${path}（${errorMessage(error)}）`,
+            resourceId: entry.id,
+            objectId: entry.id,
+          });
+          return undefined;
+        }
+        if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭');
+        throwIfAborted(combined.signal);
+        return { signatureId: entry.id, path, data: bytes, byteLength: bytes.byteLength };
+      } finally {
+        combined.dispose();
+      }
+    })();
+    this.trackActiveRun(run);
+    return run;
+  }
+
+  /**
    * 关闭文档并释放全部缓存与句柄；可重复调用。
    *
    * 进行中的渲染/导出/页信息/准备会先被中止；`close()` 不向调用方抛错。
@@ -985,6 +1096,8 @@ export class OFDDocument {
     }
     this.signatureSealImages.clear();
     this.signatureBundlePromise = undefined;
+    this.signatureEntriesCache = undefined;
+    this.signatureEntriesPending = undefined;
     this.pageCache.clear();
     this.pagePending.clear();
     this.pageInfoCache.clear();
@@ -1566,6 +1679,87 @@ export class OFDDocument {
     });
     this.annotationCache.set(path, promise);
     return promise;
+  }
+
+  /**
+   * 加载公开签章 XML 条目；只读 XML，不触发 Seal/SignedValue 解码。
+   *
+   * 索引读取失败时 warning 后返回空；单条 Signature.xml 失败时跳过该条。
+   * 结果在成功时写入 `signatureEntriesCache`，由 close 清理。
+   *
+   * @returns 按 Signatures.xml 顺序的签章条目。
+   * @throws OFDError OFD_CLOSED。
+   */
+  private async loadSignatureEntries(): Promise<readonly SignatureEntryInfo[]> {
+    const indexFilePath = this.signatureIndexPath;
+    if (!indexFilePath) return [];
+    this.assertOpen();
+    let indexRoot: XmlNode;
+    try {
+      indexRoot = await this.readXml(indexFilePath, this.documentWarningHandler);
+    } catch (error) {
+      if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭', { cause: error });
+      this.documentWarningHandler({
+        code: 'W_BAD_NUMBER',
+        message: `签章索引 ${indexFilePath} 加载失败：${errorMessage(error)}`,
+        objectId: indexFilePath,
+      });
+      this.signatureEntriesCache = [];
+      return [];
+    }
+    this.assertOpen();
+    const entries = decodeSignaturesIndex(indexRoot, indexFilePath, {
+      onWarning: this.documentWarningHandler,
+    });
+    const pageIds = this.document.pages.map((page) => page.id);
+    const result: SignatureEntryInfo[] = [];
+    for (const entry of entries) {
+      this.assertOpen();
+      let model: SignatureModel;
+      try {
+        const bytes = await this.readSignatureFile(entry.baseLoc);
+        this.assertOpen();
+        model = decodeSignature(parseXml(bytes), entry.baseLoc, {
+          id: entry.id,
+          type: entry.type,
+          pageIds,
+          onWarning: this.documentWarningHandler,
+        });
+      } catch (error) {
+        if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭', { cause: error });
+        this.documentWarningHandler({
+          code: 'W_BAD_NUMBER',
+          message: `Signature ${entry.id} 读取/解析失败：${errorMessage(error)}`,
+          objectId: entry.id,
+          resourceId: entry.id,
+        });
+        continue;
+      }
+      const stamps: SignatureStampInfo[] = model.stamps.map((stamp) => {
+        const info: SignatureStampInfo = {
+          pageId: stamp.pageId,
+          boundary: { ...stamp.boundary },
+        };
+        if (stamp.id !== undefined) info.id = stamp.id;
+        if (stamp.pageIndex !== undefined) info.pageIndex = stamp.pageIndex;
+        if (stamp.clip) info.clip = { ...stamp.clip };
+        return info;
+      });
+      const info: SignatureEntryInfo = {
+        id: model.id,
+        type: model.type,
+        baseLoc: model.baseLoc,
+        references: model.references.map((reference) => ({ fileRef: reference.fileRef })),
+        stamps,
+        hasSignedValue: model.hasSignedValue,
+      };
+      if (model.provider) info.provider = { ...model.provider };
+      if (model.signatureDateTime !== undefined) info.signatureDateTime = model.signatureDateTime;
+      if (model.signedValuePath !== undefined) info.signedValuePath = model.signedValuePath;
+      result.push(info);
+    }
+    this.signatureEntriesCache = result;
+    return result;
   }
 
   /**
