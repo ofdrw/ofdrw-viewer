@@ -228,7 +228,7 @@ exportImage(options?: PageImageExportOptions): Promise<PageImageResult>;
 
 ### 5.3 UI API 类型与签名（v1.0-r9）
 
-本组类型依据 `docs/ofdrw-viewer-ui-engine-api.md` 与 `docs/text-content-api.md`，由 `src/api/ui-types.ts` 定义并从 `src/index.ts` 导出；t67/t68/t70/t71 只做实现，t72 统一同步公开 API 文档。
+本组类型依据 `docs/ofdrw-viewer-ui-engine-api.md` 与 `docs/text-content-api.md`，由 `src/api/ui-types.ts` 定义并从 `src/index.ts` 导出；t67/t68/t70/t71 已实现，t72 接线文本层，t73 同步公开 API 文档。
 
 **边界**：引擎只读取 OFD XML 与 `SignedValue.dat` 原始字节；不解析 ASN.1/DER/X.509/CMS、不验签、不判断签章有效性；`Seal.esl` 不进入公开 API。`getSignatureEntries` 只返回 `Signature.xml` 元数据；`getSignedValue` 只返回 `SignedValue.dat` 字节。
 
@@ -261,7 +261,9 @@ interface TextContent { pageIndex; dpi; unit; pageWidth; pageHeight; items: Text
 interface TextContentOptions { dpi?; includeChars?; includeAnnotations?; includeInvisible?; layerOrder?; signal?; maxTextItems?; maxTextChars? }
 ```
 
-`OFDDocumentApi`/`OFDPageApi` 通过 class/interface 声明合并挂到 `OFDDocument`/`OFDPage`，方法体由后续任务实现：
+文本公开类型统一在 `src/api/ui-types.ts`；`src/render/text-content.ts` 只定义内部 mm 结构并提供 `collectTextPageMm`/`toTextPagePx`，不得反向 import `api/**`。
+
+`OFDDocumentApi`/`OFDPageApi` 通过 class/interface 声明合并挂到 `OFDDocument`/`OFDPage`，P0/P1 方法已实现：
 
 - `OFDDocument#getPageInfos(options?)`：页尺寸/页区域，mm；不加载页面内容。
 - `OFDDocument#getOutline(options?)` / `getBookmarks(options?)`：保持 XML 顺序；无结果返回空数组。
@@ -272,10 +274,10 @@ interface TextContentOptions { dpi?; includeChars?; includeAnnotations?; include
 
 **缓存与错误**：
 
-- `CacheOptions.textPages?: number`：文本层 mm 数据缓存页数，默认 4；r9 只冻结字段，t71 实现消费。现有缓存字段/行为不变。
+- `CacheOptions.textPages?: number`：文本层 mm 数据缓存页数，默认 4；t71/t72 已实现按页 LRU，缓存键不含 `dpi`。现有缓存字段/行为不变。
 - 取消统一 `OFD_ABORTED`，关闭后统一 `OFD_CLOSED`；可选结果缺失（无大纲/书签/签章/附件）返回空数组/`undefined`，不是错误。
-- 文本超限按页截断并走 `W_TEXT_ITEM_LIMIT`/`W_TEXT_CHAR_LIMIT`（实现阶段同步 warning 码），不抛错。
-- 本组方法尚未实现；在 t67/t68/t70/t71 落地前不得声称运行时可用；t72 补公开 API 文档。
+- 文本超限按页截断并走 `W_TEXT_ITEM_LIMIT`/`W_TEXT_CHAR_LIMIT`，不抛错；`W_LAYER_ORDER` 沿用绘制口径。
+- P0/P1 已实现：`getPageInfos`/`prepare`（t67）、`getOutline`/`getBookmarks`/`getMetadata`（t68）、签章条目/SignedValue（t71）、`getTextContent`（t70/t72）。P2 的权限/附件/局部渲染/导出旋转仍未实现，不在 r9 调用面内。
 
 ## 6. 单元/分层签名索引
 
@@ -678,7 +680,7 @@ interface Clip {
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
 | v1.0-r10 | 2026-10-22（T18e） | 记录 `Clips@TransFlag` 非标准兼容扩展：标准 `CT_Clip` 无此属性；缺省/false 按对象空间在对象 CTM 前裁剪，true 在对象 CTM 后裁剪；true 优先于 t48 图片 manual 逆 CTM 兼容；模型 `Clip.transFlag?` 容器级复制、非法值 `W_BAD_NUMBER` 后 false。不涉及公开 API。 |
-| v1.0-r9 | T17a | 冻结 ofdrw-viewer-ui 引擎 API：PageInfo/Outline/Bookmark/签章 XML 元数据/SignedValueFile/DocumentMetadata/PagePrepareOptions/TextContent 全家族；`CacheOptions.textPages?` 默认 4；ASN.1/Seal.esl 不进入公共 API。t67/t68/t70/t71 实现，t72 补文档。 |
+| v1.0-r9 | T17a/T17h | 冻结并落地 ofdrw-viewer-ui 引擎 P0/P1 API：PageInfo/Outline/Bookmark/签章 XML 元数据/SignedValueFile/DocumentMetadata/PagePrepareOptions/TextContent 全家族；`CacheOptions.textPages?` 默认 4（按页 LRU，键不含 dpi）；ASN.1/Seal.esl 不进入公共 API，P2 权限/附件/局部渲染/导出旋转延后。t67/t68/t70/t71 实现，t72 接线文本，t73 同步文档。 |
 | v1.0-r8 | T15a | 新增 `OFDPage.exportImage(options)` 与 `OFDOpenOptions.encodeImage(canvas,format,quality)`；整页 + dpi + 白底/PNG 透明；浏览器默认 convertToBlob/toBlob，Node 注入，不新增编码依赖；错误码复用 OFD_CANVAS_TOO_LARGE/OFD_CANVAS_SIZE_MISMATCH/OFD_RENDERER_UNSUPPORTED/OFD_ABORTED/OFD_CLOSED。 |
 | v1.0-r7 | T14m | 新增可选 `OFDOpenOptions.createCanvas`（`Canvas2DLike`），用于默认 H5 渲染器与矢量签章嵌套 OFD 离屏渲染；未注入保持 document/OffscreenCanvas 兜底。r8 起也供 `exportImage` 使用。 |
 | v1.0-r6 | T6c 复审 | 修正 §7.9 模板 `ZOrder` 口径：页面 `Template/@ZOrder` 优先，页面引用缺省 `Background`（标准/设计 10.4）；`Body` 仅显式使用 |

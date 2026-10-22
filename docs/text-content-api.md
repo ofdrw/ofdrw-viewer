@@ -2,11 +2,11 @@
 
 | 项 | 内容 |
 |---|---|
-| 任务 | T13.1 文本内容 API 设计落盘 |
-| 版本 | v1.1 增量设计；**不属于 v1 公共契约** |
+| 设计任务 | T13.1 文本内容 API 设计落盘 |
+| 版本 | v1.1 增量设计；**r9 已纳入 v1 公共契约** |
 | 依赖 | v1 T4 `layoutText`、T6b `prepare/drawPage`、T7 `OFDDocument/OFDPage` |
-| 输出范围 | 本文档；不改 src、不改 v1 验收计划；T7/T10 仅做加法式可选扩展，不破坏 v1 既有调用 |
-| 任务 | `t18` / attempt `5b42f8be-1f6b-4471-9cb7-e458ade2e38e` |
+| 状态 | 已实现（2026-10-22，r9）；实现状态/差异见 §14 |
+| 任务 | 设计 t18；实现 t70/t72；文档同步 t73 |
 
 ## 0. 结论摘要
 
@@ -25,7 +25,7 @@ v1.1 新增 **阅读器文字层**：`OFDPage.getTextContent(options?)` 返回�
 
 ## 1. 非目标与边界
 
-- **不进入 v1**：v1 只交付渲染；`OFDPage.getTextContent`、`TextContent*` 类型、`W_TEXT_*` 均为 v1.1 增量。v1 的 19.6/`docs/验收计划.md` 不新增本 API 验收项。
+- **设计时非目标、r9 已纳入**：T13.1 设计时 `OFDPage.getTextContent`/`TextContent*`/`W_TEXT_*` 属 v1.1 增量，v1 的 19.6 未新增验收项；r9 已作为阅读器 UI API P0 纳入公开契约，状态见 §14。
 - **不改变 v1 绘制**：`drawTextObject`、`layoutText` 的现有输出不变；T13.2 只允许新增纯函数/类型，不改变 v1 测试断言。
 - **不引入 Canvas/DOM/Node 依赖**：`render/text-content.ts` 只能 import `model`/`style`/`font`/`render` 的纯类型/纯函数，不 import `renderer/canvas2d`、`api` 或 `node:*`。
 - **不做 OCR/PDF 文本抽取**：只读 OFD `TextObject` 模型。
@@ -211,9 +211,10 @@ export interface TextContentOptions {
 }
 ```
 
-### 3.1 类型放置与导出
+### 3.1 类型放置与导出（实现差异）
 
-- 类型放 `src/render/text-content-types.ts`（目标无关，只 import `Matrix`/`ResourceId` 等类型），由 `src/index.ts` 导出；`src/api` 只 re-export，不重复定义。
+- **实际实现**：公开类型放 `src/api/ui-types.ts`，由 `src/index.ts` 直接导出；`src/render/text-content.ts` 只保留 `TextPageMm/TextItemMm/TextCharMm` 等内部 mm 结构及 `collectTextPageMm`/`toTextPagePx`。
+- 原设计建议 `src/render/text-content-types.ts`；为满足 r9 公共类型统一入口且避免 render→api 反向依赖，按 t66 契约调整为 `api/ui-types.ts`，render 侧使用内部结构/映射。
 - `TextContent` 不携带 Renderer/Canvas/内部 `PreparedPageBundle`。
 - 不导出 `TextPageData` 等 mm 内部结构。
 
@@ -464,7 +465,7 @@ build 在以下边界检查内部 signal（外部 signal 不直接传入共享 b
 - 选项非法：按 §6.1 回退默认，不抛错（与 `getViewport` 的 DPI 回退一致）；`layerOrder` 非法按 `type` 并 warning。
 - 公共 promise 只 reject `OFDError`；意外错误用 `wrapError` 包装为 `OFD_RENDERER_UNSUPPORTED`（v1 API 已有语义）。
 
-## 9. 需要的重构点（仅 v1.1 实施）
+## 9. 重构点（v1.1 已实施）
 
 ### 9.1 T4 文字布局
 
@@ -503,12 +504,19 @@ function layoutTextToChars(
 
 ### 9.4 T7 API
 
-- `OFDPage` 构造函数增加第 4 个可选参数：
+- `OFDPage` 构造函数增加可选文本驱动。实际实现位于第 6 个参数（`exportDriver`/`prepareDriver` 之后），保持旧三参调用可编译：
 
 ```ts
-type PageTextDriver = (options?: TextContentOptions) => Promise<TextContent>;
+type PageTextDriver = (options: TextContentOptions) => Promise<TextContent>;
 
-constructor(index, pageSize, driver, textDriver?: PageTextDriver)
+constructor(
+  index,
+  pageSize,
+  driver,
+  exportDriver?,
+  prepareDriver?,
+  textDriver?: PageTextDriver,
+)
 ```
 
 - `getTextContent(options?)`：
@@ -639,6 +647,21 @@ constructor(index, pageSize, driver, textDriver?: PageTextDriver)
 
 ## 13. 与 v1 验收的关系
 
-- 本文档是 **v1.1 设计**，不是 v1 交付物；v1 的 `docs/验收计划.md`/19.6 不新增 A19 文本层。
-- T13.2–T13.5 在 v1 验收通过后另开任务；T7/T10 仅做加法式可选扩展（T13.3 加可选参数/字段），不破坏 v1 既有调用与行为。
-- 本轮仅落盘设计；除 captain 明确要求的 `CONTRACTS.md` §7.9 `ZOrder` 修正（v1.0-r6）外，未修改任何实现/契约文件。
+- 本文档原为 **v1.1 设计**；r9 已把 P0 文本 API 纳入公开契约，v1 的 `docs/验收计划.md`/19.6 原始清单不新增 A19 文本层，但公开 API 文档同步由 t73 完成。
+- T13.2–T13.5 的实现已落 t70/t72；T7/T10 只做加法式可选扩展，不破坏 v1 既有调用与行为。
+- 本轮 t73 只同步文档，未修改实现代码。
+
+## 14. 实现状态与差异（r9，2026-10-22）
+
+| 项 | 状态 |
+|---|---|
+| `OFDPage.getTextContent` | 已实现（t72 接线） |
+| `render/text-content.ts` 收集内核 | 已实现（t70）：`collectTextPageMm`/`toTextPagePx`，复用 `layoutText`，不调用 Canvas 文字 API |
+| px/mm | 已实现：mm 缓存、px 输出，`dpi` 不入缓存键 |
+| `CacheOptions.textPages` | 已实现：默认 4，按页 LRU（t72） |
+| 并发/取消/close | 已实现：同键共享构建、waiters 计数、caller abort 只影响自身、close 中止并清缓存 |
+| 限制/截断 | 已实现：`maxTextItems`/`maxTextChars`，`W_TEXT_ITEM_LIMIT`/`W_TEXT_CHAR_LIMIT` |
+| 类型位置 | **差异**：公开类型在 `src/api/ui-types.ts`，不在原建议的 `render/text-content-types.ts` |
+| 构造函数 driver | **差异**：文本 driver 为第 6 个可选参数（在 export/prepare driver 之后） |
+| Pattern/ClipArea.text | 已按设计跳过；不收集其内部文字 |
+| 测试 | `test/render/text-content`、`test/api/text-content-api`、`test/text-layout` 已覆盖；具体计数见实现任务输出 |

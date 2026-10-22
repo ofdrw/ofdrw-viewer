@@ -12,6 +12,7 @@
 
 > 0.5 变更：v1 增加 `Seal.esl`/`SignedValue.dat` 静态签章解析（ASN.1 v1/v4/v5 结构推断、位图与内嵌矢量 OFD 章）、签章位图 multiply、标准/manual 图片 Clips 顺序、GIF 首帧解码；P9 `dense-text-perf` 按极端样本例外计时。
 > 0.5-r8 变更：新增 `OFDPage.exportImage` 与 `OFDOpenOptions.encodeImage` 页面图片导出契约（详见 15.1.1）；engine 不新增编码依赖。
+> 0.5-r9 变更（2026-10-22）：落地并文档化阅读器 UI API（P0/P1）：PageInfo/Outline/Bookmark/签章 XML 元数据/SignedValue/DocumentMetadata/prepare/TextContent；不解析 ASN.1/证书、不暴露 Seal.esl；P2 权限/附件/局部渲染/导出旋转延后。
 > 0.5-r10 变更（2026-10-22）：记录非标准兼容扩展 `Clips@TransFlag`（缺省 false=裁剪区不受外部对象 CTM 影响；true=受外部 CTM 影响、在对象 CTM 后应用），并明确其优先于 t48 图片 manual 逆 CTM 兼容路径；`CT_Clip` 标准 schema 无此属性，不作为标准能力。
 > 0.4 变更：采用 Monorepo 子包 `ofdrw-viewer-engine`；`Renderer` 改为 `beginGroup/endGroup`，H5 的 `CanvasFactory`/scratch 完全内部化，公开 API 不再有 `RenderSurface`；`fallbackFonts` 更名为 `supplementaryFonts`；删除 engine 级独立块栅格缓存，改为复用 display list。
 
@@ -2346,6 +2347,7 @@ export interface CacheOptions {
   imageBytes: number;               // 64 MiB
   glyphCount: number;               // 20,000
   pageModels: number;               // 8
+  textPages?: number;               // 文本层 mm 缓存页数，默认 4（r9）
 }
 
 export interface OFDOpenOptions {
@@ -2437,6 +2439,10 @@ export class OFDPage {
   render(params: PageRenderParameters): RenderTask;
   /** 整页导出为图片；使用文档的 createCanvas/encodeImage，返回编码字节 */
   exportImage(options?: PageImageExportOptions): Promise<PageImageResult>;
+  /** 预取页面模型/字体/图片/模板；不创建 canvas、不绘制（P1） */
+  prepare(options?: PagePrepareOptions): Promise<void>;
+  /** 阅读器文本层；px 坐标，复用 layoutText，不调用 Canvas 文字 API（P0） */
+  getTextContent(options?: TextContentOptions): Promise<TextContent>;
 }
 
 export class H5Canvas2DRenderer implements Renderer {
@@ -2452,6 +2458,19 @@ export class OFDDocument {
 
   /** 按需加载指定页；索引从 0 开始 */
   getPage(pageIndex: number): Promise<OFDPage>;
+
+  /** 批量页尺寸/页区域，mm；不加载页面内容（P0） */
+  getPageInfos(options?: PageInfoOptions): Promise<readonly PageInfo[]>;
+  /** 大纲树；无大纲返回空数组（P0） */
+  getOutline(options?: { signal?: AbortSignal }): Promise<readonly OutlineNode[]>;
+  /** 书签列表；无书签返回空数组（P0） */
+  getBookmarks(options?: { signal?: AbortSignal }): Promise<readonly BookmarkItem[]>;
+  /** 文档属性；日期保留原文（P1） */
+  getMetadata(options?: { signal?: AbortSignal }): Promise<DocumentMetadata>;
+  /** 签章 XML 元数据；不读 SignedValue.dat/Seal.esl、不解析 ASN.1（P0） */
+  getSignatureEntries(options?: { signal?: AbortSignal }): Promise<readonly SignatureEntryInfo[]>;
+  /** SignedValue.dat 原始字节；未声明/缺失返回 undefined（P0） */
+  getSignedValue(signatureId: string, options?: { signal?: AbortSignal }): Promise<SignedValueFile | undefined>;
 
   /** 关闭并释放所有缓存；可重复调用 */
   close(): Promise<void>;
@@ -2481,6 +2500,30 @@ export class OFDDocument {
 - **错误传播**：`page.render` 的 canvas 尺寸/像素/资源限制/取消错误原样以 `OFDError` 传播；编码阶段只新增上述映射，不新增错误码，不把第三方异常裸抛。
 
 `exportImage` 复用同一套 `createCanvas` 与 `page.render`，因此 H5、Node 宿主和矢量签章嵌套 OFD 共用相同的画布/像素限制语义。
+
+### 15.1.2 阅读器 UI API（r9）
+
+面向 `ofdrw-viewer-ui` 的 P0/P1 数据读取接口；完整字段/单位/错误见 `docs/公开API.md` §3/§4 与 `docs/ofdrw-viewer-ui-engine-api.md`。
+
+| 优先级 | API | 说明 |
+| --- | --- | --- |
+| P0 | `document.getPageInfos(options?)` | 页尺寸/页区域，mm；只读页头，不 prepare |
+| P0 | `document.getOutline/getBookmarks(options?)` | 大纲/书签及跳转目标，mm；无结果空数组 |
+| P0 | `document.getSignatureEntries(options?)` | 签章 XML 元数据、页面戳记，mm；只读 XML |
+| P0 | `document.getSignedValue(id, options?)` | SignedValue.dat 原始字节；UI 侧解析 ASN.1 |
+| P0 | `page.getTextContent(options?)` | 文本层，px；复用 layoutText，不调用 Canvas 文字 API |
+| P1 | `document.getMetadata(options?)` | DocInfo/版本/页数，日期保留原文 |
+| P1 | `page.prepare(options?)` | 预取页面资源，不创建 canvas、不绘制 |
+| P2 | `getPermissions`/`getAttachments`/`renderRegion`/`exportImage.rotation` | v1 不实现，延后到后续版本 |
+
+边界：
+
+- 引擎不解析 `SignedValue.dat` 的 ASN.1/DER/X.509/CMS，不验签、不判断证书/签章有效性；ASN.1 是 UI 包的依赖。
+- `Seal.esl` 不进入公开 API；印章信息由 UI 从 `SignedValue.dat` 的 `TBS_Sign.eseal` 获取。引擎内部签章外观渲染可读 `Seal.esl`，不属于本 API。
+- `getSignatureEntries` 只返回 `Signature.xml` 元数据；`getSignedValue` 只返回原始字节；未声明/文件缺失返回 `undefined`，不抛 `OFD_ENTRY_NOT_FOUND`。
+- 文本层几何 px，内部 mm 缓存；`CacheOptions.textPages` 默认 4，缓存键不含 dpi；超限截断 + `W_TEXT_ITEM_LIMIT`/`W_TEXT_CHAR_LIMIT`。
+- 取消统一 `OFD_ABORTED`、关闭 `OFD_CLOSED`；可选数据缺失返回空数组/`undefined`，不是错误。
+- P2 的权限/附件/局部渲染/导出旋转不进入 r9 调用面；不得据此声称已实现。
 
 ### 15.2 为什么用 `page.getViewport`
 

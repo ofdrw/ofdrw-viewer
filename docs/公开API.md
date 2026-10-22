@@ -1,13 +1,13 @@
 # ofdrw-viewer-engine 公开 API
 
-> 版本：v1.0（契约 r8）  
+> 版本：v1.0（契约 r9）
 > 更新：2026-10-22  
-> 状态：v1 稳定接口；`page.getTextContent` 属于 v1.1，本文不收录  
+> 状态：v1 稳定接口；已收录 P0/P1 阅读器 UI API（PageInfo/Outline/Bookmark/签章元数据/SignedValue/元数据/prepare/TextContent）；P2 延后
 > 适用包：`ofdrw-viewer-engine`（唯一包名）  
 > 公共入口：`packages/ofdrw-viewer-engine/src/index.ts`  
 > 设计依据：`docs/OFD渲染引擎设计方案.md` §15  
 > 内部契约：`docs/CONTRACTS.md`（模块间接口，不是调用方文档）  
-> 文本层设计：`docs/text-content-api.md`（v1.1，未实现）  
+> 文本层设计：`docs/text-content-api.md`（v1.1，已实现）
 > 回归口径：`docs/测试方案.md`、`docs/回归报告.md`
 
 本文档面向**调用方/其它模块**，说明每个公开类、函数、参数、返回值、约束与常见错误。内部模块（`container/model/resource/style/render`）不直接从包根导出，不属于本文档的调用面。
@@ -26,7 +26,7 @@
 
 同步检查：`test/smoke/public-api-doc.test.ts` 会读取 `src/index.ts` 的全部导出名，并断言每个名字都出现在本文档附录中；新增导出未补文档时 smoke 失败。
 
-**不在本文档范围**：阅读器 UI、缩放/旋转/打印筛选、签章密码学验证、Node/微信宿主适配器、`page.getTextContent()`（v1.1）。
+**不在本文档范围**：阅读器 UI 布局/交互、缩放/旋转/打印筛选、签章密码学验证（ASN.1/证书/验签）、Node/微信宿主适配器、P2 的权限/附件/局部渲染/导出旋转。
 
 ---
 
@@ -96,9 +96,17 @@ Node/小程序没有浏览器 `document`/`OffscreenCanvas` 时必须注入 `crea
 | `OFDDocument.open(options)` | `Promise<OFDDocument>` | 打开 OFD 包，只读页树/资源索引 |
 | `document.pageCount` | `number` | 页数，打开后固定 |
 | `document.getPage(index)` | `Promise<OFDPage>` | 按需加载指定页 |
+| `document.getPageInfos(options?)` | `Promise<readonly PageInfo[]>` | 批量页尺寸/页区域（P0） |
+| `document.getOutline(options?)` | `Promise<readonly OutlineNode[]>` | 大纲树（P0） |
+| `document.getBookmarks(options?)` | `Promise<readonly BookmarkItem[]>` | 书签列表（P0） |
+| `document.getMetadata(options?)` | `Promise<DocumentMetadata>` | 文档属性（P1） |
+| `document.getSignatureEntries(options?)` | `Promise<readonly SignatureEntryInfo[]>` | 签章 XML 元数据（P0） |
+| `document.getSignedValue(id, options?)` | `Promise<SignedValueFile \| undefined>` | SignedValue.dat 原始字节（P0） |
 | `document.close()` | `Promise<void>` | 关闭并释放缓存/句柄，幂等 |
 | `page.getSize()` | `PageSize` | 页尺寸，单位 mm |
 | `page.getViewport(options?)` | `Viewport` | 指定 DPI 的设备像素尺寸 |
+| `page.prepare(options?)` | `Promise<void>` | 预取页面资源，不绘制（P1） |
+| `page.getTextContent(options?)` | `Promise<TextContent>` | 阅读器文本层，px（P0） |
 | `page.render(params)` | `RenderTask` | 绘制到宿主 canvas context |
 | `page.exportImage(options?)` | `Promise<PageImageResult>` | 整页离屏编码导出 |
 | `RenderTask.promise` | `Promise<void>` | 渲染完成/失败/取消 |
@@ -168,7 +176,170 @@ Node/小程序没有浏览器 `document`/`OffscreenCanvas` 时必须注入 `crea
 
 返回页句柄；页尺寸已按“页 → 模板 → CommonData → A4”回退链解析。越界抛 `OFD_PAGE_NOT_FOUND`；文档已关闭抛 `OFD_CLOSED`；页面 XML/资源损坏抛对应 `OFD_*`。
 
-### 3.5 `document.close(): Promise<void>`
+### 3.5 `document.getPageInfos(options?: PageInfoOptions): Promise<readonly PageInfo[]>`
+
+批量读取连续页的尺寸/页区域，供阅读器建立页壳、虚拟滚动和缩略图布局。只扫描页树与 `Page.xml` 页头，**不调用 `preparePage`、不解码字体/图片、不构建 display list、不创建 canvas**。
+
+```ts
+interface PageInfoOptions {
+  /** 起始页索引，0-based；默认 0。 */
+  start?: number;
+  /** 返回页数；默认剩余全部；0 表示空。 */
+  count?: number;
+  /** 取消信号。 */
+  signal?: AbortSignal;
+}
+
+interface PageInfo {
+  index: number;                 // 页索引，0-based
+  widthMm: number;               // 页宽，mm
+  heightMm: number;              // 页高，mm
+  xMm?: number;                  // PhysicalBox 原点 x，mm；非零时给出
+  yMm?: number;                  // PhysicalBox 原点 y，mm；非零时给出
+  source?: 'page' | 'template' | 'default'; // 页尺寸来源（P1）
+}
+```
+
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `start` | `0` | 非整数截断；负数或大于等于页数返回空数组 |
+| `count` | 剩余全部 | 非有限/负数按 0；超出剩余页数时截断 |
+| `signal` | 无 | 中止后 `OFD_ABORTED`；`close` 优先 `OFD_CLOSED` |
+
+- 返回按 `index` 升序的连续页；与 `getPage(index).getSize()` 使用同一条 `Page → Template → CommonData.PageArea → A4` 回退链，单位 mm。
+- 结果按页缓存到 `close()`；相同页重复请求不重复读 XML。1000 页冷启动目标 ≤300 ms、缓存命中 ≤50 ms（参考机/本地 ZIP）。
+- 单页缺失/非法 Area 只 warning 并回退，不影响其他页；没有页时返回空数组，不抛错。
+- 错误：取消 `OFD_ABORTED`、关闭 `OFD_CLOSED`；不因单页损坏抛 `OFD_XML_PARSE`。
+
+### 3.6 `document.getOutline(options?: { signal?: AbortSignal }): Promise<readonly OutlineNode[]>`
+
+读取 `Document.xml` 的大纲树；打开阶段已解析并缓存，不加载页面内容。无大纲返回空数组。
+
+```ts
+type DestinationType = 'XYZ' | 'Fit' | 'FitH' | 'FitV' | 'FitR';
+
+interface DocumentDestination {
+  type: DestinationType;         // OFD Dest@Type
+  pageIndex: number;             // 目标页，0-based
+  leftMm?: number;               // 目标区域左边界，mm
+  topMm?: number;                // 目标区域上边界，mm
+  rightMm?: number;              // 目标区域右边界，mm
+  bottomMm?: number;             // 目标区域下边界，mm
+  zoom?: number;                 // XYZ 缩放倍率；1=100%
+}
+
+interface OutlineNode {
+  title: string;                 // 标题
+  expanded?: boolean;            // OFD Expanded；缺省由 UI 决定
+  children: readonly OutlineNode[]; // 保持 XML 顺序
+  dest?: DocumentDestination;    // 无效/缺失目标时省略
+}
+```
+
+- 保持 XML 顺序与层级；`Goto Bookmark` 在打开阶段解析到书签目标。
+- 无效 PageID/未知 Dest Type/非法坐标：保留节点与子节点，省略 `dest` 并 warning，不抛错。
+- 错误：取消 `OFD_ABORTED`、关闭 `OFD_CLOSED`。
+
+### 3.7 `document.getBookmarks(options?: { signal?: AbortSignal }): Promise<readonly BookmarkItem[]>`
+
+读取 `Document.xml` 的书签列表；保持 XML 顺序，不做去重/排序。无书签返回空数组。
+
+```ts
+interface BookmarkItem {
+  name: string;                  // Bookmark@Name
+  dest?: DocumentDestination;    // 无效/缺失目标时省略
+}
+```
+
+- 同名书签全部保留；无效目标保留书签、省略 `dest` 并 warning。
+- 错误：取消 `OFD_ABORTED`、关闭 `OFD_CLOSED`。
+
+### 3.8 `document.getMetadata(options?: { signal?: AbortSignal }): Promise<DocumentMetadata>`
+
+读取 `OFD.xml` 的 `DocBody/DocInfo`；`version/pageCount` 来自已打开文档。无 `DocInfo` 时仍返回版本与页数，不报错。
+
+```ts
+interface DocumentMetadata {
+  version: string;               // OFD 版本，例如 '1.0'
+  pageCount: number;
+  packageSize?: number;          // 源文件字节数，byte
+  title?: string;                // DocInfo/Title
+  author?: string;               // DocInfo/Author
+  subject?: string;              // DocInfo/Subject
+  abstract?: string;             // DocInfo/Abstract
+  creationDate?: string;         // 原文，不转换时区
+  modDate?: string;              // 原文，不转换时区
+  creator?: string;              // DocInfo/Creator
+  creatorVersion?: string;       // DocInfo/CreatorVersion
+  keywords?: readonly string[];  // DocInfo/Keywords
+  docId?: string;                // DocInfo/DocID
+  customData?: Readonly<Record<string, string>>; // 自定义元数据
+}
+```
+
+- 缺失字段省略；非法日期等字段 warning 后跳过，不中断打开/读取。
+- 错误：取消 `OFD_ABORTED`、关闭 `OFD_CLOSED`。
+
+### 3.9 `document.getSignatureEntries(options?: { signal?: AbortSignal }): Promise<readonly SignatureEntryInfo[]>`
+
+读取 `Signatures.xml` 索引与逐条 `Signature.xml`，返回签章 XML 元数据和页面戳记。**只读 XML**：不读取 `SignedValue.dat` 内容、不读取 `Seal.esl`、不解析 ASN.1/DER/X.509/CMS、不验签。无签章或索引损坏返回空数组。
+
+```ts
+interface SignatureProvider {
+  name?: string;                 // Provider@ProviderName
+  company?: string;              // Provider@Company
+  version?: string;              // Provider@Version
+}
+
+interface SignatureReferenceInfo {
+  fileRef: string;               // Reference@FileRef
+}
+
+interface SignatureStampInfo {
+  id?: string;                   // StampAnnot@ID
+  pageId: string;                // StampAnnot@PageRef（页 ID）
+  pageIndex?: number;            // 页索引，0-based；未匹配时省略
+  boundary: Box;                 // 戳记边界，mm
+  clip?: Box;                    // 裁剪区域，mm
+}
+
+interface SignatureEntryInfo {
+  id: string;                    // Signature@ID
+  type: string;                  // Signature@Type，例如 Seal/Sign
+  baseLoc: string;               // Signature.xml 包内路径
+  provider?: SignatureProvider;
+  signatureDateTime?: string;    // 原文，不转换时区
+  references: readonly SignatureReferenceInfo[];
+  stamps: readonly SignatureStampInfo[]; // 保持 XML 顺序
+  signedValuePath?: string;      // SignedValue.dat 包内路径；未声明时省略
+  hasSignedValue: boolean;       // 只表示是否声明路径，不表示文件存在
+}
+```
+
+- 保持 `Signatures.xml` 顺序；重复 ID 先到先得并 warning；坏 `Signature.xml` 跳过该条并 warning，其他条正常。
+- `PageRef` 未匹配：保留 `pageId`、省略 `pageIndex` 并 warning；非法 Boundary 跳过该戳记并 warning。
+- `boundary/clip` 使用 mm；`pageIndex` 从 0 开始。
+- 错误：取消 `OFD_ABORTED`、关闭 `OFD_CLOSED`；索引/条目损坏按 warning + 跳过/空数组处理，不抛 ASN.1/证书错误。
+
+### 3.10 `document.getSignedValue(signatureId: string, options?: { signal?: AbortSignal }): Promise<SignedValueFile | undefined>`
+
+按 `SignatureEntryInfo.signedValuePath` 返回 `SignedValue.dat` **原始字节**；不解析内容、不读取 `Seal.esl`、不缓存大文件。
+
+```ts
+interface SignedValueFile {
+  signatureId: string;           // 所属签章 ID
+  path: string;                  // SignedValue.dat 包内路径
+  data: Uint8Array;              // 原始字节，归调用方
+  byteLength: number;            // byte
+}
+```
+
+- 未声明 SignedValue 或签章 ID 不存在：返回 `undefined`，不 warning。
+- 声明但文件缺失/读取失败：warning `W_SIGNATURE_RESOURCE`，返回 `undefined`，不抛 `OFD_ENTRY_NOT_FOUND`。
+- `OFD_LIMIT_EXCEEDED`/`OFD_INVALID_PACKAGE` 原样抛出；取消 `OFD_ABORTED`、关闭 `OFD_CLOSED`。
+- 每次调用重新读取，不做长期缓存；UI 解析后自行缓存结构化详情。
+
+### 3.11 `document.close(): Promise<void>`
 
 关闭文档，释放 ZIP/XML/字体/图片缓存与图像句柄；可重复调用。进行中的渲染/导出会先被中止，并等待其结束；`close()` 不向调用方抛错。
 
@@ -248,7 +419,111 @@ interface PageImageResult {
 - 不包含阅读器缩放/旋转/裁剪/多页拼接；区域导出、多页导出不在 v1。
 - 导出结果不自动释放；`data` 归调用方，编码中间 canvas 由 engine 释放。
 
-### 4.6 `RenderTask`
+### 4.6 `page.prepare(options?: PagePrepareOptions): Promise<void>`
+
+预取页面模型、字体、图片和模板资源，填充页面缓存；**不创建 canvas、不绘制**。供阅读器滚动预取。
+
+```ts
+interface PagePrepareOptions {
+  /** 取消信号；中止后以 OFD_ABORTED 拒绝。 */
+  signal?: AbortSignal;
+}
+```
+
+- 幂等：已准备或正在准备时复用同一 bundle；并发调用只准备一次。
+- 使用 96 DPI 准备；`page.render` 的 DPI 匹配时复用，渲染结果不因 prepare 改变。
+- 调用方 `signal` 只影响本次等待，不取消共享准备；`close` 中止共享准备并清理缓存。
+- 手工构造、无准备驱动的 `OFDPage` 抛 `OFD_RENDERER_UNSUPPORTED`；取消 `OFD_ABORTED`、关闭 `OFD_CLOSED`。
+
+### 4.7 `page.getTextContent(options?: TextContentOptions): Promise<TextContent>`
+
+读取页面阅读器文本层。复用 `layoutText` 与页面绘制顺序，**不调用 Canvas 文字 API**，不改变页面渲染结果。所有几何单位 px，原点为 `PhysicalBox` 左上角，y 向下。
+
+```ts
+interface TextContentOptions {
+  dpi?: number;                  // 输出 DPI，默认 96；非有限/<=0 回退 96
+  includeChars?: boolean;        // 是否返回 chars，默认 true
+  includeAnnotations?: boolean;  // 是否包含注释 Appearance 文字，默认 false
+  includeInvisible?: boolean;    // 是否包含不可见文字，默认 false
+  layerOrder?: 'document' | 'type'; // 缺省沿用打开文档的 layerOrder
+  signal?: AbortSignal;          // 中止后 OFD_ABORTED
+  maxTextItems?: number;         // 默认 20,000；0=不限
+  maxTextChars?: number;         // 默认 500,000；0=不限
+}
+
+interface TextContent {
+  pageIndex: number;             // 0-based
+  dpi: number;                   // 实际输出 DPI
+  unit: 'px';                    // 固定 px
+  pageWidth: number;             // 页面宽，px
+  pageHeight: number;            // 页面高，px
+  items: TextItem[];             // 按绘制顺序
+  itemCount: number;
+  charCount: number;             // 即使 includeChars=false 也统计
+  truncated: { items: boolean; chars: boolean };
+}
+
+interface TextPoint { x: number; y: number; }              // px
+interface TextRect { x: number; y: number; width: number; height: number; } // px
+type TextQuad = readonly [TextPoint, TextPoint, TextPoint, TextPoint]; // 左上/右上/右下/左下
+
+interface TextFontInfo {
+  resourceId: string;            // TextObject.font
+  family: string;
+  postscriptName?: string;
+  weightClass?: number;          // OS/2 weightClass
+  italic: boolean;
+}
+
+type TextLayer = 'template' | 'page' | 'annotation';
+
+interface TextItem {
+  order: number;                 // 绘制顺序，0-based
+  objectId?: string;
+  templateId?: string;
+  annotationId?: string;
+  blockId?: string;
+  layer: TextLayer;
+  layerType: 'Background' | 'Body' | 'Foreground' | 'Custom';
+  zOrder?: 'Background' | 'Body' | 'Foreground';
+  visible: boolean;
+  alpha: number;                 // 0..1，仅对象自身
+  text: string;                  // TextCode 顺序拼接
+  font: TextFontInfo;
+  size: number;                  // 字号，px
+  transform: Matrix;             // 布局局部 mm → 页面 px
+  origin: TextPoint;             // 首字符 baseline，px
+  rect: TextRect;                // 轴对齐包围盒，px
+  quad: TextQuad;                // 外接四边形，px
+  advance: number;               // 阅读方向总推进，px
+  charCount: number;
+  chars?: TextChar[];            // includeChars=false 时省略
+}
+
+interface TextChar {
+  text: string;
+  codePoint: number;
+  glyphId?: number;
+  faceKey?: string;
+  fallback: boolean;
+  origin: TextPoint;             // px
+  advance: number;               // px；缺字为 0
+  rect: TextRect;                // px；缺字宽高为 0
+  quad: TextQuad;                // px；缺字四点为 origin
+  approximate: boolean;          // 多字形 run 的近似映射
+}
+```
+
+- 一个 `TextItem` 对应一个 `TextObject`，`text` 按 `TextCode` 顺序拼接；`TextChar` 按 Unicode 码点给出字符级几何。
+- 只遍历页面/模板/复合/注释的可见文字；默认排除 Pattern tile、ClipArea.text 和注释 Appearance；`includeAnnotations=true` 才加入注释文字。
+- 默认要求样式、非零 Boundary、fill/stroke、size>0、visible/alpha；`includeInvisible=true` 只放宽 visible/alpha，`TextItem.visible` 仍反映对象自身。
+- 空页返回 `items: []`、`itemCount: 0`、`charCount: 0`，不报错。
+- 达到 `maxTextItems` 停止加入后续 item；下一个 item 会超过 `maxTextChars` 时整项不加入；`truncated` 为二值状态，对应 warning `W_TEXT_ITEM_LIMIT`/`W_TEXT_CHAR_LIMIT`，不抛错。非法上限回退默认；0 表示不限。
+- mm 布局按页缓存（`CacheOptions.textPages`，默认 4 页），缓存键不含 `dpi`；96/144/300 DPI 复用同一布局，只做输出换算。`close()` 中止并清空。
+- 手工构造、无文本驱动的 `OFDPage` 抛 `OFD_RENDERER_UNSUPPORTED`；关闭 `OFD_CLOSED`、取消 `OFD_ABORTED`。页面不存在由 `getPage` 提前以 `OFD_PAGE_NOT_FOUND` 拒绝。
+- 不解析 ASN.1/证书，不触及签章；文本层与公开签章 API 相互独立。
+
+### 4.8 `RenderTask`
 
 | 成员 | 类型 | 说明 |
 | --- | --- | --- |
@@ -479,6 +754,17 @@ interface OFDWarning {
 | `W_ANNOT_EMPTY` | 注释外观为空/索引缺失 |
 | `W_JBIG2_DECODE` | JBIG2 解码失败/超限，跳过 |
 
+P0/P1 UI API 还会产生以下扩展码（`OFDWarning.code` 类型允许 `string`；宿主按字符串处理，`WARNING_CODES` 冻结表暂未列入这些新增码）：
+
+| `code` | 含义 |
+| --- | --- |
+| `W_OUTLINE_TARGET` | 大纲层级超限/目标无效/书签引用不存在，保留节点但省略 `dest` |
+| `W_BOOKMARK_TARGET` | 书签目标无效，保留书签但省略 `dest` |
+| `W_METADATA_FIELD` | DocInfo 日期非法或自定义字段缺名，跳过该字段 |
+| `W_SIGNATURE_RESOURCE` | 声明了 SignedValue.dat 但读取失败，`getSignedValue` 返回 `undefined` |
+| `W_TEXT_ITEM_LIMIT` | 文本项达到 `maxTextItems`，停止加入后续项 |
+| `W_TEXT_CHAR_LIMIT` | 下一个文本项会超过 `maxTextChars`，整项不加入 |
+
 ---
 
 ## 11. 资源限制与缓存
@@ -507,6 +793,7 @@ interface OFDWarning {
 | `imageBytes` | 64 MiB | byte | 解码图片缓存 |
 | `glyphCount` | 20,000 | 条 | 字形轮廓缓存 |
 | `pageModels` | 8 | 页 | 页面模型缓存 |
+| `textPages` | 4 | 页 | 文本层 mm 布局缓存（`getTextContent`）；r9 新增，可选 |
 
 约束：`limits`/`cache` 为浅合并；设 0 表示不限制（仅测试建议）；超限通常抛 `OFD_LIMIT_EXCEEDED` 或降级 warning。
 
@@ -514,13 +801,15 @@ interface OFDWarning {
 
 ## 12. 单位、坐标与生命周期
 
-- 页面/对象空间：**mm**；页面原点由 `PhysicalBox` 归一化。
+- 页面/对象空间：**mm**；页面原点由 `PhysicalBox` 归一化。PageInfo、大纲/书签目标、签章戳记边界均为 **mm**。
 - Viewport/画布/图片：**设备像素**；颜色 RGBA 0..255。
+- 文本层：**px**，由 mm 布局按 `dpi/25.4` 换算；`TextContent.unit` 固定 `'px'`。
+- 日期/签章时间：保留 OFD 原文，不做时区推断。
 - 矩阵：2×3 列主序 `[a,b,c,d,e,f]`，`x' = a·x + c·y + e`，`y' = b·x + d·y + f`。
-- 生命周期：`open → getPage → getViewport → render/exportImage → close`；`close` 后不可复用。
-- 并发：同一 canvas 渲染串行；不同 canvas 可并行；`close` 中止进行中的渲染/导出。
+- 生命周期：`open → getPage/getPageInfos → getViewport/prepare/render/exportImage/getTextContent → close`；`close` 后不可复用。
+- 并发：同一 canvas 渲染串行；不同 canvas 可并行；同一页的 prepare/文本构建并发去重；`close` 中止进行中的渲染/导出/准备/文本任务。
 - 背景/清屏/画布尺寸由宿主负责；`page.render` 不填白底。
-- v1 不含：径向渐变（warning 降级）、ICC/BlendMode 完整支持、加密文档、签名密码学验证、Node/微信宿主适配器、文本内容 API（v1.1）。
+- v1 不含：径向渐变（warning 降级）、ICC/BlendMode 完整支持、加密文档、签名密码学验证、Node/微信宿主适配器、P2 的权限/附件/局部渲染/导出旋转。
 
 ---
 
@@ -532,8 +821,8 @@ interface OFDWarning {
 
 | 名称 | 说明 |
 | --- | --- |
-| `OFDDocument` | 文档入口；`open/getPage/close` |
-| `OFDPage` | 页面入口；`getSize/getViewport/render/exportImage` |
+| `OFDDocument` | 文档入口；`open/getPage/getPageInfos/getOutline/getBookmarks/getMetadata/getSignatureEntries/getSignedValue/close` |
+| `OFDPage` | 页面入口；`getSize/getViewport/prepare/getTextContent/render/exportImage` |
 | `RenderTask` | 渲染句柄；`promise/cancel` |
 | `H5Canvas2DRenderer` | 默认 Canvas 2D 渲染器 |
 | `OFDError` | 统一错误类 |
@@ -639,12 +928,43 @@ interface OFDWarning {
 | `WarningEmitter` | warning 上报接口 |
 | `WarningHandler` | warning 回调类型 |
 
+### 13.7 阅读器 UI API 类型
+
+| 名称 | 说明 |
+| --- | --- |
+| `OFDDocumentApi` | 文档 UI API 形状（与 `OFDDocument` 声明合并） |
+| `OFDPageApi` | 页面 UI API 形状（与 `OFDPage` 声明合并） |
+| `PageInfoOptions` | `getPageInfos` 参数（start/count/signal） |
+| `PageInfo` | 页尺寸/页区域，mm |
+| `DestinationType` | 大纲/书签目标类型 |
+| `DocumentDestination` | 跳转目标，mm/zoom |
+| `OutlineNode` | 大纲节点与子节点 |
+| `BookmarkItem` | 书签条目 |
+| `SignatureProvider` | 签章 Provider 元数据 |
+| `SignatureReferenceInfo` | 签章保护范围引用 |
+| `SignatureStampInfo` | 签章戳记位置，mm |
+| `SignatureEntryInfo` | 签章 XML 条目元数据 |
+| `SignedValueFile` | SignedValue.dat 原始字节 |
+| `DocumentMetadata` | 文档属性 |
+| `PagePrepareOptions` | `page.prepare` 参数 |
+| `TextContent` | 页面文本层，px |
+| `TextContentOptions` | `getTextContent` 参数 |
+| `TextItem` | 单个 TextObject 的文本项 |
+| `TextChar` | 单个 Unicode 码点的字符项 |
+| `TextFontInfo` | 文本项字体元信息 |
+| `TextUnit` | 文本坐标单位（`px`） |
+| `TextLayer` | 文本项所在层 |
+| `TextPoint` | 二维点，px |
+| `TextQuad` | 字符单元四边形，px |
+| `TextRect` | 轴对齐矩形，px |
+
 ---
 
 ## 14. 变更记录
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
+| v1.0-r9 | 2026-10-22 | 同步 P0/P1 阅读器 UI API：getPageInfos/getOutline/getBookmarks/getMetadata/getSignatureEntries/getSignedValue/page.prepare/page.getTextContent；新增 PageInfo/Outline/Bookmark/签章/SignedValue/Metadata/TextContent 类型与 `CacheOptions.textPages`；明确不解析 ASN.1/不暴露 Seal.esl/P2 延后 |
 | v1.0-r8 | 2026-10-22 | 初版公开 API 文档：document/page/render/exportImage、平台注入、错误/warning、限制/缓存、类型附录；建立与 `src/index.ts` 的同步检查 |
 | v1.0-r7 | 2026-10-22 | 增加 `OFDOpenOptions.createCanvas`（矢量签章/导出） |
 | v1.0-r8 | 2026-10-22 | 增加 `page.exportImage` 与 `encodeImage` |
