@@ -6,7 +6,7 @@
  */
 
 import type { Matrix, PathCommand } from '../common/types';
-import { multiplyMatrix, transformPoint } from '../common/matrix';
+import { multiplyMatrix } from '../common/matrix';
 import type { TextCode, TextObject } from '../model/types';
 import type { ResolvedStyle } from '../style/types';
 import type { Renderer } from '../renderer/types';
@@ -313,6 +313,15 @@ export function buildUnits(
   state: WarningState = { warnedGlyph: false, warnedBadNumber: false, warnedDeltaExtra: false },
   options: TextLayoutOptions = {},
 ): PendingUnit[] {
+  // 高频小对象（无 CGTransform，通常 1 个字符）走无 Map/排序的快路径。
+  if (!cgTransforms || cgTransforms.length === 0) {
+    const simple: PendingUnit[] = [];
+    for (let index = 0; index < codePoints.length; index += 1) {
+      const run = buildGlyphRun(codePoints[index], undefined, faces, cache, state, options);
+      simple.push({ cpStart: index, codeCount: 1, glyphs: run ? [run] : [] });
+    }
+    return simple;
+  }
   const byPosition = new Map<number, TextCode['cgTransforms'][number]>();
   const sorted = [...(cgTransforms ?? [])].sort((a, b) => a.codePosition - b.codePosition);
   for (const transform of sorted) {
@@ -747,38 +756,60 @@ export function buildTextPath(
 }
 
 /**
- * 向渲染器发送一条路径命令。
+ * 直接把字形轮廓变换后送入渲染器。
+ *
+ * 与 `transformPathCommands` 使用同一仿射公式，但不再分配中间命令对象；
+ * 用于高频文字绘制，保持路径命令顺序与坐标完全一致。
  *
  * @param renderer 目标渲染器。
- * @param command 路径命令。
+ * @param commands 字体单位路径命令。
+ * @param matrix 仿射矩阵（列向量，`x' = a*x + c*y + e`）。
  */
-function emitCommand(renderer: Renderer, command: PathCommand): void {
-  switch (command.type) {
-    case 'moveTo':
-      renderer.moveTo(command.x, command.y);
-      break;
-    case 'lineTo':
-      renderer.lineTo(command.x, command.y);
-      break;
-    case 'quadraticCurveTo':
-      renderer.quadraticCurveTo(command.cpx, command.cpy, command.x, command.y);
-      break;
-    case 'bezierCurveTo':
-      renderer.cubicCurveTo(
-        command.cp1x,
-        command.cp1y,
-        command.cp2x,
-        command.cp2y,
-        command.x,
-        command.y,
-      );
-      break;
-    case 'closePath':
-      renderer.closePath();
-      break;
-    default: {
-      const exhaustive: never = command;
-      void exhaustive;
+function emitTransformed(
+  renderer: Renderer,
+  commands: readonly PathCommand[],
+  matrix: Matrix,
+): void {
+  const [a, b, c, d, e, f] = matrix;
+  for (const command of commands) {
+    switch (command.type) {
+      case 'moveTo':
+        renderer.moveTo(a * command.x + c * command.y + e, b * command.x + d * command.y + f);
+        break;
+      case 'lineTo':
+        renderer.lineTo(a * command.x + c * command.y + e, b * command.x + d * command.y + f);
+        break;
+      case 'quadraticCurveTo': {
+        const x = a * command.x + c * command.y + e;
+        const y = b * command.x + d * command.y + f;
+        renderer.quadraticCurveTo(
+          a * command.cpx + c * command.cpy + e,
+          b * command.cpx + d * command.cpy + f,
+          x,
+          y,
+        );
+        break;
+      }
+      case 'bezierCurveTo': {
+        const x = a * command.x + c * command.y + e;
+        const y = b * command.x + d * command.y + f;
+        renderer.cubicCurveTo(
+          a * command.cp1x + c * command.cp1y + e,
+          b * command.cp1x + d * command.cp1y + f,
+          a * command.cp2x + c * command.cp2y + e,
+          b * command.cp2x + d * command.cp2y + f,
+          x,
+          y,
+        );
+        break;
+      }
+      case 'closePath':
+        renderer.closePath();
+        break;
+      default: {
+        const exhaustive: never = command;
+        void exhaustive;
+      }
     }
   }
 }
@@ -818,13 +849,11 @@ export function drawTextObject(
   if (!fillPaint && !strokePaint && !(syntheticBold && boldPaint)) return;
 
   // 按字形分批复用同一条路径；每个批次独立 beginPath，避免超长路径的峰值内存。
-  let batchCommands: PathCommand[] = [];
+  // 轮廓点直接变换后送渲染器，避免为每个字形分配一份 PathCommand 数组。
   let batchGlyphs = 0;
 
   const flush = (): void => {
     if (batchGlyphs === 0) return;
-    context.renderer.beginPath();
-    for (const command of batchCommands) emitCommand(context.renderer, command);
     if (style.fill && fillPaint) {
       context.renderer.fill(style, fillPaint, 'nonzero');
     }
@@ -841,7 +870,6 @@ export function drawTextObject(
     if (style.stroke && strokePaint) {
       context.renderer.stroke(style, strokePaint);
     }
-    batchCommands = [];
     batchGlyphs = 0;
   };
 
@@ -849,9 +877,10 @@ export function drawTextObject(
     for (const [index, placement] of unit.placements.entries()) {
       const run = unit.glyphs[index];
       if (!run || run.path.length === 0) continue;
+      if (batchGlyphs === 0) context.renderer.beginPath();
       const italic = syntheticItalic && !run.face.italic;
       const matrix = glyphMatrix(placement, object, run.face.unitsPerEm, italic);
-      batchCommands.push(...transformPathCommands(run.path, matrix));
+      emitTransformed(context.renderer, run.path, matrix);
       batchGlyphs += 1;
       if (batchGlyphs >= MAX_GLYPHS_PER_BATCH) flush();
     }

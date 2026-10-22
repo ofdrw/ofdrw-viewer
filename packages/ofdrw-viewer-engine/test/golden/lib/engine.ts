@@ -6,6 +6,7 @@
  * - PNG/JPEG/WebP 通过 `test/helpers/node-image-decoder.ts` 注入 `imageDecoders`；
  *   JBIG2/TIFF 待 T5b 专用插件提供后另行注入，本文件不重复实现解码；
  * - harness 先填白底（引擎不负责背景），与 PDF 参考一致；
+ * - 性能计时拆成 `drawMs`（页准备/绘制）与 `encodeMs`（PNG 编码），门禁使用 `drawMs`；
  * - 引擎尚未实现（T8 阶段）时返回 `unavailable`，不抛异常，供 run-all 记录。
  */
 
@@ -37,7 +38,11 @@ export interface RenderedPage {
   sizeMm: { width: number; height: number };
   /** 白底合成后的 PNG 字节。 */
   png: Uint8Array;
-  /** 渲染耗时，ms。 */
+  /** 引擎 draw 阶段耗时（页准备+绘制，不含 PNG 编码），ms。 */
+  drawMs: number;
+  /** PNG 编码耗时，ms。 */
+  encodeMs: number;
+  /** 总耗时（drawMs + encodeMs），ms；报告保留，门禁统一用 drawMs。 */
   renderMs: number;
   /** 该页期间收集的 warning（去重后）。 */
   warnings: PortableWarning[];
@@ -193,14 +198,20 @@ export async function renderOfdSample(
           await runRender({ width: viewport.width, height: viewport.height, dpi });
         }
 
+        // 门禁口径：drawMs 只覆盖页准备/绘制；PNG 编码单独记录，避免编码开销混入性能门禁。
+        const drawMs = performance.now() - pageStart;
+        const encodeStart = performance.now();
         const png = new Uint8Array(canvas.toBuffer('image/png'));
+        const encodeMs = performance.now() - encodeStart;
         pages.push({
           page: pageNumber,
           width,
           height,
           sizeMm: { width: size.width, height: size.height },
           png,
-          renderMs: performance.now() - pageStart,
+          drawMs,
+          encodeMs,
+          renderMs: drawMs + encodeMs,
           warnings: warnings.filter((warning) => warning.pageIndex === pageNumber - 1),
         });
       } catch (error) {
