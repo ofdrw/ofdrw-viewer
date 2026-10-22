@@ -69,6 +69,29 @@ describe('CGTransform 1:1', () => {
   });
 });
 
+describe('CGTransform 等量 1:1 串', () => {
+  it('CodeCount 与 Glyphs 数量相同时逐字符拆分并按各自 delta 推进', () => {
+    const face = createTransformFace();
+    const layout = layoutText(
+      makeTextObject({
+        codes: [
+          makeTextCode({
+            text: 'AB',
+            deltaX: [4, 6],
+            cgTransforms: [transform(0, 2, [1, 2])],
+          }),
+        ],
+      }),
+      createFakeFaceSet(face),
+    );
+    expect(layout.units).toHaveLength(2);
+    expect(layout.units.map((unit) => unit.glyphs[0].gid)).toEqual([1, 2]);
+    expect(layout.units.map((unit) => unit.deltaX)).toEqual([4, 6]);
+    expect(layout.units.map((unit) => unit.placements[0].x)).toEqual([0, 4]);
+    expect(layout.endX).toBe(10);
+  });
+});
+
 describe('CGTransform N:1（连字）', () => {
   it('一个字形串覆盖多个字符，整串后按字符 delta 之和推进', () => {
     const face = createTransformFace();
@@ -278,8 +301,8 @@ describe('CGTransform 容错', () => {
       createFakeFaceSet(face),
       { onWarning: (code, message) => warnings.push(`${code}:${message}`) },
     );
-    expect(layout.units).toHaveLength(1);
-    expect(layout.units[0].glyphs.map((glyph) => glyph.gid)).toEqual([21, 22]);
+    expect(layout.units).toHaveLength(2);
+    expect(layout.units.map((unit) => unit.glyphs[0].gid)).toEqual([21, 22]);
     expect(warnings.some((warning) => warning.includes('重叠'))).toBe(true);
   });
 

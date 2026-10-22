@@ -419,6 +419,29 @@ export function buildUnits(
         `CGTransform CodeCount=${transform.codeCount} 超出剩余字符数，已截断为 ${span}`,
       );
     }
+    // CodeCount 与 Glyphs 数量相同表示逐字符 1:1 映射；必须拆成 span 个
+    // 单字符 unit，才能让每个字符消费自己的 DeltaX/DeltaY。若整串当一个
+    // run，run 内只能按字体 advance 排列，字符级 Delta 只在串末结算，长行会
+    // 累积偏离并溢出 Boundary。
+    if (span === transform.glyphs.length) {
+      for (let offset = 0; offset < span; offset += 1) {
+        const built = buildGlyphRun(
+          codePoints[index + offset],
+          transform.glyphs[offset],
+          faces,
+          cache,
+          state,
+          options,
+        );
+        units.push({
+          cpStart: index + offset,
+          codeCount: 1,
+          glyphs: built ? [built.run] : [],
+        });
+      }
+      index += span;
+      continue;
+    }
     const builtRuns: BuiltRun[] = [];
     let allExplicit = true;
     for (const gid of transform.glyphs) {
@@ -431,7 +454,7 @@ export function buildUnits(
       builtRuns.push(built);
     }
     if (!allExplicit) {
-      // 显式 GID/连字字形不可用时，CGTransform 的 N:1/N:M 映射不能成立；
+      // 显式 GID/连字字形不可用时，CGTransform 的 N:1/1:N/N:M 映射不能成立；
       // 用被覆盖字符各自的 cmap 轮廓组成一个 run，保留每个字符的可见性，
       // 同时只消费该 CG 单元自己的 Delta，避免把后续字符格整体错位。
       const glyphs: GlyphRun[] = [];
