@@ -8,12 +8,14 @@
 import type { ResourceId, PageSize } from '../model/types';
 import type { ByteSource } from '../platform/byte-source';
 import type { FontInput, FontProvider } from '../platform/font-provider';
+import type { FontInputLoader } from '../font/provider';
 import type { ImageDecoderPlugin } from '../platform/image-decoder';
 import type { Canvas2DLike, CanvasRenderingContext2DLike, Renderer } from '../renderer/types';
 import type { OFDWarning } from '../warnings';
 import type { Viewport } from '../common/types';
 
 export type { FontInput } from '../platform/font-provider';
+export type { FontInputLoader } from '../font/provider';
 export type { OFDWarning } from '../warnings';
 export type { PageSize } from '../model/types';
 export type { Viewport } from '../common/types';
@@ -186,6 +188,13 @@ export interface OFDOpenOptions {
   limits?: Partial<ResourceLimits>;
   /** 宿主补充字体，按需用于缺字/缺字体回退。 */
   supplementaryFonts?: FontInput[];
+  /**
+   * 宿主字体字节加载器，用于 `url`/`path`/`filePath` 来源。
+   *
+   * 不传时保持 Web 默认：`url` 走 fetch，`path`/`filePath` 不支持。
+   * Node 宿主（例如 CLI）通过此项注入文件读取，不改变 Web 优先语义。
+   */
+  loadInput?: FontInputLoader;
   /** 宿主字体提供者。 */
   fontProvider?: FontProvider;
   /** JBIG2/TIFF 等图片解码插件。 */

@@ -50,6 +50,25 @@ describe('decodePageContent 基础结构', () => {
       expect.objectContaining({ code: 'W_PHYSICALBOX_ORIGIN' }),
     );
   });
+
+  it('缺少 Area/PhysicalBox 时不在解码阶段 warning', () => {
+    const onWarning = vi.fn();
+    const root = node('Page', {}, [node('Content', {}, [])]);
+    const page = decodePageContent(root, '1', 'Doc_0/Content.xml', { onWarning });
+    expect(page.area).toEqual({ x: 0, y: 0, w: 0, h: 0 });
+    expect(page.size).toEqual({ width: 0, height: 0 });
+    expect(onWarning).not.toHaveBeenCalled();
+  });
+
+  it('显式 PhysicalBox 宽高非正仍在解码阶段 warning', () => {
+    const onWarning = vi.fn();
+    const root = node('Page', {}, [node('Area', {}, [leaf('PhysicalBox', '0 0 0 297')])]);
+    const page = decodePageContent(root, '1', 'Doc_0/Content.xml', { onWarning });
+    expect(page.area).toEqual({ x: 0, y: 0, w: 0, h: 297 });
+    expect(onWarning).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'W_BAD_NUMBER' }),
+    );
+  });
 });
 
 describe('decodePageContent 图元', () => {

@@ -20,6 +20,9 @@ const SAMPLE_DIR = join(REPO_ROOT, 'ofd_pdf_match');
 /** 合成的最小合法 TTF，避免依赖本机/不可提交的系统字体。 */
 const FIXTURE_FONT = fileURLToPath(new URL('../fixtures/minimal.ttf', import.meta.url));
 
+/** 本机 Windows 字体目录（WSL）；不存在时相关用例 skip。 */
+const WINDOWS_FONT_DIR = '/mnt/c/Windows/Fonts';
+
 const tempDirs: string[] = [];
 
 /** 创建并登记临时目录，测试结束后统一清理。 */
@@ -231,6 +234,34 @@ describe('CLI 图片导出 e2e', () => {
     expect(await listEntries(outDir)).toEqual(['helloworld-p001.png']);
     expect(result.stdout).toContain('完成：1/1 页');
   });
+
+  it.skipIf(!existsSync(WINDOWS_FONT_DIR))(
+    '999.ofd 使用 --font-dir 加载非内嵌字体后 W_FONT_MISSING 归零',
+    async () => {
+      const cwd = await createTempDir();
+      const outDir = join(cwd, 'out');
+
+      const result = await runCli(
+        [
+          join(SAMPLE_DIR, '999.ofd'),
+          '-o',
+          outDir,
+          '--pages',
+          '1',
+          '--font-dir',
+          WINDOWS_FONT_DIR,
+        ],
+        cwd,
+      );
+
+      expect(result.code).toBe(EXIT_CODES.OK);
+      expect(result.stdout).toContain('完成：1/1 页');
+      expect(result.stderr).not.toContain('W_FONT_MISSING');
+      const filePath = join(outDir, '999-p001.png');
+      expect(await imageSize(filePath)).toMatchObject({ width: 794, height: 530 });
+    },
+    180_000,
+  );
 
   it('坏文件返回文档级失败 2', async () => {
     const cwd = await createTempDir();

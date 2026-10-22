@@ -51,7 +51,8 @@ export function buildAnnotationBlocks(
     if (!annotation.visible) continue;
     const appearance = annotation.appearance;
     if (!appearance || appearance.children.length === 0) {
-      warn?.('W_ANNOT_EMPTY', `注释 ${annotation.id} 的 Appearance 为空，已跳过`, annotation.id);
+      // 空外观已由模型解码阶段统一提示（W_ANNOT_EMPTY，每次注释一条）；
+      // 渲染阶段只跳过，不再重复 warning。
       continue;
     }
     if (!annotation.boundary) {

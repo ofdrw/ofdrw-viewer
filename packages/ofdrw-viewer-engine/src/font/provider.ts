@@ -9,7 +9,7 @@ import type { FontInput, FontMatchRequest, FontProvider } from '../platform/font
 import type { FontResource, ResourceId } from '../model/types';
 import type { FontAliasTable } from './aliases';
 import { expandFontNames, normalizeFontName } from './aliases';
-import { createFontFace } from './face';
+import { createFontFace, createFontFaces } from './face';
 import type {
   FontFace,
   FontFaceSet,
@@ -382,23 +382,28 @@ export class FontLibrary {
           const data = await this.readInput(input, `supplementary:${index}`);
           if (!data) continue;
           const family = input.family ?? `supplementary-${index}`;
-          const face = this.createFace(
-            data,
-            {
-              id: `supplementary-${index}`,
-              fontName: family,
-              familyName: family,
-              charset: 'unicode',
-              serif: false,
-              bold: false,
-              italic: false,
-              fixedSize: false,
-            },
-            `supplementary:${index}`,
-            false,
-            true,
-          );
-          if (face) faces.push(face);
+          // TTC/OTC 可能包含多个字体面，全部展开后按真实 family 参与评分；
+          // 只取第 0 个会漏掉同文件内的其他族，且会因名称不匹配产生误报。
+          try {
+            faces.push(
+              ...createFontFaces(data, {
+                key: `supplementary:${index}`,
+                fontName: family,
+                familyName: family,
+                aliases: this.options.aliases,
+                resourceId: `supplementary-${index}`,
+                bold: false,
+                italic: false,
+                substitute: true,
+                onWarning: this.options.onWarning,
+              }),
+            );
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.warn('W_FONT_MISSING', `字体解析失败：${message}`, {
+              resourceId: `supplementary-${index}`,
+            });
+          }
         }
         return faces;
       })();

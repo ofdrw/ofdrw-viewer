@@ -166,6 +166,7 @@ describe('convertDocument 图片链路', () => {
     const openOptions = openCalls[0];
     expect(openOptions?.source).toMatchObject({ kind: 'custom' });
     expect(openOptions?.supplementaryFonts).toEqual([{ path: '/fonts/a.ttf' }]);
+    expect(typeof openOptions?.loadInput).toBe('function');
     expect(openOptions?.imageDecoders?.map((decoder) => decoder.format)).toEqual([
       'png',
       'jpeg',

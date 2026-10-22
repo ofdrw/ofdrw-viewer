@@ -5,8 +5,9 @@
  * 并按路径字典序返回，供 engine 的 `supplementaryFonts` 使用。
  */
 
-import { readdir, realpath, stat } from 'node:fs/promises';
+import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { extname, join, resolve } from 'node:path';
+import type { FontInput } from '@ofdrw/ofdrw-viewer-engine';
 import { CliError, EXIT_CODES, errorMessage, isCliError, isErrnoError } from './errors.js';
 import type { Logger } from './log.js';
 
@@ -22,6 +23,32 @@ export interface FontFile {
 /** 判断文件名是否为受支持的字体扩展名（大小写不敏感）。 */
 export function isFontFileName(fileName: string): boolean {
   return FONT_EXTENSIONS.has(extname(fileName).toLowerCase());
+}
+
+/**
+ * 创建 Node 字体来源加载器，供 engine `OFDOpenOptions.loadInput` 使用。
+ *
+ * `path`/`filePath` 读取本地文件；`url` 使用 fetch。engine 的 Web 默认 loader
+ * 不变，CLI 仅在自身进程注入本实现。
+ *
+ * @returns 字体来源加载器；不支持的来源返回 null。
+ */
+export function createNodeFontInputLoader(): (
+  input: FontInput,
+) => Promise<Uint8Array | null> {
+  return async (input: FontInput): Promise<Uint8Array | null> => {
+    if ('url' in input) {
+      if (typeof globalThis.fetch !== 'function') {
+        throw new Error('当前 Node 环境没有 fetch，无法加载字体 URL');
+      }
+      const response = await globalThis.fetch(input.url);
+      if (!response.ok) throw new Error(`字体 URL 加载失败：HTTP ${response.status}`);
+      return new Uint8Array(await response.arrayBuffer());
+    }
+    const filePath = 'path' in input ? input.path : 'filePath' in input ? input.filePath : undefined;
+    if (filePath === undefined) return null;
+    return new Uint8Array(await readFile(filePath));
+  };
 }
 
 /**

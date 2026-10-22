@@ -98,7 +98,8 @@ describe('buildAnnotationBlocks', () => {
 
     expect(blocks.map((block) => block.id)).toEqual(['a1', 'a5']);
     expect(blocks[1]?.boundary).toEqual({ x: 40, y: 40, w: 10, h: 20 });
-    expect(warnings.filter((code) => code === 'W_ANNOT_EMPTY')).toHaveLength(2);
+    // 空外观已由模型解码阶段提示；渲染跳过不再重复 warning。
+    expect(warnings.filter((code) => code === 'W_ANNOT_EMPTY')).toHaveLength(0);
   });
 
   it('页面绘制时注释在图层之后、按文件顺序平移 Appearance Boundary', async () => {

@@ -261,9 +261,8 @@ function decodeFont(node: XmlNode, context: ContentDecodeContext): FontResource 
   if (fontFileRaw && !fontFile) {
     emitWarning(fontContext, 'W_FONT_MISSING', `FontFile 路径无法解析：${fontFileRaw}`);
   }
-  if (!fontFileRaw) {
-    emitWarning(fontContext, 'W_FONT_MISSING', `Font ${id} 未提供 FontFile，依赖 FontProvider`);
-  }
+  // 无 FontFile 是合法声明：字体可由 FontProvider/supplementaryFonts 提供，
+  // 真正无法解析时由 FontLibrary.resolve 统一产生 W_FONT_MISSING。
   const fontName = (attr(node, 'FontName') ?? attr(node, 'FamilyName') ?? '').trim();
   if (!fontName) emitWarning(fontContext, 'W_FONT_MISSING', `Font ${id} 缺少 FontName`);
   const result: FontResource = {

@@ -4,6 +4,7 @@
  * 失败时返回 fallback 并通过回调上报 `W_BAD_NUMBER`；不抛异常，避免坏字段阻塞整页。
  * 数值数组支持 OFD ST_Array 的 `g N V` 压缩组：V 重复 N 次，
  * 例如 `g 3 3.1305` 展开为 3 个 `3.1305`，`0 g 3 5 2` 展开为 `0, 5, 5, 5, 2`。
+ * `N=0` 是合法空展开，例如 `g 0 0 3.175` 等价于 `3.175`，不视为坏值。
  */
 
 import type { BadNumberHandler } from './types';
@@ -71,7 +72,8 @@ export function toNumberArray(
       const valueToken = tokens[index + 2];
       const count = countToken === undefined ? NaN : Number(countToken);
       const value = valueToken === undefined ? NaN : Number(valueToken);
-      const validCount = Number.isInteger(count) && count > 0;
+      // count=0 表示空展开（`g 0 0 3.175` 只产生后续的 3.175），不是格式错误。
+      const validCount = Number.isInteger(count) && count >= 0;
       const validValue = valueToken !== undefined && NUMBER_TOKEN.test(valueToken) && Number.isFinite(value);
       if (!validCount || !validValue) {
         onBadNumber?.(`${token} ${countToken ?? ''} ${valueToken ?? ''}`.trim(), 0, 'g 压缩组格式非法');

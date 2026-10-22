@@ -41,12 +41,22 @@ describe('xml/numbers', () => {
     expect(toNumberArray('g 1 -2', [])).toEqual([-2]);
   });
 
-  it('toNumberArray 对非法 g 组跳过并回调', () => {
+  it('toNumberArray 把 g 0 视为合法空展开且不 warning', () => {
     const onBad = vi.fn();
+    expect(toNumberArray('g 0 0 3.175', [], onBad)).toEqual([3.175]);
     expect(toNumberArray('g 0 5 7', [], onBad)).toEqual([7]);
+    expect(toNumberArray('0 g 0 0 3.175', [], onBad)).toEqual([0, 3.175]);
+    expect(onBad).not.toHaveBeenCalled();
+  });
+
+  it('toNumberArray 对负数/非整数/缺值 g 组跳过并回调', () => {
+    const onBad = vi.fn();
+    expect(toNumberArray('g -1 5 7', [], onBad)).toEqual([7]);
+    expect(toNumberArray('g 1.5 5 7', [], onBad)).toEqual([7]);
+    expect(toNumberArray('g 2', [], onBad)).toEqual([]);
     expect(toNumberArray('g x 5 7', [], onBad)).toEqual([7]);
     expect(toNumberArray('g 2 y 7', [], onBad)).toEqual([7]);
-    expect(onBad.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(onBad.mock.calls.length).toBeGreaterThanOrEqual(5);
   });
 
   it('toNumberArray 的展开长度有上限', () => {

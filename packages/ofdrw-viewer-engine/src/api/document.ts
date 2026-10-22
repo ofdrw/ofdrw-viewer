@@ -97,7 +97,7 @@ import {
   decodePageContent,
   decodePageResources,
 } from '../model/decode';
-import { resolvePageArea, applyPageArea } from '../model/page-area';
+import { resolvePageArea, applyPageArea, isValidPageArea } from '../model/page-area';
 import { decodeAttachments } from '../model/attachments';
 import {
   decodeSignature,
@@ -217,6 +217,8 @@ interface DocumentInit {
   fontProvider?: FontProvider;
   /** 宿主补充字体；矢量章独立打开内嵌 OFD 时继承。 */
   supplementaryFonts?: readonly FontInput[];
+  /** 宿主字体字节加载器；矢量章独立打开内嵌 OFD 时继承。 */
+  fontInputLoader?: FontInputLoader;
 }
 
 /**
@@ -380,6 +382,8 @@ export class OFDDocument {
   private readonly fontProvider: FontProvider | undefined;
   /** 宿主补充字体；供矢量章嵌套文档继承。 */
   private readonly supplementaryFonts: readonly FontInput[] | undefined;
+  /** 宿主字体字节加载器；未注入时为 Web 默认实现。 */
+  private readonly fontInputLoader: FontInputLoader;
   /** 是否允许加载签章；矢量章嵌套文档关闭，避免递归。 */
   private signatureLoading = true;
 
@@ -473,6 +477,7 @@ export class OFDDocument {
     this.encodeImage = init.encodeImage;
     this.fontProvider = init.fontProvider;
     this.supplementaryFonts = init.supplementaryFonts;
+    this.fontInputLoader = init.fontInputLoader ?? createFontInputLoader();
     this.pageCount = init.document.pageCount;
     this.xmlCache = new DisposableLruCache<string, XmlCacheEntry>({
       maxBytes: init.cacheOptions.xmlBytes,
@@ -618,10 +623,11 @@ export class OFDDocument {
       });
 
       // 5) 字体库：内嵌字体按需注册，provider/supplementary 由宿主注入。
+      const fontInputLoader = options.loadInput ?? createFontInputLoader();
       const fontLibrary = new FontLibrary({
         ...(options.fontProvider ? { fontProvider: options.fontProvider } : {}),
         ...(options.supplementaryFonts ? { supplementaryFonts: options.supplementaryFonts } : {}),
-        loadInput: createFontInputLoader(),
+        loadInput: fontInputLoader,
         onWarning: (code, message, context) => {
           const warning: OFDWarning = { code, message };
           if (context?.resourceId !== undefined) warning.resourceId = context.resourceId;
@@ -668,6 +674,7 @@ export class OFDDocument {
         ...(options.encodeImage ? { encodeImage: options.encodeImage } : {}),
         ...(options.fontProvider ? { fontProvider: options.fontProvider } : {}),
         ...(options.supplementaryFonts ? { supplementaryFonts: options.supplementaryFonts } : {}),
+        fontInputLoader,
       });
     } catch (error) {
       // 打开失败时释放已获得的 ZIP/文件句柄。
@@ -1044,7 +1051,9 @@ export class OFDDocument {
     }
 
     const resolution = resolvePageArea({
-      ...(areaInfo.area ? { pageArea: areaInfo.area } : {}),
+      // 缺失/非正 Area 不参与候选，避免在模板/CommonData 回退成功时误报；
+      // 只有整条回退链都失败（A4）才由 resolvePageArea 统一提示。
+      ...(isValidPageArea(areaInfo.area) ? { pageArea: areaInfo.area } : {}),
       templateAreas,
       ...(this.document.commonData?.pageArea
         ? { commonDataArea: this.document.commonData.pageArea }
@@ -1900,7 +1909,8 @@ export class OFDDocument {
 
     // 页尺寸回退：页面 → 模板（按引用顺序第一个有效 Area）→ CommonData → A4。
     const resolution = resolvePageArea({
-      pageArea: model.area,
+      // 与 getPageInfos 同一口径：仅有效页 Area 参与回退，缺失/非正不提前 warning。
+      ...(isValidPageArea(model.area) ? { pageArea: model.area } : {}),
       templateAreas,
       ...(this.document.commonData?.pageArea
         ? { commonDataArea: this.document.commonData.pageArea }
@@ -2318,6 +2328,7 @@ export class OFDDocument {
       onWarning: this.documentWarningHandler,
       ...(this.fontProvider ? { fontProvider: this.fontProvider } : {}),
       ...(this.supplementaryFonts ? { supplementaryFonts: [...this.supplementaryFonts] } : {}),
+      loadInput: this.fontInputLoader,
     });
     nested.disableSignatureLoading();
     try {

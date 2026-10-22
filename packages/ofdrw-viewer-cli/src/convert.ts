@@ -26,6 +26,7 @@ import type {
 import { createCanvasLike, encodeCanvasImage } from './canvas.js';
 import { CliError, EXIT_CODES, errorMessage, isCliError } from './errors.js';
 import type { FontFile } from './fonts.js';
+import { createNodeFontInputLoader } from './fonts.js';
 import { nodeImageDecoders } from './image-decoder.js';
 import type { Logger } from './log.js';
 import { buildImagePath, buildTextJsonPath, writeFileAtomic } from './output.js';
@@ -113,6 +114,9 @@ export async function convertDocument(
       ) => encodeCanvasImage(canvas, format, quality),
       imageDecoders: [...nodeImageDecoders],
       supplementaryFonts: options.fontFiles.map((font) => ({ path: font.path })),
+      // engine 默认 loader 只服务 Web（url/data）；CLI 注入 Node 文件读取，
+      // 让 --font-dir 扫描到的 path 来源真正加载为字体字节。
+      loadInput: createNodeFontInputLoader(),
       onWarning: (warning: OFDWarning) => {
         const pageNumber =
           warning.pageIndex === undefined ? undefined : warning.pageIndex + 1;

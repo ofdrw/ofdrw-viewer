@@ -66,15 +66,14 @@ export function decodePageAreaXml(
   const header = contentStart >= 0 ? text.slice(0, contentStart) : text;
   const areaMatch = areaPattern.exec(header);
   let area: Box | undefined;
-  if (!areaMatch) {
-    emitWarning(context, 'W_BAD_NUMBER', 'Page 缺少 Area/PhysicalBox，页尺寸按回退链处理');
-  } else {
+  // 缺失 Area/PhysicalBox 不在此处提示：页尺寸由上层按页 → 模板 → CommonData →
+  // A4 统一回退，只有最终回退 A4 才产生 warning（见 page-area.ts）。
+  if (areaMatch) {
     const boxMatch = physicalBoxPattern.exec(areaMatch[1] ?? '');
-    if (!boxMatch) {
-      emitWarning(context, 'W_BAD_NUMBER', 'Page 缺少 Area/PhysicalBox，页尺寸按回退链处理');
-    } else {
+    if (boxMatch) {
       // 与 getPageEntry/decodePageContent 使用同一 Boundary 归一化语义。
       area = decodeBoundary(boxMatch[1]?.trim(), context, false);
+      // 显式 Area/PhysicalBox 宽高非正仍是坏值；缺失 Area 不在此处提示。
       if (area.w <= 0 || area.h <= 0) {
         emitWarning(context, 'W_BAD_NUMBER', `PhysicalBox 宽高非正：${area.w} × ${area.h}`);
       }

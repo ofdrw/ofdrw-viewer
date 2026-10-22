@@ -298,28 +298,52 @@ describe('页尺寸回退、模板与注释注入', () => {
   });
 
   it('缺页/模板 Area 时用 CommonData/PageArea', async () => {
+    const warnings: string[] = [];
     const doc = await openTestDocument(
       buildFixtureOfd({
         commonPageArea: { widthMm: 80, heightMm: 160 },
         pages: [{ id: 1, objects: [] }],
         templates: [{ id: 1, baseLoc: 'Doc_0/Tpl_1', objects: [] }],
       }),
+      { onWarning: (warning) => warnings.push(warning.code) },
     );
     try {
       expect((await doc.getPage(0)).getSize()).toEqual({ width: 80, height: 160 });
+      // 回退成功时不应再提示“缺少 Area/PhysicalBox”。
+      expect(warnings).not.toContain('W_BAD_NUMBER');
     } finally {
       await doc.close();
     }
   });
 
-  it('三层都缺失时回退 A4 并 warning', async () => {
+  it('getPageInfos 与 getPage 使用同一页面积回退口径', async () => {
+    const warnings: string[] = [];
+    const doc = await openTestDocument(
+      buildFixtureOfd({
+        commonPageArea: { widthMm: 80, heightMm: 160 },
+        pages: [{ id: 1, objects: [] }],
+      }),
+      { onWarning: (warning) => warnings.push(warning.code) },
+    );
+    try {
+      const infos = await doc.getPageInfos();
+      expect(infos[0]).toMatchObject({ widthMm: 80, heightMm: 160, source: 'default' });
+      expect(warnings).not.toContain('W_BAD_NUMBER');
+      expect((await doc.getPage(0)).getSize()).toEqual({ width: 80, height: 160 });
+      expect(warnings).not.toContain('W_BAD_NUMBER');
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('三层都缺失时回退 A4 并只 warning 一次', async () => {
     const warnings: string[] = [];
     const doc = await openTestDocument(buildFixtureOfd({ pages: [{ id: 1, objects: [] }] }), {
       onWarning: (warning) => warnings.push(warning.code),
     });
     try {
       expect((await doc.getPage(0)).getSize()).toEqual({ width: 210, height: 297 });
-      expect(warnings).toContain('W_BAD_NUMBER');
+      expect(warnings.filter((code) => code === 'W_BAD_NUMBER')).toHaveLength(1);
     } finally {
       await doc.close();
     }

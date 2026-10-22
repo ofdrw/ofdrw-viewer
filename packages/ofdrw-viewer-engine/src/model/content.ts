@@ -541,7 +541,8 @@ export function decodePageContentNode(
     physical = parsePhysicalBox(areaNode, context);
   }
   if (!physical) {
-    emitWarning(context, 'W_BAD_NUMBER', 'Page 缺少 Area/PhysicalBox，页尺寸按回退链处理');
+    // 缺失 Area/PhysicalBox 不在此处提示：上层按页 → 模板 → CommonData → A4
+    // 统一解析，只有最终回退 A4 才产生 warning（见 page-area.ts）。
     physical = { x: 0, y: 0, w: 0, h: 0 };
   }
   const size: PageSize = { width: physical.w, height: physical.h };
@@ -570,6 +571,8 @@ function parsePhysicalBox(areaNode: XmlNode, context: ContentDecodeContext): Box
   const raw = childText(areaNode, 'PhysicalBox');
   if (!raw) return undefined;
   const box = decodeBoundary(raw, context, false);
+  // 显式声明的 Area/PhysicalBox 宽高非正属于坏值，仍在解码阶段提示；
+  // 缺失 Area 则由回退链统一处理，只有最终 A4 回退才 warning。
   if (box.w <= 0 || box.h <= 0) {
     emitWarning(context, 'W_BAD_NUMBER', `PhysicalBox 宽高非正：${box.w} × ${box.h}`);
   }

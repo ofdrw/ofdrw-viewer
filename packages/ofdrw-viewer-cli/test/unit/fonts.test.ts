@@ -1,14 +1,19 @@
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Logger } from '../../src/log.js';
 import {
+  createNodeFontInputLoader,
   isFontFileName,
   loadSupplementaryFonts,
   scanFontDirectory,
 } from '../../src/fonts.js';
 import { createStreamCapture } from './helpers.js';
+
+/** 仓库自带的最小合法 TTF。 */
+const FIXTURE_FONT = fileURLToPath(new URL('../fixtures/minimal.ttf', import.meta.url));
 
 const tempDirs: string[] = [];
 
@@ -36,6 +41,21 @@ describe('isFontFileName', () => {
 
   it.each(['a.txt', 'a.ttf.bak', 'a', 'a.woff2'])('忽略 %s', (name) => {
     expect(isFontFileName(name)).toBe(false);
+  });
+});
+
+describe('createNodeFontInputLoader', () => {
+  it('读取 path/filePath 来源的字体字节', async () => {
+    const loader = createNodeFontInputLoader();
+    const expected = await readFile(FIXTURE_FONT);
+    await expect(loader({ path: FIXTURE_FONT })).resolves.toEqual(new Uint8Array(expected));
+    await expect(loader({ filePath: FIXTURE_FONT })).resolves.toEqual(new Uint8Array(expected));
+  });
+
+  it('不支持来源返回 null，读取失败向上抛出由字体层 warning', async () => {
+    const loader = createNodeFontInputLoader();
+    await expect(loader({ data: new Uint8Array([1]) })).resolves.toBeNull();
+    await expect(loader({ path: join(tmpdir(), 'ofdrw-missing-font.ttf') })).rejects.toThrow();
   });
 });
 

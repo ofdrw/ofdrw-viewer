@@ -70,4 +70,21 @@ describe('缺失 Annotations.xml warning', () => {
       await doc.close();
     }
   });
+
+  it('999.ofd 空 Appearance 每次注释只提示一次（模型解码，渲染不重复）', async () => {
+    const warnings: OFDWarning[] = [];
+    const doc = await openTestDocument(sample('999.ofd'), {
+      renderer: new RecordingRenderer(),
+      onWarning: (warning) => warnings.push(warning),
+    });
+    try {
+      const page = await doc.getPage(0);
+      await renderPage(page);
+      const emptyWarnings = warnings.filter((warning) => warning.code === 'W_ANNOT_EMPTY');
+      expect(emptyWarnings).toHaveLength(1);
+      expect(emptyWarnings[0]?.message).toContain('Appearance 为空');
+    } finally {
+      await doc.close();
+    }
+  });
 });

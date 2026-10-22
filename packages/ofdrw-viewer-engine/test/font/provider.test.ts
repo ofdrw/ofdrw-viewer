@@ -229,6 +229,22 @@ describe('FontLibrary 宿主 provider 与补充字体', () => {
     library.dispose();
   });
 
+  it.skipIf(!fixtures.dejavu)('supplementaryFonts 的 path 来源经 loadInput 读取并采用实际 family', async () => {
+    const loaded: FontInput[] = [];
+    const library = new FontLibrary({
+      supplementaryFonts: [{ path: fixtures.dejavu as string }],
+      loadInput(input) {
+        loaded.push(input);
+        if (!('path' in input)) return null;
+        return readFixture(input.path);
+      },
+    });
+    const faces = await library.resolve(makeFontResource({ fontName: 'Missing Font' }));
+    expect(loaded).toEqual([{ path: fixtures.dejavu as string }]);
+    expect(faces?.primary.family).toContain('DejaVu');
+    library.dispose();
+  });
+
   it.skipIf(!fixtures.dejavu || !fixtures.embeddedCjk)('supplementaryFonts 作为缺字回退', async () => {
     const library = new FontLibrary({
       supplementaryFonts: [
