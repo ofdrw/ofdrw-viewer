@@ -6,8 +6,12 @@
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, existsSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { REPO_ROOT } from './artifacts';
+import { alignContentToBBox, decodePng, encodePng, resizeImageContain } from './image';
+import { loadSampleManifest } from './samples';
+import type { ReferenceOverride } from './types';
 
 /** PDF 元信息。 */
 export interface PdfInfo {
@@ -81,7 +85,49 @@ export function getPdfInfo(pdfPath: string, page = 1): PdfInfo {
 }
 
 /**
+ * 查找某 PDF 页的人工参考覆盖。
+ *
+ * 只匹配清单中显式声明 `referenceOverride` 的样本；未声明时返回 undefined，
+ * 继续走 pdftoppm。
+ *
+ * @param pdfPath PDF 绝对/相对路径。
+ * @param page 页号（1 起）。
+ * @returns 参考覆盖配置；未命中时返回 undefined。
+ */
+function findReferenceOverride(pdfPath: string, page: number): ReferenceOverride | undefined {
+  const absolute = resolve(pdfPath);
+  for (const sample of loadSampleManifest().samples) {
+    if (!sample.pdf || !sample.referenceOverride || sample.referenceOverride.page !== page) continue;
+    if (resolve(REPO_ROOT, sample.pdf) === absolute) return sample.referenceOverride;
+  }
+  return undefined;
+}
+
+/**
+ * 将人工权威图等比缩放并写入参考 PNG。
+ *
+ * @param override 参考覆盖配置。
+ * @param outPngPath 输出 PNG 绝对路径。
+ * @returns 输出路径与耗时（ms）。
+ */
+function renderReferenceOverride(override: ReferenceOverride, outPngPath: string): { path: string; ms: number } {
+  const sourcePath = isAbsolute(override.path) ? override.path : join(REPO_ROOT, override.path);
+  if (!existsSync(sourcePath)) throw new Error(`参考覆盖图不存在：${sourcePath}`);
+  mkdirSync(dirname(outPngPath), { recursive: true });
+  const start = performance.now();
+  const source = decodePng(new Uint8Array(readFileSync(sourcePath)));
+  const normalized = override.targetContentBBoxPx
+    ? alignContentToBBox(source, override.width, override.height, override.targetContentBBoxPx)
+    : resizeImageContain(source, override.width, override.height);
+  writeFileSync(outPngPath, encodePng(normalized));
+  return { path: outPngPath, ms: performance.now() - start };
+}
+
+/**
  * 用 pdftoppm 渲染 PDF 单页为 PNG（96 DPI 时 1 pt = 4/3 px）。
+ *
+ * 若该页在样本清单中声明了 `referenceOverride`，改用人工权威图缩放输出；
+ * 仅影响声明页，其他页仍按 PDF 渲染。
  *
  * @param pdfPath PDF 路径。
  * @param page 页号（1 起）。
@@ -95,6 +141,8 @@ export function renderPdfPageToPng(
   outPngPath: string,
   dpi = 96,
 ): { path: string; ms: number } {
+  const override = findReferenceOverride(pdfPath, page);
+  if (override) return renderReferenceOverride(override, outPngPath);
   if (!isPdftoppmAvailable()) throw new Error('pdftoppm 不可用，无法渲染 PDF 参考图');
   if (!existsSync(pdfPath)) throw new Error(`PDF 不存在：${pdfPath}`);
   mkdirSync(dirname(outPngPath), { recursive: true });

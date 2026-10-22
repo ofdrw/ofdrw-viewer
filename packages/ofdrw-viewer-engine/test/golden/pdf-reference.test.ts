@@ -17,9 +17,13 @@ import { findSample, loadSampleManifest } from './lib/samples';
 const describeIf = isPdftoppmAvailable() ? describe : describe.skip;
 
 // 真实样本只读取仓库现有 ofd_pdf_match/，缺失时跳过（业务原件不提交新副本）。
-const hello = findSample(loadSampleManifest(), 'hello');
+const manifest = loadSampleManifest();
+const hello = findSample(manifest, 'hello');
 const helloPdf = hello?.pdf ? join(REPO_ROOT, hello.pdf) : null;
 const helloAvailable = helloPdf !== null && existsSync(helloPdf);
+const z = findSample(manifest, 'z');
+const zPdf = z?.pdf ? join(REPO_ROOT, z.pdf) : null;
+const zAvailable = zPdf !== null && existsSync(zPdf) && z?.referenceOverride !== undefined;
 
 describeIf('PDF 参考渲染（poppler）', () => {
   it('合成 PDF 渲染为 400×300 PNG，并与 Canvas 页在容差内一致', () => {
@@ -53,6 +57,16 @@ describeIf('PDF 参考渲染（poppler）', () => {
     expect(comparison.metrics.layoutDeltaMm!).toBeLessThanOrEqual(0.5);
     expect(comparison.metrics.keyColorMaxDE).toBeLessThanOrEqual(5);
     expect(comparison.ok, comparison.reasons.join('；')).toBe(true);
+  });
+
+  it.skipIf(!zAvailable)('z p2 referenceOverride 按目标内容 bbox 归一化为 794×1123', () => {
+    const pngPath = join(resolveArtifactsDir('golden'), 'pages', 'z-p002-authoritative-ref.png');
+    const rendered = renderPdfPageToPng(zPdf!, 2, pngPath, 96);
+    expect(rendered.ms).toBeGreaterThanOrEqual(0);
+    const image = decodePng(new Uint8Array(readFileSync(pngPath)));
+    expect(image.width).toBe(794);
+    expect(image.height).toBe(1123);
+    expect(z!.referenceOverride!.targetContentBBoxPx).toEqual({ x: 120, y: 129, width: 551, height: 723 });
   });
 
   it.skipIf(!helloAvailable)('真实样本 hello.pdf 首页可渲染，尺寸与样本清单一致', () => {

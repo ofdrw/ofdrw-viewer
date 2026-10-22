@@ -222,6 +222,22 @@ export interface KnownTolerancePage {
   reason: string;
 }
 
+/** 单页参考覆盖：用人工权威图替代 PDF 参考，仅影响指定页。 */
+export interface ReferenceOverride {
+  /** 页号，从 1 开始。 */
+  page: number;
+  /** 权威图仓库相对路径或绝对路径。 */
+  path: string;
+  /** 归一化目标宽度，像素。 */
+  width: number;
+  /** 归一化目标高度，像素。 */
+  height: number;
+  /** 目标内容 bbox（像素）；声明时按内容区对齐，否则整页等比缩放。 */
+  targetContentBBoxPx?: { x: number; y: number; width: number; height: number };
+  /** 覆盖原因。 */
+  reason: string;
+}
+
 /** 负样本期望：页面应产生的 warning 与内容存活条件。 */
 export interface NegativeSampleExpectation {
   /** 负样本页号（1 起）；这些页允许比较失败。 */
@@ -290,6 +306,8 @@ export interface SampleReport {
   knownTolerancePages?: KnownTolerancePage[];
   /** 负样本期望；满足时单列 expected-negative，不记为引擎失败。 */
   negativeSample?: NegativeSampleExpectation;
+  /** 单页参考覆盖（人工权威图）；仅该页使用。 */
+  referenceOverride?: ReferenceOverride;
 }
 
 /** 汇总计数。 */

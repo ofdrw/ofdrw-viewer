@@ -1515,12 +1515,25 @@
       "goldenPages": [],
       "notes": [
         "未列入 19.3 分组，作为补充回归（P1）。",
-        "p3 参考 PDF 缺 Tahoma 产生 .notdef 伪影，单独标 referenceMismatch；p2 仍按引擎缺陷处理，p4 与参考空白一致。"
+        "p2 使用用户权威图 per-page referenceOverride（794×1123 等比归一化）；p3 仍 referenceMismatch，p4 pass。"
       ],
       "referenceMismatchPages": [
         3
       ],
-      "referenceMismatchReason": "参考 PDF 宿主缺 Tahoma，底部产生 .notdef 伪影（bbox 214.577）；OFD 只有字体名无 FontFile，引擎跳过缺字正确。仅 p3 参考不匹配，不要求引擎画 tofu。"
+      "referenceMismatchReason": "参考 PDF 宿主缺 Tahoma，底部产生 .notdef 伪影（bbox 214.577）；OFD 只有字体名无 FontFile，引擎跳过缺字正确。仅 p3 参考不匹配，不要求引擎画 tofu。",
+      "referenceOverride": {
+        "page": 2,
+        "path": "test/fixtures/reference/z-p002-authoritative.png",
+        "width": 794,
+        "height": 1123,
+        "reason": "用户提供的 P2 权威图“2、多对一”，原文/变换后均为 He affixed his fine sign.；仅 p2 将权威内容区对齐到引擎 p2 内容 bbox（794×1123 页面）。",
+        "targetContentBBoxPx": {
+          "x": 120,
+          "y": 129,
+          "width": 551,
+          "height": 723
+        }
+      }
     },
     {
       "name": "zsbk",

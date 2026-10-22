@@ -128,6 +128,21 @@ describe('回归样本清单', () => {
     expect(doc.notes.join('\n')).toContain('普通页仍 0.5mm');
   });
 
+  it('z p2 使用用户权威图，且仅覆盖 p2', () => {
+    const z = manifest.samples.find((sample) => sample.name === 'z')!;
+    expect(z.referenceOverride).toMatchObject({
+      page: 2,
+      path: 'test/fixtures/reference/z-p002-authoritative.png',
+      width: 794,
+      height: 1123,
+      targetContentBBoxPx: { x: 120, y: 129, width: 551, height: 723 },
+    });
+    expect(z.referenceOverride!.reason).toContain('He affixed his fine sign');
+    expect(existsSync(join(REPO_ROOT, z.referenceOverride!.path))).toBe(true);
+    const others = manifest.samples.filter((sample) => sample.referenceOverride && sample.name !== 'z');
+    expect(others).toHaveLength(0);
+  });
+
   it('z p3 为参考 .notdef 伪影，不要求引擎画 tofu', () => {
     const z = manifest.samples.find((sample) => sample.name === 'z')!;
     expect(z.referenceMismatchPages).toEqual([3]);
