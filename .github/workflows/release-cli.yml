@@ -1,0 +1,195 @@
+name: 发布 CLI
+
+# 手动触发（可填写发布标签）或推送 cli-v* 标签时，在原生 runner 上构建多平台 SEA 产物。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 发布标签（如 cli-v0.1.0）；留空则只构建、不发布
+        required: false
+        type: string
+  push:
+    tags:
+      - 'cli-v*'
+
+# 仅创建 Release 需要写权限；不推送代码。
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: '26.10.0'
+  PNPM_VERSION: '11.24.0'
+
+jobs:
+  build:
+    name: 构建 ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: linux-x64-gnu
+            archive: tar.gz
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64-gnu
+            archive: tar.gz
+          - runner: macos-13
+            target: darwin-x64
+            archive: tar.gz
+          - runner: macos-14
+            target: darwin-arm64
+            archive: tar.gz
+          - runner: windows-2022
+            target: win32-x64
+            archive: zip
+          # Windows ARM64 必须原生构建；runner 不可用时该 job 会失败，不要用 x64 代替。
+          - runner: windows-11-arm
+            target: win32-arm64
+            archive: zip
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 构建 engine 与普通 CLI
+        run: |
+          pnpm -C packages/ofdrw-viewer-engine build
+          pnpm -C packages/ofdrw-viewer-cli build
+
+      - name: 类型检查与测试
+        run: |
+          pnpm -C packages/ofdrw-viewer-cli typecheck
+          pnpm -C packages/ofdrw-viewer-cli test
+
+      - name: 构建 SEA 可执行文件
+        run: pnpm -C packages/ofdrw-viewer-cli build:sea -- --target ${{ matrix.target }}
+
+      - name: 冒烟测试（Unix）
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin=packages/ofdrw-viewer-cli/dist/sea/ofdrw-viewer-cli
+          "$bin" --version
+          "$bin" --help
+
+          smoke="$RUNNER_TEMP/sea-smoke"
+          tmp="$RUNNER_TEMP/sea-tmp"
+          rm -rf "$smoke" "$tmp"
+          mkdir -p "$smoke" "$tmp"
+
+          # 去掉 PATH 中的 Node，确认产物自包含。
+          env -i PATH=/usr/bin:/bin TMPDIR="$tmp" \
+            "$bin" ofd_pdf_match/helloworld.ofd -o "$smoke"
+          test -s "$smoke/helloworld-p001.png"
+
+          env -i PATH=/usr/bin:/bin TMPDIR="$tmp" \
+            "$bin" ofd_pdf_match/dense-text-perf.ofd -o "$smoke" --text --pages 1
+          test -s "$smoke/dense-text-perf-p001.json"
+          grep -q '"text"' "$smoke/dense-text-perf-p001.json"
+
+      - name: 冒烟测试（Windows）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bin = 'packages/ofdrw-viewer-cli/dist/sea/ofdrw-viewer-cli.exe'
+          & $bin --version
+          & $bin --help
+
+          $smoke = Join-Path $env:RUNNER_TEMP 'sea-smoke'
+          $tmp = Join-Path $env:RUNNER_TEMP 'sea-tmp'
+          Remove-Item -Recurse -Force $smoke, $tmp -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $smoke, $tmp | Out-Null
+
+          $originalPath = $env:PATH
+          $originalTemp = $env:TEMP
+          $originalTmp = $env:TMP
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $env:TEMP = $tmp
+          $env:TMP = $tmp
+          try {
+            & $bin ofd_pdf_match/helloworld.ofd -o $smoke
+            & $bin ofd_pdf_match/dense-text-perf.ofd -o $smoke --text --pages 1
+          } finally {
+            $env:PATH = $originalPath
+            $env:TEMP = $originalTemp
+            $env:TMP = $originalTmp
+          }
+
+          if (-not (Test-Path (Join-Path $smoke 'helloworld-p001.png'))) {
+            throw 'SEA 图片冒烟未生成 PNG'
+          }
+          $textJson = Join-Path $smoke 'dense-text-perf-p001.json'
+          if (-not (Test-Path $textJson)) {
+            throw 'SEA 文本冒烟未生成 JSON'
+          }
+          if (-not (Select-String -Path $textJson -Pattern '"text"' -Quiet)) {
+            throw 'SEA 文本 JSON 不包含 text 字段'
+          }
+
+      - name: 打包发布产物
+        run: pnpm -C packages/ofdrw-viewer-cli package:sea -- --target ${{ matrix.target }}
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target }}
+          path: |
+            packages/ofdrw-viewer-cli/dist/release/*.${{ matrix.archive }}
+            packages/ofdrw-viewer-cli/dist/release/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: 创建 GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/cli-v') || inputs.tag != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 下载全部构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: 生成 SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          shopt -s nullglob
+          files=(*.tar.gz *.zip)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo '没有找到发布产物' >&2
+            exit 1
+          fi
+          sha256sum "${files[@]}" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: ${{ inputs.tag || github.ref_name }}
+          files: |
+            release-assets/*.tar.gz
+            release-assets/*.zip
+            release-assets/SHA256SUMS
+          fail_on_unmatched_files: true

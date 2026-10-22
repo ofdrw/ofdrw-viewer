@@ -6,7 +6,7 @@
 
 - 采用 Node SEA（Single Executable Application）：每个产物内嵌 Node 运行时、CLI/engine JS 与当前平台的 `@napi-rs/canvas` 原生模块。
 - 一平台一架构一产物，不做 universal binary，不做跨平台交叉构建。
-- 支持矩阵固定为 6 个目标；国产 Linux ARM 复用 `linux-arm64` 产物，但需在目标发行版上验收。
+- 支持矩阵固定为 6 个目标；国产 Linux ARM 复用 `linux-arm64-gnu` 产物，但需在目标发行版上验收。
 - 不支持 LoongArch（龙芯）：Node 与 canvas 生态均缺少可用预编译/稳定 SEA 支持。
 - macOS 与 Windows 暂不签名、不公证。
 
@@ -14,8 +14,8 @@
 
 | 目标 | 产物后缀 | 构建 runner | 说明 |
 |---|---|---|---|
-| Linux x86_64 glibc | `linux-x64-gnu` | `ubuntu-22.04` | 建议在较老 glibc 环境构建 |
-| Linux ARM64 glibc | `linux-arm64-gnu` | `ubuntu-22.04-arm` | 国产 ARM Linux 使用同一 ABI，需在麒麟/UOS/openEuler 验收 |
+| Linux x86_64 glibc | `linux-x64-gnu` | `ubuntu-24.04` | GitHub 托管 x64 runner |
+| Linux ARM64 glibc | `linux-arm64-gnu` | `ubuntu-24.04-arm` | 国产 ARM Linux 使用同一 ABI，需在麒麟/UOS/openEuler 验收 |
 | macOS Intel | `darwin-x64` | `macos-13` | 不签名、不公证 |
 | macOS Apple Silicon | `darwin-arm64` | `macos-14` | 不签名、不公证 |
 | Windows x64 | `win32-x64` | `windows-2022` | 不签名 |
@@ -66,10 +66,19 @@ CLI 包声明的运行时下限是 **Node.js >=22**。普通 Node 运行 `dist/b
 
 ```bash
 pnpm install
-pnpm -C packages/ofdrw-viewer-cli typecheck
-pnpm -C packages/ofdrw-viewer-cli test
+pnpm -C packages/ofdrw-viewer-engine build
 pnpm -C packages/ofdrw-viewer-cli build
-pnpm -C packages/ofdrw-viewer-cli build:sea
+pnpm cli:typecheck
+pnpm cli:test
+pnpm cli:build:sea
+pnpm cli:package:sea
+```
+
+也可以直接进入 CLI 包目录执行同名脚本。`build:sea` 与 `package:sea` 都支持 `--target`，但目标必须与当前平台一致：
+
+```bash
+pnpm -C packages/ofdrw-viewer-cli build:sea -- --target linux-x64-gnu
+pnpm -C packages/ofdrw-viewer-cli package:sea -- --target linux-x64-gnu
 ```
 
 产物：
@@ -77,30 +86,35 @@ pnpm -C packages/ofdrw-viewer-cli build:sea
 ```text
 packages/ofdrw-viewer-cli/dist/sea/ofdrw-viewer-cli
 packages/ofdrw-viewer-cli/dist/sea/ofdrw-viewer-cli.exe   # Windows
+packages/ofdrw-viewer-cli/dist/release/ofdrw-viewer-cli-<version>-<target>.tar.gz
+packages/ofdrw-viewer-cli/dist/release/ofdrw-viewer-cli-<version>-<target>.zip
+packages/ofdrw-viewer-cli/dist/release/*.sha256
 ```
 
 `build:sea` 会执行：
 
 1. esbuild 打包 CLI/engine；
-2. 收集 `@napi-rs/canvas` JS 与当前平台 `.node`；
+2. 收集 `@napi-rs/canvas` JS 与目标平台 `.node`；
 3. 生成 `canvas-manifest.json`；
 4. 调用 `node --build-sea`；
 5. 在隔离临时目录执行冷启动、热启动与真实 OFD 冒烟。
 
-本地只能构建当前平台。不要用本机产物冒充其他平台。
+`package:sea` 会把可执行文件、根目录 `README.md` 与 `LICENSE` 打进归档，并生成对应的 `.sha256`。压缩包不包含 `skills/`、源码或 `.node` 文件。
+
+本地只能构建当前平台。`--target` 只用于显式校验目标，不会启用交叉构建；不要用本机产物冒充其他平台。
 
 ## 5. GitHub Actions
 
-建议恢复 `.github/workflows/release-cli.yml`，使用原生 runner 矩阵：
+仓库使用 `.github/workflows/release-cli.yml`，在原生 runner 矩阵上构建：
 
 ```yaml
 strategy:
   fail-fast: false
   matrix:
     include:
-      - runner: ubuntu-22.04
+      - runner: ubuntu-24.04
         target: linux-x64-gnu
-      - runner: ubuntu-22.04-arm
+      - runner: ubuntu-24.04-arm
         target: linux-arm64-gnu
       - runner: macos-13
         target: darwin-x64
@@ -112,15 +126,21 @@ strategy:
         target: win32-arm64
 ```
 
+触发方式：
+
+- 推送 `cli-v*` 标签；
+- 或手动 `workflow_dispatch`，填写 `tag` 才会创建 Release，留空只构建并保留 artifact。
+
 每个 job：
 
 1. checkout；
 2. 安装 Node 26.10、pnpm；
 3. `pnpm install --frozen-lockfile`；
-4. `pnpm -C packages/ofdrw-viewer-cli build:sea`；
-5. 去掉 PATH 中的 Node 后执行 `--version`、`--help` 与真实 OFD 转换；
-6. 打包 `tar.gz`/`zip` 并上传 artifact；
-7. release job 汇总产物并生成 `SHA256SUMS`。
+4. 构建 engine、CLI 并执行类型检查/测试；
+5. `build:sea -- --target <target>`；
+6. 去掉 PATH 中的 Node 后执行 `--version`、`--help`、真实 OFD 图片与 `--text` 冒烟；
+7. `package:sea -- --target <target>` 打包并上传 artifact；
+8. release job 汇总产物并生成 `SHA256SUMS`。
 
 注意：
 
@@ -137,16 +157,18 @@ ofdrw-viewer-cli-<version>-darwin-x64.tar.gz
 ofdrw-viewer-cli-<version>-darwin-arm64.tar.gz
 ofdrw-viewer-cli-<version>-win32-x64.zip
 ofdrw-viewer-cli-<version>-win32-arm64.zip
+*.sha256
 SHA256SUMS
 ```
 
-压缩包内只放可执行文件，不放 `skills/`、源码或 `.node` 文件。
+压缩包内只放可执行文件、`README.md` 与 `LICENSE`，不放 `skills/`、源码或 `.node` 文件。每个单平台产物同时生成 `.sha256`；Release 中的 `SHA256SUMS` 由 CI 汇总重新生成。
 
 ## 7. 平台注意事项
 
 ### Linux
 
 - 产物面向 glibc；不要宣称支持 musl；
+- GitHub 托管的 Linux arm64 runner 目前是 Ubuntu 24.04；若目标环境的 glibc 更老，需在更老容器或自建 runner 上重建并验证；
 - 若需支持麒麟 V10 / UOS 等较老环境，构建环境的 glibc 不能高于目标；
 - canvas `.node` 的 glibc 要求通常低于 Node，主要限制来自 Node 官方二进制。
 

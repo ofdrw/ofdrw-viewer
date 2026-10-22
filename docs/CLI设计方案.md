@@ -472,12 +472,12 @@ Node 侧实现位于 `image-decoder.ts`：
 
 | 平台 | 运行器 | 产物 |
 | --- | --- | --- |
-| Linux x64 (glibc) | `ubuntu-24.04` | `ofdrw-viewer-cli-<version>-linux-x64.tar.gz` |
-| Linux arm64 (glibc) | `ubuntu-24.04-arm` | `ofdrw-viewer-cli-<version>-linux-arm64.tar.gz` |
+| Linux x64 (glibc) | `ubuntu-24.04` | `ofdrw-viewer-cli-<version>-linux-x64-gnu.tar.gz` |
+| Linux arm64 (glibc) | `ubuntu-24.04-arm` | `ofdrw-viewer-cli-<version>-linux-arm64-gnu.tar.gz` |
 | macOS x64 | `macos-13` | `ofdrw-viewer-cli-<version>-darwin-x64.tar.gz` |
 | macOS arm64 | `macos-14` | `ofdrw-viewer-cli-<version>-darwin-arm64.tar.gz` |
-| Windows x64 | `windows-latest` | `ofdrw-viewer-cli-<version>-windows-x64.zip` |
-| Windows arm64 | `windows-11-arm` | `ofdrw-viewer-cli-<version>-windows-arm64.zip` |
+| Windows x64 | `windows-2022` | `ofdrw-viewer-cli-<version>-win32-x64.zip` |
+| Windows arm64 | `windows-11-arm` | `ofdrw-viewer-cli-<version>-win32-arm64.zip` |
 
 每个压缩包包含：
 
@@ -487,15 +487,15 @@ README.md
 LICENSE
 ```
 
-发布同时生成 `SHA256SUMS`。
+每个单平台产物同时生成 `.sha256`；发布时再由 CI 汇总生成 `SHA256SUMS`。构建、平台限制与 Node 版本要求以 `packages/ofdrw-viewer-cli/docs/BUILDING.md` 为准。
 
 ### 8.5 CI 发布流程
 
-新增 `.github/workflows/release-cli.yml`：
+仓库使用 `.github/workflows/release-cli.yml`：
 
 - 触发：`workflow_dispatch` 或 tag `cli-v*`；
 - matrix 构建各平台；
-- 每个 job：安装 Node 26.10、pnpm、依赖，运行 `pnpm --filter ofdrw-viewer-cli build:sea`，执行冒烟测试，上传 artifact；
+- 每个 job：安装 Node 26.10、pnpm、依赖，运行 `pnpm -C packages/ofdrw-viewer-cli build:sea -- --target <target>`，执行图片与 `--text` 冒烟测试，运行 `package:sea` 并上传 artifact；
 - release job：下载全部 artifact、生成 `SHA256SUMS`、创建 GitHub Release；
 - 权限仅 `contents: write`；
 - 不自动执行 `git push`；发布由 tag/手动触发。
@@ -503,6 +503,7 @@ LICENSE
 ### 8.6 已知限制
 
 - Linux 仅 glibc；musl/Alpine 不提供；
+- LoongArch/龙芯不提供，Node 与 canvas 生态缺少稳定构建链；
 - macOS 只编译可执行文件，不签名、不公证；首次运行可能被 Gatekeeper 拦截；
 - Windows 未签名，可能触发 SmartScreen；
 - 单文件体积约 180 MB（Linux x64 实测），压缩后仍较大；

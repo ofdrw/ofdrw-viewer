@@ -6,7 +6,7 @@
  * 1. 用 esbuild 把 CLI（含 engine 与字体/压缩依赖）打包成单个 ESM 文件；
  * 2. 收集 `@napi-rs/canvas` 的 JS 与当前平台 `.node` 到 SEA assets；
  * 3. 生成资产清单与 `sea-config.json`；
- * 4. 运行 `node --build-sea` 生成可执行文件；
+ * 4. 校验 `--target` 与当前构建机一致后，运行 `node --build-sea` 生成可执行文件；
  * 5. 在隔离的临时目录中做冷启动、二次启动与真实 OFD 转换冒烟。
  *
  * 构建机要求 Node >= 25.5（`node --build-sea`），推荐 Node 26.10。
@@ -49,14 +49,42 @@ const assetsDir = join(seaDir, 'assets');
 /** 清单格式版本，与 src/sea.ts 保持一致。 */
 const MANIFEST_SCHEMA_VERSION = 1;
 
-/** 平台与架构到 `@napi-rs/canvas` 原生包名的映射（Linux 仅 glibc）。 */
-const NATIVE_PACKAGES = {
-  'linux-x64': '@napi-rs/canvas-linux-x64-gnu',
-  'linux-arm64': '@napi-rs/canvas-linux-arm64-gnu',
-  'darwin-x64': '@napi-rs/canvas-darwin-x64',
-  'darwin-arm64': '@napi-rs/canvas-darwin-arm64',
-  'win32-x64': '@napi-rs/canvas-win32-x64-msvc',
-  'win32-arm64': '@napi-rs/canvas-win32-arm64-msvc',
+/**
+ * 发布矩阵：目标键到运行平台、架构与 canvas 原生包的映射。
+ *
+ * Linux 只支持 glibc；musl、LoongArch 等不在当前矩阵内。
+ */
+const TARGETS = {
+  'linux-x64-gnu': {
+    platform: 'linux',
+    arch: 'x64',
+    nativePackage: '@napi-rs/canvas-linux-x64-gnu',
+  },
+  'linux-arm64-gnu': {
+    platform: 'linux',
+    arch: 'arm64',
+    nativePackage: '@napi-rs/canvas-linux-arm64-gnu',
+  },
+  'darwin-x64': {
+    platform: 'darwin',
+    arch: 'x64',
+    nativePackage: '@napi-rs/canvas-darwin-x64',
+  },
+  'darwin-arm64': {
+    platform: 'darwin',
+    arch: 'arm64',
+    nativePackage: '@napi-rs/canvas-darwin-arm64',
+  },
+  'win32-x64': {
+    platform: 'win32',
+    arch: 'x64',
+    nativePackage: '@napi-rs/canvas-win32-x64-msvc',
+  },
+  'win32-arm64': {
+    platform: 'win32',
+    arch: 'arm64',
+    nativePackage: '@napi-rs/canvas-win32-arm64-msvc',
+  },
 };
 
 /** 可执行文件在 Windows 上的扩展名。 */
@@ -69,11 +97,13 @@ const EXECUTABLE_EXT = process.platform === 'win32' ? '.exe' : '';
  */
 async function main() {
   assertNodeVersion();
+  const target = resolveTarget();
+  assertNativeTarget(target);
   await rm(seaDir, { recursive: true, force: true });
   await mkdir(seaDir, { recursive: true });
 
   const cliPackage = await readJson(join(cliDir, 'package.json'));
-  const canvasInfo = await resolveCanvasAssets();
+  const canvasInfo = await resolveCanvasAssets(target);
   const assetMap = await collectAssets(canvasInfo);
   const manifest = await writeManifest(cliPackage, canvasInfo, assetMap);
   assetMap['canvas-manifest.json'] = join(assetsDir, 'canvas-manifest.json');
@@ -86,7 +116,53 @@ async function main() {
   if (process.platform !== 'win32') await chmod(executablePath, 0o755);
 
   const smoke = await runSmoke(executablePath, cliPackage.version);
-  await printSummary(executablePath, manifest, smoke);
+  await printSummary(executablePath, manifest, smoke, target);
+}
+
+/**
+ * 解析 `--target`，未指定时使用当前平台的默认目标。
+ *
+ * @returns 发布目标键与目标配置
+ * @throws {Error} 目标未知或缺少参数时抛出
+ */
+function resolveTarget() {
+  const args = process.argv.slice(2).filter((arg) => arg !== '--');
+  const index = args.indexOf('--target');
+  if (index === -1) {
+    const current = Object.entries(TARGETS).find(
+      ([, target]) => target.platform === process.platform && target.arch === process.arch,
+    );
+    if (!current) {
+      throw new Error(
+        `当前平台 ${process.platform}-${process.arch} 不在发布矩阵内；支持：${Object.keys(TARGETS).join(', ')}`,
+      );
+    }
+    return { key: current[0], ...current[1] };
+  }
+
+  const key = args[index + 1];
+  if (!key || key.startsWith('--')) {
+    throw new Error('--target 缺少目标值；示例：--target linux-x64-gnu');
+  }
+  const target = TARGETS[key];
+  if (!target) {
+    throw new Error(`未知目标 ${key}；支持：${Object.keys(TARGETS).join(', ')}`);
+  }
+  return { key, ...target };
+}
+
+/**
+ * 确认目标与当前构建机一致，避免交叉构建产生错误平台产物。
+ *
+ * @param target 发布目标
+ * @throws {Error} 目标与当前平台/架构不一致时抛出
+ */
+function assertNativeTarget(target) {
+  if (target.platform !== process.platform || target.arch !== process.arch) {
+    throw new Error(
+      `不支持交叉构建：目标 ${target.platform}-${target.arch}，当前构建机 ${process.platform}-${process.arch}；请在目标平台原生 runner 上构建`,
+    );
+  }
 }
 
 /**
@@ -102,11 +178,12 @@ function assertNodeVersion() {
 }
 
 /**
- * 定位 `@napi-rs/canvas` 的 JS 包与当前平台原生包。
+ * 定位 `@napi-rs/canvas` 的 JS 包与目标平台原生包。
  *
+ * @param target 发布目标
  * @returns canvas 包目录、平台包目录、原生模块文件名与版本
  */
-async function resolveCanvasAssets() {
+async function resolveCanvasAssets(target) {
   const require = createRequire(import.meta.url);
   let canvasPackageJson;
   try {
@@ -120,13 +197,7 @@ async function resolveCanvasAssets() {
 
   const canvasDir = dirname(canvasPackageJson);
   const canvasPackage = await readJson(canvasPackageJson);
-  const platformKey = `${process.platform}-${process.arch}`;
-  const nativePackage = NATIVE_PACKAGES[platformKey];
-  if (!nativePackage) {
-    throw new Error(
-      `当前平台 ${platformKey} 不在 SEA 发布矩阵内（仅支持 Linux/macOS/Windows 的 x64 与 arm64，Linux 仅 glibc）`,
-    );
-  }
+  const nativePackage = target.nativePackage;
 
   const canvasRequire = createRequire(canvasPackageJson);
   let nativePackageJson;
@@ -443,13 +514,15 @@ function measure(operation) {
  * @param executablePath 可执行文件绝对路径
  * @param manifest 资产清单
  * @param smoke 冒烟结果
+ * @param target 发布目标
  * @returns 输出完成的 Promise
  */
-async function printSummary(executablePath, manifest, smoke) {
+async function printSummary(executablePath, manifest, smoke, target) {
   const { size } = await stat(executablePath);
   const sizeMb = (size / 1024 / 1024).toFixed(1);
   console.log('');
   console.log('SEA 构建完成');
+  console.log(`  目标：${target.key}（${target.platform}-${target.arch}）`);
   console.log(`  可执行文件：${executablePath}（${sizeMb} MB）`);
   console.log(
     `  canvas：${manifest.canvasVersion} / ${manifest.nativePackage} / ${manifest.nodeFile}`,
