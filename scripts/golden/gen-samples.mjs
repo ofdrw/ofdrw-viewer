@@ -6,7 +6,7 @@
  * - 用 pdfinfo 读取 PDF 页数与首页尺寸；
  * - 用 ZIP 中央目录统计字体/图片/JBIG2 条目；
  * - 按设计方案 19.3 分组并标注优先级；
- * - manual（第 56 对，不提交仓库）做存在性探测：缺失时仍保留条目并标 available=false。
+ * - manual 与 dense-text-perf（可选）做存在性探测：缺失时仍保留条目并标 available=false。
  *
  * 用法：
  *   node scripts/golden/gen-samples.mjs            # 生成/更新清单
@@ -19,7 +19,12 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getPdfMeta } from './lib/pdf-meta.mjs';
 import { scanOfdPackage } from './lib/zip-scan.mjs';
-import { classifySample, MANUAL_SAMPLE, OTHER_GROUP } from './lib/sample-groups.mjs';
+import {
+  classifySample,
+  MANUAL_SAMPLE,
+  OTHER_GROUP,
+  TEXT_PERF_SAMPLE,
+} from './lib/sample-groups.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const SAMPLE_DIR = join(REPO_ROOT, 'ofd_pdf_match');
@@ -43,7 +48,10 @@ function listSampleNames() {
     const match = /^(.*)\.(ofd|pdf)$/i.exec(dirEntry);
     if (match) names.add(match[1]);
   }
-  if (!names.has(MANUAL_SAMPLE.name)) names.add(MANUAL_SAMPLE.name);
+  // 可选样本即使本地不存在也保留清单条目，由脚本/测试做可用性 skip。
+  for (const optional of [MANUAL_SAMPLE, TEXT_PERF_SAMPLE]) {
+    if (!names.has(optional.name)) names.add(optional.name);
+  }
   return [...names].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
@@ -60,7 +68,7 @@ function buildEntry(name) {
   const hasPdf = existsSync(pdfPath);
   const available = hasOfd && hasPdf;
   const notes = [];
-  const optional = name === MANUAL_SAMPLE.name;
+  const optional = name === MANUAL_SAMPLE.name || name === TEXT_PERF_SAMPLE.name;
   const { groups, priority } = classifySample(name);
 
   let pdfPages = null;
@@ -95,6 +103,10 @@ function buildEntry(name) {
     notes.push(MANUAL_SAMPLE.note);
     if (!available) notes.push('本地样本不存在：T9/T11 将 skip，不作为失败。');
   }
+  if (name === TEXT_PERF_SAMPLE.name) {
+    notes.push(TEXT_PERF_SAMPLE.note);
+    if (!available) notes.push('本地样本不存在：文本性能用例将 skip，不作为失败。');
+  }
   if (priority === 'P1' && groups.includes(OTHER_GROUP)) {
     notes.push('未列入 19.3 分组，作为补充回归（P1）。');
   }
@@ -118,7 +130,7 @@ function buildEntry(name) {
     sha256: hasOfd
       ? createHash('sha256').update(readFileSync(ofdPath)).digest('hex')
       : null,
-    goldenPages: optional ? [...MANUAL_SAMPLE.goldenPages] : [],
+    goldenPages: name === MANUAL_SAMPLE.name ? [...MANUAL_SAMPLE.goldenPages] : [],
     notes,
   };
 }
@@ -219,12 +231,19 @@ function printSummary(samples, outPath) {
   console.log(`样本清单已写入：${outPath}`);
   console.log(`  总数：${samples.length}（P0 ${p0}，P1 ${samples.length - p0}）`);
   console.log(`  分组：${[...groups.entries()].map(([key, count]) => `${key}=${count}`).join(', ')}`);
-  console.log(`  可选样本缺失：${optionalMissing}（manual）`);
+  console.log(`  可选样本缺失：${optionalMissing}（manual/dense-text-perf）`);
   const manual = samples.find((sample) => sample.name === MANUAL_SAMPLE.name);
   if (manual) {
     console.log(
       `  manual：available=${manual.available}，PDF ${manual.pdfPages ?? '-'} 页，` +
         `字体 ${manual.fontEntries}，JBIG2 ${manual.jb2Entries}，黄金页 ${manual.goldenPages.join('/')}`,
+    );
+  }
+  const textPerf = samples.find((sample) => sample.name === TEXT_PERF_SAMPLE.name);
+  if (textPerf) {
+    console.log(
+      `  dense-text-perf：available=${textPerf.available}，PDF ${textPerf.pdfPages ?? '-'} 页，` +
+        `字体 ${textPerf.fontEntries}，TextObject 性能样本（P0）`,
     );
   }
 }

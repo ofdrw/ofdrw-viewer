@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 批量回归入口：55 对基准样本 + 可选 manual。
+ * 批量回归入口：55 对基准样本 + 可选 manual + 可选 dense-text-perf。
  *
  * 通过 vitest（源码 alias）运行 `test/e2e/run-all.e2e.test.ts`，输出：
  * - test/.artifacts/golden/<timestamp>/report.json|html；
@@ -12,7 +12,7 @@
  *   node scripts/golden/run-all.mjs --require-engine     # T9/T11 门禁
  *   node scripts/golden/run-all.mjs --max-pages 5
  *
- * 说明：manual 不提交仓库；缺失时脚本提示并跳过，不当作失败。
+ * 说明：manual/dense-text-perf 不提交仓库；缺失时脚本提示并跳过，不当作失败。
  */
 
 import { spawnSync } from 'node:child_process';
@@ -125,9 +125,13 @@ console.log(
 );
 console.log(`[run-all] 报告：${join(outDir, 'report.html')}`);
 
-const manual = report.samples.find((sample) => sample.name === 'manual');
-if (manual && !manual.available) {
-  console.log('[run-all] 提示：manual.ofd/manual.pdf 本地不存在，已跳过（不提交仓库，不视为失败）。');
+for (const optionalName of ['manual', 'dense-text-perf']) {
+  const sample = report.samples.find((item) => item.name === optionalName);
+  if (sample && !sample.available) {
+    console.log(
+      `[run-all] 提示：${optionalName}.ofd/${optionalName}.pdf 本地不存在，已跳过（不提交仓库，不视为失败）。`,
+    );
+  }
 }
 
 if (options.requireEngine) {

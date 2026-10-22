@@ -1,5 +1,5 @@
 /**
- * 55 对基准样本的分组（设计方案 19.3）与第 56 对 manual 的元数据。
+ * 55 对基准样本的分组（设计方案 19.3）与可选样本（manual、dense-text-perf）的元数据。
  *
  * 一个样本可以属于多个分组（设计方案对 1.ofd、no_page_container.ofd 等重复列出）；
  * 未列入 19.3 的样本归入 `other`，仍参与全量回归，但优先级为 P1。
@@ -59,6 +59,9 @@ export const SAMPLE_GROUPS = Object.freeze({
 /** 未命中任何分组的样本使用的分组键。 */
 export const OTHER_GROUP = 'other';
 
+/** 文本性能样本的补充分组键（不在 19.3 九组内，单独标记）。 */
+export const TEXT_PERF_GROUP = 'text-perf';
+
 /** manual 样本元数据；不提交仓库，缺失时脚本 skip。 */
 export const MANUAL_SAMPLE = Object.freeze({
   name: 'manual',
@@ -69,12 +72,31 @@ export const MANUAL_SAMPLE = Object.freeze({
 });
 
 /**
+ * 文本性能样本元数据；不提交仓库，缺失时脚本 skip。
+ *
+ * 该样本用于暴露大量 TextObject 的布局/渲染开销，不参与黄金图基线，
+ * 由 `test/golden/text-perf.test.ts` 按 P0 性能门禁测量。
+ */
+export const TEXT_PERF_SAMPLE = Object.freeze({
+  name: 'dense-text-perf',
+  optional: true,
+  group: TEXT_PERF_GROUP,
+  priority: 'P0',
+  note:
+    '2 页 A4 文本性能样本：page0 147 个 TextObject/15442 字符，page1 8331 个 TextObject/15074 字符' +
+    '（1.45MB Content.xml），内嵌 SimSun 子集，无 g 压缩组；用于 P9 文本性能门禁，缺失时 skip。',
+});
+
+/**
  * 判断样本所属分组与优先级。
  *
  * @param name 样本名。
  * @returns `{groups, priority}`。
  */
 export function classifySample(name) {
+  if (name === TEXT_PERF_SAMPLE.name) {
+    return { groups: [TEXT_PERF_GROUP], priority: TEXT_PERF_SAMPLE.priority };
+  }
   const groups = [];
   for (const [key, group] of Object.entries(SAMPLE_GROUPS)) {
     if (group.samples.includes(name)) groups.push(key);
