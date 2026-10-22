@@ -218,6 +218,65 @@ describe('页面绘制管线', () => {
   });
 
 
+  it('注释 Appearance 内 Composite CTM 只应用一次（发票监制章尺度）', async () => {
+    const imageRes: ImageResource = { id: '64', mediaFile: 'image_63.png', format: 'png' };
+    const composite: PageObject = {
+      kind: 'composite',
+      id: '66',
+      resourceId: '67',
+      boundary: { x: 0, y: 0, w: 42.6861, h: 29.2806 },
+      ctm: [0.3528, 0, 0, 0.3528, 0, 0],
+      alpha: 255,
+      visible: true,
+    };
+    const unit: CompositeGraphicUnit = {
+      id: '67',
+      width: 342.9921,
+      height: 235.2756,
+      content: {
+        kind: 'block',
+        children: [
+          {
+            kind: 'image',
+            id: '65',
+            resourceId: '64',
+            boundary: { x: 0, y: 0, w: 121, h: 83 },
+            ctm: [106, 0, 0, 79, 7.5, 2],
+            alpha: 255,
+            visible: true,
+          },
+        ],
+      },
+    };
+    const annotation: Annotation = {
+      id: '62',
+      type: 'Stamp',
+      visible: true,
+      boundary: { x: 166.8639, y: 106.1897, w: 42.6861, h: 29.2806 },
+      appearance: { kind: 'block', children: [composite] },
+    };
+    const bundle = await preparePage({
+      page: { ...page([]), annotationFile: 'annot.xml' },
+      resources: scope({ images: [imageRes], composites: [unit] }),
+      loader: loader([annotation]),
+    });
+    const block = bundle.page.annotationBlocks[0]!;
+    const transforms = block.displayList.commands
+      .filter((command) => command.op === 'transform')
+      .map((command) => command.matrix);
+
+    // 外层 CompositeObject CTM 0.3528 只能出现一次；内层 ImageObject CTM 106×79 保持原值。
+    expect(transforms.filter((matrix) => matrix[0] === 0.3528 && matrix[3] === 0.3528)).toHaveLength(1);
+    expect(transforms.filter((matrix) => matrix[0] === 106 && matrix[3] === 79)).toHaveLength(1);
+
+    const renderer = new FakeRenderer();
+    drawPage(bundle, renderer, {} as never, { width: 813, height: 526, dpi: 96 });
+    expect(renderer.callsOf('drawImage')).toHaveLength(1);
+    // 42.6861mm 边界按 0.3528 仅缩放一次；若重复应用会退化为约 15.06mm。
+    const pageTransform = renderer.callsOf('setTransform').at(-1)?.args[0] as number[];
+    expect(pageTransform[0]).toBeCloseTo(96 / 25.4, 6);
+  });
+
   it('底纹 cell 在准备阶段构建并在绘制期补 tile', async () => {
     const cell = {
       kind: 'block' as const,

@@ -615,16 +615,9 @@ function flattenComposite(context: DrawObjectContext, object: CompositeObject): 
     context.build!.markDynamic();
     return;
   }
-  const boundary = normalizeBox(object.boundary);
-  const { renderer } = context;
-  renderer.save();
-  renderer.translate(boundary.x, boundary.y);
-  renderer.beginPath();
-  renderer.rect(0, 0, boundary.w, boundary.h);
-  renderer.clip('nonzero');
-  if (object.ctm) renderer.transform(object.ctm);
-  replayDisplayList(renderer, child.displayList);
-  renderer.restore();
+  // drawObject 已在分派前完成 Boundary 平移、裁剪与对象 CTM；这里只回放子块，
+  // 否则 CompositeObject 的 CTM 会被重复应用（发票监制章右下红章缩小 1/0.3528）。
+  replayDisplayList(context.renderer, child.displayList);
 }
 
 /**
