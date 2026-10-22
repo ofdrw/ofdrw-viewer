@@ -1403,6 +1403,9 @@ export class OFDDocument {
     this.signatureBundlePromise = undefined;
     this.signatureEntriesCache = undefined;
     this.signatureEntriesPending = undefined;
+    this.attachmentsCache = undefined;
+    this.attachmentsInfoCache = undefined;
+    this.attachmentsPending = undefined;
     this.pageCache.clear();
     this.pagePending.clear();
     this.pageInfoCache.clear();
@@ -2607,6 +2610,26 @@ export class OFDDocument {
         : {}),
     };
   }
+}
+
+/**
+ * 把附件模型转换为公开 API 类型，隐藏包内 FileLoc。
+ *
+ * @param model 附件模型。
+ * @returns 公开附件元信息。
+ */
+function toAttachmentInfo(model: AttachmentModel): AttachmentInfo {
+  const info: AttachmentInfo = {
+    id: model.id,
+    name: model.name,
+    visible: model.visible,
+    usage: model.usage,
+  };
+  if (model.format !== undefined) info.format = model.format;
+  if (model.size !== undefined) info.size = model.size;
+  if (model.creationDate !== undefined) info.creationDate = model.creationDate;
+  if (model.modDate !== undefined) info.modDate = model.modDate;
+  return info;
 }
 
 /**
