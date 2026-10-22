@@ -226,6 +226,59 @@ describe('功能门控', () => {
     expect(find.hidden).toBe(false);
   });
 
+  it('查找栏容器初始隐藏，且显隐只由打开/关闭控制', () => {
+    const { shell } = createShell({ state: { pageCount: 10 } });
+    const findbar = shell.elements.findbar;
+    const input = findbar.querySelector<HTMLInputElement>('input[type="search"]');
+    expect(input).not.toBeNull();
+    expect(findbar.hidden).toBe(true);
+    expect(shell.findbar.isOpen).toBe(false);
+
+    // 功能状态多次刷新（含核心 setFeatures 触发的同步）都不能把未打开的查找栏显示出来。
+    shell.setFeatureStates(createDefaultFeatureStates());
+    shell.setFeatureStates(resolveFeatureStates());
+    expect(findbar.hidden).toBe(true);
+
+    expect(shell.openFindbar()).toBe(true);
+    expect(findbar.hidden).toBe(false);
+    expect(shell.findbar.isOpen).toBe(true);
+    expect(document.activeElement).toBe(input);
+    shell.closeFindbar();
+    expect(findbar.hidden).toBe(true);
+    expect(shell.findbar.isOpen).toBe(false);
+
+    // 已打开时关闭 find 功能：立即收起，内部控件按门控禁用并带原因 tooltip。
+    expect(shell.openFindbar()).toBe(true);
+    const disabledStates = resolveFeatureStates(
+      { find: false },
+      {},
+      { find: 'disable' },
+    );
+    shell.setFeatureStates(disabledStates);
+    expect(findbar.hidden).toBe(true);
+    expect(shell.findbar.isOpen).toBe(false);
+    expect(input!.disabled).toBe(true);
+    expect(input!.getAttribute('aria-disabled')).toBe('true');
+    expect(input!.title).toContain('查找不可用');
+    expect(shell.openFindbar()).toBe(false);
+    expect(findbar.hidden).toBe(true);
+
+    // 重复门控调用仍保持隐藏；重新启用后也不自动打开，直到用户再次点击。
+    shell.setFeatureStates(disabledStates);
+    expect(findbar.hidden).toBe(true);
+    shell.setFeatureStates(createDefaultFeatureStates());
+    shell.setFeatureStates(resolveFeatureStates());
+    expect(findbar.hidden).toBe(true);
+    expect(shell.findbar.isOpen).toBe(false);
+    expect(input!.disabled).toBe(false);
+    expect(input!.hasAttribute('aria-disabled')).toBe(false);
+    expect(input!.title).toBe('');
+    expect(shell.openFindbar()).toBe(true);
+    expect(findbar.hidden).toBe(false);
+    shell.closeFindbar();
+    expect(findbar.hidden).toBe(true);
+  });
+
   it('关闭侧栏标签功能时隐藏标签并收起侧栏', () => {
     const states = resolveFeatureStates({ signatures: false });
     const { shell } = createShell({

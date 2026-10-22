@@ -9,7 +9,7 @@ import type { FeatureState, ViewerFeatureStates } from '../features';
 import type { MessageKey, Translator } from '../i18n';
 import type { FindState } from '../state';
 import { createIcon } from './icons';
-import { applyFeatureGate, resolveFeatureGate } from './feature-control';
+import { resolveFeatureGate } from './feature-control';
 import type {
   UIShellCommand,
   UIShellCommandHandler,
@@ -331,7 +331,7 @@ export class Findbar {
       visible: gate.visible,
       reason: gate.reason,
     };
-    applyFeatureGate(this.element, gate);
+    // 容器显隐只由 open()/close() 控制；门控仅作用于内部控件。
     setDisabled(this.input, !this.gate.enabled, gate.tooltip);
     for (const input of this.optionInputs.values()) {
       setDisabled(input, !this.gate.enabled, gate.tooltip);
