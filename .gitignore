@@ -23,3 +23,5 @@ src_material/
 # AgentTeams 运行状态，不纳入版本管理
 .agent-teams/
 .playwright-cli/
+.research/
+.cache
