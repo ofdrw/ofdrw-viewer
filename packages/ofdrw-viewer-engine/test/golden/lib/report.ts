@@ -18,7 +18,7 @@ export interface ReportPaths {
 }
 
 /** 样本结论。 */
-export type SampleOutcome = 'passed' | 'failed' | 'skipped' | 'unavailable';
+export type SampleOutcome = 'passed' | 'failed' | 'skipped' | 'unavailable' | 'reference-mismatch';
 
 /**
  * 根据单页结果判定样本结论。
@@ -34,7 +34,14 @@ export function sampleOutcome(sample: SampleReport): SampleOutcome {
     (page) => page.status !== 'skipped' && page.status !== 'reference-missing',
   );
   if (compared.length === 0) return 'skipped';
-  return compared.some((page) => page.status !== 'pass') ? 'failed' : 'passed';
+  const mismatchPages = new Set(sample.referenceMismatchPages ?? []);
+  const judged = compared.filter((page) => !mismatchPages.has(page.page));
+  const mismatchFailed = compared.filter(
+    (page) => mismatchPages.has(page.page) && page.status !== 'pass',
+  );
+  if (judged.some((page) => page.status !== 'pass')) return 'failed';
+  if (mismatchFailed.length > 0) return 'reference-mismatch';
+  return 'passed';
 }
 
 /**
@@ -55,6 +62,8 @@ export function computeSummary(samples: readonly SampleReport[], durationMs: num
     pagesPassed: 0,
     pagesFailed: 0,
     pagesSkipped: 0,
+    samplesReferenceMismatch: 0,
+    pagesReferenceMismatch: 0,
     durationMs,
   };
   for (const sample of samples) {
@@ -62,11 +71,14 @@ export function computeSummary(samples: readonly SampleReport[], durationMs: num
     if (outcome === 'passed') summary.samplesPassed += 1;
     else if (outcome === 'failed') summary.samplesFailed += 1;
     else if (outcome === 'unavailable') summary.samplesUnavailable += 1;
+    else if (outcome === 'reference-mismatch') summary.samplesReferenceMismatch += 1;
     else summary.samplesSkipped += 1;
 
+    const mismatchPages = new Set(sample.referenceMismatchPages ?? []);
     for (const page of sample.pages) {
       summary.pages += 1;
       if (page.status === 'pass') summary.pagesPassed += 1;
+      else if (mismatchPages.has(page.page)) summary.pagesReferenceMismatch += 1;
       else if (page.status === 'skipped' || page.status === 'reference-missing' || page.status === 'engine-unavailable') {
         summary.pagesSkipped += 1;
       } else summary.pagesFailed += 1;
@@ -104,6 +116,7 @@ function escapeHtml(value: string): string {
 function statusColor(status: string): string {
   if (status === 'pass') return '#1a7f37';
   if (status === 'skipped' || status === 'reference-missing') return '#8a6d3b';
+  if (status === 'reference-mismatch') return '#8250df';
   if (status === 'engine-unavailable') return '#6c6c6c';
   return '#c62828';
 }
@@ -123,12 +136,18 @@ function renderTolerance(tolerance: Tolerance): string {
     <tr><th>关键色占比差</th><td>≤ ${(tolerance.colorCoverageDelta * 100).toFixed(1)}%</td></tr>
     <tr><th>抗锯齿边缘</th><td>Sobel 梯度 &gt; ${tolerance.aaEdgeThreshold}（含 1 px 膨胀，不参与差异）</td></tr>
     <tr><th>像素差</th><td>pixelmatch threshold=${tolerance.pixelmatchThreshold}（辅助指标）</td></tr>
+    <tr><th>文字页判定</th><td>边缘密度 ≥ ${tolerance.textEdgeDensity} 且 SSIM ≥ ${tolerance.textSsimMin}；仅此类页启用暗墨主色（亮度 ≤ ${tolerance.textInkMaxLuminance}）、占比差 ≤ ${(tolerance.textCoverageDelta * 100).toFixed(0)}%、bbox ≤ ${tolerance.textLayoutMm} mm 的容差</td></tr>
+    <tr><th>普通页目标</th><td>bbox/尺寸 0.5 mm、关键色 ΔE ≤ ${tolerance.colorDeltaE}、占比差 ≤ ${(tolerance.colorCoverageDelta * 100).toFixed(0)}%（不因文字页放宽）</td></tr>
   </tbody></table>`;
 }
 
 /** 渲染单页行。 */
 function renderPageRow(sample: SampleReport, pageIndex: number): string {
   const page = sample.pages[pageIndex]!;
+  const displayStatus =
+    page.status !== 'pass' && sample.referenceMismatchPages?.includes(page.page)
+      ? 'reference-mismatch'
+      : page.status;
   const links: string[] = [];
   if (page.enginePng) links.push(`<a href="${escapeHtml(page.enginePng)}">engine</a>`);
   if (page.referencePng) links.push(`<a href="${escapeHtml(page.referencePng)}">pdf-ref</a>`);
@@ -138,7 +157,7 @@ function renderPageRow(sample: SampleReport, pageIndex: number): string {
   const warningText = page.warnings.map((warning) => `${warning.code}: ${warning.message}`).join('\n');
   return `<tr>
     <td>${page.page}</td>
-    <td style="color:${statusColor(page.status)};font-weight:600">${escapeHtml(page.status)}</td>
+    <td style="color:${statusColor(displayStatus)};font-weight:600">${escapeHtml(displayStatus)}</td>
     <td>${page.width ?? '-'}×${page.height ?? '-'}</td>
     <td>${metrics ? fmt(metrics.layoutDeltaMm) : '-'}</td>
     <td>${metrics ? fmt(metrics.keyColorMaxDE, 2) : '-'}</td>
@@ -233,8 +252,10 @@ export function renderHtml(report: GoldenReport): string {
   <div class="card"><b>${summary.samplesPassed}/${summary.samples}</b>样本通过</div>
   <div class="card"><b>${summary.pagesPassed}/${summary.pages}</b>页通过</div>
   <div class="card"><b>${summary.samplesFailed}</b>样本失败</div>
+  <div class="card"><b>${summary.samplesReferenceMismatch}</b>参考不匹配</div>
   <div class="card"><b>${summary.samplesUnavailable}</b>引擎不可用</div>
   <div class="card"><b>${summary.samplesSkipped}</b>跳过</div>
+  <div class="card"><b>${summary.pagesReferenceMismatch}</b>参考不匹配页</div>
   <div class="card"><b>${(summary.durationMs / 1000).toFixed(1)} s</b>总耗时</div>
 </div>
 <h2>容差口径</h2>

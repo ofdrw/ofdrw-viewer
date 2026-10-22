@@ -24,6 +24,7 @@ import type {
   OFDWarning,
 } from 'ofdrw-viewer-engine';
 import { nodeImageDecoders } from '../../helpers/node-image-decoder';
+import { loadSystemSupplementaryFonts } from './system-fonts';
 import type { PortableWarning } from './types';
 
 /** 单页渲染结果。 */
@@ -145,6 +146,7 @@ export async function renderOfdSample(
 
   try {
     const data = new Uint8Array(readFileSync(ofdPath));
+    const supplementaryFonts = loadSystemSupplementaryFonts();
     const renderer = new H5Canvas2DRenderer({
       createCanvas: (width, height) => createCanvas(width, height) as unknown as Canvas2DLike,
     });
@@ -154,6 +156,8 @@ export async function renderOfdSample(
       onWarning: pushWarning,
       // Node 测试环境没有 DOM 图片解码器；PNG/JPEG/WebP 走共享 helper，JBIG2/TIFF 待 T5b 插件另行注入。
       imageDecoders: [...nodeImageDecoders],
+      // Node 测试环境没有系统字体回退；注入主机 CJK 字体，避免把缺字体误判为文字渲染缺陷。
+      ...(supplementaryFonts.length > 0 ? { supplementaryFonts } : {}),
     });
     const openMs = performance.now() - start;
     const pageCount = doc.pageCount;

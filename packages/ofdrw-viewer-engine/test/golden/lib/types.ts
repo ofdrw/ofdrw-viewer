@@ -38,6 +38,18 @@ export interface Tolerance {
   minAlpha: number;
   /** 区域对比的网格边长（3 表示 3×3）；默认 3。 */
   regionGrid: number;
+  /** 判定为文字页所需的抗锯齿边缘密度下限（边缘像素/内容像素）；默认 1.2。 */
+  textEdgeDensity: number;
+  /** 文字页参与 SSIM 下限；默认 0.6。 */
+  textSsimMin: number;
+  /** 文字页只统计暗墨主色的最大亮度（0..255）；默认 100。 */
+  textInkMaxLuminance: number;
+  /** 文字页允许的主色占比差；默认 0.9（字形抗锯齿/字重差异）。 */
+  textCoverageDelta: number;
+  /** 文字页暗墨主色最大 ΔE2000；默认 6。 */
+  textColorDeltaE: number;
+  /** 文字页内容 bbox 容差，mm；默认 2（仅文字页，普通页仍 0.5）。 */
+  textLayoutMm: number;
 }
 
 /** 默认容差。 */
@@ -51,6 +63,12 @@ export const DEFAULT_TOLERANCE: Readonly<Tolerance> = Object.freeze({
   backgroundDistance: 8,
   minAlpha: 8,
   regionGrid: 3,
+  textEdgeDensity: 1.2,
+  textSsimMin: 0.6,
+  textInkMaxLuminance: 100,
+  textCoverageDelta: 0.9,
+  textColorDeltaE: 6,
+  textLayoutMm: 2,
 });
 
 /** 像素坐标 bbox。 */
@@ -111,6 +129,8 @@ export interface CompareMetrics {
   pixelDiffRatio: number;
   /** 3×3 区域指标。 */
   regions: RegionMetric[];
+  /** 抗锯齿边缘密度（边缘像素/内容像素），用于判定文字页。 */
+  edgeDensity: number;
 }
 
 /** 比较结论。 */
@@ -238,6 +258,10 @@ export interface SampleReport {
   pages: PageComparisonRecord[];
   /** 备注。 */
   notes: string[];
+  /** 人工确认的参考配对不匹配页（1 起）；这些页不记为引擎缺陷。 */
+  referenceMismatchPages?: number[];
+  /** 参考配对不匹配原因。 */
+  referenceMismatchReason?: string;
 }
 
 /** 汇总计数。 */
@@ -260,6 +284,10 @@ export interface GoldenSummary {
   pagesFailed: number;
   /** 页跳过数。 */
   pagesSkipped: number;
+  /** 样本的参考配对不匹配数（不计引擎失败）。 */
+  samplesReferenceMismatch: number;
+  /** 参考配对不匹配页数（不计引擎失败）。 */
+  pagesReferenceMismatch: number;
   /** 总耗时，ms。 */
   durationMs: number;
 }

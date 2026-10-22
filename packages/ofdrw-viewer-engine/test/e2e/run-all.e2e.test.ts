@@ -1,5 +1,5 @@
 /**
- * 55 对基准样本 + manual 的批量回归（由 `scripts/golden/run-all.mjs` 触发）。
+ * 57 条样本（55 对基准 + manual + dense-text-perf）的批量回归（由 `scripts/golden/run-all.mjs` 触发）。
  *
  * 默认行为（未设置 `GOLDEN_RUN_ALL=1`）跳过，避免拖慢日常单测。
  * 运行方式：
@@ -87,7 +87,7 @@ function roundMm(value: number): number {
   return Number(value.toFixed(4));
 }
 
-describeIf('真实样本回归（55 对 + manual）', () => {
+describeIf('真实样本回归（55 对 + manual + dense-text-perf）', () => {
   it(
     '批量渲染、PDF 参考对比与报告输出',
     { timeout: 30 * 60_000 },

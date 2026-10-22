@@ -198,16 +198,26 @@ export function computeEdgeMask(
  * @param mask 掩码。
  * @param width 宽，像素。
  * @param height 高，像素。
+ * @param minComponentPixels 连通域最小像素数；小于该值的孤立噪点不参与 bbox，默认 1。
  * @returns bbox；无内容时返回 null。
  */
-export function computeBBox(mask: Uint8Array, width: number, height: number): BBoxPx | null {
+export function computeBBox(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  minComponentPixels = 1,
+): BBoxPx | null {
+  const filtered =
+    minComponentPixels > 1
+      ? filterSmallComponents(mask, width, height, minComponentPixels)
+      : mask;
   let minX = width;
   let minY = height;
   let maxX = -1;
   let maxY = -1;
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      if (mask[y * width + x] === 0) continue;
+      if (filtered[y * width + x] === 0) continue;
       if (x < minX) minX = x;
       if (x > maxX) maxX = x;
       if (y < minY) minY = y;
@@ -216,6 +226,73 @@ export function computeBBox(mask: Uint8Array, width: number, height: number): BB
   }
   if (maxX < minX || maxY < minY) return null;
   return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
+}
+
+/**
+ * 过滤小于阈值的 4 邻接连通域，避免单像素噪点把内容 bbox 拉大到页边。
+ *
+ * @param mask 输入掩码。
+ * @param width 宽，像素。
+ * @param height 高，像素。
+ * @param minPixels 保留连通域的最小像素数。
+ * @returns 过滤后的掩码。
+ */
+function filterSmallComponents(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  minPixels: number,
+): Uint8Array {
+  const size = width * height;
+  const visited = new Uint8Array(size);
+  const output = new Uint8Array(size);
+  const stack = new Int32Array(size);
+  const component: number[] = [];
+  for (let start = 0; start < size; start += 1) {
+    if (mask[start] === 0 || visited[start] !== 0) continue;
+    let top = 0;
+    stack[top++] = start;
+    visited[start] = 1;
+    component.length = 0;
+    while (top > 0) {
+      const index = stack[--top]!;
+      component.push(index);
+      const x = index % width;
+      const y = (index / width) | 0;
+      if (x > 0) {
+        const next = index - 1;
+        if (mask[next] !== 0 && visited[next] === 0) {
+          visited[next] = 1;
+          stack[top++] = next;
+        }
+      }
+      if (x + 1 < width) {
+        const next = index + 1;
+        if (mask[next] !== 0 && visited[next] === 0) {
+          visited[next] = 1;
+          stack[top++] = next;
+        }
+      }
+      if (y > 0) {
+        const next = index - width;
+        if (mask[next] !== 0 && visited[next] === 0) {
+          visited[next] = 1;
+          stack[top++] = next;
+        }
+      }
+      if (y + 1 < height) {
+        const next = index + width;
+        if (mask[next] !== 0 && visited[next] === 0) {
+          visited[next] = 1;
+          stack[top++] = next;
+        }
+      }
+    }
+    if (component.length >= minPixels) {
+      for (const index of component) output[index] = 1;
+    }
+  }
+  return output;
 }
 
 /**

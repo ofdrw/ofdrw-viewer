@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-21T08:20:06.378Z",
+  "generatedAt": "2026-10-21T09:46:45.764Z",
   "sourceDir": "ofd_pdf_match",
-  "count": 56,
+  "count": 57,
   "samples": [
     {
       "name": "1",
@@ -534,6 +534,36 @@
       "notes": []
     },
     {
+      "name": "dense-text-perf",
+      "groups": [
+        "text-perf"
+      ],
+      "priority": "P0",
+      "optional": true,
+      "available": true,
+      "ofd": "ofd_pdf_match/dense-text-perf.ofd",
+      "pdf": "ofd_pdf_match/dense-text-perf.pdf",
+      "pdfPages": 2,
+      "ofdDeclaredPages": 2,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": true,
+      "fontEntries": 1,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "0a43ac189ca746df2c1ce3d73c407d433c66fc754789f462d855ef0e13974740",
+      "goldenPages": [],
+      "notes": [
+        "2 页 A4 文本性能样本：page0 147 个 TextObject/15442 字符，page1 8331 个 TextObject/15074 字符（1.45MB Content.xml），内嵌 SimSun 子集，无 g 压缩组；用于 P9 文本性能门禁，缺失时 skip。"
+      ]
+    },
+    {
       "name": "doc1File",
       "groups": [
         "other"
@@ -560,7 +590,8 @@
       "sha256": "92a655b3966aae0b44dc9ca666849f68ee26028e12f537669e58489271f06f95",
       "goldenPages": [],
       "notes": [
-        "未列入 19.3 分组，作为补充回归（P1）。"
+        "未列入 19.3 分组，作为补充回归（P1）。",
+        "文字页容差：edgeDensity≥1.2 且 SSIM≥0.6 时使用暗墨主色 + 2mm bbox 容差；普通页仍 0.5mm/ΔE5。"
       ]
     },
     {
@@ -821,7 +852,23 @@
       "jb2Entries": 0,
       "sha256": "df7bf847df8c6e6416180ee5cbcfdc13b3bf6ab5314b12958588c709329374f3",
       "goldenPages": [],
-      "notes": []
+      "notes": [
+        "OFD 这些页为图片版式（ImageObject/CompositeObject），PDF 同页为文字版式；参考配对不一致，差异不计引擎缺陷，待样本维护确认。"
+      ],
+      "referenceMismatchPages": [
+        4,
+        14,
+        15,
+        16,
+        17,
+        18,
+        32,
+        34,
+        35,
+        40,
+        42
+      ],
+      "referenceMismatchReason": "OFD 这些页为图片版式（ImageObject/CompositeObject），PDF 同页为文字版式；参考配对不一致，差异不计引擎缺陷，待样本维护确认。"
     },
     {
       "name": "keyword",

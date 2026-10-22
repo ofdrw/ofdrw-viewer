@@ -1,5 +1,5 @@
 /**
- * 回归样本清单（56 对：55 对基准样本 + 可选 manual）。
+ * 回归样本清单（57 对：55 对基准样本 + 可选 manual + 可选 dense-text-perf）。
  *
  * 清单由 `scripts/golden/gen-samples.mjs` 生成；测试只读取与校验，
  * 业务原件不复制进仓库。
@@ -25,6 +25,9 @@ export const REQUIRED_GROUPS = Object.freeze([
 /** manual 样本的特殊分组键。 */
 export const MANUAL_GROUP = 'scan-image-ctm';
 
+/** 文本性能样本的补充分组键（不在 19.3 九组内）。 */
+export const TEXT_PERF_GROUP = 'text-perf';
+
 /** 其余样本的分组键。 */
 export const OTHER_GROUP = 'other';
 
@@ -36,7 +39,7 @@ export interface SampleManifestEntry {
   groups: string[];
   /** 优先级。 */
   priority: 'P0' | 'P1';
-  /** 是否可选（manual 不提交仓库）。 */
+  /** 是否可选（manual/dense-text-perf 缺失时 skip）。 */
   optional: boolean;
   /** 本地是否存在。 */
   available: boolean;
@@ -66,6 +69,10 @@ export interface SampleManifestEntry {
   goldenPages: number[];
   /** 备注。 */
   notes: string[];
+  /** 人工确认的参考配对不匹配页（1 起）；差异不记为引擎缺陷。 */
+  referenceMismatchPages?: number[];
+  /** 参考配对不匹配原因。 */
+  referenceMismatchReason?: string;
 }
 
 /** 清单文件结构。 */
@@ -151,5 +158,7 @@ export function createEmptySampleReport(sample: SampleManifestEntry): SampleRepo
     warnings: [],
     pages: [],
     notes: [...sample.notes],
+    ...(sample.referenceMismatchPages ? { referenceMismatchPages: [...sample.referenceMismatchPages] } : {}),
+    ...(sample.referenceMismatchReason ? { referenceMismatchReason: sample.referenceMismatchReason } : {}),
   };
 }

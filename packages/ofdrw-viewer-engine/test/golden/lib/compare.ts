@@ -17,6 +17,7 @@ import {
   computeBBox,
   computeContentMask,
   computeEdgeMask,
+  countMask,
   cropImage,
   decodePng,
   dominantColors,
@@ -99,8 +100,10 @@ export function compareImages(
 
   const contentMaskA = computeContentMask(actualFlat, tolerance.minAlpha, tolerance.backgroundDistance);
   const contentMaskE = computeContentMask(expectedFlat, tolerance.minAlpha, tolerance.backgroundDistance);
-  const bboxA = computeBBox(contentMaskA, width, height);
-  const bboxE = computeBBox(contentMaskE, width, height);
+  // 单像素/极小噪点不应把 bbox 拉到页边；文字页尤其容易被 PDF/引擎的抗锯齿孤立点影响。
+  const minBboxComponent = Math.max(4, Math.round(width * height * 0.00001));
+  const bboxA = computeBBox(contentMaskA, width, height, minBboxComponent);
+  const bboxE = computeBBox(contentMaskE, width, height, minBboxComponent);
   const bboxAm = bboxToMm(bboxA, dpi);
   const bboxEm = bboxToMm(bboxE, dpi);
 
@@ -128,12 +131,24 @@ export function compareImages(
 
   const ssim = globalSsim(grayA, grayE);
 
+  // 文字页的“主色”很容易被字形抗锯齿灰阶主导；边缘密度 + SSIM 作为显式文字页判定，
+  // 只对文字页启用暗墨主色与较宽占比容差，不改变图片/版式页的严格口径。
+  const contentCount = countMask(contentMaskA) + countMask(contentMaskE);
+  const edgeDensity = contentCount > 0 ? countMask(ignoreMask) / contentCount : 0;
+  const isTextLike = edgeDensity >= tolerance.textEdgeDensity && ssim >= tolerance.textSsimMin;
+
   const colorStats = sampleColorDifferences(actualFlat, expectedFlat, contentMaskA, contentMaskE, ignoreMask);
   // 主色统计排除抗锯齿边缘，避免第 5 名灰阶随 AA 抖动导致误判。
   const flatMaskA = maskWithoutEdges(contentMaskA, edgeMaskA);
   const flatMaskE = maskWithoutEdges(contentMaskE, edgeMaskE);
-  const actualColors = dominantColors(actualFlat, flatMaskA, 8, 0.002);
-  const expectedColors = dominantColors(expectedFlat, flatMaskE, 8, 0.002);
+  const colorMaskA = isTextLike
+    ? maskByLuminance(actualFlat, flatMaskA, tolerance.textInkMaxLuminance)
+    : flatMaskA;
+  const colorMaskE = isTextLike
+    ? maskByLuminance(expectedFlat, flatMaskE, tolerance.textInkMaxLuminance)
+    : flatMaskE;
+  const actualColors = dominantColors(actualFlat, colorMaskA, 8, 0.002);
+  const expectedColors = dominantColors(expectedFlat, colorMaskE, 8, 0.002);
   let keyColorMaxDE = 0;
   let keyColorCoverageDelta = 0;
   for (const expectedColor of expectedColors) {
@@ -165,14 +180,18 @@ export function compareImages(
     height: actual.height - expected.height,
   };
   const sizeDeltaMm = { width: sizeDeltaPx.width * scale, height: sizeDeltaPx.height * scale };
-  const layoutToleranceMm = Math.max(tolerance.layoutMm, scale);
+  const layoutToleranceMm = Math.max(
+    tolerance.layoutMm,
+    scale,
+    isTextLike ? tolerance.textLayoutMm : 0,
+  );
   const sizeTolerancePx = Math.max(1, tolerance.sizeMm / scale);
   const sizeOk =
     Math.abs(sizeDeltaPx.width) <= sizeTolerancePx && Math.abs(sizeDeltaPx.height) <= sizeTolerancePx;
   const layoutOk = layoutDeltaMm !== null && layoutDeltaMm <= layoutToleranceMm;
-  const colorOk =
-    keyColorMaxDE <= tolerance.colorDeltaE &&
-    keyColorCoverageDelta <= tolerance.colorCoverageDelta;
+  const colorDeltaLimit = isTextLike ? tolerance.textColorDeltaE : tolerance.colorDeltaE;
+  const coverageLimit = isTextLike ? tolerance.textCoverageDelta : tolerance.colorCoverageDelta;
+  const colorOk = keyColorMaxDE <= colorDeltaLimit && keyColorCoverageDelta <= coverageLimit;
 
   const reasons: string[] = [];
   if (!sizeOk) {
@@ -189,13 +208,13 @@ export function compareImages(
     );
   }
   if (!colorOk) {
-    if (keyColorMaxDE > tolerance.colorDeltaE) {
-      reasons.push(`关键色 ΔE2000 ${keyColorMaxDE.toFixed(2)} > ${tolerance.colorDeltaE}`);
+    if (keyColorMaxDE > colorDeltaLimit) {
+      reasons.push(`关键色 ΔE2000 ${keyColorMaxDE.toFixed(2)} > ${colorDeltaLimit}`);
     }
-    if (keyColorCoverageDelta > tolerance.colorCoverageDelta) {
+    if (keyColorCoverageDelta > coverageLimit) {
       reasons.push(
         `关键色占比差 ${(keyColorCoverageDelta * 100).toFixed(1)}% > ` +
-          `${(tolerance.colorCoverageDelta * 100).toFixed(1)}%`,
+          `${(coverageLimit * 100).toFixed(1)}%`,
       );
     }
   }
@@ -220,6 +239,7 @@ export function compareImages(
     ssim,
     pixelDiffRatio,
     regions,
+    edgeDensity,
   };
 
   const result: CompareResult = { status, ok: status === 'pass', reasons, metrics };
@@ -323,6 +343,26 @@ function maskWithoutEdges(contentMask: Uint8Array, edgeMask: Uint8Array): Uint8A
     mask[i] = contentMask[i] === 1 && edgeMask[i] === 0 ? 1 : 0;
   }
   return mask;
+}
+
+/**
+ * 只保留亮度不超过阈值的暗墨像素，排除文字抗锯齿灰阶对主色统计的干扰。
+ *
+ * @param image 图像。
+ * @param mask 基础内容掩码。
+ * @param maxLuminance 最大亮度（0..255）。
+ * @returns 过滤后的掩码。
+ */
+function maskByLuminance(image: ImageLike, mask: Uint8Array, maxLuminance: number): Uint8Array {
+  const out = new Uint8Array(mask.length);
+  for (let i = 0; i < mask.length; i += 1) {
+    if (mask[i] === 0) continue;
+    const offset = i * 4;
+    const luminance =
+      0.299 * image.data[offset]! + 0.587 * image.data[offset + 1]! + 0.114 * image.data[offset + 2]!;
+    if (luminance <= maxLuminance) out[i] = 1;
+  }
+  return out;
 }
 
 /** 构造 diff 叠加图：非差异区淡出，差异区标红。 */

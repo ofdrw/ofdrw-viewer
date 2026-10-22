@@ -1,5 +1,5 @@
 /**
- * 回归样本清单完整性：56 对（55 基准 + manual）、19.3 分组、页数/尺寸/字体/JBIG2 标注。
+ * 回归样本清单完整性：57 对（55 基准 + manual + dense-text-perf）、19.3 分组、页数/尺寸/字体/JBIG2 标注。
  */
 
 import { existsSync } from 'node:fs';
@@ -10,6 +10,7 @@ import {
   MANUAL_GROUP,
   OTHER_GROUP,
   REQUIRED_GROUPS,
+  TEXT_PERF_GROUP,
   loadSampleManifest,
 } from './lib/samples';
 
@@ -36,14 +37,15 @@ const EXPECTED_GROUP_SAMPLES: Record<string, string[]> = {
 describe('回归样本清单', () => {
   const manifest = loadSampleManifest();
 
-  it('包含 56 对且名称唯一', () => {
+  it('包含 57 对且名称唯一', () => {
     expect(manifest.schemaVersion).toBe(1);
     expect(manifest.sourceDir).toBe('ofd_pdf_match');
-    expect(manifest.count).toBe(56);
-    expect(manifest.samples).toHaveLength(56);
+    expect(manifest.count).toBe(57);
+    expect(manifest.samples).toHaveLength(57);
     const names = new Set(manifest.samples.map((sample) => sample.name));
-    expect(names.size).toBe(56);
+    expect(names.size).toBe(57);
     expect(names.has('manual')).toBe(true);
+    expect(names.has('dense-text-perf')).toBe(true);
   });
 
   it('19.3 分组完整，重复列出的样本属于多个分组', () => {
@@ -93,6 +95,35 @@ describe('回归样本清单', () => {
       expect(manual.embeddedFonts).toBe(true);
       expect(manual.imageEntries).toBeGreaterThan(0);
     }
+  });
+
+  it('dense-text-perf 为可选 P0 文本性能样本，缺失时 skip', () => {
+    const perf = manifest.samples.find((sample) => sample.name === 'dense-text-perf')!;
+    expect(perf.optional).toBe(true);
+    expect(perf.priority).toBe('P0');
+    expect(perf.groups).toEqual([TEXT_PERF_GROUP]);
+    expect(perf.goldenPages).toEqual([]);
+    if (perf.available) {
+      expect(perf.pdfPages).toBe(2);
+      expect(perf.ofdDeclaredPages).toBe(2);
+      expect(perf.sizeMm).toEqual({ width: 210, height: 297 });
+      expect(perf.embeddedFonts).toBe(true);
+      expect(perf.fontEntries).toBeGreaterThan(0);
+      expect(perf.jb2Entries).toBe(0);
+    } else {
+      expect(perf.notes.join('\n')).toContain('skip');
+    }
+  });
+
+  it('intro-数科 标注参考配对不匹配页，doc1File 标注文字页容差', () => {
+    const intro = manifest.samples.find((sample) => sample.name === 'intro-数科')!;
+    expect(intro.referenceMismatchPages).toEqual([4, 14, 15, 16, 17, 18, 32, 34, 35, 40, 42]);
+    expect(intro.referenceMismatchReason).toContain('图片版式');
+    expect(intro.notes.join('\n')).toContain('参考配对不一致');
+
+    const doc = manifest.samples.find((sample) => sample.name === 'doc1File')!;
+    expect(doc.notes.join('\n')).toContain('文字页容差');
+    expect(doc.notes.join('\n')).toContain('普通页仍 0.5mm');
   });
 
   it('本地样本存在时：PDF/OFD 页数一致、尺寸换算正确、文件可访问', () => {
