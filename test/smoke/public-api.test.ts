@@ -45,8 +45,9 @@ describe('public API surface', () => {
     expect(MM_PER_INCH).toBe(25.4);
     const viewport = getPageViewport({ width: 210, height: 297 }, { dpi: 96 });
     expect(viewport.dpi).toBe(96);
-    expect(viewport.width).toBeCloseTo((210 * 96) / 25.4, 6);
-    expect(viewport.height).toBeCloseTo((297 * 96) / 25.4, 6);
+    // t61 起 viewport 像素按 0.001px 归一化；A4@96 的精确归一处为 793.701/1122.52。
+    expect(viewport.width).toBe(793.701);
+    expect(viewport.height).toBe(1122.52);
     const matrix = getPageTransform({ x: 0, y: 0, w: 210, h: 297 }, 96);
     const scale = 96 / 25.4;
     expect(matrix[0]).toBeCloseTo(scale, 12);

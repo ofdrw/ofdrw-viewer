@@ -29,6 +29,9 @@ export default defineConfig({
     ],
     testTimeout: 30_000,
     hookTimeout: 30_000,
+    // 性能门禁（test/performance）依赖独占 CPU；文件串行避免 --maxWorkers 并发造成假超时，
+    // 不降低任何阈值，也不跳过真实性能用例。
+    fileParallelism: false,
   },
   cacheDir: fileURLToPath(new URL('./node_modules/.vite', import.meta.url)),
 });

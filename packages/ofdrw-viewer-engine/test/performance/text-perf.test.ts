@@ -23,9 +23,9 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { REPO_ROOT, resolveArtifactsDir } from './lib/artifacts';
-import { renderOfdSample } from './lib/engine';
-import { findSample, loadSampleManifest } from './lib/samples';
+import { REPO_ROOT, resolveArtifactsDir } from '../golden/lib/artifacts';
+import { renderOfdSample } from '../golden/lib/engine';
+import { findSample, loadSampleManifest } from '../golden/lib/samples';
 
 /** 普通页性能目标（设计方案 18）；仅记录，不适用于 dense-text-perf，不得下调。 */
 const ORDINARY_PAGE_THRESHOLDS = Object.freeze({
