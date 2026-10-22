@@ -234,6 +234,9 @@ export class OFDViewer implements UIShellHost {
   private scrollFrame: number | null = null;
   private reflowFrame: number | null = null;
   private lastVisibleRange = { start: 0, end: -1 };
+  private scrollListenerBound = false;
+  /** 主区域滚动回调；只做 rAF 合并，实际更新在 `handleScroll` 中完成。 */
+  private readonly onScroll = (): void => this.scheduleScrollUpdate();
   private readonly onWindowResize = (): void => this.scheduleViewportUpdate();
   private readonly onFullscreenChange = (): void => {
     const value = !!this.ownerDocument.fullscreenElement;
@@ -578,6 +581,7 @@ export class OFDViewer implements UIShellHost {
     this.destroyPages();
     this.keyboard.destroy();
     this.history?.destroy();
+    this.unbindScrollListener();
     this.resizeObserver?.disconnect();
     window.removeEventListener('resize', this.onWindowResize);
     this.ownerDocument.removeEventListener('fullscreenchange', this.onFullscreenChange);
@@ -1370,7 +1374,7 @@ export class OFDViewer implements UIShellHost {
     return { width: Math.max(1, width), height: Math.max(1, height) };
   }
 
-  /** 设置 ResizeObserver/窗口监听。 */
+  /** 设置 ResizeObserver/窗口监听与主区域滚动监听。 */
   private setupViewport(): void {
     this.root.dataset.viewport = this.viewportMode;
     this.root.dataset.sidebarLayout = this.sidebarLayout;
@@ -1382,6 +1386,26 @@ export class OFDViewer implements UIShellHost {
       this.resizeObserver = null;
     }
     if (typeof window !== 'undefined') window.addEventListener('resize', this.onWindowResize);
+    this.bindScrollListener();
+  }
+
+  /**
+   * 绑定主区域滚动监听；连同 `open`/`close` 只绑一次，避免重复入队。
+   *
+   * 用户滚轮/触控/滚动条只改变 `main.scrollTop`，必须由该监听触发 rAF 合并后的
+   * `handleScroll()`，否则页码、可见范围与后续页渲染都不会更新。
+   */
+  private bindScrollListener(): void {
+    if (this.scrollListenerBound) return;
+    this.elements.main.addEventListener('scroll', this.onScroll, { passive: true });
+    this.scrollListenerBound = true;
+  }
+
+  /** 解绑主区域滚动监听。 */
+  private unbindScrollListener(): void {
+    if (!this.scrollListenerBound) return;
+    this.elements.main.removeEventListener('scroll', this.onScroll);
+    this.scrollListenerBound = false;
   }
 
   /** 核心管理侧栏与遮罩可见性。 */

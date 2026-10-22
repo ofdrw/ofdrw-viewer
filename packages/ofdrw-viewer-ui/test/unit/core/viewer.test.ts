@@ -78,6 +78,19 @@ function makeDocument(count: number): unknown {
   };
 }
 
+/**
+ * 读取页视图的排版顶部偏移，单位 px。
+ *
+ * @param viewer 阅读器实例。
+ * @param pageNumber 页码，1-based。
+ * @returns 页顶偏移。
+ */
+function pageTop(viewer: OFDViewer, pageNumber: number): number {
+  const element = viewer.getPageView(pageNumber)?.element;
+  if (!element) throw new Error(`页 ${pageNumber} 不存在`);
+  return Number.parseFloat(element.style.top);
+}
+
 let contextMock: { clearRect: ReturnType<typeof vi.fn>; fillRect: ReturnType<typeof vi.fn> };
 
 beforeEach(() => {
@@ -201,5 +214,61 @@ describe('OFDViewer 核心', () => {
     expect(viewer.getPageViews()).toHaveLength(100);
     viewer.destroy();
     expect(viewer.getRoot().isConnected).toBe(false);
+  });
+
+  it('主区域 scroll 事件驱动连续滚动状态、事件与后续页渲染', async () => {
+    // 监听器只允许绑定一次，并在 destroy 时解绑。
+    const addSpy = vi.spyOn(HTMLElement.prototype, 'addEventListener');
+    const removeSpy = vi.spyOn(HTMLElement.prototype, 'removeEventListener');
+    engineMocks.open.mockImplementation(async () => makeDocument(5));
+    const viewer = new OFDViewer({ container: document.body, source: new ArrayBuffer(8) });
+    await viewer.ready;
+
+    const main = viewer.getElements().main;
+    const scrollAddIndex = addSpy.mock.calls.findIndex((call) => call[0] === 'scroll');
+    expect(scrollAddIndex).toBeGreaterThanOrEqual(0);
+    expect(addSpy.mock.calls.filter((call) => call[0] === 'scroll')).toHaveLength(1);
+    expect(addSpy.mock.contexts[scrollAddIndex]).toBe(main);
+    expect(addSpy.mock.calls[scrollAddIndex]?.[2]).toMatchObject({ passive: true });
+
+    const changes: Array<{ pageNumber: number; previous: number }> = [];
+    const rendered: number[] = [];
+    viewer.on('pagechanging', (event) => changes.push(event));
+    viewer.on('pagerendered', (event) => rendered.push(event.pageNumber));
+
+    // 第一段：连续滚动到第 2 页，页码/可见范围/事件同步更新。
+    main.scrollTop = pageTop(viewer, 2);
+    main.dispatchEvent(new Event('scroll'));
+    await vi.waitFor(() => {
+      expect(viewer.getPageNumber()).toBe(2);
+      expect(viewer.getState().view.visiblePageRange.start).toBe(1);
+    });
+    expect(changes).toContainEqual({ pageNumber: 2, previous: 1 });
+
+    // 第二段：继续滚动到第 4 页（初始预取范围之外），触发新页渲染。
+    const fourth = viewer.getPageView(4)!;
+    main.scrollTop = pageTop(viewer, 4);
+    main.dispatchEvent(new Event('scroll'));
+    await vi.waitFor(() => {
+      expect(viewer.getPageNumber()).toBe(4);
+      expect(viewer.getState().view.visiblePageRange.start).toBeLessThanOrEqual(3);
+      expect(viewer.getState().view.visiblePageRange.end).toBeGreaterThanOrEqual(3);
+    });
+    await vi.waitFor(() => {
+      expect(fourth.canvas).not.toBeNull();
+      expect(fourth.state).toBe('rendered');
+    });
+    expect(rendered).toContain(4);
+    expect(changes).toContainEqual({ pageNumber: 4, previous: 2 });
+
+    // 重复构造/打开不得重复绑定；destroy 必须解绑。
+    await viewer.close();
+    await viewer.open();
+    expect(addSpy.mock.calls.filter((call) => call[0] === 'scroll')).toHaveLength(1);
+
+    viewer.destroy();
+    const scrollRemoveIndex = removeSpy.mock.calls.findIndex((call) => call[0] === 'scroll');
+    expect(scrollRemoveIndex).toBeGreaterThanOrEqual(0);
+    expect(removeSpy.mock.contexts[scrollRemoveIndex]).toBe(main);
   });
 });
