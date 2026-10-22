@@ -140,12 +140,22 @@ describe('图片 CLI 黑盒验收：SEA 无 Node 运行', () => {
     expect(image.nonWhiteSamples).toBeGreaterThan(0);
     expect(await findTempArtifacts(out1)).toEqual([]);
 
-    const cacheRoot = join(iso.tmpDir, 'ofdrw-viewer-cli');
+    // 在隔离 TMPDIR 中按前缀发现唯一缓存根，不写死根路径。
+    const cacheRoots = (await readdir(iso.tmpDir)).filter((name) =>
+      /^ofdrw-viewer-cli(?:-u\d+)?$/.test(name),
+    );
+    expect(cacheRoots).toHaveLength(1);
+    const cacheRoot = join(iso.tmpDir, cacheRoots[0] as string);
+    if (process.platform !== 'win32' && process.getuid !== undefined) {
+      expect(cacheRoots[0]).toBe(`ofdrw-viewer-cli-u${process.getuid()}`);
+      expect(existsSync(join(iso.tmpDir, 'ofdrw-viewer-cli'))).toBe(false);
+    }
     const coldEntries = await readdir(cacheRoot);
     expect(coldEntries).toHaveLength(1);
     const cacheDir = join(cacheRoot, coldEntries[0] as string);
     const markerPath = join(cacheDir, '.complete');
     const coldMarker = await stat(markerPath);
+    expect((await stat(cacheRoot)).mode & 0o777).toBe(0o700);
     expect((await stat(cacheDir)).mode & 0o777).toBe(0o700);
     expect((await stat(join(cacheDir, 'native'))).mode & 0o777).toBe(0o700);
 

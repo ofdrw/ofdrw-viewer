@@ -91,8 +91,9 @@ let preparePromise: Promise<void> | undefined;
 /**
  * 准备 SEA 运行所需的 canvas 资产。
  *
- * 普通 Node 下直接返回；SEA 下把内嵌资产解压到
- * `<临时目录>/ofdrw-viewer-cli/<uid>-<版本>-<平台>-<架构>-<摘要>/`，
+ * 普通 Node 下直接返回；SEA 下把内嵌资产解压到按用户隔离的
+ * `<临时目录>/ofdrw-viewer-cli-u<uid>/u<uid>-<版本>-<平台>-<架构>-<摘要>/`
+ * （Windows 无 uid 时为 `<临时目录>/ofdrw-viewer-cli/win-.../`），
  * 并设置 `OFDRW_CANVAS_DIR`、`NAPI_RS_NATIVE_LIBRARY_PATH` 与
  * `OFDRW_CLI_VERSION`。
  *
@@ -107,7 +108,9 @@ export function prepareSeaAssets(): Promise<void> {
 /**
  * 计算缓存根与版本子目录。
  *
- * 缓存根保留稳定名称；版本子目录加入 uid，避免不同用户复用同一目录。
+ * POSIX 下缓存根带 uid（`ofdrw-viewer-cli-u<uid>`），避免 Linux 共享
+ * /tmp 时首个用户的 0700 根阻塞其他用户；Windows 无 uid 时保留固定根名。
+ * 版本子目录继续包含 uid、版本、平台、架构与摘要。
  *
  * @param manifest 资产清单
  * @param options 平台、uid 与临时目录覆盖（测试用）
@@ -131,7 +134,9 @@ export function buildCachePaths(
   }
   const uid = currentUid(platform, options.uid);
   const namespace = uid === undefined ? 'win' : `u${uid}`;
-  const root = join(options.tmpDir ?? tmpdir(), CACHE_ROOT_NAME);
+  const rootName =
+    uid === undefined ? CACHE_ROOT_NAME : `${CACHE_ROOT_NAME}-${namespace}`;
+  const root = join(options.tmpDir ?? tmpdir(), rootName);
   const dir = join(
     root,
     `${namespace}-${manifest.cliVersion}-${manifest.platform}-${manifest.arch}-${manifest.digest}`,

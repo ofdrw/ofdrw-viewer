@@ -197,17 +197,34 @@ describe.skipIf(!POSIX)('SEA 缓存安全校验', () => {
 });
 
 describe('SEA 缓存路径命名', () => {
-  it('包含 uid、版本、平台、架构与摘要', () => {
+  it('POSIX 根按 uid 隔离，子目录包含 uid/版本/平台/架构/摘要', () => {
     const manifest = createManifest('0123456789abcdef');
     const paths = buildCachePaths(manifest, {
       tmpDir: '/tmp/test',
       platform: 'linux',
       uid: 1234,
     });
-    expect(paths.root).toBe(join('/tmp/test', 'ofdrw-viewer-cli'));
+    expect(paths.root).toBe(join('/tmp/test', 'ofdrw-viewer-cli-u1234'));
+    expect(paths.root).not.toBe(join('/tmp/test', 'ofdrw-viewer-cli'));
     expect(paths.dir).toBe(
       join(paths.root, 'u1234-0.1.0-linux-x64-0123456789abcdef'),
     );
+  });
+
+  it('不同 uid 得到不同的根与缓存目录', () => {
+    const manifest = createManifest('0123456789abcdef');
+    const first = buildCachePaths(manifest, {
+      tmpDir: '/tmp/test',
+      platform: 'linux',
+      uid: 1000,
+    });
+    const second = buildCachePaths(manifest, {
+      tmpDir: '/tmp/test',
+      platform: 'linux',
+      uid: 1001,
+    });
+    expect(first.root).not.toBe(second.root);
+    expect(first.dir).not.toBe(second.dir);
   });
 
   it('拒绝含 .. 或路径分隔符的清单字段', () => {
@@ -219,11 +236,14 @@ describe('SEA 缓存路径命名', () => {
     ).toThrow(SeaAssetError);
   });
 
-  it('Windows 无 uid 时使用 win 命名空间', () => {
+  it('Windows 无 uid 时保留固定根名并使用 win 命名空间', () => {
     const paths = buildCachePaths(createManifest('0123456789abcdef'), {
       tmpDir: '/tmp/test',
       platform: 'win32',
     });
-    expect(paths.dir).toContain('win-0.1.0-linux-x64-0123456789abcdef');
+    expect(paths.root).toBe(join('/tmp/test', 'ofdrw-viewer-cli'));
+    expect(paths.dir).toBe(
+      join(paths.root, 'win-0.1.0-linux-x64-0123456789abcdef'),
+    );
   });
 });
