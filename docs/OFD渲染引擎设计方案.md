@@ -1,7 +1,7 @@
 # OFD 渲染引擎设计方案
 
-> 版本：0.4（设计稿，按 pdf.js 形态 + Monorepo 子包 + Renderer 扩展点 + 纯页面内容调整）  
-> 日期：2026-10-21  
+> 版本：0.5（设计稿，按 pdf.js 形态 + Monorepo 子包 + Renderer 扩展点 + 纯页面内容调整）  
+> 日期：2026-10-22  
 > 技术栈：TypeScript + Canvas 2D + fontkit  
 > 仓库：Monorepo，当前唯一子包 `ofdrw-viewer-engine`  
 > 范围：只做“把 OFD 页面画到 Canvas”的 engine 库，不含阅读器 UI、任何端实现（Web/Node/Electron/小程序宿主）、编辑、签章密码学验证；v1 包含注释/签章外观的静态渲染
@@ -10,6 +10,7 @@
 
 ## 0. 结论摘要
 
+> 0.5 变更：v1 增加 `Seal.esl`/`SignedValue.dat` 静态签章解析（ASN.1 v1/v4/v5 结构推断、位图与内嵌矢量 OFD 章）、签章位图 multiply、标准/manual 图片 Clips 顺序、GIF 首帧解码；P9 `dense-text-perf` 按极端样本例外计时。
 > 0.4 变更：采用 Monorepo 子包 `ofdrw-viewer-engine`；`Renderer` 改为 `beginGroup/endGroup`，H5 的 `CanvasFactory`/scratch 完全内部化，公开 API 不再有 `RenderSurface`；`fallbackFonts` 更名为 `supplementaryFonts`；删除 engine 级独立块栅格缓存，改为复用 display list。
 
 1. **引擎做成一个独立、平台无关的 TypeScript 库**：以 Monorepo 子包 `ofdrw-viewer-engine` 交付；公开 API 按 pdf.js 形态收敛为 `open → getPage → page.getViewport/page.render → close`；核心只定义 `ByteSource`、Canvas、图片解码器、字体来源等接口，`Renderer` 作为正式扩展点但默认实现由 engine 提供，**v1 不实现任何端适配器**。
@@ -1316,7 +1317,13 @@ Custom 层（非标准，放在最后）
 
 ### 10.4.1 裁剪（Clips）
 
-`Clips` 是图元对象自己的裁剪区，坐标在**对象空间**，即已经过 `Boundary` 平移、但尚未乘对象 `CTM` 的空间。因此 `applyClips` 必须在 `renderer.transform(obj.ctm)` **之前**执行；图元 `CTM` 只作用于图元数据，不作用于裁剪区。
+`Clips` 是图元对象自己的裁剪区，坐标在**对象空间**，即已经过 `Boundary` 平移、但尚未乘对象 `CTM` 的空间。因此标准图元的 `applyClips` 必须在 `renderer.transform(obj.ctm)` **之前**执行；图元 `CTM` 只作用于图元数据，不作用于裁剪区。
+
+真实文件存在一类 `manual` 兼容写法：`Clips/Area.CTM` 已经写成了图片 `CTM` 的**逆矩阵**，用于表达“在图片单位空间里裁剪”。这种 Clips 如果仍在 `CTM` 之前应用，会被二次变换，导致裁剪区与图片交集为空或只剩一条边。v1 的口径是：
+
+- 默认按标准顺序：`translate(Boundary) → clips → transform(obj.ctm)`；
+- 仅当 `Clips/Area.CTM` 的面积比落在 `0.2–5`（典型 `manual` 样本≈1）且明显是逆编码时，改为 `translate(Boundary) → transform(obj.ctm) → clips`；
+- 该判定只影响带 `Clips` 的 `ImageObject`，不影响普通路径/文字/注释；不允许把“先 CTM 后 Clips”推广到所有图元。
 
 - 多个 `Clip` 之间取**交集**：按顺序对 Canvas 执行 `clip()`，Canvas 会自动与当前裁剪区相交。
 - 一个 `Clip` 内多个 `Area` 取**并集**：把所有 Area 的轮廓合并到同一条路径，再执行一次 `clip(rule)`。
@@ -1546,7 +1553,7 @@ M_annot = M_page × T(appearance.boundary.x, appearance.boundary.y)
   - 不再有 `NoZoom`/`NoRotate` 的单独矩阵，也没有 `scale/pixelRatio/rotation`。
 - `NoZoom`/`NoRotate`/`Print` 是阅读器/打印控制提示，engine 不实现；如果宿主需要，由宿主在显示/打印时处理，不能反向污染页面内容渲染。
 - 注释始终渲染所有 `Visible=true` 的静态外观；没有 `annotations: all/print/none` 选项。
-- 只做外观，不做链接跳转、批注回复、表单填写、签名验证。`Signatures/*/Signature.xml` 里的 `StampAnnot` 只用于定位/关联，真正显示仍以 `Annotations` 的 `Appearance` 为准；`Seal.esl` 不解析。
+- 只做外观，不做链接跳转、批注回复、表单填写、签名验证。`Signatures/*/Signature.xml` 的 `StampAnnot` 用于定位/关联；有 `Annotations` 外观时优先按 `Appearance` 绘制，没有 `Annotations` 时按 `StampAnnot + Seal.esl/SignedValue.dat` 的静态签章绘制（见 11.6.1）。
 - `v4signed.ofd` 的 Stamp `Appearance` 为空，说明不能假设“有 Signatures 就一定有可画的红章”；空外观必须 warning + 跳过，不能崩页。
 - 资源作用域：`Appearance` 里的 `ResourceID` 按“页面 PageRes → 文档级 PublicRes/DocumentRes”查找；不要只查 DocumentRes。
 - 资源限制与页面内容共用：注释里的图片/字体同样走 `ResourceStore` 和 `ImageDecoder`，不能绕过 zip bomb/像素上限。
@@ -1557,6 +1564,56 @@ M_annot = M_page × T(appearance.boundary.x, appearance.boundary.y)
 - `发票监制章-数科.ofd`：`Annot Type="Stamp"`，`Appearance Boundary="166.8639 106.1897 42.6861 29.2806"`，内部 `CompositeObject Boundary="0 0 42.6861 29.2806" CTM="0.3528 0 0 0.3528 0 0"`；PDF 对应页的红章在右下角，验证了“Appearance 平移 + Composite 映射”。
 - `signout.ofd`：同一页 3 个 Stamp，按文件顺序叠加；`20240531141733.ofd` 的水印带 `NoRotate="true"`，engine 仍按页面内容绘制其 `Appearance`，标志不参与变换。
 - `pattern类型.ofd`：`Watermark` 的 `Appearance` 用 `Pattern` 画 45°“严禁复制”；底纹若未完成，注释只能降级为平均色/跳过，必须显式 warning。
+
+#### 11.6.1 签章来源与 ASN.1 版本（v1 扩展）
+
+签章不一定有可画的 `PageAnnot/Appearance`。真实文件存在两种静态签章来源，v1 都要支持：
+
+1. `Signatures/Signatures.xml → Sign_i/Signature.xml → Seal.esl`：`Seal.esl` 是 ASN.1 DER 的 `SESeal`，图片在 `SES_SealInfo` 的 `SES_ESPictrueInfo` 内。
+2. `Signature.xml → SignedValue.dat`：`SignedValue.dat` 是 `SES_Signature`，`TBS_Sign` 内嵌 `SES_SealInfo`；印章图片同样在 `SES_ESPictrueInfo` 内。不能再只读 `Signature.xml` 的 `<Seal>` 元素，否则真实文件的章会整块丢失。
+
+版本不能靠固定字段或文件名判断，必须按 ASN.1 结构推断（与 `VersionParser` 一致）：
+
+- `Seal.esl` 顶层 SEQUENCE：
+  - size=2 → v1；
+  - size=4 → 读 `SealInfo[0] → Header[0] → version(index 1)`，version=5 才是 v5，否则 v4；
+  - size=5 → v5；
+  - 其他 → 未知结构，warning，不崩页。
+- `SignedValue.dat`（`SES_Signature`）顶层：
+  - size=2 → v1；
+  - size=4–5 → `TBS_Sign[0] → eSealInfo[1] → Header[0] → version`，version=5 为 v5，否则 v4；
+  - 其他 → warning。
+- v1/v4/v5 的 `SealInfo` 都是 `[header, esID, property, picture, extDatas?]`；`picture` 固定第 4 个字段（index 3），其 `SES_ESPictrueInfo` 为 `[type, data, width, height]`，`width/height` 单位 mm。
+
+图片与矢量章：
+
+- `picture.type` 为 `PNG`/`JPG`/`JPEG` 时按位图解码；`type` 大小写不敏感，格式识别失败时再用魔术字节兜底。
+- `picture.type` 为 `ofd` 时，`picture.data` 是内嵌的矢量 OFD ZIP（不是图片）；v1 解析其首页并按 `StampAnnot` 尺寸/位置渲染，不能当作普通图片丢给 `createImageBitmap`。
+- 矢量 OFD 章可能只含 `PathObject`/文字，没有图片资源；渲染路径复用页面 prepare/draw，不另写一套签章绘制循环。
+- 位图章常见全不透明白底（alpha=255）。签章位图必须用 `multiply` 合成，让白底不遮正文；普通 `ImageObject`/注释图片仍用 source-over，不能全局改混合模式。
+- 不做证书链、签名值、时间戳的密码学验证；只取 `SES_SealInfo` 的静态图片/矢量内容。
+
+定位与绘制：
+
+```
+Document.xml/Signatures -> Signatures.xml
+  -> Sign_i/Signature.xml
+  -> SignedInfo/StampAnnot(PageRef, Boundary, Clip)
+  -> Seal.esl 或 SignedValue.dat
+```
+
+- `PageRef` 是页 ID，不是页索引；按页树映射为 index 后再过滤。
+- `StampAnnot.Boundary` 是章在页面上的外接矩形；`Clip` 是骑缝章跨页切片，按页分别裁剪，不能整章重复画到每页。
+- 绘制顺序在页面所有图层和 `PageAnnot` 之后；有 `PageAnnot/Appearance` 时优先用 `Appearance`，避免同一枚章画两次。
+- 无 `Seal`/`SignedValue`、坏 DER、坏 ZIP、空图片都 warning 后跳过该戳记，不崩页；同一 `SealImage` 多页/重渲染复用解码结果。
+
+样本验证：
+
+- `h.ofd`：2 个签章、6 个戳记，v4 PNG 40×40mm，跨页 `Clip` 0–8/8–16/16–24/24–32/32–40，右缘 8mm 切片 + 完整章。
+- `V4RideRight.ofd`：1 个签章、5 个戳记，v4 PNG 42×42mm，骑缝切片正确。
+- `keyword.ofd`：`Seal.esl` 为 v4 PNG，但图片全不透明白底；用 multiply 后白底不遮表格文字。
+- `不规范资源路径.ofd`：`Signature.xml` 无 `<Seal>`，章在 `SignValue.dat` 的 `SES_SealInfo` 内（PNG）。
+- `SignScaleError.ofd`：`SignedValue.dat` 的 `picture.type=ofd`，内嵌 104×84 矢量 OFD 章；按矢量章渲染，不能按位图解码。
 
 ### 11.7 独立空间块：注释、复合对象、底纹共用
 
@@ -2614,6 +2671,16 @@ Warning 码：
 | 内存（100 页典型文档） | < 250 MB |
 | 主包 gzip | < 250 KB（不含补充字体、JBIG2/TIFF 动态 chunk） |
 
+**极端性能样本例外（dense-text-perf，已确认）**
+
+`dense-text-perf.ofd` 是单页上万字形、极端密集的压测样本，不代表普通公文页。它的门禁只统计**引擎绘制耗时** `drawMs`（不含 PNG 编码 `encodeMs`），并在文档/测试报告中单列：
+
+- 首次绘制 `drawMs < 800 ms`；
+- 翻页/重绘 `drawMs < 1000 ms`；
+- 第二次绘制 `drawMs < 600 ms`；
+- 打开 `< 100 ms`、堆增量 `< 150 MiB`；
+- 普通页面仍按首渲 `< 500 ms`、翻页 `< 150 ms`、缓存命中 `< 80 ms`，不得用该例外放宽普通页阈值。
+
 优化手段：
 
 - 只解压需要的条目；XML 解析一次，模型缓存。
@@ -2638,7 +2705,8 @@ Warning 码：
   - 两种命名空间、前缀、无命名空间、属性大小写、DTD 拒绝、坏数字、超大文档；
   - `CGTransform` 子节点/兄弟节点/属性形式。
 - 矩阵/变换：
-  - `T(boundary)*CTM` 顺序；页面偏移；旋转 0/90/180/270；负 Boundary 归一化。
+  - `T(boundary)*CTM` 顺序；页面偏移；旋转 0/90/180/270；负 Boundary 归一化；
+  - 裁剪顺序：标准 ImageObject `Clips` 在对象 CTM 前；manual 逆 CTM 编码仅在 CTM 后追加；两者都不能把普通图元改成“先 CTM 后裁剪”。
 - 路径：
   - 所有命令、圆弧四种 flag 组合、退化弧、坏 token、零长度、evenodd。
 - 颜色：
@@ -2654,11 +2722,13 @@ Warning 码：
   - 正常 TTF、无 cmap/name 的剥离子集、CFF CID、TTC、损坏字体；
   - 用固定字体 fixture，断言 glyph id/advance/bbox。
 - 图片：
-  - 单位矩形 + CTM；无 CTM；边框圆角/虚线；蒙版；替换图；解码失败。
+  - 单位矩形 + CTM；无 CTM；边框圆角/虚线；蒙版；替换图；解码失败；
+  - GIF87a/89a 首帧：GCT/LCT、透明、隔行、LZW、动态 chunk；GIF 属 v1 必需格式。
 - 复合/底纹：
   - 递归、循环、组透明度、tile 反射、Page 相对；Composite Width/Height 的 0.3528 单位换算。
 - 注释/签章：
-  - `Annotations.xml` 的 PageID 映射、绝对/相对 FileLoc、`Appearance` 平移、空外观、`Visible=false`、多 Stamp 顺序；`NoZoom/NoRotate` 只断言“不改变内容”。
+  - `Annotations.xml` 的 PageID 映射、绝对/相对 FileLoc、`Appearance` 平移、空外观、`Visible=false`、多 Stamp 顺序；`NoZoom/NoRotate` 只断言“不改变内容”；
+  - `Seal.esl` 与 `SignedValue.dat` 的 v1/v4/v5 ASN.1 版本推断；`SES_ESPictrueInfo` PNG/JPEG/`ofd` 矢量章；白底 multiply；跨页 `StampAnnot.Clip` 切片；坏 DER/坏 ZIP 只 warning。
 - 独立空间块：
   - 同一红章 10 页复用 display list；平移不改变显示列表；alpha/DrawParam 不同不串图；嵌套 Composite→Pattern→Text；组透明度整体合成。
 - JBIG2/TIFF：
@@ -2914,8 +2984,9 @@ v1 只交付 engine 库，因此不把 Chrome/Firefox/Safari/Electron/小程序�
   save
   translate(Boundary)
   Boundary 裁剪（对象空间 [0,w]×[0,h]）
+  Clips 裁剪（标准：对象空间，多个 Clip 交集；Clip 内多个 Area 并集）
   transform(CTM)
-  Clips 裁剪（对象空间，多个 Clip 交集；Clip 内多个 Area 并集）
+  [仅 manual 逆编码 Clips] 追加裁剪（Area.CTM 面积比 0.2–5）
   multiplyAlpha
   fill / stroke / drawImage
   restore
