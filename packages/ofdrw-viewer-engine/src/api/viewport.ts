@@ -14,6 +14,28 @@ export const MM_PER_INCH = 25.4;
 /** 默认输出 DPI。 */
 export const DEFAULT_DPI = 96;
 
+/** Viewport 像素尺寸保留的小数位数；1 单位 = 0.001px。 */
+const VIEWPORT_DECIMALS = 3;
+
+/** Viewport 像素尺寸的归一化倍数。 */
+const VIEWPORT_SCALE = 10 ** VIEWPORT_DECIMALS;
+
+/**
+ * 把 viewport 像素尺寸归一化到固定小数位，去掉 mm→px 浮点尾差。
+ *
+ * 只限制小数精度，不做整数取整；例如 864.0000000000001 → 864，
+ * 793.7007874015749 → 793.701，864.3 仍为 864.3。画布分配方继续使用
+ * `Math.ceil(viewport.width/height)`，因此 864 取 864，864.3 取 865。
+ *
+ * @param value 像素尺寸（px）。
+ * @returns 保留 3 位小数（0.001px）的像素尺寸。
+ */
+function normalizeViewportPx(value: number): number {
+  const rounded = Math.round(value * VIEWPORT_SCALE) / VIEWPORT_SCALE;
+  // 避免 -0 进入快照/相等断言。
+  return Object.is(rounded, -0) ? 0 : rounded;
+}
+
 /**
  * 计算页面在指定 DPI 下的像素尺寸。
  *
@@ -25,8 +47,8 @@ export function getPageViewport(size: PageSize, options: ViewportOptions = {}): 
   const dpi = options.dpi ?? DEFAULT_DPI;
   const scale = dpi / MM_PER_INCH;
   return {
-    width: size.width * scale,
-    height: size.height * scale,
+    width: normalizeViewportPx(size.width * scale),
+    height: normalizeViewportPx(size.height * scale),
     dpi,
   };
 }

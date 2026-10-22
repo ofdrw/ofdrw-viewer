@@ -17,8 +17,9 @@ describe('getPageViewport', () => {
   it('A4 @96 DPI', () => {
     const viewport = getPageViewport({ width: 210, height: 297 });
     expect(viewport.dpi).toBe(96);
-    expect(viewport.width).toBeCloseTo((210 * 96) / 25.4, 6);
-    expect(viewport.height).toBeCloseTo((297 * 96) / 25.4, 6);
+    // viewport 固定保留 3 位小数。
+    expect(viewport.width).toBe(793.701);
+    expect(viewport.height).toBe(1122.52);
     expect(DEFAULT_DPI).toBe(96);
   });
 
@@ -26,16 +27,16 @@ describe('getPageViewport', () => {
     const base = getPageViewport({ width: 100, height: 50 }, { dpi: 96 });
     for (const dpi of [144, 300]) {
       const viewport = getPageViewport({ width: 100, height: 50 }, { dpi });
-      expect(viewport.width).toBeCloseTo((base.width * dpi) / 96, 6);
-      expect(viewport.height).toBeCloseTo((base.height * dpi) / 96, 6);
+      expect(viewport.width).toBeCloseTo((base.width * dpi) / 96, 2);
+      expect(viewport.height).toBeCloseTo((base.height * dpi) / 96, 2);
     }
   });
 
   it('纸张 fixture 与 mm→px 公式一致', () => {
     for (const paper of PAPER_SIZES_MM) {
       const viewport = getPageViewport({ width: paper.width, height: paper.height });
-      expect(viewport.width).toBeCloseTo((paper.width / MM_PER_INCH) * 96, 6);
-      expect(viewport.height).toBeCloseTo((paper.height / MM_PER_INCH) * 96, 6);
+      expect(viewport.width).toBeCloseTo((paper.width / MM_PER_INCH) * 96, 2);
+      expect(viewport.height).toBeCloseTo((paper.height / MM_PER_INCH) * 96, 2);
     }
   });
 });
