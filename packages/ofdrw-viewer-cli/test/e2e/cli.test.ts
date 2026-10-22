@@ -17,8 +17,8 @@ const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 /** 仓库示例目录。 */
 const SAMPLE_DIR = join(REPO_ROOT, 'ofd_pdf_match');
 
-/** 测试字体目录。 */
-const FIXTURE_FONT = join(REPO_ROOT, 'test', '.fixtures', 'fonts', 'DroidSansFallbackFull.ttf');
+/** 合成的最小合法 TTF，避免依赖本机/不可提交的系统字体。 */
+const FIXTURE_FONT = fileURLToPath(new URL('../fixtures/minimal.ttf', import.meta.url));
 
 const tempDirs: string[] = [];
 
@@ -45,6 +45,7 @@ async function runCli(
   args: readonly string[],
   cwd: string,
   signal?: AbortSignal,
+  stderrIsTTY?: boolean,
 ): Promise<CliResult> {
   const capture = createStreamCapture();
   const code = await main(args, {
@@ -52,6 +53,7 @@ async function runCli(
     stdout: capture.stdout,
     stderr: capture.stderr,
     ...(signal === undefined ? {} : { signal }),
+    ...(stderrIsTTY === undefined ? {} : { stderrIsTTY }),
   });
   return { code, stdout: capture.stdoutText(), stderr: capture.stderrText() };
 }
@@ -264,6 +266,32 @@ describe('CLI 图片导出 e2e', () => {
 
     expect(result.code).toBe(EXIT_CODES.USAGE);
     expect(result.stderr).toContain('不是文件');
+    expect(existsSync(outDir)).toBe(false);
+  });
+
+  it('TTY 时 stderr 输出逐页进度并清理，非 TTY 保持安静', async () => {
+    const cwd = await createTempDir();
+    const input = join(SAMPLE_DIR, 'helloworld.ofd');
+
+    const tty = await runCli([input, '-o', join(cwd, 'tty')], cwd, undefined, true);
+    expect(tty.code).toBe(EXIT_CODES.OK);
+    expect(tty.stderr).toContain('\r[1/1]');
+    expect(tty.stderr).toContain(`\r${' '.repeat(32)}\r`);
+
+    const quiet = await runCli([input, '-o', join(cwd, 'quiet')], cwd, undefined, false);
+    expect(quiet.code).toBe(EXIT_CODES.OK);
+    expect(quiet.stderr).not.toContain('[1/1]');
+  });
+
+  it('超大 --pages 区间快速退出 1 且不创建输出目录', async () => {
+    const cwd = await createTempDir();
+    const outDir = join(cwd, 'out');
+    const input = join(SAMPLE_DIR, 'helloworld.ofd');
+
+    const result = await runCli([input, '-o', outDir, '--pages', '1-999999999'], cwd);
+
+    expect(result.code).toBe(EXIT_CODES.USAGE);
+    expect(result.stderr).toContain('范围过大');
     expect(existsSync(outDir)).toBe(false);
   });
 

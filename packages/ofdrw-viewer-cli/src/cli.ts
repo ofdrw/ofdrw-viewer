@@ -6,6 +6,7 @@
  */
 
 import { stat } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { convertDocument } from './convert.js';
@@ -33,8 +34,13 @@ export { parsePageRanges, resolvePageNumbers, validatePageNumbers } from './page
 /** 命令名，同时用作包名与 bin 名。 */
 export const CLI_NAME = 'ofdrw-viewer-cli';
 
-/** CLI 版本，与 package.json 保持一致。 */
-export const CLI_VERSION = '0.1.0';
+/**
+ * CLI 版本。
+ *
+ * 普通 Node 下从 package.json 读取；SEA 启动时由 `sea.ts` 从内嵌清单写入
+ * `OFDRW_CLI_VERSION`，避免在可执行文件内依赖 package.json 文件。
+ */
+export const CLI_VERSION = process.env.OFDRW_CLI_VERSION ?? readPackageVersion();
 
 /** 默认输出 DPI。 */
 export const DEFAULT_DPI = 96;
@@ -98,6 +104,12 @@ export interface CliRuntime {
   readonly stdout?: OutputStream;
   /** 错误/warning 输出流，默认 `process.stderr`。 */
   readonly stderr?: OutputStream;
+  /**
+   * stderr 是否为 TTY；默认读取 `process.stderr.isTTY`。
+   *
+   * 为 true 时向 stderr 输出单行逐页进度，重定向/管道保持安静。
+   */
+  readonly stderrIsTTY?: boolean;
   /** 平台名，默认 `process.platform`。 */
   readonly platform?: string;
   /** CPU 架构，默认 `process.arch`。 */
@@ -108,6 +120,56 @@ export interface CliRuntime {
    * 生产环境由 CLI 主流程创建 AbortController 并在 SIGINT 时触发。
    */
   readonly signal?: AbortSignal;
+}
+
+/** 逐页进度回调；TTY 与非 TTY 都由 `convert.ts` 统一调用。 */
+export interface ProgressReporter {
+  /** 更新当前页进度；`current` 为页号（1 起），`total` 为计划总页数。 */
+  onProgress?: (current: number, total: number) => void;
+  /** 清理进度行。 */
+  onProgressEnd?: () => void;
+}
+
+/**
+ * 创建逐页进度输出器。
+ *
+ * @param stream 目标输出流（stderr）
+ * @param enabled 是否为 TTY；false 时返回空实现
+ * @returns 进度回调
+ */
+export function createProgressReporter(
+  stream: OutputStream,
+  enabled: boolean,
+): ProgressReporter {
+  if (!enabled) return {};
+  return {
+    onProgress(current: number, total: number): void {
+      stream.write(`\r[${current}/${total}]`);
+    },
+    onProgressEnd(): void {
+      // 用空格覆盖整行后回到行首，避免残留字符；不依赖 ANSI 控制序列。
+      stream.write(`\r${' '.repeat(32)}\r`);
+    },
+  };
+}
+
+/**
+ * 从 package.json 读取版本。
+ *
+ * 源码与 dist 都位于包根下一层，因此 `../package.json` 在两种布局下均成立。
+ *
+ * @returns 版本字符串；读取失败时回退 `0.0.0`
+ */
+function readPackageVersion(): string {
+  try {
+    const require = createRequire(import.meta.url);
+    const pkg = require('../package.json') as { version?: unknown };
+    return typeof pkg.version === 'string' && pkg.version.length > 0
+      ? pkg.version
+      : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
 }
 
 /**
@@ -265,7 +327,12 @@ export async function main(
   argv: readonly string[],
   runtime: CliRuntime = {},
 ): Promise<number> {
-  const logger = new Logger({ stdout: runtime.stdout, stderr: runtime.stderr });
+  const stderr = runtime.stderr ?? process.stderr;
+  const logger = new Logger({ stdout: runtime.stdout, stderr });
+  const progress = createProgressReporter(
+    stderr,
+    runtime.stderrIsTTY ?? process.stderr.isTTY === true,
+  );
 
   try {
     const parsed = parseCliArgs(argv, runtime.cwd ?? process.cwd());
@@ -312,7 +379,7 @@ export async function main(
     try {
       const summary = await convertDocument(
         { ...options, fontFiles },
-        { logger, signal },
+        { logger, signal, ...progress },
       );
       logger.info(summary.message);
       logger.flushWarningSummary();

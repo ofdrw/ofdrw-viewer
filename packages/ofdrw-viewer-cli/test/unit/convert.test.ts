@@ -556,3 +556,21 @@ describe('convertDocument 空间文本链路', () => {
     expect(await readdir(outDir)).toEqual([]);
   });
 });
+
+describe('convertDocument 进度回调', () => {
+  it('逐页开始/完成时回调，并在 finally 清理进度行', async () => {
+    const outDir = await createTempDir();
+    const logger = new Logger({ stderr: createStreamCapture().stderr });
+    const document = createFakeDocument(2, [{}, {}]);
+    const events: string[] = [];
+
+    await convertDocument(createOptions(outDir), {
+      logger,
+      openDocument: createOpenMock(async () => document),
+      onProgress: (current, total) => events.push(`${current}/${total}`),
+      onProgressEnd: () => events.push('end'),
+    });
+
+    expect(events).toEqual(['1/2', '1/2', '2/2', '2/2', 'end']);
+  });
+});

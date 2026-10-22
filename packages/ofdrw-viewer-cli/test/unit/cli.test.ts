@@ -1,9 +1,12 @@
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  CLI_VERSION,
   DEFAULT_DPI,
   HELP_TEXT,
   USAGE_LINE,
+  createProgressReporter,
   formatVersion,
   main,
   parseCliArgs,
@@ -159,6 +162,25 @@ describe('parsePageRanges', () => {
   it.each(['', '0', '3-1', 'a', '1,,2', '1-', '-2'])('拒绝非法范围 %j', (raw) => {
     expect(captureCliError(() => parsePageRanges(raw)).code).toBe('CLI_INVALID_PAGES');
   });
+
+  it('超大单段在展开前快速失败', () => {
+    const startedAt = performance.now();
+    const error = captureCliError(() => parsePageRanges('1-999999999'));
+    expect(error.code).toBe('CLI_INVALID_PAGES');
+    expect(error.exitCode).toBe(1);
+    expect(error.message).toContain('范围过大');
+    expect(performance.now() - startedAt).toBeLessThan(500);
+  });
+
+  it('合并后总页数超限时快速失败', () => {
+    const error = captureCliError(() => parsePageRanges('1-60000,60001-120000'));
+    expect(error.code).toBe('CLI_INVALID_PAGES');
+    expect(error.message).toContain('范围过大');
+  });
+
+  it('重叠区间合并后不重复计数', () => {
+    expect(parsePageRanges('1-100000,1-100000')).toHaveLength(100000);
+  });
 });
 
 describe('页码越界校验', () => {
@@ -175,6 +197,12 @@ describe('页码越界校验', () => {
 
   it('未指定页范围时展开为全部页', () => {
     expect(resolvePageNumbers(undefined, 3)).toEqual([1, 2, 3]);
+  });
+
+  it('文档页数超过上限时在展开前失败', () => {
+    const error = captureCliError(() => resolvePageNumbers(undefined, 100001));
+    expect(error.code).toBe('CLI_INVALID_PAGES');
+    expect(error.message).toContain('页数过大');
   });
 
   it('指定页范围时校验、去重并升序返回', () => {
@@ -270,5 +298,51 @@ describe('main 帮助/版本与退出码', () => {
     });
     expect(code).toBe(1);
     expect(capture.stderrText()).toContain('CLI_INPUT_NOT_FOUND');
+  });
+});
+
+
+describe('CLI 版本与 TTY 进度', () => {
+  it('CLI_VERSION 与 package.json 一致，--version 使用该版本', async () => {
+    const pkg = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { version: string };
+    expect(CLI_VERSION).toBe(pkg.version);
+
+    const capture = createStreamCapture();
+    const code = await main(['--version'], {
+      stdout: capture.stdout,
+      stderr: capture.stderr,
+      platform: 'testos',
+      arch: 'testarch',
+    });
+    expect(code).toBe(0);
+    expect(capture.stdoutText()).toContain(`ofdrw-viewer-cli ${pkg.version}`);
+  });
+
+  it('TTY 进度写 stderr 并清理，非 TTY 保持安静', () => {
+    const ttyWrites: string[] = [];
+    const tty = createProgressReporter(
+      { write: (chunk) => { ttyWrites.push(String(chunk)); return true; } },
+      true,
+    );
+    tty.onProgress?.(1, 2);
+    tty.onProgress?.(2, 2);
+    tty.onProgressEnd?.();
+    expect(ttyWrites).toEqual([
+      '\r[1/2]',
+      '\r[2/2]',
+      `\r${' '.repeat(32)}\r`,
+    ]);
+
+    const quietWrites: string[] = [];
+    const quiet = createProgressReporter(
+      { write: (chunk) => { quietWrites.push(String(chunk)); return true; } },
+      false,
+    );
+    expect(quiet).toEqual({});
+    quiet.onProgress?.(1, 2);
+    quiet.onProgressEnd?.();
+    expect(quietWrites).toEqual([]);
   });
 });

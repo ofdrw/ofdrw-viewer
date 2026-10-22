@@ -75,6 +75,10 @@ export interface ConvertRuntime {
   readonly logger: Logger;
   /** 取消信号；SIGINT 时由 CLI 主流程触发。 */
   readonly signal?: AbortSignal;
+  /** 逐页进度回调；仅 TTY 时由 CLI 注入。 */
+  readonly onProgress?: (current: number, total: number) => void;
+  /** 转换结束（含异常/取消）时清理进度行。 */
+  readonly onProgressEnd?: () => void;
   /** 打开文档的实现，默认 `OFDDocument.open`（单元测试可替换）。 */
   readonly openDocument?: typeof OFDDocument.open;
 }
@@ -138,6 +142,7 @@ export async function convertDocument(
         break;
       }
 
+      runtime.onProgress?.(pageNumber, totalPages);
       let page: OFDPage;
       try {
         page = await document.getPage(pageNumber - 1);
@@ -148,6 +153,7 @@ export async function convertDocument(
         }
         failedPages += 1;
         logger.pageError(pageNumber, totalPages, errorCodeOf(error), errorMessage(error));
+        runtime.onProgress?.(pageNumber, totalPages);
         continue;
       }
 
@@ -229,6 +235,7 @@ export async function convertDocument(
 
       if (!textOk || !imageOk) failedPages += 1;
       else succeededPages += 1;
+      runtime.onProgress?.(pageNumber, totalPages);
     }
 
     const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
@@ -248,6 +255,11 @@ export async function convertDocument(
       }),
     };
   } finally {
+    try {
+      runtime.onProgressEnd?.();
+    } catch {
+      // 进度清理失败不应覆盖真正的转换错误。
+    }
     if (document !== undefined) {
       try {
         await document.close();
