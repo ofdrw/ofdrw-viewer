@@ -1,0 +1,14 @@
+{
+  "name": "ofdrw-viewer-web-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ofdrw-viewer-engine 最小 Web 验证页（Vite + TypeScript）",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "check": "node check.mjs"
+  }
+}
