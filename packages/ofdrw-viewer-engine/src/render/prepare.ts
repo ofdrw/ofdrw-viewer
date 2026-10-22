@@ -6,13 +6,14 @@
  */
 
 import type { DisplayList } from '../common/display-list';
-import type { DecodedImage, PaintSpec } from '../common/types';
+import type { Box, DecodedImage, PaintSpec } from '../common/types';
 import type { FontFaceSet } from '../font/types';
 import type {
   Annotation,
   CompositeObject,
   DrawParam,
   FontResource,
+  ImageObject,
   ImageResource,
   IndependentBlock,
   PageBlock,
@@ -20,6 +21,8 @@ import type {
   Pattern,
   PreparedPage,
   ResourceId,
+  SealImage,
+  SignatureStamp,
   TemplateRef,
 } from '../model/types';
 import type { PageResourceScope } from '../resource/types';
@@ -27,6 +30,7 @@ import type { ResolvedStyle } from '../style/types';
 import type { PaintBinder } from './paint';
 import type { WarningHandler } from '../warnings';
 import { OFDError } from '../errors';
+import { normalizeBox } from '../common/matrix';
 import { createDefaultStyle } from '../style/defaults';
 import { DrawParamGraph } from '../style/draw-param';
 import { StyleResolver } from '../style/resolve';
@@ -34,10 +38,11 @@ import { resolveBlockStyles, resolvePageStyles } from '../style/page-styles';
 import {
   buildBlockDisplayList,
   compositeBlockCacheKey,
+  createDeferredImageHandle,
   markBlockDynamic,
   setBlockStyles,
 } from './object';
-import { materializeDisplayListImages } from './display-list';
+import { DisplayListBuilder, materializeDisplayListImages } from './display-list';
 import type { DisplayListImageResolver } from './display-list';
 import { createPaintBinder } from './paint';
 import { buildAnnotationBlocks } from './annotation';
@@ -85,6 +90,62 @@ export interface PreparePageLoader {
    * @returns 注释列表，按文件顺序；无注释返回空数组。
    */
   loadAnnotations(page: PageModel): Promise<readonly Annotation[]>;
+  /**
+   * 加载当前页的签章戳记及 Seal 图片元数据。
+   *
+   * 可选：未实现时不加载签章，保持既有 API 兼容。API 层应按 `PageRef`/页索引
+   * 过滤 `SignatureBundle.pageIndex`，单页失败只 warning，不阻断页面。
+   *
+   * @param page 页面模型。
+   * @returns 当前页签章戳记（按签名/戳记顺序）；无签章返回空数组。
+   */
+  loadSignatureStamps?(page: PageModel): Promise<readonly SignatureStampSource[]>;
+  /**
+   * 解码 Seal.esl 中的印章图片字节。
+   *
+   * 可选：只有存在 `loadSignatureStamps` 时使用。宿主图片解码器（PNG/GIF/JPG/BMP）
+   * 由 API 注入；失败时抛错，由 prepare warning 后跳过该戳记。
+   *
+   * @param seal Seal.esl 提取的图片元数据。
+   * @returns 解码后的像素缓冲。
+   */
+  decodeSeal?(seal: SealImage): Promise<DecodedImage>;
+}
+
+/**
+ * 单页签章戳记的模型输入。
+ *
+ * 由 API loader 从 `SignatureBundle.pageIndex` 按页取出；render 不读取
+ * Signatures.xml/Seal.esl，也不直接依赖 container/XML。
+ */
+export interface SignatureStampSource {
+  /** 所属签章资源 ID。 */
+  signatureId: ResourceId;
+  /** StampAnnot 的位置与可选裁剪，单位 mm。 */
+  stamp: SignatureStamp;
+  /** 已从 Seal.esl 提取的印章图片；缺失时 render 只 warning 并跳过。 */
+  seal?: SealImage;
+}
+
+/**
+ * 准备阶段构建出的签章块。
+ *
+ * `displayList` 只包含“裁剪 + 图片”命令，坐标位于块本地空间
+ * `(0,0,boundary.w,boundary.h)`；页面绘制时再平移到 `boundary`。
+ */
+export interface SignatureBlock {
+  /** 块 ID，即 StampAnnot ID（缺失时使用签名/序号组合）。 */
+  id: ResourceId;
+  /** 所属签章资源 ID。 */
+  signatureId: ResourceId;
+  /** 原始 StampAnnot 模型；包含 Boundary/Clip，单位 mm。 */
+  stamp: SignatureStamp;
+  /** 页面落位边界，单位 mm。 */
+  boundary: Box;
+  /** 块本地空间尺寸，单位 mm。 */
+  space: { width: number; height: number };
+  /** 块本地显示列表：可选裁剪 + 图片绘制。 */
+  displayList: DisplayList;
 }
 
 /** 准备阶段输入。 */
@@ -118,6 +179,8 @@ export interface PreparedPageBundle {
   images: ReadonlyMap<ResourceId, DecodedImage>;
   /** 以复合/底纹资源 ID 为键的独立块（displayList 必填）；注释在 page.annotationBlocks。 */
   blocks: ReadonlyMap<string, IndependentBlock>;
+  /** 按 StampAnnot 顺序构建的签章块；在所有页面图层与注释之后绘制。 */
+  signatureBlocks: readonly SignatureBlock[];
 }
 
 /**
@@ -161,6 +224,19 @@ export async function preparePage(input: PreparePageInput): Promise<PreparedPage
       warn(
         'W_ANNOT_EMPTY',
         `注释文件 ${page.annotationFile} 加载失败：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  throwIfAborted();
+
+  let signatureSources: readonly SignatureStampSource[] = [];
+  if (loader.loadSignatureStamps) {
+    try {
+      signatureSources = await loader.loadSignatureStamps(page);
+    } catch (error) {
+      warn(
+        'W_UNSUPPORTED_PAINT',
+        `签章加载失败：${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -280,6 +356,9 @@ export async function preparePage(input: PreparePageInput): Promise<PreparedPage
   ]);
   throwIfAborted();
 
+  const decodedSignatures = await decodeSignatureStampsSafely(loader, signatureSources, warn);
+  throwIfAborted();
+
   const defaultStyle = createDefaultStyle();
   const resolver = new StyleResolver(
     new DrawParamGraph(resources.drawParams),
@@ -307,12 +386,17 @@ export async function preparePage(input: PreparePageInput): Promise<PreparedPage
     annotationBlocks: [],
   };
   const blocks = new Map<string, IndependentBlock>();
+  const bundleImages = new Map(loadedImages);
+  for (const signature of decodedSignatures) {
+    bundleImages.set(signature.imageResourceId, signature.image);
+  }
   const bundle: PreparedPageBundle = {
     page: preparedPage,
     templates,
     fonts: loadedFonts,
-    images: loadedImages,
+    images: bundleImages,
     blocks,
+    signatureBlocks: [],
   };
 
   // 准备阶段构建显示列表时没有真实渲染器；PaintBinder 不依赖 renderer 实例。
@@ -498,8 +582,134 @@ export async function preparePage(input: PreparePageInput): Promise<PreparedPage
     },
   });
   preparedPage.annotationBlocks = annotationBlocks;
+  bundle.signatureBlocks = decodedSignatures.map((signature) => buildSignatureBlock(signature));
 
   return bundle;
+}
+
+/** 已解码并通过 Boundary/Clip 校验的签章戳记。 */
+interface DecodedSignatureStamp {
+  /** 块 ID。 */
+  blockId: ResourceId;
+  /** 所属签章 ID。 */
+  signatureId: ResourceId;
+  /** 原始 StampAnnot；保留 Boundary/Clip。 */
+  stamp: SignatureStamp;
+  /** 归一化后的页面落位边界，单位 mm。 */
+  boundary: Box;
+  /** 已解码印章图片。 */
+  image: DecodedImage;
+  /** 合成图片资源键；写入 PreparedPageBundle.images 供延迟 resolver 使用。 */
+  imageResourceId: ResourceId;
+}
+
+/**
+ * 解码当前页所有签章印章；单个失败只 warning，不阻断页面。
+ *
+ * @param loader 准备阶段加载器；必须提供 `decodeSeal` 才能解码图片。
+ * @param sources 当前页 StampAnnot 与 Seal 元数据。
+ * @param warn warning 回调。
+ * @returns 可构建签章块的戳记。
+ */
+async function decodeSignatureStampsSafely(
+  loader: PreparePageLoader,
+  sources: readonly SignatureStampSource[],
+  warn: (code: string, message: string, objectId?: ResourceId) => void,
+): Promise<DecodedSignatureStamp[]> {
+  const result: DecodedSignatureStamp[] = [];
+  for (const [index, source] of sources.entries()) {
+    const stamp = source.stamp;
+    const blockId = stamp.id ?? `${source.signatureId}-${index}`;
+    const boundary = normalizeBox(stamp.boundary);
+    if (!(boundary.w > 0) || !(boundary.h > 0)) {
+      warn('W_ZERO_BOUNDARY', `签章戳记 ${blockId} 的 Boundary 非正，已跳过`, blockId);
+      continue;
+    }
+    if (stamp.clip) {
+      const clip = normalizeBox(stamp.clip);
+      if (!(clip.w > 0) || !(clip.h > 0)) {
+        warn('W_ZERO_BOUNDARY', `签章戳记 ${blockId} 的 Clip 非正，已跳过`, blockId);
+        continue;
+      }
+    }
+    if (!source.seal) {
+      warn('W_IMAGE_DECODE', `签章 ${source.signatureId} 缺少 Seal 图片，戳记 ${blockId} 已跳过`, blockId);
+      continue;
+    }
+    if (source.seal.data.length === 0) {
+      warn('W_IMAGE_DECODE', `签章 ${source.signatureId} 的 Seal 图片为空，戳记 ${blockId} 已跳过`, blockId);
+      continue;
+    }
+    if (!loader.decodeSeal) {
+      warn('W_IMAGE_DECODE', `签章戳记 ${blockId} 缺少图片解码器，已跳过`, blockId);
+      continue;
+    }
+    let image: DecodedImage;
+    try {
+      image = await loader.decodeSeal(source.seal);
+    } catch (error) {
+      warn(
+        'W_IMAGE_DECODE',
+        `签章戳记 ${blockId} 印章解码失败：${error instanceof Error ? error.message : String(error)}`,
+        blockId,
+      );
+      continue;
+    }
+    if (!(image.width > 0) || !(image.height > 0)) {
+      warn('W_IMAGE_DECODE', `签章戳记 ${blockId} 印章尺寸非正，已跳过`, blockId);
+      continue;
+    }
+    result.push({
+      blockId,
+      signatureId: source.signatureId,
+      stamp,
+      boundary,
+      image,
+      imageResourceId: `signature:${source.signatureId}:${index}`,
+    });
+  }
+  return result;
+}
+
+/**
+ * 把已解码印章构建成块本地显示列表。
+ *
+ * 图片按完整 Boundary 大小绘制；StampAnnot.Clip 作为块本地裁剪窗口，
+ * 从而支持 h/V4RideRight 的骑缝章分页切片。
+ *
+ * @param source 已解码签章戳记。
+ * @returns 可交给 drawPage 的签章块。
+ */
+function buildSignatureBlock(source: DecodedSignatureStamp): SignatureBlock {
+  const { boundary, stamp } = source;
+  const space = { width: boundary.w, height: boundary.h };
+  const builder = new DisplayListBuilder({ x: 0, y: 0, w: space.width, h: space.height });
+  if (stamp.clip) {
+    const clip = normalizeBox(stamp.clip);
+    builder.beginPath();
+    builder.rect(clip.x, clip.y, clip.w, clip.h);
+    builder.clip('nonzero');
+  }
+  // 合成 ImageObject 仅用于延迟图片 plan；实际绘制由 displayList 的 drawImage 完成。
+  const imageObject: ImageObject = {
+    kind: 'image',
+    id: source.blockId,
+    boundary: { x: 0, y: 0, w: space.width, h: space.height },
+    ctm: [space.width, 0, 0, space.height, 0, 0],
+    alpha: 255,
+    visible: true,
+    resourceId: source.imageResourceId,
+  };
+  const handle = createDeferredImageHandle(imageObject, source.image, 'main', 'never');
+  builder.drawImage(handle, [space.width, 0, 0, space.height, 0, 0], 1, true);
+  return {
+    id: source.blockId,
+    signatureId: source.signatureId,
+    stamp,
+    boundary,
+    space,
+    displayList: builder.build(),
+  };
 }
 
 /**

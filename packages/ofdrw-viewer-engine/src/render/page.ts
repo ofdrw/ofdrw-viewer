@@ -13,6 +13,7 @@ import type { WarningHandler } from '../warnings';
 import { IDENTITY_MATRIX, invertMatrix, multiplyMatrix, translateMatrix } from '../common/matrix';
 import { createPaintBinder } from './paint';
 import { drawBlock, drawObjects, resolveDisplayImage } from './object';
+import { replayDisplayList } from './display-list';
 import { wrapPatternBinder } from './prepare';
 import type { ImageSubstitutionMode } from './image';
 
@@ -185,6 +186,33 @@ export function drawPage(
           renderer.restore();
         } catch {
           // 忽略 restore 失败，继续后续注释。
+        }
+      }
+    }
+
+    // 签章外观最后绘制；按 StampAnnot 顺序，后出现覆盖先出现。
+    for (const block of prepared.signatureBlocks ?? []) {
+      if (options.signal?.aborted) break;
+      renderer.save();
+      try {
+        renderer.translate(block.boundary.x, block.boundary.y);
+        renderer.beginPath();
+        renderer.rect(0, 0, block.space.width, block.space.height);
+        renderer.clip('nonzero');
+        replayDisplayList(renderer, block.displayList, (handle, role) =>
+          resolveDisplayImage(renderer, prepared, handle, role, viewport.dpi),
+        );
+      } catch (error) {
+        warn(
+          'W_UNSUPPORTED_PAINT',
+          `签章块绘制失败：${error instanceof Error ? error.message : String(error)}`,
+          block.id,
+        );
+      } finally {
+        try {
+          renderer.restore();
+        } catch {
+          // 忽略 restore 失败，继续后续签章。
         }
       }
     }
