@@ -472,10 +472,11 @@ export function decodeLayersNode(contentNode: XmlNode, context: ContentDecodeCon
 function decodeClipsNode(node: XmlNode, context: ContentDecodeContext): Clip[] {
   const clipsNode = child(node, 'Clips');
   if (!clipsNode) return [];
+  const transFlag = booleanAttr(clipsNode, 'TransFlag', false, context);
   const result: Clip[] = [];
   for (const clipNode of children(clipsNode, 'Clip')) {
     const clipContext = withObject(context, normalizeResourceId(attr(clipNode, 'ID')) || undefined);
-    const clip: Clip = { areas: [] };
+    const clip: Clip = { transFlag, areas: [] };
     const clipCtm = parseMatrix(attr(clipNode, 'CTM'), clipContext, 'Clip.CTM');
     if (clipCtm) clip.ctm = clipCtm;
     const drawParamRaw = attr(clipNode, 'DrawParam');

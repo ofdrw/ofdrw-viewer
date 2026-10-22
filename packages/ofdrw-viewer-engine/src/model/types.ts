@@ -39,6 +39,10 @@ export interface Clip {
   ctm?: Matrix;
   /** 裁剪区自己的 DrawParam；已由样式层结算前保留引用。 */
   drawParam?: ResourceId;
+  /**
+   * 裁剪区域是否受外部 CTM 影响；来自 `Clips@TransFlag`，缺省 false。
+   */
+  transFlag?: boolean;
   /** 同一 Clip 内的裁剪区域，取并集。 */
   areas: ClipArea[];
 }

@@ -172,6 +172,48 @@ describe('decodePageContent 图元', () => {
     expect(object.children[0]?.kind).toBe('text');
   });
 
+  it('Clips@TransFlag：true/false/缺省复制到每个 Clip，非法值 warning 后 false', () => {
+    const clipPath = (id: string) =>
+      node('Path', { ID: id, Boundary: '0 0 1 1' }, [leaf('AbbreviatedData', 'M 0 0 L 1 1')]);
+    const decode = (transFlag: string | undefined, onWarning?: (warning: unknown) => void) => {
+      const clipsAttrs: Record<string, string> = transFlag === undefined ? {} : { TransFlag: transFlag };
+      const object = node(
+        'PathObject',
+        { ID: '1', Boundary: '0 0 10 10', Fill: 'true' },
+        [
+          leaf('AbbreviatedData', 'M 0 0 L 10 10'),
+          node('Clips', clipsAttrs, [
+            node('Clip', {}, [node('Area', {}, [clipPath('1')])]),
+            node('Clip', {}, [node('Area', {}, [clipPath('2')])]),
+          ]),
+        ],
+      );
+      const page = decodePageContent(
+        pageNode([node('Content', {}, [node('Layer', {}, [object])])]),
+        '1',
+        'Doc_0/Content.xml',
+        onWarning ? { onWarning: onWarning as never } : {},
+      );
+      const decoded = page.layers[0]?.children[0];
+      expect(decoded?.kind).toBe('path');
+      return decoded?.kind === 'path' ? decoded.clips : undefined;
+    };
+
+    expect(decode('true')?.map((clip) => clip.transFlag)).toEqual([true, true]);
+    expect(decode('false')?.map((clip) => clip.transFlag)).toEqual([false, false]);
+    expect(decode(undefined)?.map((clip) => clip.transFlag)).toEqual([false, false]);
+
+    const warnings: Array<{ code: string; message: string }> = [];
+    expect(
+      decode('maybe', (warning) => warnings.push(warning as { code: string; message: string }))?.map(
+        (clip) => clip.transFlag,
+      ),
+    ).toEqual([false, false]);
+    expect(warnings).toEqual([
+      expect.objectContaining({ code: 'W_BAD_NUMBER', message: expect.stringContaining('TransFlag') }),
+    ]);
+  });
+
   it('Clips：Area.CTM 折叠进裁剪对象，多个 Clip 保留', () => {
     const path = node('PathObject', { ID: '1', Boundary: '0 0 10 10', Fill: 'true' }, [
       node('Clips', {}, [
