@@ -1,0 +1,161 @@
+/**
+ * `<ofd-viewer>` Web Component：属性映射、property、事件与生命周期。
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { FakeViewer } from './mock-viewer';
+
+vi.mock('../../../src/index', async () => {
+  const { FakeViewer: Fake } = await import('./mock-viewer');
+  return { OFDViewer: Fake };
+});
+
+import {
+  OFD_VIEWER_TAG,
+  OFDViewerElement,
+  defineOFDViewerElement,
+} from '../../../src/component/ofd-viewer-element';
+
+/** 等待自定义元素生命周期与微任务完成。 */
+async function tick(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+beforeEach(() => {
+  FakeViewer.reset();
+  defineOFDViewerElement();
+  document.body.replaceChildren();
+});
+
+afterEach(() => {
+  document.body.replaceChildren();
+  vi.restoreAllMocks();
+});
+
+describe('<ofd-viewer>', () => {
+  it('注册标签并使用 light DOM 创建核心实例', () => {
+    expect(customElements.get(OFD_VIEWER_TAG)).toBe(OFDViewerElement);
+
+    const element = document.createElement(OFD_VIEWER_TAG) as OFDViewerElement;
+    element.setAttribute('src', 'a.ofd');
+    element.setAttribute('page', '2');
+    element.setAttribute('scale', '1.25');
+    element.setAttribute('rotation', '90');
+    element.setAttribute('theme', 'dark');
+    element.setAttribute('locale', 'en-US');
+    element.setAttribute('sidebar', 'outline');
+    element.features = { print: false };
+    document.body.append(element);
+
+    const viewer = FakeViewer.instances[0]!;
+    expect(element.viewer).toBe(viewer);
+    expect(viewer.options.container).toBe(element);
+    expect(viewer.options.source).toBe('a.ofd');
+    expect(viewer.options.initialPage).toBe(2);
+    expect(viewer.options.initialScale).toBe(1.25);
+    expect(viewer.options.rotation).toBe(90);
+    expect(viewer.options.theme).toBe('dark');
+    expect(viewer.options.locale).toBe('en-US');
+    expect(viewer.options.sidebar).toBe('outline');
+    expect(viewer.options.features).toEqual({ print: false });
+    // light DOM：核心 DOM 是元素的子节点，而不是 shadow root。
+    expect(element.shadowRoot).toBeNull();
+    expect(element.querySelector('.fake-ofd-viewer')).not.toBeNull();
+    expect(Object.getOwnPropertyDescriptor(OFDViewerElement.prototype, 'viewer')?.set).toBeUndefined();
+  });
+
+  it('属性变化映射到实例方法且不重建实例', async () => {
+    const element = document.createElement(OFD_VIEWER_TAG) as OFDViewerElement;
+    element.setAttribute('src', 'a.ofd');
+    document.body.append(element);
+    const viewer = FakeViewer.instances[0]!;
+
+    element.setAttribute('page', '3');
+    element.setAttribute('scale', 'page-fit');
+    element.setAttribute('rotation', '180');
+    element.setAttribute('theme', 'light');
+    element.setAttribute('locale', 'zh-CN');
+    element.setAttribute('sidebar', 'bookmarks');
+    element.setAttribute('sidebar', '');
+    element.setAttribute('src', 'b.ofd');
+    await tick();
+
+    expect(FakeViewer.instances).toHaveLength(1);
+    expect(viewer.pageCalls).toContain(3);
+    expect(viewer.zoomModeCalls).toContain('page-fit');
+    expect(viewer.rotationCalls).toContain(180);
+    expect(viewer.themeCalls).toContain('light');
+    expect(viewer.localeCalls).toContain('zh-CN');
+    expect(viewer.sidebarCalls).toContain('bookmarks');
+    expect(viewer.sidebarCalls).toContain(null);
+    expect(viewer.openCalls).toContain('b.ofd');
+    expect(element.viewer).toBe(viewer);
+  });
+
+  it('features property 合并更新，并可通过 setFeatures 调用', () => {
+    const element = document.createElement(OFD_VIEWER_TAG) as OFDViewerElement;
+    element.setAttribute('src', 'a.ofd');
+    document.body.append(element);
+    const viewer = FakeViewer.instances[0]!;
+
+    element.features = { find: false };
+    expect(viewer.featureCalls.at(-1)).toEqual({ find: false });
+    element.setFeatures({ print: false }, { display: 'disable' });
+    expect(viewer.featureCalls.at(-1)).toEqual({ print: false });
+    expect(element.features).toEqual({ find: false, print: false });
+  });
+
+  it('核心事件映射为 ofd-* CustomEvent', () => {
+    const element = document.createElement(OFD_VIEWER_TAG) as OFDViewerElement;
+    element.setAttribute('src', 'a.ofd');
+    document.body.append(element);
+    const viewer = FakeViewer.instances[0]!;
+    const received: CustomEvent[] = [];
+    element.addEventListener('ofd-page-change', (event) => {
+      received.push(event as CustomEvent);
+    });
+    element.addEventListener('ofd-error', (event) => {
+      received.push(event as CustomEvent);
+    });
+
+    viewer.emit('pagechanging', { pageNumber: 2, previous: 1 });
+    viewer.emit('error', { code: 'OFD_OPEN_FAILED', message: 'bad' });
+
+    expect(received).toHaveLength(2);
+    expect(received[0]!.type).toBe('ofd-page-change');
+    expect(received[0]!.detail).toEqual({ pageNumber: 2, previous: 1 });
+    expect(received[0]!.bubbles).toBe(true);
+    expect(received[0]!.composed).toBe(true);
+    expect(received[1]!.type).toBe('ofd-error');
+  });
+
+  it('支持 source property（Blob），断开销毁、重连重建且保留来源', async () => {
+    const element = document.createElement(OFD_VIEWER_TAG) as OFDViewerElement;
+    const source = new Blob(['ofd']);
+    element.source = source;
+    document.body.append(element);
+    await tick();
+    const first = FakeViewer.instances[0]!;
+    expect(first.options.source).toBe(source);
+
+    element.remove();
+    expect(first.destroyed).toBe(true);
+    expect(element.viewer).toBeNull();
+
+    document.body.append(element);
+    await tick();
+    const second = FakeViewer.instances[1]!;
+    expect(FakeViewer.instances).toHaveLength(2);
+    expect(second.options.source).toBe(source);
+    expect(element.viewer).toBe(second);
+  });
+
+  it('无 src 时不创建实例，随后设置 src 再创建', async () => {
+    const element = document.createElement(OFD_VIEWER_TAG) as OFDViewerElement;
+    document.body.append(element);
+    expect(element.viewer).toBeNull();
+    element.setAttribute('src', 'later.ofd');
+    await tick();
+    expect(FakeViewer.instances).toHaveLength(1);
+    expect((element.viewer as unknown as FakeViewer).options.source).toBe('later.ofd');
+  });
+});
