@@ -1,0 +1,215 @@
+/**
+ * E2E 共享操作：本地夹具、打开阅读器、等待渲染与读取状态。
+ */
+import { expect } from 'playwright/test';
+import type { Page } from 'playwright/test';
+
+/** 本地 OFD 夹具路径。 */
+export const FIXTURES = {
+  /** 1 页基础文档（字体缺失，只用于打开/无异常）。 */
+  basic: '/ofd_pdf_match/helloworld.ofd',
+  /** 2 页密集文本，内嵌 SimSun，用于文本层/查找/选区。 */
+  text: '/ofd_pdf_match/dense-text-perf.ofd',
+  /** 4 页，含大纲。 */
+  multi: '/ofd_pdf_match/z.ofd',
+  /** 5 页，含书签。 */
+  bookmarks: '/ofd_pdf_match/Page5.ofd',
+  /** 1 页真实 V4 签章。 */
+  signature: '/ofd_pdf_match/SESV4SignDoc.ofd',
+  /** 删除 SignedValue.dat 的签章降级夹具。 */
+  signatureMissing: '/packages/ofdrw-viewer-ui/test/acceptance/fixtures/signature-missing-value.ofd',
+  /** 1000 页性能夹具。 */
+  thousand: '/packages/ofdrw-viewer-ui/test/acceptance/fixtures/thousand.ofd',
+} as const;
+
+/** 打开参数。 */
+export interface OpenOptions {
+  /** 初始缩放；默认 1。 */
+  readonly scale?: number | 'auto';
+  /** 初始页；默认 1。 */
+  readonly page?: number;
+  /** 初始旋转。 */
+  readonly rotation?: 0 | 90 | 180 | 270;
+  /** 功能开关。 */
+  readonly features?: Record<string, boolean>;
+  /** 功能展示策略。 */
+  readonly display?: 'hide' | 'disable';
+  /** 宿主容器宽度，单位 px；用于嵌入式断点。 */
+  readonly hostWidth?: number;
+  /** 初始侧栏。 */
+  readonly sidebar?: 'thumbnails' | 'outline' | 'bookmarks' | 'signatures';
+  /** 是否等待首个 pagerendered；默认 true。 */
+  readonly waitForRender?: boolean;
+}
+
+/**
+ * 构造测试页 URL。
+ *
+ * @param fixture OFD 路径。
+ * @param options 打开参数。
+ * @returns 相对 URL。
+ */
+export function viewerUrl(fixture: string, options: OpenOptions = {}): string {
+  const params = new URLSearchParams({ src: fixture });
+  if (options.scale !== undefined) params.set('scale', String(options.scale));
+  if (options.page !== undefined) params.set('page', String(options.page));
+  if (options.rotation !== undefined) params.set('rotation', String(options.rotation));
+  if (options.features) params.set('features', JSON.stringify(options.features));
+  if (options.display) params.set('display', options.display);
+  if (options.hostWidth) params.set('w', String(options.hostWidth));
+  if (options.sidebar) params.set('sidebar', options.sidebar);
+  return `/packages/ofdrw-viewer-ui/test/e2e/index.html?${params.toString()}`;
+}
+
+/**
+ * 打开夹具并等待文档就绪（可选等待首屏渲染）。
+ *
+ * @param page 页面。
+ * @param fixture OFD 路径。
+ * @param options 打开参数。
+ */
+export async function openViewer(
+  page: Page,
+  fixture: string,
+  options: OpenOptions = {},
+): Promise<void> {
+  await page.goto(viewerUrl(fixture, options));
+  await expect(page.locator('html')).toHaveAttribute('data-e2e-ready', 'true', {
+    timeout: 45_000,
+  });
+  await page.waitForFunction(() => (window.__viewer?.getPageCount() ?? 0) > 0);
+  if (options.waitForRender !== false) {
+    await page.waitForFunction(() => window.__events?.some((event) => event.type === 'pagerendered'), null, {
+      timeout: 60_000,
+    });
+  }
+}
+
+/**
+ * 若查找栏意外处于打开状态则关闭，避免遮挡工具栏；用于独立缺陷修复前的其余路径。
+ *
+ * @param page 页面。
+ */
+export async function dismissFindbar(page: Page): Promise<void> {
+  const findbar = page.locator('.ofd-viewer__findbar');
+  if (await findbar.isVisible()) {
+    await page.locator('.ofd-findbar__close').click();
+    await expect(findbar).toBeHidden();
+  }
+}
+
+/**
+ * 读取当前视图状态。
+ *
+ * @param page 页面。
+ * @returns 核心状态快照。
+ */
+export async function viewState(page: Page) {
+  return page.evaluate(() => {
+    const state = window.__viewer!.getState();
+    return {
+      pageNumber: state.view.pageNumber,
+      pageCount: state.document.pageCount,
+      scale: state.view.scale,
+      rotation: state.view.rotation,
+      scrollTop: state.view.scrollTop,
+      sidebarView: state.view.sidebarView,
+      status: state.document.status,
+      selectedText: state.view.selectedText,
+      find: state.view.findState,
+      viewport: document.querySelector<HTMLElement>('.ofd-viewer')?.dataset.viewport ?? null,
+      sidebarLayout:
+        document.querySelector<HTMLElement>('.ofd-viewer')?.dataset.sidebarLayout ?? null,
+    };
+  });
+}
+
+/**
+ * 等待指定页渲染完成。
+ *
+ * @param page 页面。
+ * @param pageNumber 1-based 页码。
+ */
+export async function waitForPageRendered(page: Page, pageNumber: number): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          (target) =>
+            window.__events?.some(
+              (event) => event.type === 'pagerendered' && (event.detail as { pageNumber?: number }).pageNumber === target,
+            ) ?? false,
+          pageNumber,
+        ),
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+}
+
+/**
+ * 读取视图断点/WAI 属性。
+ *
+ * @param page 页面。
+ */
+export async function layoutState(page: Page) {
+  return page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>('.ofd-viewer')!;
+    const sidebar = document.querySelector<HTMLElement>('.ofd-viewer__sidebar')!;
+    const mask = document.querySelector<HTMLElement>('.ofd-viewer__sidebar-mask')!;
+    const toggle = document.querySelector<HTMLElement>('[data-ofd-control="sidebar"]')!;
+    const toolbar = document.querySelector<HTMLElement>('.ofd-viewer__toolbar')!;
+    const host = document.querySelector<HTMLElement>('#host')!;
+    return {
+      viewport: root.dataset.viewport,
+      sidebarLayout: root.dataset.sidebarLayout,
+      rootWidth: Math.round(root.getBoundingClientRect().width),
+      hostWidth: Math.round(host.getBoundingClientRect().width),
+      windowWidth: window.innerWidth,
+      sidebarHidden: sidebar.hidden,
+      sidebarOpen: sidebar.dataset.open,
+      maskHidden: mask.hidden,
+      ariaExpanded: toggle.getAttribute('aria-expanded'),
+      ariaPressed: toggle.getAttribute('aria-pressed'),
+      toolbarHidden: toolbar.hidden,
+    };
+  });
+}
+
+/**
+ * 设置窗口尺寸并等待根节点断点更新。
+ *
+ * @param page 页面。
+ * @param width 宽度，px。
+ * @param height 高度，px。
+ * @param expected 期望的 data-viewport。
+ */
+export async function resizeAndWait(
+  page: Page,
+  width: number,
+  height: number,
+  expected: string,
+): Promise<void> {
+  await page.setViewportSize({ width, height });
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () => document.querySelector<HTMLElement>('.ofd-viewer')?.dataset.viewport ?? null,
+        ),
+      { timeout: 10_000 },
+    )
+    .toBe(expected);
+}
+
+/**
+ * 统计事件次数。
+ *
+ * @param page 页面。
+ * @param type 事件名。
+ */
+export async function eventCount(page: Page, type: string): Promise<number> {
+  return page.evaluate(
+    (name) => window.__events?.filter((event) => event.type === name).length ?? 0,
+    type,
+  );
+}
