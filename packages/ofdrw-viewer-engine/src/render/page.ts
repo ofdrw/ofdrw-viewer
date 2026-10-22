@@ -5,7 +5,7 @@
  * 注释 → endPage。不解析 DrawParam、不查资源、不直接调用 Canvas（除透传 ctx）。
  */
 
-import type { PageModel, Layer, ResourceId } from '../model/types';
+import type { PageModel, Layer, PageObject, ResourceId } from '../model/types';
 import type { PreparedPageBundle } from './prepare';
 import type { Renderer, CanvasRenderingContext2DLike } from '../renderer/types';
 import type { Matrix, Viewport } from '../common/types';
@@ -34,6 +34,110 @@ export interface DrawPageOptions {
   onWarning?: WarningHandler;
   /** 页索引，从 0 开始；仅用于 warning。 */
   pageIndex?: number;
+}
+
+/** 页面绘制顺序项；模板/页图层按绘制顺序展开，注释块单独一项。 */
+export type PageDrawEntry =
+  | {
+      /** 模板图层或页面图层。 */
+      kind: 'template' | 'page';
+      /** 图层类型。 */
+      layerType: Layer['type'];
+      /** 该图层按 XML 顺序的绘制对象。 */
+      objects: readonly PageObject[];
+      /** 模板页 ID；页面图层为 undefined。 */
+      templateId?: ResourceId;
+      /** 模板有效 ZOrder；页面图层为 undefined。 */
+      zOrder?: 'Background' | 'Body' | 'Foreground';
+    }
+  | {
+      /** 注释外观块。 */
+      kind: 'annotation';
+      /** 准备阶段构建的注释独立块。 */
+      block: import('../model/types').IndependentBlock;
+    };
+
+/** 页面绘制顺序选项。 */
+export interface PageDrawOrderOptions {
+  /** 图层顺序：默认 `type`，`document` 为严格 XML 顺序。 */
+  layerOrder?: 'document' | 'type';
+  /** 是否在末尾返回注释块，默认 false。 */
+  includeAnnotations?: boolean;
+  /** warning 回调；用于模板缺失与非法图层顺序。 */
+  onWarning?: WarningHandler;
+}
+
+/**
+ * 解析页面绘制顺序，供绘制与文本收集共用。
+ *
+ * 顺序与 `drawPage` 一致：type 模式按 Background/Body/Foreground/Custom，
+ * 每组先模板（按页面引用顺序）后页图层；document 模式模板整体在前。模板
+ * 组内按模板自身图层类型 + XML 顺序；注释块始终最后。
+ *
+ * @param prepared 已准备的页面。
+ * @param options 图层顺序、注释与 warning 选项。
+ * @returns 按绘制顺序展开的图层项与可选注释项。
+ */
+export function resolvePageDrawOrder(
+  prepared: PreparedPageBundle,
+  options: PageDrawOrderOptions = {},
+): PageDrawEntry[] {
+  const page = prepared.page.page;
+  const warn = (code: string, message: string, objectId?: ResourceId): void => {
+    options.onWarning?.({ code, message, ...(objectId !== undefined ? { objectId } : {}) });
+  };
+  const rawOrder = options.layerOrder ?? 'type';
+  if (rawOrder !== 'document' && rawOrder !== 'type') {
+    warn('W_LAYER_ORDER', `未知图层顺序 ${String(rawOrder)}，已按 type 处理`);
+  }
+  const layerOrder = rawOrder === 'document' ? 'document' : 'type';
+  const templates = resolveTemplates(page, prepared.templates, warn);
+  const entries: PageDrawEntry[] = [];
+  const pushLayer = (
+    layer: Layer,
+    template?: { id: ResourceId; zOrder: 'Background' | 'Body' | 'Foreground' },
+  ): void => {
+    if (layer.children.length === 0) return;
+    entries.push({
+      kind: template ? 'template' : 'page',
+      layerType: layer.type,
+      objects: layer.children,
+      ...(template ? { templateId: template.id, zOrder: template.zOrder } : {}),
+    });
+  };
+
+  if (layerOrder === 'document') {
+    for (const template of templates) {
+      for (const layer of template.model.layers) {
+        pushLayer(layer, { id: template.model.id, zOrder: templateZOrder(template.ref) });
+      }
+    }
+    for (const layer of page.layers) pushLayer(layer);
+  } else {
+    for (const type of LAYER_TYPES) {
+      for (const template of templates) {
+        const zOrder = templateZOrder(template.ref);
+        if (zOrder !== type) continue;
+        for (const templateType of LAYER_TYPES) {
+          for (const layer of template.model.layers) {
+            if (layer.type !== templateType) continue;
+            pushLayer(layer, { id: template.model.id, zOrder });
+          }
+        }
+      }
+      for (const layer of page.layers) {
+        if (layer.type !== type) continue;
+        pushLayer(layer);
+      }
+    }
+  }
+
+  if (options.includeAnnotations) {
+    for (const block of prepared.page.annotationBlocks) {
+      entries.push({ kind: 'annotation', block });
+    }
+  }
+  return entries;
 }
 
 /**
@@ -118,12 +222,10 @@ export function drawPage(
     onWarning: warn,
   };
 
-  const layerOrder = options.layerOrder ?? 'type';
-  if (layerOrder !== 'type' && layerOrder !== 'document') {
-    warn('W_LAYER_ORDER', `未知图层顺序 ${String(layerOrder)}，已按 type 处理`);
-  }
-
-  const templateEntries = resolveTemplates(page, prepared.templates, warn);
+  const entries = resolvePageDrawOrder(prepared, {
+    layerOrder: options.layerOrder ?? 'type',
+    onWarning: (warning) => warn(warning.code, warning.message, warning.objectId),
+  });
   renderer.beginPage(canvasContext, viewport);
   try {
     renderer.setTransform(IDENTITY_MATRIX);
@@ -133,22 +235,10 @@ export function drawPage(
     renderer.rect(0, 0, page.area.w, page.area.h);
     renderer.clip('nonzero');
 
-    if (layerOrder === 'document') {
-      // 严格 XML 顺序：模板按引用顺序整体先画，再画页图层。
-      for (const entry of templateEntries) drawLayers(context, entry.model.layers);
-      drawLayers(context, page.layers);
-    } else {
-      // 图 16：每个类型先画该类型模板（按页面引用顺序），再画该类型页图层；
-      // 模板整体归入 TemplateRef.zOrder，优先于模板页自身图层类型；缺省 Background。
-      for (const type of LAYER_TYPES) {
-        for (const entry of templateEntries) {
-          if (templateZOrder(entry.ref) !== type) continue;
-          // 模板被整体放入 ref 组；组内仍按模板自身 Layer 类型 + XML 顺序绘制。
-          for (const templateType of LAYER_TYPES) {
-            drawLayers(context, entry.model.layers, templateType);
-          }
-        }
-        drawLayers(context, page.layers, type);
+    // 严格 XML / 图 16 顺序都由 resolvePageDrawOrder 统一展开，绘制与文本收集共用。
+    for (const entry of entries) {
+      if (entry.kind === 'template' || entry.kind === 'page') {
+        drawObjects(context, entry.objects);
       }
     }
 
@@ -261,27 +351,11 @@ function resolveTemplates(
  * @param ref 页面模板引用。
  * @returns 图层类型。
  */
-function templateZOrder(ref: PageModel['templates'][number]): Layer['type'] {
+function templateZOrder(
+  ref: PageModel['templates'][number],
+): 'Background' | 'Body' | 'Foreground' {
   const value = ref.zOrder;
   return value === 'Background' || value === 'Body' || value === 'Foreground'
     ? value
     : 'Background';
-}
-
-/**
- * 绘制图层；指定类型时只画该类型。
- *
- * @param context 对象绘制上下文。
- * @param layers 图层列表。
- * @param type 可选图层类型过滤。
- */
-function drawLayers(
-  context: Parameters<typeof drawObjects>[0],
-  layers: readonly Layer[],
-  type?: Layer['type'],
-): void {
-  for (const layer of layers) {
-    if (type && layer.type !== type) continue;
-    drawObjects(context, layer.children);
-  }
 }
