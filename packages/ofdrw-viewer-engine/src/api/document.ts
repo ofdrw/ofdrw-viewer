@@ -24,6 +24,8 @@ import type {
   ImageResource,
   PageModel,
   ResourceId,
+  SealImage,
+  SignatureBundle,
   TemplateRef,
 } from '../model/types';
 import type { DocumentResourceIndex, PageResourceScope, ResourceIndex } from '../resource/types';
@@ -66,6 +68,7 @@ import {
   decodePageResources,
 } from '../model/decode';
 import { resolvePageArea, applyPageArea } from '../model/page-area';
+import { decodeSignatureBundle, signaturesFilePath } from '../model/signature';
 import {
   buildDocumentResourceIndex,
   ResourceStore,
@@ -81,6 +84,7 @@ import {
 } from '../image/format';
 import { H5Canvas2DRenderer } from '../renderer/canvas2d';
 import { preparePage } from '../render/prepare';
+import type { PreparePageLoader, SignatureStampSource } from '../render/prepare';
 import { drawPage } from '../render/page';
 
 /** Canvas 尺寸比较容差，避免浮点 viewport 与整数 canvas 的舍入误差。 */
@@ -118,6 +122,8 @@ interface DocumentInit {
   layerOrder: 'document' | 'type';
   documentResources: DocumentResourceIndex;
   fontLibrary: FontLibrary;
+  /** Signs/Signatures.xml 包内路径；文档无签章索引时缺省。 */
+  signatureIndexPath?: string;
 }
 
 /**
@@ -265,6 +271,8 @@ export class OFDDocument {
   private readonly documentResources: DocumentResourceIndex;
   private readonly fontLibrary: FontLibrary;
   private readonly documentWarningHandler: (warning: OFDWarning) => void;
+  /** Signs/Signatures.xml 包内路径；无签章索引时 undefined，loader 不注册签章方法。 */
+  private readonly signatureIndexPath: string | undefined;
 
   /** 已解析 XML 的 LRU（键：包内路径）。 */
   private readonly xmlCache: DisposableLruCache<string, XmlCacheEntry>;
@@ -288,6 +296,12 @@ export class OFDDocument {
   private readonly resourceIndexCache = new Map<string, Promise<ResourceIndex>>();
   /** 注释文件缓存（键：PageAnnot 包内路径）。 */
   private readonly annotationCache = new Map<string, Promise<readonly Annotation[]>>();
+  /** 文档级签章集合缓存；无 Signatures.xml 时为已解析的 undefined。 */
+  private signatureBundlePromise: Promise<SignatureBundle | undefined> | undefined;
+  /** 按 SealImage 实例缓存印章解码结果，避免骑缝章逐页重复解码。 */
+  private readonly signatureSealPromises = new Map<SealImage, Promise<DecodedImage>>();
+  /** 本文档解码出的印章图片，关闭时释放 ImageBitmap。 */
+  private readonly signatureSealImages = new Set<DecodedImage>();
 
   /** 每个 Canvas 的渲染 Promise 链；同一 Canvas 串行。 */
   private readonly canvasChains = new WeakMap<Canvas2DLike, Promise<void>>();
@@ -317,6 +331,7 @@ export class OFDDocument {
     this.resourceStore = new ResourceStore(init.documentResources);
     this.fontLibrary = init.fontLibrary;
     this.documentWarningHandler = createDocumentWarningHandler(init.warnings);
+    this.signatureIndexPath = init.signatureIndexPath;
     this.pageCount = init.document.pageCount;
     this.xmlCache = new DisposableLruCache<string, XmlCacheEntry>({
       maxBytes: init.cacheOptions.xmlBytes,
@@ -465,6 +480,7 @@ export class OFDDocument {
       });
 
       const renderer: Renderer = options.renderer ?? new H5Canvas2DRenderer();
+      const signaturePath = signaturesFilePath(documentPath);
       return new OFDDocument({
         source,
         zip,
@@ -478,6 +494,7 @@ export class OFDDocument {
         layerOrder: options.layerOrder ?? 'type',
         documentResources,
         fontLibrary,
+        ...(zip.hasEntry(signaturePath) ? { signatureIndexPath: signaturePath } : {}),
       });
     } catch (error) {
       // 打开失败时释放已获得的 ZIP/文件句柄。
@@ -533,6 +550,19 @@ export class OFDDocument {
     this.fontBytesPending.clear();
     this.imageCache.clear();
     this.imagePending.clear();
+    this.signatureSealPromises.clear();
+    for (const image of this.signatureSealImages) {
+      const close = (image.data as { close?: () => void }).close;
+      if (typeof close === 'function') {
+        try {
+          close.call(image.data);
+        } catch {
+          // 印章 ImageBitmap.close 失败不影响关闭流程。
+        }
+      }
+    }
+    this.signatureSealImages.clear();
+    this.signatureBundlePromise = undefined;
     this.pageCache.clear();
     this.pagePending.clear();
     this.templateCache.clear();
@@ -584,7 +614,7 @@ export class OFDDocument {
         const bundle = await preparePage({
           page: entry.model,
           resources: entry.resources,
-          loader: this.createLoader(combined.signal),
+          loader: this.createLoader(combined.signal, pageIndex),
           dpi: params.viewport.dpi,
           strictImageCtm: this.strictImageCtm,
           signal: combined.signal,
@@ -675,14 +705,10 @@ export class OFDDocument {
    * 构造准备阶段 loader。
    *
    * @param signal 取消信号，用于准备阶段 I/O 前后检查。
-   * @returns loader 实现。
+   * @param pageIndex 当前页索引，用于签章按页过滤。
+   * @returns loader 实现；无 Signatures.xml 时不注册签章方法，避免额外调用。
    */
-  private createLoader(signal: AbortSignal): {
-    loadFontFaces(resources: readonly FontResource[]): Promise<ReadonlyMap<ResourceId, FontFaceSet>>;
-    decodeImage(resource: ImageResource): Promise<DecodedImage>;
-    loadTemplatePage(ref: TemplateRef): Promise<PageModel>;
-    loadAnnotations(page: PageModel): Promise<readonly Annotation[]>;
-  } {
+  private createLoader(signal: AbortSignal, pageIndex: number): PreparePageLoader {
     return {
       loadFontFaces: async (resources) => {
         throwIfAborted(signal);
@@ -700,6 +726,19 @@ export class OFDDocument {
         throwIfAborted(signal);
         return this.loadAnnotations(page);
       },
+      ...(this.signatureIndexPath
+        ? {
+            loadSignatureStamps: async (page: PageModel) => {
+              throwIfAborted(signal);
+              void page;
+              return this.loadSignatureStamps(pageIndex);
+            },
+            decodeSeal: async (seal: SealImage) => {
+              throwIfAborted(signal);
+              return this.decodeSeal(seal);
+            },
+          }
+        : {}),
     };
   }
 
@@ -902,6 +941,103 @@ export class OFDDocument {
       throw wrapError(error, 'OFD_ENTRY_NOT_FOUND', `注释文件 ${path} 解析失败`);
     });
     this.annotationCache.set(path, promise);
+    return promise;
+  }
+
+  /**
+   * 加载文档签章集合；按文档缓存，无 Signatures.xml 时返回 undefined。
+   *
+   * 索引/Signature 损坏只 warning 并返回 undefined，不阻断页面打开或渲染。
+   *
+   * @returns 签章集合；无签章或加载失败时为 undefined。
+   */
+  private getSignatureBundle(): Promise<SignatureBundle | undefined> {
+    if (!this.signatureIndexPath) return Promise.resolve(undefined);
+    if (this.signatureBundlePromise) return this.signatureBundlePromise;
+    const indexFilePath = this.signatureIndexPath;
+    const pageIds = this.document.pages.map((ref) => ref.id);
+    const promise = (async (): Promise<SignatureBundle> => {
+      const root = await this.readXml(indexFilePath, this.documentWarningHandler);
+      return decodeSignatureBundle(
+        {
+          index: root,
+          indexFilePath,
+          pageIds,
+          readFile: (path) => this.readSignatureFile(path),
+        },
+        { onWarning: this.documentWarningHandler, pageIds },
+      );
+    })().catch((error: unknown) => {
+      this.documentWarningHandler({
+        code: 'W_BAD_NUMBER',
+        message: `签章索引 ${indexFilePath} 加载失败：${errorMessage(error)}`,
+      });
+      return undefined;
+    });
+    this.signatureBundlePromise = promise;
+    return promise;
+  }
+
+  /**
+   * 读取签章相关条目：Signature.xml 受 XML 上限约束，Seal.esl 受条目上限约束。
+   *
+   * @param path 包内路径。
+   * @returns 条目字节。
+   */
+  private readSignatureFile(path: string): Promise<Uint8Array> {
+    const maxBytes = /\.xml$/i.test(path) ? this.limits.maxXmlBytes : this.limits.maxEntryBytes;
+    return this.zip.readEntry(path, {
+      maxBytes,
+      onWarning: this.documentWarningHandler,
+    });
+  }
+
+  /**
+   * 取当前页的签章戳记与 Seal 元数据。
+   *
+   * 只读取已缓存的文档签章集合，不重复解析 XML/Seal.esl。
+   *
+   * @param pageIndex 页索引。
+   * @returns 当前页签章戳记；无签章时为 []。
+   */
+  private async loadSignatureStamps(pageIndex: number): Promise<readonly SignatureStampSource[]> {
+    const bundle = await this.getSignatureBundle();
+    if (!bundle) return [];
+    const result: SignatureStampSource[] = [];
+    for (const signature of bundle.signatures) {
+      for (const stamp of signature.stamps) {
+        if (stamp.pageIndex !== pageIndex) continue;
+        result.push({
+          signatureId: signature.id,
+          stamp,
+          ...(signature.seal ? { seal: signature.seal } : {}),
+        });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * 解码 Seal.esl 中的印章图片；按 SealImage 实例缓存，供多页骑缝章复用。
+   *
+   * @param seal Seal 图片元数据。
+   * @returns 解码后的图片。
+   * @throws OFDError 无可用解码器/像素超限/解码失败时。
+   */
+  private decodeSeal(seal: SealImage): Promise<DecodedImage> {
+    const cached = this.signatureSealPromises.get(seal);
+    if (cached) return cached;
+    const format = normalizeSealFormat(seal.type) || detectImageFormat(seal.data, 'Seal.esl');
+    const promise = this.decodeImageBytes(seal.data, format)
+      .then((decoded) => {
+        this.signatureSealImages.add(decoded);
+        return decoded;
+      })
+      .catch((error: unknown) => {
+        this.signatureSealPromises.delete(seal);
+        throw error;
+      });
+    this.signatureSealPromises.set(seal, promise);
     return promise;
   }
 
@@ -1167,6 +1303,19 @@ function emptyResourceSet(): ResourceDefinitionSet {
  */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * 归一化 Seal.esl 中记录的图片格式名。
+ *
+ * @param type Seal 图片格式（例如 PNG/JPG）。
+ * @returns 引擎图片格式名；空值原样返回。
+ */
+function normalizeSealFormat(type: string): string {
+  const normalized = type.trim().toLowerCase();
+  if (normalized === 'jpg' || normalized === 'jpe') return 'jpeg';
+  if (normalized === 'tif') return 'tiff';
+  return normalized;
 }
 
 /**
