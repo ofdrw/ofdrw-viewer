@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "OFD 转图片命令行工具（ofdrw-viewer-engine 的 Node 子包）",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "ofdrw-viewer-cli": "./dist/bin.js"

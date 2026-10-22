@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "ofdrw-viewer-engine 最小 Web 验证页（Vite + TypeScript）",
+  "license": "MIT",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

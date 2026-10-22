@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "平台无关的 OFD 页面渲染引擎",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
