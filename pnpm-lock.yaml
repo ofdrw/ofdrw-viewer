@@ -20,6 +20,8 @@ importers:
 
   examples/web: {}
 
+  packages/ofdrw-viewer-cli: {}
+
   packages/ofdrw-viewer-engine:
     dependencies:
       fflate:
