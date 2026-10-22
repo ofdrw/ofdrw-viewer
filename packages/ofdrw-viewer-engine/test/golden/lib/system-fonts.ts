@@ -8,14 +8,16 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { FontInput } from 'ofdrw-viewer-engine';
 
 /**
  * 系统字体候选组；每组按优先级取第一个可用文件。
  *
  * 第一组是 CJK 主字体（中文样本），第二组是西文衬线回退（Nimbus Roman，
- * 缺失时用 Noto Serif CJK）。两组都注入，避免只取第一个导致 z p2 的
- * Times New Roman 字形仍落到宿主默认字体。
+ * 缺失时用 Noto Serif CJK），第三组是宿主 SimSun/宋体（存在才注入）。
+ * 各组都注入，按字体名评分选择，避免只取第一个导致特定 family 落空。
  */
 const FONT_CANDIDATE_GROUPS: ReadonlyArray<
   ReadonlyArray<{ family: string; paths: readonly string[] }>
@@ -56,6 +58,15 @@ const FONT_CANDIDATE_GROUPS: ReadonlyArray<
     {
       family: 'Noto Serif CJK SC',
       paths: ['/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc'],
+    },
+  ],
+  [
+    {
+      family: 'SimSun',
+      paths: [
+        join(homedir(), '.local/share/fonts/SimSun.ttc'),
+        'C:\\Windows\\Fonts\\simsun.ttc',
+      ],
     },
   ],
 ];
