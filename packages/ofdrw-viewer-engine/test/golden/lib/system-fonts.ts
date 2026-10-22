@@ -3,7 +3,8 @@
  *
  * Node 测试环境没有浏览器系统字体回退；未注入字体时，非内嵌字体样本会全部
  * `W_FONT_MISSING` 并输出空白文字，导致“引擎缺陷”与“宿主未提供字体”无法区分。
- * 本模块只在测试侧发现主机字体文件并读取为 `supplementaryFonts` 的 `data` 来源；
+ * 本模块只在测试侧发现主机字体文件，并以惰性 `data` getter 提供 `supplementaryFonts`；
+ * 引擎首次解析字体时才读取字节，避免 `OFDDocument.open` 为每个样本预读数十 MiB 字体。
  * 不改变引擎公共 API，也不内置字体。
  */
 
@@ -96,15 +97,40 @@ const FONT_CANDIDATE_GROUPS: ReadonlyArray<
 /** 可覆盖的补充字体文件路径环境变量。 */
 const FONT_PATH_ENV = 'GOLDEN_SUPPLEMENTARY_FONT';
 
-/** 缓存：同一测试进程只读取一次字体字节。 */
+/** 缓存：同一测试进程复用同一批惰性字体来源。 */
 let cachedFonts: FontInput[] | undefined;
 let cachedDescription: string[] | undefined;
 
 /**
- * 发现并读取系统补充字体。
+ * 创建惰性字体来源；`data` 首次被引擎读取时才加载文件。
+ *
+ * @param path 字体文件路径。
+ * @param family 诊断/别名匹配使用的字体族名。
+ * @returns 可传给 `OFDDocument.open({ supplementaryFonts })` 的字体来源。
+ */
+function createLazyFontInput(path: string, family: string): FontInput {
+  let bytes: Uint8Array | undefined;
+  return {
+    family,
+    get data(): Uint8Array {
+      if (!bytes) {
+        try {
+          bytes = new Uint8Array(readFileSync(path));
+        } catch {
+          // 文件在发现后被删除/不可读时交给字体解析层 warning，避免阻断整页渲染。
+          bytes = new Uint8Array(0);
+        }
+      }
+      return bytes;
+    },
+  };
+}
+
+/**
+ * 发现系统补充字体；只做文件存在性检查，不读取字体字节。
  *
  * @returns 可直接传给 `OFDDocument.open({ supplementaryFonts })` 的字体来源；
- *          无可用字体时返回空数组。
+ *          无可用字体时返回空数组。`data` 在首次解析字体时才读取。
  */
 export function loadSystemSupplementaryFonts(): FontInput[] {
   if (cachedFonts) return cachedFonts;
@@ -113,7 +139,7 @@ export function loadSystemSupplementaryFonts(): FontInput[] {
   const override = process.env[FONT_PATH_ENV];
   if (override) {
     if (existsSync(override)) {
-      fonts.push({ data: new Uint8Array(readFileSync(override)), family: 'GOLDEN_SUPPLEMENTARY_FONT' });
+      fonts.push(createLazyFontInput(override, 'GOLDEN_SUPPLEMENTARY_FONT'));
       description.push(override);
     }
   } else {
@@ -122,7 +148,7 @@ export function loadSystemSupplementaryFonts(): FontInput[] {
       if (!candidate) continue;
       const path = candidate.paths.find((item) => existsSync(item));
       if (!path) continue;
-      fonts.push({ data: new Uint8Array(readFileSync(path)), family: candidate.family });
+      fonts.push(createLazyFontInput(path, candidate.family));
       description.push(path);
     }
   }
@@ -134,7 +160,7 @@ export function loadSystemSupplementaryFonts(): FontInput[] {
 /**
  * 返回本次发现到的字体文件路径（用于报告/诊断，不读字节）。
  *
- * @returns 已加载字体文件路径；未注入时为空数组。
+ * @returns 发现到的字体文件路径；未注入时为空数组。
  */
 export function systemSupplementaryFontDescription(): string[] {
   if (cachedDescription) return [...cachedDescription];
