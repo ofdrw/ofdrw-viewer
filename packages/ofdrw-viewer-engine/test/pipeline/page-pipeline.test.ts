@@ -133,10 +133,12 @@ describe('页面绘制管线', () => {
     const ops = renderer.ops();
     const saveIndex = ops.indexOf('save');
     const translateIndex = ops.indexOf('translate');
-    const firstClip = ops.indexOf('clip');
+    const firstClip = ops.indexOf('clip', translateIndex);
     const transformIndex = ops.indexOf('transform');
     const alphaIndex = ops.indexOf('multiplyAlpha');
     const fillIndex = ops.indexOf('fill');
+    // 页面整体先按 PhysicalBox 裁剪，再进入对象顺序。
+    expect(renderer.callsOf('rect')[0]?.args).toEqual([0, 0, 210, 297]);
     expect(saveIndex).toBeLessThan(translateIndex);
     expect(translateIndex).toBeLessThan(firstClip);
     expect(firstClip).toBeLessThan(transformIndex);

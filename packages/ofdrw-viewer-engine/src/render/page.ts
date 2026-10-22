@@ -128,6 +128,10 @@ export function drawPage(
   try {
     renderer.setTransform(IDENTITY_MATRIX);
     renderer.setTransform(pageMatrix);
+    // 页面内容裁剪：Canvas 像素比页面 PhysicalBox 略大，避免最后一行画出页外模板边缘。
+    renderer.beginPath();
+    renderer.rect(0, 0, page.area.w, page.area.h);
+    renderer.clip('nonzero');
 
     if (layerOrder === 'document') {
       // 严格 XML 顺序：模板按引用顺序整体先画，再画页图层。

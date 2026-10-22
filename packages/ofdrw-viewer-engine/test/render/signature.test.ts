@@ -153,7 +153,8 @@ describe('签章渲染', () => {
 
     expect(renderer.callsOf('translate').map((call) => call.args)).toContainEqual([194, 128.5]);
     expect(renderer.callsOf('rect').map((call) => call.args)).toContainEqual([8, 0, 8, 40]);
-    expect(renderer.callsOf('clip')).toHaveLength(2);
+    // 页面 PhysicalBox 裁剪 + 注释 Boundary 裁剪 + 签章 Clip。
+    expect(renderer.callsOf('clip')).toHaveLength(3);
     expect(renderer.callsOf('createImage')).toHaveLength(1);
     expect(renderer.callsOf('drawImage')[0]?.args.slice(0, 2)).toEqual([
       expect.objectContaining({ width: 2, height: 2 }),
