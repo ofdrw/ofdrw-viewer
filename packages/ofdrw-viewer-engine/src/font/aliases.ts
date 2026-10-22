@@ -24,7 +24,7 @@ export const DEFAULT_FONT_ALIASES: FontAliasTable = Object.freeze([
   ['华文中宋', 'stzhongsong', 'zhongsong'],
   ['方正书宋', 'fzshusong'],
   ['arial', 'helvetica', 'liberationsans'],
-  ['times new roman', 'timesnewroman', 'times', 'liberationserif'],
+  ['times new roman', 'timesnewroman', 'times', 'liberationserif', 'nimbusroman', 'nimbusromanregular'],
   ['courier new', 'couriernew', 'courier', 'liberationmono'],
 ]);
 

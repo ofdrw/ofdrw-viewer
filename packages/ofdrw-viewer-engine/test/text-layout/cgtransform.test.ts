@@ -332,4 +332,112 @@ describe('CGTransform 容错', () => {
     );
     expect(missingWarnings.some((warning) => warning.startsWith('W_GLYPH_MISSING'))).toBe(true);
   });
+
+  it('多对多：2 个字符映射 3 个字形时按一个 run 连续排布', () => {
+    const face = createTransformFace();
+    const layout = layoutText(
+      makeTextObject({
+        codes: [
+          makeTextCode({
+            text: 'AB',
+            deltaX: [10, 20],
+            cgTransforms: [transform(0, 2, [21, 22, 23])],
+          }),
+        ],
+      }),
+      createFakeFaceSet(face),
+    );
+    expect(layout.units).toHaveLength(1);
+    expect(layout.units[0].glyphs.map((glyph) => glyph.gid)).toEqual([21, 22, 23]);
+    // 100/200/300 字体单位，Size=10 → 1/2/3 对象空间单位；字符 delta 之和 30。
+    expect(layout.units[0].placements.map((placement) => placement.advance)).toEqual([1, 2, 3]);
+    expect(layout.endX).toBe(30);
+  });
+
+  it('替代字体的显式 gid 不生效，按码点 cmap 解析', () => {
+    const face = createFakeFace({
+      explicitGlyphs: false,
+      glyphs: [
+        { gid: 1, advanceWidth: 500, codePoints: [0x41] },
+        { gid: 21, advanceWidth: 900 },
+      ],
+    });
+    const warnings: string[] = [];
+    const layout = layoutText(
+      makeTextObject({
+        codes: [
+          makeTextCode({
+            text: 'A',
+            deltaX: [5],
+            cgTransforms: [transform(0, 1, [21])],
+          }),
+        ],
+      }),
+      createFakeFaceSet(face),
+      { onWarning: (code, message) => warnings.push(`${code}:${message}`) },
+    );
+    expect(layout.units[0].glyphs.map((glyph) => glyph.gid)).toEqual([1]);
+    expect(warnings).toEqual([]);
+  });
+
+  it('N:1 的显式 gid 不可用时回退为逐字符轮廓，保留两字符 Delta', () => {
+    const face = createFakeFace({
+      explicitGlyphs: false,
+      glyphs: [
+        { gid: 1, advanceWidth: 500, codePoints: [0x41] },
+        { gid: 2, advanceWidth: 700, codePoints: [0x42] },
+      ],
+    });
+    const warnings: string[] = [];
+    const layout = layoutText(
+      makeTextObject({
+        codes: [
+          makeTextCode({
+            text: 'AB',
+            deltaX: [10, 20],
+            cgTransforms: [transform(0, 2, [10])],
+          }),
+        ],
+      }),
+      createFakeFaceSet(face),
+      { onWarning: (code, message) => warnings.push(`${code}:${message}`) },
+    );
+    expect(layout.units).toHaveLength(1);
+    expect(layout.units[0].glyphs.map((glyph) => glyph.gid)).toEqual([1, 2]);
+    expect(layout.units[0].cpStart).toBe(0);
+    expect(layout.units[0].codeCount).toBe(2);
+    // 两个字符的轮廓都保留，按字体 advance 连续排；整串只消费该 CG 单元 1 个 Delta。
+    expect(layout.units[0].placements.map((placement) => placement.x)).toEqual([0, 5]);
+    expect(layout.endX).toBe(10);
+    expect(warnings).toEqual([]);
+  });
+
+  it('N:M 的显式 gid 不可用时保留全部字符轮廓，只消费该 CG 单元 Delta', () => {
+    const face = createFakeFace({
+      explicitGlyphs: false,
+      glyphs: [
+        { gid: 1, advanceWidth: 500, codePoints: [0x41] },
+        { gid: 2, advanceWidth: 700, codePoints: [0x42] },
+      ],
+    });
+    const warnings: string[] = [];
+    const layout = layoutText(
+      makeTextObject({
+        codes: [
+          makeTextCode({
+            text: 'AB',
+            deltaX: [10, 20],
+            cgTransforms: [transform(0, 2, [10, 11, 12])],
+          }),
+        ],
+      }),
+      createFakeFaceSet(face),
+      { onWarning: (code, message) => warnings.push(`${code}:${message}`) },
+    );
+    expect(layout.units).toHaveLength(1);
+    expect(layout.units[0].glyphs.map((glyph) => glyph.gid)).toEqual([1, 2]);
+    expect(layout.units[0].placements.map((placement) => placement.x)).toEqual([0, 5]);
+    expect(layout.endX).toBe(10);
+    expect(warnings).toEqual([]);
+  });
 });

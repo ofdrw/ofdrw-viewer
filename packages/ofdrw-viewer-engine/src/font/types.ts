@@ -41,6 +41,14 @@ export interface FontFace {
   /** 字体本身是否已是斜体（macStyle、italicAngle 或字体名判定）。 */
   italic?: boolean;
   /**
+   * 显式 Glyph ID 是否可安全用于该字体面。
+   *
+   * 仅当字体面确为 OFD 指定字体（内嵌文件或名称匹配）时为 true；
+   * 字体缺失后使用补充/回退字体时为 false，此时 CGTransform 的 GID 属于原字体，
+   * 不能套用到替代字体上。
+   */
+  explicitGlyphs?: boolean;
+  /**
    * 按 Unicode 码点取字形；无 cmap 或缺失时返回 null。
    *
    * @param codePoint Unicode 码点。
@@ -87,6 +95,18 @@ export interface FontFaceCreateOptions {
   bold?: boolean;
   /** 字体资源声明的斜体标志；与字体内部检测结果取并集。 */
   italic?: boolean;
+  /**
+   * 字体字节是否确为 OFD 指定字体（内嵌 FontFile）。
+   *
+   * true 时显式 gid 可直接使用；缺省时按字体名是否匹配 FontName/FamilyName 推断。
+   */
+  authoritative?: boolean;
+  /**
+   * 字体字节是否为替代字体（例如 supplementaryFonts）。
+   *
+   * true 时显式 gid 一律不可用；优先于名称匹配推断。
+   */
+  substitute?: boolean;
   /** 字体层 warning 回调（例如 TTC 未匹配到期望字体面）。 */
   onWarning?: FontWarningCallback;
 }

@@ -253,6 +253,18 @@ function wrapFontFace(
     typeof rawUnitsPerEm === 'number' && rawUnitsPerEm > 0 ? rawUnitsPerEm : 1000;
   const numGlyphs = Math.max(0, safeRead(() => font.numGlyphs) ?? 0);
   const key = `${options.key ?? baseKey}#${index}`;
+  const wantedNames = expandFontNames(
+    [options.fontName, options.familyName],
+    options.aliases,
+  );
+  const actualNames = expandFontNames([family, postscriptName, fullName], options.aliases);
+  const explicitGlyphs =
+    options.authoritative === true
+      ? true
+      : options.substitute === true
+        ? false
+        : wantedNames.length === 0 ||
+          actualNames.some((name) => wantedNames.includes(name));
 
   const face: FontFace = {
     key,
@@ -263,6 +275,7 @@ function wrapFontFace(
     hasCmap,
     bold: options.bold === true || detectBold(font, names),
     italic: options.italic === true || detectItalic(font, names),
+    explicitGlyphs,
     weightClass: safeRead(() => font['OS/2']?.usWeightClass),
     italicAngle: safeRead(() => font.post?.italicAngle),
     glyphForCodePoint(codePoint: number): Glyph | null {

@@ -208,6 +208,8 @@ export interface PendingUnit {
   cpStart: number;
   codeCount: number;
   glyphs: GlyphRun[];
+  /** 覆盖的 Delta 数量；缺省等于 codeCount，CG 兜底 run 为 1。 */
+  deltaCount?: number;
 }
 
 /** 每个对象一次的 warning 状态。 */
@@ -251,6 +253,14 @@ function glyphPath(face: FontFace, glyph: Glyph, cache: GlyphOutlineCache): Path
   return cached ?? glyph.path;
 }
 
+/** 构建结果；explicit 表示是否真正使用了 CGTransform 的显式 gid。 */
+interface BuiltRun {
+  /** 字形 run。 */
+  run: GlyphRun;
+  /** 显式 gid 是否被字体面接受。 */
+  explicit: boolean;
+}
+
 /**
  * 把一个码点解析成字形 run；缺失时返回 null。
  *
@@ -260,7 +270,7 @@ function glyphPath(face: FontFace, glyph: Glyph, cache: GlyphOutlineCache): Path
  * @param cache 轮廓缓存。
  * @param state warning 状态。
  * @param options 布局选项。
- * @returns 字形 run 或 null。
+ * @returns 字形 run 与显式 gid 使用情况；缺失时返回 null。
  */
 function buildGlyphRun(
   codePoint: number,
@@ -269,7 +279,7 @@ function buildGlyphRun(
   cache: GlyphOutlineCache,
   state: WarningState,
   options: TextLayoutOptions,
-): GlyphRun | null {
+): BuiltRun | null {
   const resolved = resolveGlyph(codePoint, explicitGlyphId, faces);
   if (!resolved) {
     warnOnce(
@@ -282,10 +292,13 @@ function buildGlyphRun(
     return null;
   }
   return {
-    face: resolved.face,
-    gid: resolved.glyph.id,
-    advanceWidth: resolved.glyph.advanceWidth,
-    path: glyphPath(resolved.face, resolved.glyph, cache),
+    run: {
+      face: resolved.face,
+      gid: resolved.glyph.id,
+      advanceWidth: resolved.glyph.advanceWidth,
+      path: glyphPath(resolved.face, resolved.glyph, cache),
+    },
+    explicit: resolved.explicit === true,
   };
 }
 
@@ -317,8 +330,8 @@ export function buildUnits(
   if (!cgTransforms || cgTransforms.length === 0) {
     const simple: PendingUnit[] = [];
     for (let index = 0; index < codePoints.length; index += 1) {
-      const run = buildGlyphRun(codePoints[index], undefined, faces, cache, state, options);
-      simple.push({ cpStart: index, codeCount: 1, glyphs: run ? [run] : [] });
+      const built = buildGlyphRun(codePoints[index], undefined, faces, cache, state, options);
+      simple.push({ cpStart: index, codeCount: 1, glyphs: built ? [built.run] : [] });
     }
     return simple;
   }
@@ -390,8 +403,8 @@ export function buildUnits(
   while (index < codePoints.length) {
     const transform = byPosition.get(index);
     if (!transform) {
-      const run = buildGlyphRun(codePoints[index], undefined, faces, cache, state, options);
-      units.push({ cpStart: index, codeCount: 1, glyphs: run ? [run] : [] });
+      const built = buildGlyphRun(codePoints[index], undefined, faces, cache, state, options);
+      units.push({ cpStart: index, codeCount: 1, glyphs: built ? [built.run] : [] });
       index += 1;
       continue;
     }
@@ -406,12 +419,30 @@ export function buildUnits(
         `CGTransform CodeCount=${transform.codeCount} 超出剩余字符数，已截断为 ${span}`,
       );
     }
-    const runs: GlyphRun[] = [];
+    const builtRuns: BuiltRun[] = [];
+    let allExplicit = true;
     for (const gid of transform.glyphs) {
-      const run = buildGlyphRun(codePoints[index], gid, faces, cache, state, options);
-      if (run) runs.push(run);
+      const built = buildGlyphRun(codePoints[index], gid, faces, cache, state, options);
+      if (!built) {
+        allExplicit = false;
+        continue;
+      }
+      if (!built.explicit) allExplicit = false;
+      builtRuns.push(built);
     }
-    units.push({ cpStart: index, codeCount: span, glyphs: runs });
+    if (!allExplicit) {
+      // 显式 GID/连字字形不可用时，CGTransform 的 N:1/N:M 映射不能成立；
+      // 用被覆盖字符各自的 cmap 轮廓组成一个 run，保留每个字符的可见性，
+      // 同时只消费该 CG 单元自己的 Delta，避免把后续字符格整体错位。
+      const glyphs: GlyphRun[] = [];
+      for (let offset = 0; offset < span; offset += 1) {
+        const built = buildGlyphRun(codePoints[index + offset], undefined, faces, cache, state, options);
+        if (built) glyphs.push(built.run);
+      }
+      units.push({ cpStart: index, codeCount: span, deltaCount: 1, glyphs });
+    } else {
+      units.push({ cpStart: index, codeCount: span, glyphs: builtRuns.map((built) => built.run) });
+    }
     index += span;
   }
   return units;
@@ -560,6 +591,25 @@ function parseCodeDeltas(
 }
 
 /**
+ * 提取参与布局的码点。
+ *
+ * OFD 生成器常在 TextCode 内容中带入 XML 美化换行；换行不属于可见字符，
+ * 也不应触发字形缺失 warning 或占用 DeltaX 下标。其他码点保持原顺序。
+ *
+ * @param text TextCode 文本。
+ * @returns 过滤 CR/LF 后的码点序列。
+ */
+function layoutCodePoints(text: string): number[] {
+  const result: number[] = [];
+  for (const char of text) {
+    const codePoint = char.codePointAt(0) ?? 0;
+    if (codePoint === 0x0a || codePoint === 0x0d) continue;
+    result.push(codePoint);
+  }
+  return result;
+}
+
+/**
  * 计算文字布局。
  *
  * 处理 DeltaX/DeltaY、CGTransform、ReadDirection/CharDirection、HScale；
@@ -594,7 +644,7 @@ export function layoutText(
   let prevY = 0;
 
   for (const [codeIndex, code] of object.codes.entries()) {
-    const codePoints = Array.from(code.text, (char) => char.codePointAt(0) ?? 0);
+    const codePoints = layoutCodePoints(code.text);
     const startX = typeof code.x === 'number' && Number.isFinite(code.x) ? code.x : prevX;
     const startY = typeof code.y === 'number' && Number.isFinite(code.y) ? code.y : prevY;
     if (typeof code.x === 'number' && Number.isFinite(code.x)) prevX = code.x;
@@ -619,8 +669,10 @@ export function layoutText(
       );
     }
     const pending = buildUnits(codePoints, code.cgTransforms, faces, cache, state, options);
+    let deltaIndex = 0;
 
     for (const unit of pending) {
+      const deltaCount = unit.deltaCount ?? unit.codeCount;
       const unitX = penX;
       const unitY = penY;
       const placements: GlyphPlacement[] = [];
@@ -640,8 +692,8 @@ export function layoutText(
       }
       const stepX = computeDelta(
         deltaX,
-        unit.cpStart,
-        unit.codeCount,
+        deltaIndex,
+        deltaCount,
         codePoints,
         faces,
         size,
@@ -650,8 +702,8 @@ export function layoutText(
       );
       const stepY = computeDelta(
         deltaY,
-        unit.cpStart,
-        unit.codeCount,
+        deltaIndex,
+        deltaCount,
         codePoints,
         faces,
         size,
@@ -671,6 +723,7 @@ export function layoutText(
       });
       penX += dirX * stepX;
       penY += dirY * stepY;
+      deltaIndex += deltaCount;
     }
   }
 

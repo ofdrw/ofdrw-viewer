@@ -18,6 +18,7 @@ import {
   normalizeFontName,
 } from '../../src/font/aliases';
 import { ensureFixtures, readFixture } from './fixtures';
+import { createFakeFace } from '../text-layout/fake-font';
 
 const fixtures = ensureFixtures();
 
@@ -60,6 +61,8 @@ describe('字体名别名', () => {
     expect(fontNamesMatch('微软雅黑', 'Microsoft YaHei')).toBe(true);
     expect(fontNamesMatch('Noto Serif CJK SC', '宋体')).toBe(true);
     expect(fontNamesMatch('DejaVu Sans', 'SimSun')).toBe(false);
+    expect(fontNamesMatch('Nimbus Roman', 'Times New Roman')).toBe(true);
+    expect(fontNamesMatch('NimbusRoman-Regular', 'Times New Roman')).toBe(true);
   });
 
   it('宿主可扩展别名组', () => {
@@ -285,4 +288,58 @@ describe('resolveGlyph', () => {
     expect(missing).toBeNull();
     library.dispose();
   });
+});
+describe('resolveGlyph 与替代字体', () => {
+  it('explicitGlyphs=false 时忽略显式 gid，改用 cmap/回退', () => {
+    const primary = createFakeFace({
+      explicitGlyphs: false,
+      glyphs: [{ gid: 5, advanceWidth: 100 }],
+    });
+    const fallback = createFakeFace({
+      glyphs: [{ gid: 7, advanceWidth: 200, codePoints: [0x4e2d] }],
+    });
+    const resolved = resolveGlyph(0x4e2d, 5, { primary, fallbacks: [fallback] });
+    expect(resolved?.face).toBe(fallback);
+    expect(resolved?.glyph.id).toBe(7);
+    expect(resolved?.fallback).toBe(true);
+  });
+
+  it('explicitGlyphs=true 时优先使用显式 gid', () => {
+    const primary = createFakeFace({
+      explicitGlyphs: true,
+      glyphs: [{ gid: 5, advanceWidth: 100 }],
+    });
+    const resolved = resolveGlyph(0x4e2d, 5, { primary, fallbacks: [] });
+    expect(resolved?.face).toBe(primary);
+    expect(resolved?.glyph.id).toBe(5);
+  });
+
+  it.skipIf(!fixtures.dejavu)('supplementary 字体标记为替代字体，不套用原字体 GID', async () => {
+    const library = new FontLibrary({
+      supplementaryFonts: [
+        { data: readFixture(fixtures.dejavu as string), family: 'DejaVu Sans' },
+      ],
+    });
+    const faces = await library.resolve(makeFontResource({ fontName: 'Missing Font' }));
+    expect(faces).not.toBeNull();
+    expect(faces?.primary.explicitGlyphs).toBe(false);
+    const resolved = resolveGlyph(0x41, 37, faces!);
+    expect(resolved?.glyph.id).toBe(36);
+    library.dispose();
+  });
+
+  it.skipIf(!fixtures.dejavu || !fixtures.nimbusRoman)(
+    'Times 请求时优先选择 Nimbus Roman 衬线替代字体',
+    async () => {
+      const library = new FontLibrary({
+        supplementaryFonts: [
+          { data: readFixture(fixtures.dejavu as string), family: 'DejaVu Sans' },
+          { data: readFixture(fixtures.nimbusRoman as string), family: 'Nimbus Roman' },
+        ],
+      });
+      const faces = await library.resolve(makeFontResource({ fontName: 'Times New Roman' }));
+      expect(faces?.primary.family).toContain('Nimbus');
+      library.dispose();
+    },
+  );
 });

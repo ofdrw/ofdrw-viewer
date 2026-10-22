@@ -48,6 +48,8 @@ export interface ResolvedGlyph {
   glyph: Glyph;
   /** 是否来自回退字体。 */
   fallback: boolean;
+  /** 是否实际使用了调用方提供的显式 gid。 */
+  explicit?: boolean;
 }
 
 /** 字体解析缓存键。 */
@@ -142,7 +144,7 @@ export class FontLibrary {
       );
       return null;
     }
-    const face = this.createFace(data, font, `embedded:${key}`);
+    const face = this.createFace(data, font, `embedded:${key}`, true, false);
     if (face) {
       this.embedded.set(key, face);
       // 先 resolve 后 register 的场景：清掉旧的 null/回退结果，避免吞掉新字体。
@@ -189,7 +191,13 @@ export class FontLibrary {
    * @param key 缓存键前缀。
    * @returns 字体面或 null。
    */
-  private createFace(data: Uint8Array, font: FontResource, key: string): FontFace | null {
+  private createFace(
+    data: Uint8Array,
+    font: FontResource,
+    key: string,
+    authoritative = false,
+    substitute = false,
+  ): FontFace | null {
     const createOptions: FontFaceCreateOptions = {
       key,
       fontName: font.fontName,
@@ -198,6 +206,8 @@ export class FontLibrary {
       resourceId: font.id,
       bold: font.bold,
       italic: font.italic,
+      authoritative,
+      substitute,
       onWarning: this.options.onWarning,
     };
     try {
@@ -223,9 +233,18 @@ export class FontLibrary {
       providerFaces.push(...(await this.loadProviderFaces(font)));
     }
     const supplementaryFaces = await this.loadSupplementaryFaces();
+    // 补充字体可能同时包含无衬线/衬线/等宽多个族；按请求字体名与别名评分选择，
+    // 不能固定取第一个，否则 Times/SimSun 等衬线请求会误用 Noto Sans。
+    const bestSupplementary = supplementaryFaces.reduce<FontFace | undefined>(
+      (best, face) =>
+        !best || scoreFace(face, font, this.options.aliases) > scoreFace(best, font, this.options.aliases)
+          ? face
+          : best,
+      undefined,
+    );
 
     const primary =
-      embeddedFace ?? this.pickProviderFace(providerFaces, font) ?? supplementaryFaces[0];
+      embeddedFace ?? this.pickProviderFace(providerFaces, font) ?? bestSupplementary;
 
     if (!primary) {
       this.warn(
@@ -305,6 +324,8 @@ export class FontLibrary {
               fixedSize: false,
             },
             `supplementary:${index}`,
+            false,
+            true,
           );
           if (face) faces.push(face);
         }
@@ -415,10 +436,14 @@ export function resolveGlyph(
   explicitGlyphId: number | null | undefined,
   faces: FontFaceSet,
 ): ResolvedGlyph | null {
-  if (explicitGlyphId !== null && explicitGlyphId !== undefined) {
+  if (
+    explicitGlyphId !== null &&
+    explicitGlyphId !== undefined &&
+    faces.primary.explicitGlyphs !== false
+  ) {
     const glyph = faces.primary.glyph(explicitGlyphId);
     if (glyph && (glyph.id !== 0 || codePoint === 0)) {
-      return { face: faces.primary, glyph, fallback: false };
+      return { face: faces.primary, glyph, fallback: false, explicit: true };
     }
   }
   if (faces.primary.hasCmap) {

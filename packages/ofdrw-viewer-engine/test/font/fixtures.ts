@@ -31,6 +31,8 @@ export interface FontFixtures {
   cjkTtf: string | null;
   /** CFF CID 的 TTC（Noto Serif CJK）。 */
   notoTtc: string | null;
+  /** Times 兼容衬线字体（Nimbus Roman，可选）。 */
+  nimbusRoman: string | null;
   /** CFF CID 的单字体 OTF（仓库参考目录，可选）。 */
   cffOtf: string | null;
   /** 无 cmap/name/OS2 的剥离子集（从 doc1File.ofd 解压）。 */
@@ -57,6 +59,7 @@ const SYSTEM_FONTS = {
     '/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc',
     '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
   ],
+  nimbusRoman: ['/usr/share/fonts/opentype/urw-base35/NimbusRoman-Regular.otf'],
 };
 
 /**
@@ -124,6 +127,7 @@ export function ensureFixtures(): FontFixtures {
     dejavuOblique: copySystemFont(SYSTEM_FONTS.dejavuOblique, 'DejaVuSans-Oblique.ttf'),
     cjkTtf: copySystemFont(SYSTEM_FONTS.cjkTtf, 'DroidSansFallbackFull.ttf'),
     notoTtc: copySystemFont(SYSTEM_FONTS.notoTtc, 'NotoSerifCJK-Bold.ttc'),
+    nimbusRoman: copySystemFont(SYSTEM_FONTS.nimbusRoman, 'NimbusRoman-Regular.otf'),
     cffOtf: (() => {
       const source = join(
         REPO_ROOT,

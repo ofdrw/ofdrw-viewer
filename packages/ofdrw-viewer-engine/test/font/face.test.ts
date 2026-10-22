@@ -39,6 +39,21 @@ describe('createFontFace', () => {
     expect(glyph?.path.length).toBeGreaterThan(3);
   });
 
+  it.skipIf(!fixtures.dejavu)('显式 gid 只对指定/内嵌字体开放', () => {
+    const bytes = readFixture(fixtures.dejavu as string);
+    const matched = createFontFace(bytes, { fontName: 'DejaVu Sans' });
+    expect(matched.explicitGlyphs).toBe(true);
+
+    const substitute = createFontFace(bytes, { fontName: 'DejaVu Sans', substitute: true });
+    expect(substitute.explicitGlyphs).toBe(false);
+
+    const renamed = createFontFace(bytes, { fontName: 'Not The Font' });
+    expect(renamed.explicitGlyphs).toBe(false);
+
+    const embedded = createFontFace(bytes, { fontName: 'Not The Font', authoritative: true });
+    expect(embedded.explicitGlyphs).toBe(true);
+  });
+
   it.skipIf(!fixtures.dejavuBold)('识别字体自带粗体', () => {
     const face = createFontFace(readFixture(fixtures.dejavuBold as string));
     expect(face.bold).toBe(true);

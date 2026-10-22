@@ -2,7 +2,7 @@
  * T9 稳定性/安全回归：500 页循环、重复 close、快速取消/重渲染、恶意包拒绝。
  *
  * 只通过公共 API 驱动；所有样本均为仓库内脱敏样本或内存合成包。
- * 结果写入 `test/.artifacts/t9/stability.json`，供回归报告引用。
+ * 结果写入 `test/.artifacts/t9b/stability.json`，供 T9b 回归报告引用。
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -20,7 +20,7 @@ import { buildMinimalOfd } from '../fixtures/ofd-builder';
 import { createZip } from '../fixtures/zip-builder';
 import { readZipEntries } from '../fixtures/zip-inspector';
 
-const ARTIFACT_DIR = resolve(process.cwd(), '../../test/.artifacts/t9');
+const ARTIFACT_DIR = resolve(process.cwd(), '../../test/.artifacts/t9b');
 const SAMPLE_DIR = resolve(process.cwd(), '../../ofd_pdf_match');
 const data: Record<string, unknown> = {};
 

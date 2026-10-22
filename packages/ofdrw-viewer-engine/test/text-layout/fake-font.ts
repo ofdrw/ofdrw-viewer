@@ -31,6 +31,8 @@ export interface FakeFaceOptions {
   hasCmap?: boolean;
   bold?: boolean;
   italic?: boolean;
+  /** 显式 gid 是否可用于该字体面；缺省 true。 */
+  explicitGlyphs?: boolean;
   glyphs: FakeGlyphSpec[];
 }
 
@@ -88,6 +90,7 @@ export function createFakeFace(options: FakeFaceOptions): FakeFace {
     hasCmap,
     bold: options.bold ?? false,
     italic: options.italic ?? false,
+    explicitGlyphs: options.explicitGlyphs ?? true,
     calls,
     glyphForCodePoint(codePoint: number): Glyph | null {
       calls.glyphForCodePoint += 1;
