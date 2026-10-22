@@ -16,6 +16,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "test:acceptance": "pnpm run build && pnpm run build:sea && vitest run --config test/acceptance/vitest.config.ts",
     "build": "pnpm run clean && tsc -p tsconfig.build.json && node -e \"if(process.platform!=='win32')require('node:fs').chmodSync('dist/bin.js',0o755)\"",
     "build:sea": "node scripts/build-sea.mjs",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
