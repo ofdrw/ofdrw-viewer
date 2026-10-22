@@ -4,7 +4,7 @@
 - 验收对象：`@ofdrw/ofdrw-viewer-ui` 0.1.0
 - 验收 HEAD：`2382820` `fix(ui): 修复输出对话框提交与全屏退出`
 - 结论：**通过（MVP 门禁）**。P0 功能、构建、单元/集成、真实浏览器 E2E 与 axe 均通过；性能目标与少数测试矩阵项按 P1 延期，见“已知限制与延期”。
-- 说明：`packages/ofdrw-viewer-ui/test/acceptance/report.md` 是 t11 阶段历史快照（HEAD 9dee355）；本报告是最终验收依据，已按当前 HEAD 的事实更新性能、手势与延期项。
+- 说明：`packages/ofdrw-viewer-ui/test/acceptance/report.md` 已按当前 HEAD 更新，替代 t11 阶段 HEAD 9dee355 的历史快照；本报告是最终验收依据，性能、手势与延期项以本报告为准。
 
 ## 1. 验收环境
 
