@@ -16,7 +16,8 @@ import type { FontInput } from 'ofdrw-viewer-engine';
  * 系统字体候选组；每组按优先级取第一个可用文件。
  *
  * 第一组是 CJK 主字体（中文样本），第二组是西文衬线回退（Nimbus Roman，
- * 缺失时用 Noto Serif CJK），第三组是宿主 SimSun/宋体（存在才注入）。
+ * 缺失时用 Noto Serif CJK），第三组是宿主 SimSun/宋体，第四组是宿主
+ * FangSong/仿宋，第五组是宿主小标宋；存在才注入。
  * 各组都注入，按字体名评分选择，避免只取第一个导致特定 family 落空。
  */
 const FONT_CANDIDATE_GROUPS: ReadonlyArray<
@@ -66,6 +67,27 @@ const FONT_CANDIDATE_GROUPS: ReadonlyArray<
       paths: [
         join(homedir(), '.local/share/fonts/SimSun.ttc'),
         'C:\\Windows\\Fonts\\simsun.ttc',
+      ],
+    },
+  ],
+  [
+    {
+      family: 'FangSong',
+      paths: [
+        join(homedir(), '.local/share/fonts/simfang.ttf'),
+        join(homedir(), '.fonts/simfang.ttf'),
+        '/mnt/c/Windows/Fonts/simfang.ttf',
+        'C:\\Windows\\Fonts\\simfang.ttf',
+      ],
+    },
+  ],
+  [
+    {
+      family: '小标宋体',
+      paths: [
+        join(homedir(), '.local/share/fonts/HGXBS_CNKI.TTF'),
+        '/mnt/c/Windows/Fonts/HGXBS_CNKI.TTF',
+        'C:\\Windows\\Fonts\\HGXBS_CNKI.TTF',
       ],
     },
   ],

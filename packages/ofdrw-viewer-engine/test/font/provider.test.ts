@@ -58,6 +58,8 @@ describe('字体名别名', () => {
     expect(fontNamesMatch('黑体', 'SimHei')).toBe(true);
     expect(fontNamesMatch('楷体', 'KaiTi')).toBe(true);
     expect(fontNamesMatch('仿宋', 'FangSong')).toBe(true);
+    expect(fontNamesMatch('小标宋体', 'HGXBS_CNKI')).toBe(true);
+    expect(fontNamesMatch('小标宋体', '华光小标宋_CNKI')).toBe(true);
     expect(fontNamesMatch('微软雅黑', 'Microsoft YaHei')).toBe(true);
     expect(fontNamesMatch('Noto Serif CJK SC', '宋体')).toBe(true);
     expect(fontNamesMatch('DejaVu Sans', 'SimSun')).toBe(false);

@@ -22,6 +22,7 @@ export const DEFAULT_FONT_ALIASES: FontAliasTable = Object.freeze([
   ['微软雅黑', 'microsoftyahei', 'msyahei', 'msyh'],
   ['等线', 'dengxian'],
   ['华文中宋', 'stzhongsong', 'zhongsong'],
+  ['小标宋体', '小标宋', '华光小标宋_cnki', 'hgxbs_cnki', 'fzxbs'],
   ['方正书宋', 'fzshusong'],
   ['arial', 'helvetica', 'liberationsans'],
   ['times new roman', 'timesnewroman', 'times', 'liberationserif', 'nimbusroman', 'nimbusromanregular'],
