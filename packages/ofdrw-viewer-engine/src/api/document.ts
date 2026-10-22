@@ -13,7 +13,7 @@
  */
 
 import type { ByteSource } from '../platform/byte-source';
-import type { FontInput } from '../platform/font-provider';
+import type { FontInput, FontProvider } from '../platform/font-provider';
 import type { ImageDecoderPlugin } from '../platform/image-decoder';
 import type { DecodedImage, Viewport } from '../common/types';
 import type {
@@ -68,7 +68,7 @@ import {
   decodePageResources,
 } from '../model/decode';
 import { resolvePageArea, applyPageArea } from '../model/page-area';
-import { decodeSignatureBundle, signaturesFilePath } from '../model/signature';
+import { decodeSignatureBundle, signatureIndexCandidates } from '../model/signature';
 import {
   buildDocumentResourceIndex,
   ResourceStore,
@@ -82,13 +82,16 @@ import {
   readImageSize,
   resolveImageDecoder,
 } from '../image/format';
-import { H5Canvas2DRenderer } from '../renderer/canvas2d';
+import { H5Canvas2DRenderer, H5CanvasFactory } from '../renderer/canvas2d';
 import { preparePage } from '../render/prepare';
 import type { PreparePageLoader, SignatureStampSource } from '../render/prepare';
 import { drawPage } from '../render/page';
 
 /** Canvas 尺寸比较容差，避免浮点 viewport 与整数 canvas 的舍入误差。 */
 const CANVAS_SIZE_EPSILON = 1e-6;
+
+/** 矢量 OFD 印章离屏渲染的目标 DPI；上限由 maxImagePixels/maxCanvasPixels 收敛。 */
+const VECTOR_SEAL_DPI = 300;
 
 /** 页面级运行时：模型、资源作用域与按引用顺序解码的模板页。 */
 interface PageEntry {
@@ -126,6 +129,12 @@ interface DocumentInit {
   signatureIndexPath?: string;
   /** Document 声明但读取失败的 Annotations 索引路径；用于页级 warning。 */
   annotationsIndexError?: string;
+  /** 宿主临时画布工厂；供矢量 OFD 章与内部 H5 渲染器复用。 */
+  createCanvas?: (width: number, height: number) => Canvas2DLike;
+  /** 宿主字体提供者；矢量章独立打开内嵌 OFD 时继承。 */
+  fontProvider?: FontProvider;
+  /** 宿主补充字体；矢量章独立打开内嵌 OFD 时继承。 */
+  supplementaryFonts?: readonly FontInput[];
 }
 
 /**
@@ -277,6 +286,14 @@ export class OFDDocument {
   private readonly signatureIndexPath: string | undefined;
   /** Document 声明但读取失败的 Annotations 索引路径；无失败时为 undefined。 */
   private readonly annotationsIndexError: string | undefined;
+  /** 宿主临时画布工厂；未注入时矢量章使用浏览器默认工厂。 */
+  private readonly createCanvas: ((width: number, height: number) => Canvas2DLike) | undefined;
+  /** 宿主字体提供者；供矢量章嵌套文档继承。 */
+  private readonly fontProvider: FontProvider | undefined;
+  /** 宿主补充字体；供矢量章嵌套文档继承。 */
+  private readonly supplementaryFonts: readonly FontInput[] | undefined;
+  /** 是否允许加载签章；矢量章嵌套文档关闭，避免递归。 */
+  private signatureLoading = true;
 
   /** 已解析 XML 的 LRU（键：包内路径）。 */
   private readonly xmlCache: DisposableLruCache<string, XmlCacheEntry>;
@@ -302,8 +319,8 @@ export class OFDDocument {
   private readonly annotationCache = new Map<string, Promise<readonly Annotation[]>>();
   /** 文档级签章集合缓存；无 Signatures.xml 时为已解析的 undefined。 */
   private signatureBundlePromise: Promise<SignatureBundle | undefined> | undefined;
-  /** 按 SealImage 实例缓存印章解码结果，避免骑缝章逐页重复解码。 */
-  private readonly signatureSealPromises = new Map<SealImage, Promise<DecodedImage>>();
+  /** 按 SealImage.cacheKey（缺省实例）缓存印章解码结果，避免骑缝章逐页重复解码。 */
+  private readonly signatureSealPromises = new Map<string | SealImage, Promise<DecodedImage>>();
   /** 本文档解码出的印章图片，关闭时释放 ImageBitmap。 */
   private readonly signatureSealImages = new Set<DecodedImage>();
 
@@ -337,6 +354,9 @@ export class OFDDocument {
     this.documentWarningHandler = createDocumentWarningHandler(init.warnings);
     this.signatureIndexPath = init.signatureIndexPath;
     this.annotationsIndexError = init.annotationsIndexError;
+    this.createCanvas = init.createCanvas;
+    this.fontProvider = init.fontProvider;
+    this.supplementaryFonts = init.supplementaryFonts;
     this.pageCount = init.document.pageCount;
     this.xmlCache = new DisposableLruCache<string, XmlCacheEntry>({
       maxBytes: init.cacheOptions.xmlBytes,
@@ -491,7 +511,11 @@ export class OFDDocument {
         new H5Canvas2DRenderer(
           options.createCanvas ? { createCanvas: options.createCanvas } : undefined,
         );
-      const signaturePath = signaturesFilePath(documentPath);
+      // 兼容旧宿主：显式 H5 渲染器已注入的 createCanvas 继续作为矢量章工厂。
+      const createCanvas = options.createCanvas ?? createCanvasFromRenderer(renderer);
+      const signaturePath = signatureIndexCandidates(documentPath).find((path) =>
+        zip?.hasEntry(path),
+      );
       return new OFDDocument({
         source,
         zip,
@@ -505,8 +529,11 @@ export class OFDDocument {
         layerOrder: options.layerOrder ?? 'type',
         documentResources,
         fontLibrary,
-        ...(zip.hasEntry(signaturePath) ? { signatureIndexPath: signaturePath } : {}),
+        ...(signaturePath ? { signatureIndexPath: signaturePath } : {}),
         ...(annotationsIndexError ? { annotationsIndexError } : {}),
+        ...(createCanvas ? { createCanvas } : {}),
+        ...(options.fontProvider ? { fontProvider: options.fontProvider } : {}),
+        ...(options.supplementaryFonts ? { supplementaryFonts: options.supplementaryFonts } : {}),
       });
     } catch (error) {
       // 打开失败时释放已获得的 ZIP/文件句柄。
@@ -738,7 +765,7 @@ export class OFDDocument {
         throwIfAborted(signal);
         return this.loadAnnotations(page);
       },
-      ...(this.signatureIndexPath
+      ...(this.signatureIndexPath && this.signatureLoading
         ? {
             loadSignatureStamps: async (page: PageModel) => {
               throwIfAborted(signal);
@@ -970,7 +997,7 @@ export class OFDDocument {
    * @returns 签章集合；无签章或加载失败时为 undefined。
    */
   private getSignatureBundle(): Promise<SignatureBundle | undefined> {
-    if (!this.signatureIndexPath) return Promise.resolve(undefined);
+    if (!this.signatureIndexPath || !this.signatureLoading) return Promise.resolve(undefined);
     if (this.signatureBundlePromise) return this.signatureBundlePromise;
     const indexFilePath = this.signatureIndexPath;
     const pageIds = this.document.pages.map((ref) => ref.id);
@@ -1036,27 +1063,113 @@ export class OFDDocument {
   }
 
   /**
-   * 解码 Seal.esl 中的印章图片；按 SealImage 实例缓存，供多页骑缝章复用。
+   * 解码 Seal.esl/SignedValue 中的印章：位图走图片解码，type=ofd 的内嵌 ZIP
+   * 作为独立 OFD 渲染首页到离屏 canvas；按 SealImage 实例缓存。
    *
    * @param seal Seal 图片元数据。
-   * @returns 解码后的图片。
-   * @throws OFDError 无可用解码器/像素超限/解码失败时。
+   * @returns 解码后的图片；矢量章为 canvas source。
+   * @throws OFDError 无可用解码器/像素超限/矢量 ZIP 无效/渲染失败时。
    */
   private decodeSeal(seal: SealImage): Promise<DecodedImage> {
-    const cached = this.signatureSealPromises.get(seal);
+    const cacheKey = seal.cacheKey ?? seal;
+    const cached = this.signatureSealPromises.get(cacheKey);
     if (cached) return cached;
     const format = normalizeSealFormat(seal.type) || detectImageFormat(seal.data, 'Seal.esl');
-    const promise = this.decodeImageBytes(seal.data, format)
+    const promise = (format === 'ofd' || isZipData(seal.data)
+      ? this.decodeVectorSeal(seal)
+      : this.decodeImageBytes(seal.data, format)
+    )
       .then((decoded) => {
         this.signatureSealImages.add(decoded);
         return decoded;
       })
       .catch((error: unknown) => {
-        this.signatureSealPromises.delete(seal);
+        this.signatureSealPromises.delete(cacheKey);
         throw error;
       });
-    this.signatureSealPromises.set(seal, promise);
+    this.signatureSealPromises.set(cacheKey, promise);
     return promise;
+  }
+
+  /**
+   * 把 type=ofd 的内嵌 ZIP 作为独立 OFD 打开，渲染首页到离屏 canvas。
+   *
+   * 嵌套文档关闭签章加载，保证矢量章内部不再递归解析签章；使用独立 H5
+   * 渲染器与画布，不污染父页 Canvas 状态。
+   *
+   * @param seal 矢量印章元数据；data 为内嵌 OFD ZIP。
+   * @returns 首页渲染结果，宽度/高度单位为像素。
+   * @throws OFDError ZIP/OFD 无效、无页面或画布不可用时。
+   */
+  private async decodeVectorSeal(seal: SealImage): Promise<DecodedImage> {
+    if (!isZipData(seal.data)) {
+      throw new OFDError('OFD_INVALID_PACKAGE', '矢量印章 picture.type=ofd 但数据不是 ZIP');
+    }
+    const nested = await OFDDocument.open({
+      source: { kind: 'arraybuffer', data: seal.data },
+      renderer: new H5Canvas2DRenderer(
+        this.createCanvas ? { createCanvas: this.createCanvas } : undefined,
+      ),
+      ...(this.createCanvas ? { createCanvas: this.createCanvas } : {}),
+      imageDecoders: [...this.imageDecoders],
+      limits: this.limits,
+      onWarning: this.documentWarningHandler,
+      ...(this.fontProvider ? { fontProvider: this.fontProvider } : {}),
+      ...(this.supplementaryFonts ? { supplementaryFonts: [...this.supplementaryFonts] } : {}),
+    });
+    nested.disableSignatureLoading();
+    try {
+      if (nested.pageCount < 1) {
+        throw new OFDError('OFD_INVALID_PACKAGE', '矢量印章 OFD 没有页面');
+      }
+      const page = await nested.getPage(0);
+      let dpi = VECTOR_SEAL_DPI;
+      let width = 1;
+      let height = 1;
+      const pixelLimit = this.vectorSealPixelLimit();
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const viewport = page.getViewport({ dpi });
+        width = Math.max(1, Math.ceil(viewport.width));
+        height = Math.max(1, Math.ceil(viewport.height));
+        if (pixelLimit <= 0 || width * height <= pixelLimit) break;
+        dpi *= Math.sqrt(pixelLimit / (width * height)) * 0.999;
+      }
+      if (pixelLimit > 0 && width * height > pixelLimit) {
+        throw new OFDError(
+          'OFD_LIMIT_EXCEEDED',
+          `矢量印章 ${width}×${height} 超过像素上限 ${pixelLimit}`,
+        );
+      }
+      const factory = new H5CanvasFactory(
+        this.createCanvas ? { createCanvas: this.createCanvas } : {},
+      );
+      const { canvas, context } = factory.create(width, height);
+      context.clearRect(0, 0, width, height);
+      await page.render({
+        canvasContext: context,
+        viewport: { width, height, dpi },
+      }).promise;
+      return { width, height, data: canvas, kind: 'source' };
+    } finally {
+      await nested.close();
+    }
+  }
+
+  /**
+   * 矢量印章可用像素上限：同时受图片上限与嵌套页面画布上限约束。
+   *
+   * @returns 最大像素数；0 表示不限制。
+   */
+  private vectorSealPixelLimit(): number {
+    const limits = [this.limits.maxImagePixels, this.limits.maxCanvasPixels].filter(
+      (value) => value > 0,
+    );
+    return limits.length > 0 ? Math.min(...limits) : 0;
+  }
+
+  /** 关闭当前文档的签章加载，供矢量章嵌套文档防止递归。 */
+  private disableSignatureLoading(): void {
+    this.signatureLoading = false;
   }
 
   /**
@@ -1321,6 +1434,29 @@ function emptyResourceSet(): ResourceDefinitionSet {
  */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * 从显式 H5 渲染器提取 createCanvas，兼容 t56 之前只传 renderer 的宿主。
+ *
+ * @param renderer 宿主渲染器。
+ * @returns 画布工厂；非 H5 或未注入时 undefined。
+ */
+function createCanvasFromRenderer(
+  renderer: Renderer,
+): ((width: number, height: number) => Canvas2DLike) | undefined {
+  if (!(renderer instanceof H5Canvas2DRenderer)) return undefined;
+  const options = (
+    renderer as unknown as {
+      options?: { createCanvas?: (width: number, height: number) => Canvas2DLike };
+    }
+  ).options;
+  return options?.createCanvas;
+}
+
+/** 判断字节是否为 ZIP 头（PK\x03\x04 / PK\x05\x06 / PK\x07\x08）。 */
+function isZipData(data: Uint8Array): boolean {
+  return data.length >= 4 && data[0] === 0x50 && data[1] === 0x4b;
 }
 
 /**

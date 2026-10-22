@@ -108,6 +108,17 @@ function loader(stamps: readonly SignatureStampSource[]): PreparePageLoader {
       return stamps;
     },
     async decodeSeal(seal: SealImage) {
+      if (seal.type.toLowerCase() === 'ofd') {
+        // 管线测试只验证矢量章进入签名块；实际内嵌 OFD 渲染由 API 测试覆盖。
+        const width = 34;
+        const height = 26;
+        return {
+          width,
+          height,
+          data: { width, height, data: new Uint8ClampedArray(width * height * 4) },
+          kind: 'imagedata',
+        };
+      }
       const decoded = await decodeWithImageDecoder(seal.data, seal.type.toLowerCase(), nodeImageDecoders, {
         maxPixels: 1_000_000,
       });
@@ -164,4 +175,25 @@ describe('真实样本签章', () => {
       }
     });
   }
+
+  it('SignScaleError 的 SignedValue 矢量章进入签名块并按 Boundary 放置', async () => {
+    const path = fileURLToPath(new URL('../../../../ofd_pdf_match/SignScaleError.ofd', import.meta.url));
+    const { pageIds, sources } = await readSignatureSources(path);
+    expect(pageIds).toEqual(['2']);
+    expect(sources[0]).toHaveLength(1);
+    expect(sources[0]?.[0]?.seal?.type).toBe('OFD');
+    const bundle = await preparePage({
+      page: page(pageIds[0]!),
+      resources: scope(),
+      loader: loader(sources[0]!),
+    });
+    expect(bundle.signatureBlocks).toHaveLength(1);
+    expect(bundle.signatureBlocks[0]?.boundary).toEqual({ x: 87, y: 4, w: 34, h: 26 });
+    const renderer = new FakeRenderer();
+    drawPage(bundle, renderer, {} as never, { width: 794, height: 1123, dpi: 96 });
+    expect(renderer.callsOf('createImage')).toHaveLength(1);
+    const draws = renderer.callsOf('drawImage');
+    expect(draws).toHaveLength(1);
+    expect((draws[0]?.args[1] as number[]).slice(0, 4)).toEqual([34, 0, 0, 26]);
+  });
 });
