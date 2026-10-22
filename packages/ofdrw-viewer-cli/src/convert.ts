@@ -1,14 +1,14 @@
 /**
- * 图片转换流程：打开 OFD，逐页导出图片并原子写入。
+ * 图片与空间文本转换流程：打开 OFD，逐页导出并原子写入。
  *
  * 使用 engine 公共 API：
  * - `OFDDocument.open` 负责解包、页面与资源；CLI 注入 Node Canvas、编码器、
  *   图片解码插件与补充字体；
- * - `OFDPage.exportImage` 负责整页渲染与编码，CLI 只做命名、落盘、日志与
- *   退出码汇总。
+ * - `OFDPage.exportImage` 负责整页渲染与编码；
+ * - `OFDPage.getTextContent` 返回 px 坐标文本项，CLI 扁平化为 JSON。
  *
- * 页级失败继续处理后续页；文档级失败（打开失败、页码越界、页面像素超限）
- * 立即结束。SIGINT 通过 AbortSignal 取消当前导出。
+ * 页级失败继续处理后续页；文档级失败（打开失败、页码越界、页面像素超限、
+ * 文本 API 缺失）立即结束。SIGINT 通过 AbortSignal 取消当前导出。
  */
 
 import { parse as parsePath } from 'node:path';
@@ -28,10 +28,11 @@ import { CliError, EXIT_CODES, errorMessage, isCliError } from './errors.js';
 import type { FontFile } from './fonts.js';
 import { nodeImageDecoders } from './image-decoder.js';
 import type { Logger } from './log.js';
-import { buildImagePath, writeFileAtomic } from './output.js';
+import { buildImagePath, buildTextJsonPath, writeFileAtomic } from './output.js';
 import type { ImageFormat } from './output.js';
 import { NodeFileByteSource } from './node-file-source.js';
 import { resolvePageNumbers } from './pages.js';
+import { buildTextRecords } from './text.js';
 
 /** JPEG/WebP 固定编码质量。 */
 const IMAGE_QUALITY = 0.9;
@@ -50,6 +51,8 @@ export interface ConvertOptions {
   readonly pageNumbers: readonly number[] | undefined;
   /** 补充字体文件列表。 */
   readonly fontFiles: readonly FontFile[];
+  /** 是否额外导出空间文本 JSON。 */
+  readonly text: boolean;
 }
 
 /** 转换摘要，供成功/部分失败/取消时输出与计算退出码。 */
@@ -125,15 +128,71 @@ export async function convertDocument(
     let failedPages = 0;
     let interrupted = false;
 
+    if (options.text) {
+      await assertTextApiAvailable(document, pageNumbers[0]);
+    }
+
     for (const pageNumber of pageNumbers) {
       if (isSignalAborted(runtime.signal)) {
         interrupted = true;
         break;
       }
 
+      let page: OFDPage;
       try {
-        const page = await document.getPage(pageNumber - 1);
-        assertCanvasWithinLimit(page, pageNumber, options.dpi);
+        page = await document.getPage(pageNumber - 1);
+      } catch (error) {
+        if (isSignalAborted(runtime.signal) || isAbortError(error)) {
+          interrupted = true;
+          break;
+        }
+        failedPages += 1;
+        logger.pageError(pageNumber, totalPages, errorCodeOf(error), errorMessage(error));
+        continue;
+      }
+
+      assertCanvasWithinLimit(page, pageNumber, options.dpi);
+
+      let textOk = !options.text;
+      if (options.text) {
+        const textPath = buildTextJsonPath(
+          options.outDir,
+          stem,
+          pageNumber,
+          document.pageCount,
+        );
+        try {
+          await exportPageText(page, textPath, options.dpi, runtime.signal);
+          textOk = true;
+        } catch (error) {
+          if (isSignalAborted(runtime.signal) || isAbortError(error)) {
+            interrupted = true;
+            break;
+          }
+          if (isTextUnsupportedError(error)) {
+            throw new CliError(
+              'CLI_TEXT_UNSUPPORTED',
+              `当前 engine 不支持空间文本导出：${errorMessage(error)}`,
+              EXIT_CODES.DOCUMENT,
+            );
+          }
+          if (isCliError(error) && error.exitCode === EXIT_CODES.DOCUMENT) throw error;
+          logger.pageError(
+            pageNumber,
+            totalPages,
+            errorCodeOf(error),
+            `文本导出失败：${errorMessage(error)}`,
+          );
+        }
+      }
+
+      if (isSignalAborted(runtime.signal)) {
+        interrupted = true;
+        break;
+      }
+
+      let imageOk = false;
+      try {
         const result = await page.exportImage({
           dpi: options.dpi,
           format: options.format,
@@ -157,7 +216,7 @@ export async function convertDocument(
             EXIT_CODES.PAGE,
           );
         }
-        succeededPages += 1;
+        imageOk = true;
       } catch (error) {
         if (isSignalAborted(runtime.signal) || isAbortError(error)) {
           interrupted = true;
@@ -165,9 +224,11 @@ export async function convertDocument(
         }
         // 页面像素超限等文档级错误立即结束，不降级为页级失败。
         if (isCliError(error) && error.exitCode === EXIT_CODES.DOCUMENT) throw error;
-        failedPages += 1;
         logger.pageError(pageNumber, totalPages, errorCodeOf(error), errorMessage(error));
       }
+
+      if (!textOk || !imageOk) failedPages += 1;
+      else succeededPages += 1;
     }
 
     const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
@@ -183,6 +244,7 @@ export async function convertDocument(
         interrupted,
         outDir: options.outDir,
         elapsedSeconds,
+        text: options.text,
       }),
     };
   } finally {
@@ -201,6 +263,67 @@ export async function convertDocument(
         logger.warn('W_SOURCE_CLOSE_FAILED', `关闭输入文件失败：${errorMessage(error)}`);
       }
     }
+  }
+}
+
+/**
+ * 在进入逐页流程前确认 engine 提供空间文本 API。
+ *
+ * 只检查首个选中页的方法是否存在；若 `getPage` 本身失败则留给逐页流程
+ * 按页级失败处理。旧版 engine 无该方法时直接以文档级错误退出 2。
+ *
+ * @param document 已打开的文档
+ * @param pageNumber 首个选中页的页号（1 起）
+ * @throws {CliError} 文本 API 缺失时抛出（退出码 2）
+ */
+async function assertTextApiAvailable(
+  document: OFDDocument,
+  pageNumber: number,
+): Promise<void> {
+  let page: OFDPage;
+  try {
+    page = await document.getPage(pageNumber - 1);
+  } catch {
+    return;
+  }
+  if (typeof page.getTextContent !== 'function') {
+    throw new CliError(
+      'CLI_TEXT_UNSUPPORTED',
+      '当前 engine 不支持空间文本导出（OFDPage.getTextContent 缺失）',
+      EXIT_CODES.DOCUMENT,
+    );
+  }
+}
+
+/**
+ * 读取单页空间文本并原子写 JSON。
+ *
+ * @param page 页面
+ * @param jsonPath 目标 JSON 路径
+ * @param dpi 与图片共用的输出 DPI
+ * @param signal 取消信号
+ * @throws {CliError} JSON 写盘失败时抛出（退出码 3）
+ */
+async function exportPageText(
+  page: OFDPage,
+  jsonPath: string,
+  dpi: number,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  const content = await page.getTextContent({
+    dpi,
+    includeChars: false,
+    ...(signal === undefined ? {} : { signal }),
+  });
+  const records = buildTextRecords(content);
+  try {
+    await writeFileAtomic(jsonPath, JSON.stringify(records));
+  } catch (error) {
+    throw new CliError(
+      'CLI_TEXT_WRITE_FAILED',
+      `写入文本 JSON 失败：${jsonPath}（${errorMessage(error)}）`,
+      EXIT_CODES.PAGE,
+    );
   }
 }
 
@@ -234,6 +357,11 @@ function isAbortError(error: unknown): boolean {
   return isOFDError(error) && error.code === 'OFD_ABORTED';
 }
 
+/** 判断错误是否为 engine 未绑定文本驱动。 */
+function isTextUnsupportedError(error: unknown): boolean {
+  return isOFDError(error) && error.code === 'OFD_RENDERER_UNSUPPORTED';
+}
+
 /** 提取用于日志的错误码。 */
 function errorCodeOf(error: unknown): string {
   if (isOFDError(error)) return error.code;
@@ -249,11 +377,14 @@ function formatSummary(summary: {
   interrupted: boolean;
   outDir: string;
   elapsedSeconds: string;
+  text: boolean;
 }): string {
   const progress = `${summary.succeededPages}/${summary.totalPages} 页`;
   if (summary.interrupted) return `已取消：${progress} → ${summary.outDir}`;
+  const mode = summary.text ? '（图片 + 文本）' : '';
   if (summary.failedPages > 0) {
-    return `完成：${progress}，${summary.failedPages} 页失败 → ${summary.outDir}`;
+    return `完成：${progress}${mode}，${summary.failedPages} 页失败 → ${summary.outDir}`;
   }
-  return `完成：${progress} → ${summary.outDir}（${summary.elapsedSeconds}s）`;
+  const arrow = mode === '' ? ' →' : '→';
+  return `完成：${progress}${mode}${arrow} ${summary.outDir}（${summary.elapsedSeconds}s）`;
 }

@@ -55,6 +55,7 @@ export const HELP_TEXT = `${USAGE_LINE}
   -d, --dpi <n>         输出 DPI，正整数（默认 96；超过 ${HIGH_DPI_WARNING_THRESHOLD} 给 warning）
   -p, --pages <ranges>  页码范围，1 起闭区间，如 1-3,5（默认全部页）
       --font-dir <dir>  补充字体目录；递归扫描 ttf/otf/ttc/otc
+      --text            每页额外导出空间文本 JSON（<stem>-p<NNN>.json）
   -h, --help            显示本帮助
   -V, --version         显示版本与平台
 
@@ -75,6 +76,8 @@ export interface CliOptions {
   readonly pageNumbers: readonly number[] | undefined;
   /** 补充字体目录绝对路径；未提供时为 `undefined`。 */
   readonly fontDir: string | undefined;
+  /** 是否额外导出空间文本 JSON。 */
+  readonly text: boolean;
 }
 
 /** `parseCliArgs` 的结果。 */
@@ -133,6 +136,7 @@ export function parseCliArgs(
         dpi: { type: 'string', short: 'd' },
         pages: { type: 'string', short: 'p' },
         'font-dir': { type: 'string' },
+        text: { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
         version: { type: 'boolean', short: 'V' },
       },
@@ -176,6 +180,7 @@ export function parseCliArgs(
       dpi: parseDpi(values.dpi),
       pageNumbers: values.pages === undefined ? undefined : parsePageRanges(values.pages),
       fontDir,
+      text: values.text === true,
     },
   };
 }

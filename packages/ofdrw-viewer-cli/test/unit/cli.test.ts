@@ -39,10 +39,11 @@ describe('parseCliArgs', () => {
       dpi: DEFAULT_DPI,
       pageNumbers: undefined,
       fontDir: undefined,
+      text: false,
     });
   });
 
-  it('解析全部图片参数', () => {
+  it('解析全部参数', () => {
     const parsed = parseCliArgs(
       [
         'input.ofd',
@@ -56,6 +57,7 @@ describe('parseCliArgs', () => {
         '1-3,5',
         '--font-dir',
         'fonts',
+        '--text',
       ],
       cwd,
     );
@@ -66,6 +68,7 @@ describe('parseCliArgs', () => {
       dpi: 300,
       pageNumbers: [1, 2, 3, 5],
       fontDir: resolve(cwd, 'fonts'),
+      text: true,
     });
   });
 
@@ -200,6 +203,7 @@ describe('main 帮助/版本与退出码', () => {
       '-d, --dpi',
       '-p, --pages',
       '--font-dir',
+      '--text',
       '-h, --help',
       '-V, --version',
     ]) {

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,9 @@ import type {
   OFDOpenOptions,
   OFDPage,
   PageImageResult,
+  TextContent,
+  TextContentOptions,
+  TextItem,
 } from 'ofdrw-viewer-engine';
 import { convertDocument } from '../../src/convert.js';
 import type { ConvertOptions } from '../../src/convert.js';
@@ -38,6 +41,20 @@ afterEach(async () => {
 interface FakePageSpec {
   readonly viewport?: { width: number; height: number };
   readonly exportImage?: (options: { signal?: AbortSignal }) => Promise<PageImageResult>;
+  readonly getTextContent?: (options: TextContentOptions) => Promise<TextContent>;
+}
+
+/** 构造只包含 items 的文本内容；转换链路仅消费该字段。 */
+function textContent(items: readonly TextItem[]): TextContent {
+  return { items } as TextContent;
+}
+
+/** 构造只包含 text/rect 的文本项。 */
+function textItem(
+  text: string,
+  rect: { x: number; y: number; width: number; height: number },
+): TextItem {
+  return { text, rect } as TextItem;
 }
 
 /** 构造满足 convert 所需最小接口的假文档。 */
@@ -62,6 +79,9 @@ function createFakeDocument(
             height: 100,
             dpi: 96,
           })),
+        ...(spec.getTextContent === undefined
+          ? {}
+          : { getTextContent: spec.getTextContent }),
       } as unknown as OFDPage;
     },
     async close() {
@@ -86,6 +106,7 @@ function createOptions(outDir: string, overrides: Partial<ConvertOptions> = {}):
     dpi: 96,
     pageNumbers: undefined,
     fontFiles: [{ path: '/fonts/a.ttf' }],
+    text: false,
     ...overrides,
   };
 }
@@ -348,5 +369,190 @@ describe('convertDocument 图片链路', () => {
     await convertDocument(createOptions(outDir), { logger, openDocument });
 
     expect(capture.stderrText()).toContain('警告 [W_FONT_MISSING] 第 1 页：缺字体');
+  });
+});
+describe('convertDocument 空间文本链路', () => {
+  it('--text 调用 getTextContent 并同时写 JSON 与图片', async () => {
+    const outDir = await createTempDir();
+    const capture = createStreamCapture();
+    const logger = new Logger({ stderr: capture.stderr });
+    const getTextContent = vi.fn(async () =>
+      textContent([
+        textItem('发票', { x: 100.5, y: 176.25, width: 48.125, height: 24.5 }),
+        textItem('', { x: 1, y: 2, width: 3, height: 4 }),
+        textItem('金额', { x: 400.75, y: 300.5, width: 96, height: 12.25 }),
+      ]),
+    );
+    const document = createFakeDocument(1, [{ getTextContent }]);
+
+    const summary = await convertDocument(createOptions(outDir, { text: true }), {
+      logger,
+      openDocument: createOpenMock(async () => document),
+    });
+
+    expect(getTextContent).toHaveBeenCalledOnce();
+    expect(getTextContent).toHaveBeenCalledWith({ dpi: 96, includeChars: false });
+    expect(await listDir(outDir)).toEqual([
+      'helloworld-p001.json',
+      'helloworld-p001.png',
+    ]);
+    expect(JSON.parse(await readFile(join(outDir, 'helloworld-p001.json'), 'utf8'))).toEqual([
+      { text: '发票', x: 100.5, y: 176.25, w: 48.125, h: 24.5 },
+      { text: '金额', x: 400.75, y: 300.5, w: 96, h: 12.25 },
+    ]);
+    expect(summary).toMatchObject({ succeededPages: 1, failedPages: 0 });
+    expect(summary.message).toContain('（图片 + 文本）');
+    expect(capture.stderrText()).toBe('');
+  });
+
+  it('空文本页写 []', async () => {
+    const outDir = await createTempDir();
+    const logger = new Logger({ stderr: createStreamCapture().stderr });
+    const document = createFakeDocument(1, [
+      { getTextContent: async () => textContent([]) },
+    ]);
+
+    await convertDocument(createOptions(outDir, { text: true }), {
+      logger,
+      openDocument: createOpenMock(async () => document),
+    });
+
+    expect(await readFile(join(outDir, 'helloworld-p001.json'), 'utf8')).toBe('[]');
+  });
+
+  it('不传 --text 时不调用 getTextContent、不生成 JSON', async () => {
+    const outDir = await createTempDir();
+    const logger = new Logger({ stderr: createStreamCapture().stderr });
+    const getTextContent = vi.fn(async () => textContent([]));
+    const document = createFakeDocument(1, [{ getTextContent }]);
+
+    const summary = await convertDocument(createOptions(outDir), {
+      logger,
+      openDocument: createOpenMock(async () => document),
+    });
+
+    expect(getTextContent).not.toHaveBeenCalled();
+    expect(await listDir(outDir)).toEqual(['helloworld-p001.png']);
+    expect(summary.message).not.toContain('（图片 + 文本）');
+  });
+
+  it('文本失败不阻止图片，页面计为失败且保留图片', async () => {
+    const outDir = await createTempDir();
+    const capture = createStreamCapture();
+    const logger = new Logger({ stderr: capture.stderr });
+    const document = createFakeDocument(1, [
+      {
+        getTextContent: async () => {
+          throw new OFDError('OFD_LIMIT_EXCEEDED', '文本坏了');
+        },
+      },
+    ]);
+
+    const summary = await convertDocument(createOptions(outDir, { text: true }), {
+      logger,
+      openDocument: createOpenMock(async () => document),
+    });
+
+    expect(summary).toMatchObject({ succeededPages: 0, failedPages: 1 });
+    expect(summary.message).toContain('0/1 页（图片 + 文本），1 页失败');
+    expect(capture.stderrText()).toContain('文本导出失败');
+    expect(await listDir(outDir)).toEqual(['helloworld-p001.png']);
+  });
+
+  it('图片失败不阻止文本，页面计为失败且保留 JSON', async () => {
+    const outDir = await createTempDir();
+    const capture = createStreamCapture();
+    const logger = new Logger({ stderr: capture.stderr });
+    const document = createFakeDocument(1, [
+      {
+        getTextContent: async () =>
+          textContent([textItem('文本', { x: 1, y: 2, width: 3, height: 4 })]),
+        exportImage: async () => {
+          throw new OFDError('OFD_IMAGE_DECODE', '图片坏了');
+        },
+      },
+    ]);
+
+    const summary = await convertDocument(createOptions(outDir, { text: true }), {
+      logger,
+      openDocument: createOpenMock(async () => document),
+    });
+
+    expect(summary).toMatchObject({ succeededPages: 0, failedPages: 1 });
+    expect(await listDir(outDir)).toEqual(['helloworld-p001.json']);
+    expect(JSON.parse(await readFile(join(outDir, 'helloworld-p001.json'), 'utf8'))).toHaveLength(
+      1,
+    );
+    expect(capture.stderrText()).toContain('图片坏了');
+  });
+
+  it('文本写盘失败按页失败处理且保留图片', async () => {
+    const outDir = await createTempDir();
+    await mkdir(join(outDir, 'helloworld-p001.json'));
+    const capture = createStreamCapture();
+    const logger = new Logger({ stderr: capture.stderr });
+    const document = createFakeDocument(1, [
+      { getTextContent: async () => textContent([]) },
+    ]);
+
+    const summary = await convertDocument(createOptions(outDir, { text: true }), {
+      logger,
+      openDocument: createOpenMock(async () => document),
+    });
+
+    expect(summary).toMatchObject({ succeededPages: 0, failedPages: 1 });
+    expect(capture.stderrText()).toContain('CLI_TEXT_WRITE_FAILED');
+    expect(capture.stderrText()).toContain('文本导出失败');
+    expect(await readFile(join(outDir, 'helloworld-p001.png'))).toBeInstanceOf(Buffer);
+    const entries = await readdir(outDir);
+    expect(entries).toEqual(['helloworld-p001.json', 'helloworld-p001.png']);
+    expect(entries.some((entry) => entry.includes('.tmp-'))).toBe(false);
+  });
+
+  it('文本 API 缺失在逐页前报 CLI_TEXT_UNSUPPORTED 并退出 2', async () => {
+    const outDir = await createTempDir();
+    const logger = new Logger({ stderr: createStreamCapture().stderr });
+    const document = createFakeDocument(1, [{}]);
+
+    try {
+      await convertDocument(createOptions(outDir, { text: true }), {
+        logger,
+        openDocument: createOpenMock(async () => document),
+      });
+      throw new Error('预期抛出文本 API 缺失错误');
+    } catch (error) {
+      expect(isCliError(error)).toBe(true);
+      expect((error as CliError).code).toBe('CLI_TEXT_UNSUPPORTED');
+      expect((error as CliError).exitCode).toBe(EXIT_CODES.DOCUMENT);
+    }
+    expect(await readdir(outDir)).toEqual([]);
+  });
+
+  it('getTextContent 报 OFD_RENDERER_UNSUPPORTED 时映射为 CLI_TEXT_UNSUPPORTED', async () => {
+    const outDir = await createTempDir();
+    const logger = new Logger({ stderr: createStreamCapture().stderr });
+    const exportImage = vi.fn();
+    const document = createFakeDocument(1, [
+      {
+        getTextContent: async () => {
+          throw new OFDError('OFD_RENDERER_UNSUPPORTED', '当前页面未绑定文本内容驱动');
+        },
+        exportImage,
+      },
+    ]);
+
+    try {
+      await convertDocument(createOptions(outDir, { text: true }), {
+        logger,
+        openDocument: createOpenMock(async () => document),
+      });
+      throw new Error('预期抛出文本 API 不支持错误');
+    } catch (error) {
+      expect(isCliError(error)).toBe(true);
+      expect((error as CliError).code).toBe('CLI_TEXT_UNSUPPORTED');
+      expect((error as CliError).exitCode).toBe(EXIT_CODES.DOCUMENT);
+    }
+    expect(exportImage).not.toHaveBeenCalled();
+    expect(await readdir(outDir)).toEqual([]);
   });
 });

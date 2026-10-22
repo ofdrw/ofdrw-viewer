@@ -86,7 +86,7 @@ export function buildImagePath(
 /**
  * 生成单页空间文本 JSON 的绝对路径。
  *
- * 本阶段不生成 JSON；该函数为后续文本导出保留统一命名。
+ * 与图片使用相同的页号补零规则；`--text` 时每页写 `<stem>-p<NNN>.json`。
  *
  * @param outDir 输出目录
  * @param stem 输入文件 stem
