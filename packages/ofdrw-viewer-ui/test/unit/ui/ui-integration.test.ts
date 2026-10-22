@@ -179,6 +179,68 @@ describe('内置 UI 接线', () => {
     dispose();
   });
 
+  it('输出表单 Enter 提交被阻止并执行确认，所有控件都有可访问名称', () => {
+    const host = createFakeHost();
+    const dispose = attachUIShell(host);
+    const shell = getUIShell(host)!;
+
+    // 打印：每个 select/input 都应有 label 或 aria-label；主按钮显式 type=button。
+    (shell.toolbar.getControl('print') as HTMLButtonElement).click();
+    let dialog = document.querySelector<HTMLElement>('.ofd-dialog')!;
+    let form = dialog.querySelector<HTMLFormElement>('form')!;
+    for (const control of form.querySelectorAll<HTMLInputElement | HTMLSelectElement>('select,input')) {
+      const named =
+        (control.labels?.length ?? 0) > 0 ||
+        control.hasAttribute('aria-label') ||
+        control.hasAttribute('aria-labelledby');
+      expect(named, control.outerHTML).toBe(true);
+    }
+    const dpiField = [...form.querySelectorAll<HTMLElement>('.ofd-output-field')].find((field) =>
+      field.textContent?.includes('DPI'),
+    )!;
+    expect(dpiField.querySelector('label')!.htmlFor).toBe(
+      dpiField.querySelector('select')!.id,
+    );
+    expect(
+      dialog.querySelector('.ofd-dialog__action--primary')!.getAttribute('type'),
+    ).toBe('button');
+
+    let range = form.querySelector<HTMLSelectElement>('select')!;
+    range.value = 'custom';
+    range.dispatchEvent(new Event('change'));
+    let custom = form.querySelector<HTMLInputElement>('input.ofd-input')!;
+    expect(custom.hidden).toBe(false);
+    custom.value = '1-2';
+    const printSubmit = new Event('submit', { bubbles: true, cancelable: true });
+    form.dispatchEvent(printSubmit);
+    expect(printSubmit.defaultPrevented).toBe(true);
+    expect(document.querySelector('.ofd-dialog')).toBeNull();
+    expect(host.calls).toContain('print');
+
+    // 导出：同样通过 submit 执行确认并关闭对话框。
+    (shell.toolbar.getControl('export') as HTMLButtonElement).click();
+    dialog = document.querySelector<HTMLElement>('.ofd-dialog')!;
+    form = dialog.querySelector<HTMLFormElement>('form')!;
+    for (const control of form.querySelectorAll<HTMLInputElement | HTMLSelectElement>('select,input')) {
+      const named =
+        (control.labels?.length ?? 0) > 0 ||
+        control.hasAttribute('aria-label') ||
+        control.hasAttribute('aria-labelledby');
+      expect(named, control.outerHTML).toBe(true);
+    }
+    range = form.querySelector<HTMLSelectElement>('select')!;
+    range.value = 'custom';
+    range.dispatchEvent(new Event('change'));
+    custom = form.querySelector<HTMLInputElement>('input.ofd-input')!;
+    custom.value = '2';
+    const exportSubmit = new Event('submit', { bubbles: true, cancelable: true });
+    form.dispatchEvent(exportSubmit);
+    expect(exportSubmit.defaultPrevented).toBe(true);
+    expect(document.querySelector('.ofd-dialog')).toBeNull();
+    expect(host.calls).toContain('exportImages');
+    dispose();
+  });
+
   it('把工具栏/查找命令映射到核心方法', () => {
     const host = createFakeHost();
     const dispose = attachUIShell(host);

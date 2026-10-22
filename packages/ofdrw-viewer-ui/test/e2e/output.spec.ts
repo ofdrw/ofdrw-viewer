@@ -91,6 +91,69 @@ test('打印当前页/全部页：生成打印 DOM、调用 window.print 并清�
   expect(snapshot!.pageNumbers).toEqual([1]);
   await expect(page.locator('.ofd-print-root')).toHaveCount(0);
 
+  // Enter 提交打印：自定义范围 1-2 不得导航/丢文档，并按范围生成打印 DOM。
+  const initialUrl = page.url();
+  await page.locator('[data-ofd-control="print"]').click();
+  await expect(page.locator('.ofd-dialog')).toBeVisible();
+  const printForm = page.locator('.ofd-output-form');
+  await printForm.locator('select').first().selectOption('custom');
+  const printRange = printForm.locator('input.ofd-input');
+  await printRange.fill('1-2');
+  await printRange.press('Enter');
+  await expect(page.locator('.ofd-dialog')).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as { __printCalls: number }).__printCalls),
+    )
+    .toBe(3);
+  snapshot = await page.evaluate(
+    () => (window as unknown as { __printSnapshot: PrintSnapshot | null }).__printSnapshot,
+  );
+  expect(snapshot!.pages).toBe(2);
+  expect(snapshot!.pageNumbers).toEqual([1, 2]);
+  expect(page.url()).toBe(initialUrl);
+  expect(await page.evaluate(() => window.__viewer!.getPageCount())).toBe(4);
+  expect(await page.locator('.ofd-page').count()).toBe(4);
+
+  // Enter 提交导出：同样不导航，并调用 exportImages 处理 1-2 范围。
+  await page.evaluate(() => {
+    const globals = window as unknown as {
+      __exportCalls: number;
+      __exportPages: number[] | null;
+    };
+    globals.__exportCalls = 0;
+    globals.__exportPages = null;
+    const viewer = window.__viewer as unknown as {
+      exportImages(options: { pages?: number[] }): Promise<void>;
+    };
+    viewer.exportImages = async (options) => {
+      globals.__exportCalls += 1;
+      globals.__exportPages = options.pages ?? null;
+    };
+  });
+  const exportUrl = page.url();
+  await page.locator('[data-ofd-control="export"]').click();
+  await expect(page.locator('.ofd-dialog')).toBeVisible();
+  const exportForm = page.locator('.ofd-output-form');
+  await exportForm.locator('select').first().selectOption('custom');
+  const exportRange = exportForm.locator('input.ofd-input');
+  await exportRange.fill('1-2');
+  await exportRange.press('Enter');
+  await expect(page.locator('.ofd-dialog')).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as { __exportCalls: number }).__exportCalls),
+    )
+    .toBe(1);
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __exportPages: number[] | null }).__exportPages,
+    ),
+  ).toEqual([1, 2]);
+  expect(page.url()).toBe(exportUrl);
+  expect(await page.evaluate(() => window.__viewer!.getPageCount())).toBe(4);
+  expect(await page.locator('.ofd-page').count()).toBe(4);
+
   // 导出选项对话框可取消，不触发下载。
   await page.locator('[data-ofd-control="export"]').click();
   await expect(page.locator('.ofd-dialog')).toBeVisible();

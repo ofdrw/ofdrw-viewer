@@ -244,6 +244,7 @@ function createOutputRangeField(
   custom.className = 'ofd-input';
   custom.type = 'text';
   custom.placeholder = translator.t('output.rangePlaceholder');
+  custom.setAttribute('aria-label', translator.t('output.range'));
   custom.hidden = true;
   custom.setAttribute('aria-describedby', `${id}-error`);
   const error = doc.createElement('p');
@@ -273,13 +274,25 @@ function createOutputRangeField(
   };
 }
 
-/** 创建字段标签与控件容器。 */
+/** 创建带 `<label for>` 关联的字段容器。 */
 function createOutputField(doc: Document, text: string, ...controls: HTMLElement[]): HTMLElement {
   const field = doc.createElement('div');
   field.className = 'ofd-output-field';
-  const label = doc.createElement('span');
+  const id = `ofd-output-field-${++outputFieldSequence}`;
+  const label = doc.createElement('label');
   label.className = 'ofd-output-field__label';
   label.textContent = text;
+  const [first, ...rest] = controls;
+  if (first) {
+    if (!first.id) first.id = id;
+    label.htmlFor = first.id;
+  }
+  for (const [index, control] of rest.entries()) {
+    if (!control.id) control.id = `${id}-${index + 2}`;
+    if (!control.hasAttribute('aria-label') && !control.hasAttribute('aria-labelledby')) {
+      control.setAttribute('aria-label', text);
+    }
+  }
   field.append(label, ...controls);
   return field;
 }
@@ -341,6 +354,29 @@ function openPrintDialog(viewer: UIShellHost, shell: UIShell): void {
     createOutputField(doc, translator.t('output.rotation'), rotation),
   );
 
+  const submit = (): void => {
+    const pages = range.read(viewer.getState().document.pageCount);
+    if (pages === null) return;
+    shell.closeDialog(false);
+    settle(
+      viewer.print({
+        pages,
+        dpi: dpi.value === 'auto' ? 'auto' : Number(dpi.value),
+        includeBackground: background.checked,
+        rotation:
+          rotation.value === 'current'
+            ? 'current'
+            : (Number(rotation.value) as Rotation),
+      }),
+      shell,
+    );
+  };
+  // 表单内 Enter 与点击主按钮一致；必须阻止默认提交，避免页面导航丢文档。
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    submit();
+  });
+
   shell.openDialog({
     name: 'print',
     title: translator.t('output.printTitle'),
@@ -351,23 +387,7 @@ function openPrintDialog(viewer: UIShellHost, shell: UIShell): void {
         label: translator.t('toolbar.print'),
         primary: true,
         closeOnClick: false,
-        onClick: () => {
-          const pages = range.read(viewer.getState().document.pageCount);
-          if (pages === null) return;
-          shell.closeDialog(false);
-          settle(
-            viewer.print({
-              pages,
-              dpi: dpi.value === 'auto' ? 'auto' : Number(dpi.value),
-              includeBackground: background.checked,
-              rotation:
-                rotation.value === 'current'
-                  ? 'current'
-                  : (Number(rotation.value) as Rotation),
-            }),
-            shell,
-          );
-        },
+        onClick: submit,
       },
     ],
   });
@@ -463,6 +483,29 @@ function openExportDialog(viewer: UIShellHost, shell: UIShell): void {
     createOutputField(doc, translator.t('output.rotation'), rotation),
   );
 
+  const submit = (): void => {
+    const pages = range.read(viewer.getState().document.pageCount);
+    if (pages === null) return;
+    const options: ExportImageOptions = {
+      format: format.value as ExportImageOptions['format'],
+      dpi: dpi.value === 'auto' ? 'auto' : Number(dpi.value),
+      quality: Number(quality.value),
+      background: background.value === 'transparent' ? null : '#ffffff',
+      rotation: Number(rotation.value) as Rotation,
+    };
+    shell.closeDialog(false);
+    if (pages === 'current') {
+      settle(viewer.exportImage(options), shell);
+    } else {
+      settle(viewer.exportImages({ ...options, pages }), shell);
+    }
+  };
+  // 与打印一致：Enter 触发 submit 时阻止默认导航，执行导出确认动作。
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    submit();
+  });
+
   shell.openDialog({
     name: 'export',
     title: translator.t('output.exportTitle'),
@@ -473,23 +516,7 @@ function openExportDialog(viewer: UIShellHost, shell: UIShell): void {
         label: translator.t('toolbar.export'),
         primary: true,
         closeOnClick: false,
-        onClick: () => {
-          const pages = range.read(viewer.getState().document.pageCount);
-          if (pages === null) return;
-          const options: ExportImageOptions = {
-            format: format.value as ExportImageOptions['format'],
-            dpi: dpi.value === 'auto' ? 'auto' : Number(dpi.value),
-            quality: Number(quality.value),
-            background: background.value === 'transparent' ? null : '#ffffff',
-            rotation: Number(rotation.value) as Rotation,
-          };
-          shell.closeDialog(false);
-          if (pages === 'current') {
-            settle(viewer.exportImage(options), shell);
-          } else {
-            settle(viewer.exportImages({ ...options, pages }), shell);
-          }
-        },
+        onClick: submit,
       },
     ],
   });

@@ -182,6 +182,64 @@ describe('OFDViewer 核心', () => {
     viewer.destroy();
   });
 
+  it('原生 Fullscreen API 可用时走 requestFullscreen 且不进入 fallback', async () => {
+    const viewer = new OFDViewer({
+      container: document.body,
+      source: new ArrayBuffer(8),
+    });
+    await viewer.ready;
+    const root = viewer.getElements().root;
+    const requestFullscreen = vi.fn(async () => undefined);
+    Object.defineProperty(root, 'requestFullscreen', {
+      configurable: true,
+      value: requestFullscreen,
+    });
+    await viewer.setFullscreen(true);
+    expect(requestFullscreen).toHaveBeenCalledTimes(1);
+    expect(viewer.getState().view.fullscreen).toBe(true);
+    expect(root.classList.contains('ofd-viewer--fullscreen-fallback')).toBe(false);
+    await viewer.setFullscreen(false);
+    expect(viewer.getState().view.fullscreen).toBe(false);
+    viewer.destroy();
+  });
+
+  it('沉浸式全屏 fallback 下 Escape 退出且不与侧栏 Escape 冲突', async () => {
+    const viewer = new OFDViewer({
+      container: document.body,
+      source: new ArrayBuffer(8),
+    });
+    await viewer.ready;
+    const root = viewer.getElements().root;
+    await viewer.setFullscreen(true);
+    expect(viewer.getState().view.fullscreen).toBe(true);
+    expect(root.dataset.fullscreenFallback).toBe('true');
+
+    // 侧栏打开时第一次 Esc 只关侧栏，并阻止 document 上的退出全屏逻辑。
+    viewer.openSidebar('thumbnails');
+    const sidebarEscape = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      cancelable: true,
+    });
+    viewer.getElements().main.dispatchEvent(sidebarEscape);
+    expect(sidebarEscape.defaultPrevented).toBe(true);
+    await vi.waitFor(() => expect(viewer.getState().view.sidebarView).toBeNull());
+    expect(viewer.getState().view.fullscreen).toBe(true);
+
+    // 焦点不在阅读器内部时，document 上的 Escape 也应退出 fallback。
+    const exitEscape = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(exitEscape);
+    expect(exitEscape.defaultPrevented).toBe(true);
+    await vi.waitFor(() => expect(viewer.getState().view.fullscreen).toBe(false));
+    expect(root.classList.contains('ofd-viewer--fullscreen-fallback')).toBe(false);
+    expect(root.dataset.fullscreenFallback).toBe('false');
+    viewer.destroy();
+  });
+
   it('公共读取 API 与签章门控一致', async () => {
     const viewer = new OFDViewer({
       container: document.body,

@@ -45,7 +45,7 @@ function serious(violations: AxeViolation[]): AxeViolation[] {
   );
 }
 
-test('axe 扫描阅读页、侧栏、查找栏与签章对话框', async ({ page, issues }) => {
+test('axe 扫描阅读页、侧栏、查找栏、打印/导出与签章对话框', async ({ page, issues }) => {
   await openViewer(page, FIXTURES.signature);
   await dismissFindbar(page);
   await page.addScriptTag({ path: 'test/e2e/vendor/axe.min.js' });
@@ -68,6 +68,28 @@ test('axe 扫描阅读页、侧栏、查找栏与签章对话框', async ({ page
   await expect(page.locator('.ofd-viewer__findbar')).toBeVisible();
   record('findbar', await scan(page, '.ofd-viewer'));
   await page.keyboard.press('Escape');
+
+  // 打印/导出对话框：所有字段有名称，自定义范围输入也不应漏标。
+  await page.locator('[data-ofd-control="print"]').click();
+  await expect(page.locator('.ofd-dialog')).toBeVisible();
+  await page.locator('.ofd-output-form select').first().selectOption('custom');
+  // 等待 150ms 入场动画结束，避免半透明中间态造成对比度误报。
+  await page.locator('.ofd-dialog').evaluate(async (element) => {
+    await Promise.all(element.getAnimations().map((animation) => animation.finished));
+  });
+  record('print-dialog', await scan(page, '.ofd-viewer'));
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.ofd-dialog')).toBeHidden();
+
+  await page.locator('[data-ofd-control="export"]').click();
+  await expect(page.locator('.ofd-dialog')).toBeVisible();
+  await page.locator('.ofd-output-form select').first().selectOption('custom');
+  await page.locator('.ofd-dialog').evaluate(async (element) => {
+    await Promise.all(element.getAnimations().map((animation) => animation.finished));
+  });
+  record('export-dialog', await scan(page, '.ofd-viewer'));
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.ofd-dialog')).toBeHidden();
 
   await page.evaluate(() => {
     const signatures = window.__viewer!.getSignatures();
@@ -109,5 +131,43 @@ test('键盘：PageDown/PageUp、Home/End、Ctrl+F、Escape', async ({ page, iss
   await page.locator('.ofd-toolbar__page-input').focus();
   await page.keyboard.press('PageDown');
   expect((await viewState(page)).pageNumber).toBe(1);
+  await expectNoPageErrors(page, issues);
+});
+
+test('沉浸式全屏 fallback 下 Escape 退出且不与侧栏冲突', async ({ page, issues }) => {
+  await openViewer(page, FIXTURES.multi);
+  await dismissFindbar(page);
+  // 模拟浏览器缺少原生全屏能力，强制走沉浸式 fallback。
+  await page.evaluate(() => {
+    Object.defineProperty(window.__viewer!.getElements().root, 'requestFullscreen', {
+      configurable: true,
+      value: undefined,
+    });
+  });
+  const fullscreen = () =>
+    page.evaluate(() => window.__viewer!.getState().view.fullscreen);
+  const sidebar = () =>
+    page.evaluate(() => window.__viewer!.getState().view.sidebarView);
+
+  await page.locator('[data-ofd-control="fullscreen"]').click();
+  await expect.poll(fullscreen).toBe(true);
+  await expect(page.locator('.ofd-viewer')).toHaveAttribute('data-fullscreen-fallback', 'true');
+
+  // 第一次 Esc 只关侧栏，不退出 fallback。
+  await page.locator('[data-ofd-control="sidebar"]').click();
+  await expect.poll(sidebar).toBe('thumbnails');
+  await page.keyboard.press('Escape');
+  await expect.poll(sidebar).toBeNull();
+  expect(await fullscreen()).toBe(true);
+
+  // 第二次 Esc 退出 fallback，并同步 data/class/state。
+  await page.keyboard.press('Escape');
+  await expect.poll(fullscreen).toBe(false);
+  await expect(page.locator('.ofd-viewer')).toHaveAttribute('data-fullscreen-fallback', 'false');
+  expect(
+    await page.locator('.ofd-viewer').evaluate((element) =>
+      element.classList.contains('ofd-viewer--fullscreen-fallback'),
+    ),
+  ).toBe(false);
   await expectNoPageErrors(page, issues);
 });

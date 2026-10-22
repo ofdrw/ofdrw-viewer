@@ -277,6 +277,22 @@ export class OFDViewer implements UIShellHost {
       this.commit();
     }
   };
+  /**
+   * 沉浸式回退下用 document Escape 退出；原生全屏由浏览器处理。
+   *
+   * 对话框的 FocusTrap 会在捕获阶段 stopPropagation，因此不会误退出；
+   * 侧栏打开时先交给侧栏处理，避免同一次按键既关侧栏又退全屏。
+   */
+  private readonly onFullscreenFallbackEscape = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || event.defaultPrevented) return;
+    if (!this.root.classList.contains('ofd-viewer--fullscreen-fallback')) return;
+    if (this.state.view.sidebarView !== null) {
+      this.closeSidebar();
+      return;
+    }
+    event.preventDefault();
+    void this.setFullscreen(false);
+  };
 
   /**
    * @param options 容器、来源与阅读器选项。
@@ -364,11 +380,13 @@ export class OFDViewer implements UIShellHost {
     this.applyFeatureStates();
     this.root.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && this.state.view.sidebarView !== null) {
+        event.preventDefault();
         this.closeSidebar();
       }
     });
     if (typeof this.ownerDocument.addEventListener === 'function') {
       this.ownerDocument.addEventListener('fullscreenchange', this.onFullscreenChange);
+      this.ownerDocument.addEventListener('keydown', this.onFullscreenFallbackEscape);
     }
     this.ready = this.open(this.options.source);
   }
@@ -628,6 +646,7 @@ export class OFDViewer implements UIShellHost {
     this.resizeObserver?.disconnect();
     window.removeEventListener('resize', this.onWindowResize);
     this.ownerDocument.removeEventListener('fullscreenchange', this.onFullscreenChange);
+    this.ownerDocument.removeEventListener('keydown', this.onFullscreenFallbackEscape);
     if (this.scrollFrame !== null) cancelAnimationFrame(this.scrollFrame);
     if (this.reflowFrame !== null) cancelAnimationFrame(this.reflowFrame);
     for (const cleanup of this.extensionCleanups.splice(0)) this.safeCleanup(cleanup);
