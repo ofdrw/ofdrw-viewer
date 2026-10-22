@@ -46,6 +46,7 @@ import type {
   ResourceLimits,
 } from './types';
 import type { OFDPage } from './page';
+import type { OFDDocumentApi } from './ui-types';
 import type { FontInputLoader } from '../font/provider';
 import type { FontFaceSet } from '../font/types';
 import type { PageAreaCandidate } from '../model/page-area';
@@ -1625,6 +1626,13 @@ export class OFDDocument {
     };
   }
 }
+
+/**
+ * UI API 类型声明合并。
+ *
+ * 方法实现由后续任务落到 `OFDDocument`；本任务只冻结签名，不改变现有行为。
+ */
+export interface OFDDocument extends OFDDocumentApi {}
 
 /**
  * 空的资源定义集合；用于单个资源 XML 解析失败时保持集合顺序。

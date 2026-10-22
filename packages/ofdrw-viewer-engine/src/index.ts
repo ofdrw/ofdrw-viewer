@@ -50,6 +50,33 @@ export type {
   ResourceLimits,
   ViewportOptions,
 } from './api/types';
+export type {
+  BookmarkItem,
+  DestinationType,
+  DocumentDestination,
+  DocumentMetadata,
+  OFDDocumentApi,
+  OFDPageApi,
+  OutlineNode,
+  PageInfo,
+  PageInfoOptions,
+  PagePrepareOptions,
+  SignatureEntryInfo,
+  SignatureProvider,
+  SignatureReferenceInfo,
+  SignatureStampInfo,
+  SignedValueFile,
+  TextChar,
+  TextContent,
+  TextContentOptions,
+  TextFontInfo,
+  TextItem,
+  TextLayer,
+  TextPoint,
+  TextQuad,
+  TextRect,
+  TextUnit,
+} from './api/ui-types';
 export { DEFAULT_DPI, MM_PER_INCH, getPageTransform, getPageViewport } from './api/viewport';
 
 // ---------------------------------------------------------------------------

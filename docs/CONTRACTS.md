@@ -116,6 +116,12 @@ platform ──→ common（接口独立，供 api/font/image 注入）
 OFDDocument.open(options: OFDOpenOptions): Promise<OFDDocument>
 OFDDocument#pageCount: number
 OFDDocument#getPage(index: number): Promise<OFDPage>
+OFDDocument#getPageInfos(options?: PageInfoOptions): Promise<readonly PageInfo[]>
+OFDDocument#getOutline(options?: { signal?: AbortSignal }): Promise<readonly OutlineNode[]>
+OFDDocument#getBookmarks(options?: { signal?: AbortSignal }): Promise<readonly BookmarkItem[]>
+OFDDocument#getSignatureEntries(options?: { signal?: AbortSignal }): Promise<readonly SignatureEntryInfo[]>
+OFDDocument#getSignedValue(signatureId: string, options?: { signal?: AbortSignal }): Promise<SignedValueFile | undefined>
+OFDDocument#getMetadata(options?: { signal?: AbortSignal }): Promise<DocumentMetadata>
 OFDDocument#close(): Promise<void>
 
 OFDPage#index: number
@@ -123,6 +129,8 @@ OFDPage#getSize(): PageSize                 // mm
 OFDPage#getViewport(options?: ViewportOptions): Viewport // px
 OFDPage#render(params: PageRenderParameters): RenderTask
 OFDPage#exportImage(options?: PageImageExportOptions): Promise<PageImageResult>
+OFDPage#getTextContent(options?: TextContentOptions): Promise<TextContent>
+OFDPage#prepare(options?: PagePrepareOptions): Promise<void>
 
 RenderTask#promise: Promise<void>
 RenderTask#cancel(): void
@@ -144,7 +152,7 @@ WARNING_CODES
 OFDError、isOFDError、toOFDError
 ```
 
-公共类型包括 `OFDOpenOptions`、`OFDSource`、`PageRenderParameters`、`PageImageExportOptions`、`PageImageResult`、`PageImageFormat`、`PageImageMime`、`CanvasImageEncodeSource`、`EncodeImage`、`ResourceLimits`、`CacheOptions`、`FontInput`、`FontProvider`、`ImageDecoderPlugin`、`Renderer`/`Canvas2DLike`/`CanvasRenderingContext2DLike`、`Viewport`、`Matrix`、`Box`、`DrawStyle`、`PaintSpec`、`ResolvedPaint`、`PatternSpec`、`PatternPaint`、`DisplayList`、`DrawCommand`、`OFDWarning`、`OFDErrorCode`、`WarningCode` 等。
+公共类型包括 `OFDOpenOptions`、`OFDSource`、`PageRenderParameters`、`PageImageExportOptions`、`PageImageResult`、`PageImageFormat`、`PageImageMime`、`CanvasImageEncodeSource`、`EncodeImage`、`ResourceLimits`、`CacheOptions`、`FontInput`、`FontProvider`、`ImageDecoderPlugin`、`Renderer`/`Canvas2DLike`/`CanvasRenderingContext2DLike`、`Viewport`、`Matrix`、`Box`、`DrawStyle`、`PaintSpec`、`ResolvedPaint`、`PatternSpec`、`PatternPaint`、`DisplayList`、`DrawCommand`、`OFDWarning`、`OFDErrorCode`、`WarningCode` 等；UI API 类型见 §5.3（`PageInfo`、`OutlineNode`、`SignatureEntryInfo`、`SignedValueFile`、`DocumentMetadata`、`TextContent` 等）。
 
 **不导出** `CanvasFactory`（渲染器内部结构）。自定义画布的两个公共入口：
 
@@ -216,6 +224,57 @@ exportImage(options?: PageImageExportOptions): Promise<PageImageResult>;
 - **close**：调用前文档已关闭抛 `OFD_CLOSED`；导出期间 close 与 render 竞争时按现有 close 语义以 `OFD_CLOSED` 拒绝，绝不返回编码结果。`close()` 可重复。
 - **错误**：`page.render` 的尺寸/像素/资源限制/取消错误原样传播；编码阶段不新增错误码，不裸抛第三方异常。结果 `data` 归调用方，engine 不缓存。
 - **导出面**：`PageImageExportOptions`、`PageImageResult`、`PageImageFormat`、`PageImageMime`、`CanvasImageEncodeSource`、`EncodeImage` 与 `OFDPage#exportImage` 属于 T15b 实现面；`src/index.ts` 由 T12/T15b 在不破坏既有导出的前提下追加。
+
+### 5.3 UI API 类型与签名（v1.0-r9）
+
+本组类型依据 `docs/ofdrw-viewer-ui-engine-api.md` 与 `docs/text-content-api.md`，由 `src/api/ui-types.ts` 定义并从 `src/index.ts` 导出；t67/t68/t70/t71 只做实现，t72 统一同步公开 API 文档。
+
+**边界**：引擎只读取 OFD XML 与 `SignedValue.dat` 原始字节；不解析 ASN.1/DER/X.509/CMS、不验签、不判断签章有效性；`Seal.esl` 不进入公开 API。`getSignatureEntries` 只返回 `Signature.xml` 元数据；`getSignedValue` 只返回 `SignedValue.dat` 字节。
+
+```ts
+// P0/P1 文档与页面
+interface PageInfoOptions { start?: number; count?: number; signal?: AbortSignal }
+interface PageInfo { index; widthMm; heightMm; xMm?; yMm?; source?: 'page'|'template'|'default' }
+type DestinationType = 'XYZ' | 'Fit' | 'FitH' | 'FitV' | 'FitR';
+interface DocumentDestination { type; pageIndex; leftMm?; topMm?; rightMm?; bottomMm?; zoom? }
+interface OutlineNode { title; expanded?; children: readonly OutlineNode[]; dest? }
+interface BookmarkItem { name; dest? }
+interface SignatureProvider { name?; company?; version? }
+interface SignatureReferenceInfo { fileRef }
+interface SignatureStampInfo { id?; pageId; pageIndex?; boundary: Box; clip?: Box }
+interface SignatureEntryInfo { id; type; baseLoc; provider?; signatureDateTime?; references; stamps; signedValuePath?; hasSignedValue }
+interface SignedValueFile { signatureId; path; data: Uint8Array; byteLength }
+interface DocumentMetadata { version; pageCount; packageSize?; title?; author?; subject?; abstract?; creationDate?; modDate?; creator?; creatorVersion?; keywords?; docId?; customData? }
+interface PagePrepareOptions { signal?: AbortSignal }
+
+// P0 文本层：全部几何单位 px，原点 PhysicalBox 左上角，y 向下
+type TextUnit = 'px';
+interface TextPoint { x; y }
+interface TextRect { x; y; width; height }
+type TextQuad = readonly [TextPoint, TextPoint, TextPoint, TextPoint];
+interface TextFontInfo { resourceId; family; postscriptName?; weightClass?; italic }
+type TextLayer = 'template' | 'page' | 'annotation';
+interface TextItem { order; objectId?; templateId?; annotationId?; blockId?; layer; layerType; zOrder?; visible; alpha; text; font; size; transform; origin; rect; quad; advance; charCount; chars? }
+interface TextChar { text; codePoint; glyphId?; faceKey?; fallback; origin; advance; rect; quad; approximate }
+interface TextContent { pageIndex; dpi; unit; pageWidth; pageHeight; items: TextItem[]; itemCount; charCount; truncated: { items; chars } }
+interface TextContentOptions { dpi?; includeChars?; includeAnnotations?; includeInvisible?; layerOrder?; signal?; maxTextItems?; maxTextChars? }
+```
+
+`OFDDocumentApi`/`OFDPageApi` 通过 class/interface 声明合并挂到 `OFDDocument`/`OFDPage`，方法体由后续任务实现：
+
+- `OFDDocument#getPageInfos(options?)`：页尺寸/页区域，mm；不加载页面内容。
+- `OFDDocument#getOutline(options?)` / `getBookmarks(options?)`：保持 XML 顺序；无结果返回空数组。
+- `OFDDocument#getSignatureEntries(options?)` / `getSignedValue(id, options?)`：只读签章 XML/原始字节。
+- `OFDDocument#getMetadata(options?)`：文档属性，日期保留原文。
+- `OFDPage#getTextContent(options?)`：px 文本层，复用 `layoutText`；不调用 Canvas 文字 API。
+- `OFDPage#prepare(options?)`：预取页面资源，不创建 canvas、不绘制。
+
+**缓存与错误**：
+
+- `CacheOptions.textPages?: number`：文本层 mm 数据缓存页数，默认 4；r9 只冻结字段，t71 实现消费。现有缓存字段/行为不变。
+- 取消统一 `OFD_ABORTED`，关闭后统一 `OFD_CLOSED`；可选结果缺失（无大纲/书签/签章/附件）返回空数组/`undefined`，不是错误。
+- 文本超限按页截断并走 `W_TEXT_ITEM_LIMIT`/`W_TEXT_CHAR_LIMIT`（实现阶段同步 warning 码），不抛错。
+- 本组方法尚未实现；在 t67/t68/t70/t71 落地前不得声称运行时可用；t72 补公开 API 文档。
 
 ## 6. 单元/分层签名索引
 
@@ -586,6 +645,7 @@ interface ResourceIndex {
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
+| v1.0-r9 | T17a | 冻结 ofdrw-viewer-ui 引擎 API：PageInfo/Outline/Bookmark/签章 XML 元数据/SignedValueFile/DocumentMetadata/PagePrepareOptions/TextContent 全家族；`CacheOptions.textPages?` 默认 4；ASN.1/Seal.esl 不进入公共 API。t67/t68/t70/t71 实现，t72 补文档。 |
 | v1.0-r8 | T15a | 新增 `OFDPage.exportImage(options)` 与 `OFDOpenOptions.encodeImage(canvas,format,quality)`；整页 + dpi + 白底/PNG 透明；浏览器默认 convertToBlob/toBlob，Node 注入，不新增编码依赖；错误码复用 OFD_CANVAS_TOO_LARGE/OFD_CANVAS_SIZE_MISMATCH/OFD_RENDERER_UNSUPPORTED/OFD_ABORTED/OFD_CLOSED。 |
 | v1.0-r7 | T14m | 新增可选 `OFDOpenOptions.createCanvas`（`Canvas2DLike`），用于默认 H5 渲染器与矢量签章嵌套 OFD 离屏渲染；未注入保持 document/OffscreenCanvas 兜底。r8 起也供 `exportImage` 使用。 |
 | v1.0-r6 | T6c 复审 | 修正 §7.9 模板 `ZOrder` 口径：页面 `Template/@ZOrder` 优先，页面引用缺省 `Background`（标准/设计 10.4）；`Body` 仅显式使用 |

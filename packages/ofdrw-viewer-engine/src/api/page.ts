@@ -13,6 +13,7 @@ import type {
   PageRenderParameters,
   ViewportOptions,
 } from './types';
+import type { OFDPageApi } from './ui-types';
 import { OFDError } from '../errors';
 import { createRenderTask } from './render-task';
 import type { RenderTask } from './render-task';
@@ -127,3 +128,10 @@ export class OFDPage {
     return this.exportDriver(options ?? {});
   }
 }
+
+/**
+ * UI API 类型声明合并。
+ *
+ * `getTextContent`/`prepare` 的实现由 t68/t71 落到 `OFDPage`；本任务只冻结签名。
+ */
+export interface OFDPage extends OFDPageApi {}

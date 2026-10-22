@@ -54,6 +54,8 @@ export interface CacheOptions {
   glyphCount: number;
   /** 页面模型缓存页数，默认 8。 */
   pageModels: number;
+  /** 文本层 mm 数据缓存页数，默认 4；t71 实现消费。 */
+  textPages?: number;
 }
 
 /** 资源限制默认值（设计方案 7.4 / 15.1）。 */
@@ -77,6 +79,7 @@ export const DEFAULT_CACHE_OPTIONS: Readonly<CacheOptions> = Object.freeze({
   imageBytes: 64 * 1024 * 1024,
   glyphCount: 20_000,
   pageModels: 8,
+  textPages: 4,
 });
 
 /** 文档字节来源；Node/微信来源本轮只保留类型，Web 实现 arraybuffer/blob/url/custom。 */
