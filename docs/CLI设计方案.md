@@ -1,7 +1,7 @@
 # OFD 转图片与空间文本 CLI（ofdrw-viewer-cli）设计方案
 
 > 状态：设计定稿 v1.2（2026-10-22）
-> 定位：`ofdrw-viewer-engine` 的 Node CLI 子包；消费 engine 公共 API，输出页面图片，并可通过 `--text` 额外导出带坐标的文本；发布为多平台自包含可执行文件，并配套仓库内 Agent skill。
+> 定位：`@ofdrw/ofdrw-viewer-engine` 的 Node CLI 子包；消费 engine 公共 API，输出页面图片，并可通过 `--text` 额外导出带坐标的文本；发布为多平台自包含可执行文件，并配套仓库内 Agent skill。
 > 依据：《OFD 渲染引擎设计方案》v0.4 第 6.1/14.4/15 节、[`docs/text-content-api.md`](./text-content-api.md)。
 
 ## 1. 背景与目标
@@ -52,7 +52,7 @@ OFD 文件
 
 ## 3. 与 engine 的边界
 
-CLI 只能从 `ofdrw-viewer-engine` 包根导入类型与 API，禁止跨包相对路径引用 engine 内部模块。
+CLI 只能从 `@ofdrw/ofdrw-viewer-engine` 包根导入类型与 API，禁止跨包相对路径引用 engine 内部模块。
 
 | CLI 需要的能力 | 来源 |
 | --- | --- |

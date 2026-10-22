@@ -21,8 +21,8 @@ export default defineConfig({
   root: repoRoot,
   resolve: {
     alias: {
-      'ofdrw-viewer-engine': engineEntry,
-      'ofdrw-viewer-ui': packageEntry,
+      '@ofdrw/ofdrw-viewer-engine': engineEntry,
+      '@ofdrw/ofdrw-viewer-ui': packageEntry,
     },
   },
   test: {

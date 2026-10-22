@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadImage } from '@napi-rs/canvas';
-import { OFDDocument } from 'ofdrw-viewer-engine';
+import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
 import { main } from '../../src/cli.js';
 import { EXIT_CODES } from '../../src/errors.js';
 import { NodeFileByteSource } from '../../src/node-file-source.js';

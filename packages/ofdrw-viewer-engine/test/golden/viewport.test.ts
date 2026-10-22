@@ -10,7 +10,7 @@ import {
   MM_PER_INCH,
   getPageTransform,
   getPageViewport,
-} from 'ofdrw-viewer-engine';
+} from '@ofdrw/ofdrw-viewer-engine';
 import { PAPER_SIZES_MM } from '../fixtures';
 
 describe('getPageViewport', () => {

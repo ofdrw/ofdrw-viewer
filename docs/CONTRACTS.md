@@ -1,6 +1,6 @@
 # OFD 渲染引擎跨模块契约（v1.0，T1 冻结）
 
-> 适用范围：`ofdrw-viewer-engine` v1（Web 优先）。
+> 适用范围：`@ofdrw/ofdrw-viewer-engine` v1（Web 优先）。
 > 依据：`docs/OFD渲染引擎设计方案.md` v0.4 第 6/8/10/14/15/19 节。
 > 冻结时间：T1 完成时。冻结后本文件与下列公共契约文件只读；变更必须先由架构负责人（architect）评估并同步 captain。
 > 最近修订：v1.0-r10（2026-10-22，T18e/P2）。
@@ -37,11 +37,11 @@
 
 ## 2. 包、目录与命令
 
-- 包名只允许 `ofdrw-viewer-engine`。禁止 `@ofdrw/engine`、`ofdrw-engine`、`ofdrw/engine` 等别名。
+- 包名统一使用 `@ofdrw/` 作用域：`@ofdrw/ofdrw-viewer-engine`、`@ofdrw/ofdrw-viewer-ui`、`@ofdrw/ofdrw-viewer-cli`；禁止无作用域或简写别名（如 `ofdrw-viewer-engine`、`ofdrw-engine`、`@ofdrw/engine`）。目录名保持 `packages/ofdrw-viewer-*`。
 - workspace：`packages/*`、`examples/*`。
 - T1 架构 smoke 测试位于仓库根 `test/smoke/`（任务契约路径）；各开发任务的单测位于 `packages/ofdrw-viewer-engine/test/<module>/`（如 `test/common`、`test/model`）；QA 黄金图/回归位于 `packages/ofdrw-viewer-engine/test/golden|e2e|acceptance/`。
 - vitest 根为仓库根，`include` 同时覆盖 `test/**` 与 `packages/ofdrw-viewer-engine/test/**`；CLI 过滤 `test/smoke` 可命中两者。
-- 测试通过包名 `ofdrw-viewer-engine` 引入源码（vitest alias 指向 `src/index.ts`）。
+- 测试通过包名 `@ofdrw/ofdrw-viewer-engine` 引入源码（vitest alias 指向 `src/index.ts`）。
 - 测试产物写入仓库根 `test/.artifacts/<task-id>/`（或对应包内 `test/.artifacts/`），不得提交。
 - 根命令：
 

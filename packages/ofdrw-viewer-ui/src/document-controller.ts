@@ -8,7 +8,7 @@
  * 结构等价的内存文档，避免 jsdom 中依赖真实 canvas。
  */
 
-import { OFDDocument } from 'ofdrw-viewer-engine';
+import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
 import type {
   BookmarkItem,
   DocumentMetadata,
@@ -26,7 +26,7 @@ import type {
   TextContent,
   TextContentOptions,
   Viewport,
-} from 'ofdrw-viewer-engine';
+} from '@ofdrw/ofdrw-viewer-engine';
 import type { ViewerWarning } from './state';
 import type { ViewerSource } from './types';
 import { OFDViewerError } from './errors';

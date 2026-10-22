@@ -1,12 +1,12 @@
 /**
- * `ofdrw-viewer-ui` 公共类型。
+ * `@ofdrw/ofdrw-viewer-ui` 公共类型。
  *
  * 本文件只放跨模块共享的公共契约：来源、缩放/旋转、命令选项、事件、签章详情等。
  * 内部实现类型（PageView、RenderQueue、FindController 状态等）不得从这里导出。
  * 引擎已经公开的页面/大纲/书签/签章/文本类型直接复用，避免 UI 另造模型。
  */
 
-import type { PageImageFormat, SignatureEntryInfo } from 'ofdrw-viewer-engine';
+import type { PageImageFormat, SignatureEntryInfo } from '@ofdrw/ofdrw-viewer-engine';
 import type { ViewerFeatureStates } from './features';
 import type {
   Rotation,
@@ -37,7 +37,7 @@ export type {
   TextItem,
   TextQuad,
   TextRect,
-} from 'ofdrw-viewer-engine';
+} from '@ofdrw/ofdrw-viewer-engine';
 
 // ---------------------------------------------------------------------------
 // 功能开关与状态

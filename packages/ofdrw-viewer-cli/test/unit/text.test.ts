@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { TextContent, TextItem } from 'ofdrw-viewer-engine';
+import type { TextContent, TextItem } from '@ofdrw/ofdrw-viewer-engine';
 import { buildTextRecords } from '../../src/text.js';
 
 /** 构造只包含 text/rect 的文本项，其余字段由 engine 提供。 */

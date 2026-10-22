@@ -12,7 +12,7 @@ import type {
   OutlineNode,
   PageInfo,
   SignatureEntryInfo,
-} from 'ofdrw-viewer-engine';
+} from '@ofdrw/ofdrw-viewer-engine';
 import { createDefaultFeatureStates } from './features';
 import type { ViewerFeatureStates } from './features';
 

@@ -72,16 +72,16 @@ jobs:
 
       - name: 构建 engine 与普通 CLI
         run: |
-          pnpm --filter ofdrw-viewer-engine build
-          pnpm --filter ofdrw-viewer-cli build
+          pnpm --filter @ofdrw/ofdrw-viewer-engine build
+          pnpm --filter @ofdrw/ofdrw-viewer-cli build
 
       - name: 类型检查与测试
         run: |
-          pnpm --filter ofdrw-viewer-cli typecheck
-          pnpm --filter ofdrw-viewer-cli test
+          pnpm --filter @ofdrw/ofdrw-viewer-cli typecheck
+          pnpm --filter @ofdrw/ofdrw-viewer-cli test
 
       - name: 构建 SEA 可执行文件
-        run: pnpm --filter ofdrw-viewer-cli build:sea
+        run: pnpm --filter @ofdrw/ofdrw-viewer-cli build:sea
 
       - name: 冒烟测试（Unix）
         if: runner.os != 'Windows'

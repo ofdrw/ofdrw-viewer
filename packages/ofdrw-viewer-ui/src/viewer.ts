@@ -11,7 +11,7 @@ import type {
   PageImageFormat,
   PageInfo,
   SignatureEntryInfo,
-} from 'ofdrw-viewer-engine';
+} from '@ofdrw/ofdrw-viewer-engine';
 import {
   DocumentController,
   type EngineDocument,

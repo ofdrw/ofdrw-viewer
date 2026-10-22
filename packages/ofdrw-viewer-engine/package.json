@@ -1,7 +1,6 @@
 {
-  "name": "ofdrw-viewer-engine",
+  "name": "@ofdrw/ofdrw-viewer-engine",
   "version": "0.1.0",
-  "private": true,
   "description": "平台无关的 OFD 页面渲染引擎",
   "license": "MIT",
   "type": "module",
@@ -21,6 +20,27 @@
   "sideEffects": false,
   "engines": {
     "node": ">=22"
+  },
+  "keywords": [
+    "ofd",
+    "ofdrw",
+    "ofd-render",
+    "document",
+    "renderer",
+    "canvas",
+    "typescript"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ofdrw/ofdrw-viewer.git",
+    "directory": "packages/ofdrw-viewer-engine"
+  },
+  "homepage": "https://github.com/ofdrw/ofdrw-viewer#readme",
+  "bugs": {
+    "url": "https://github.com/ofdrw/ofdrw-viewer/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsup",

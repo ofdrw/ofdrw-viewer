@@ -1,12 +1,12 @@
-# ofdrw-viewer-ui 所需引擎 API 与功能说明
+# @ofdrw/ofdrw-viewer-ui 所需引擎 API 与功能说明
 
 | 项 | 内容 |
 |---|---|
 | 状态 | 已确认并实现（P0/P1 + P2 权限/附件/导出旋转；renderRegion 暂不实现） |
 | 版本 | 0.3 |
 | 日期 | 2026-10-22 |
-| 使用方 | `ofdrw-viewer-ui` |
-| 提供方 | `ofdrw-viewer-engine` |
+| 使用方 | `@ofdrw/ofdrw-viewer-ui` |
+| 提供方 | `@ofdrw/ofdrw-viewer-engine` |
 | 关联设计 | [ofdrw-viewer-ui 设计方案](./ofdrw-viewer-ui设计方案.md) |
 | 核心边界 | 引擎只负责**从 OFD 容器读取数据、结构化为对象信息、返回原始字节**；不解析电子签章，不做 ASN.1/X.509/证书链/签名值/时间戳验证，不负责 UI |
 
@@ -36,7 +36,7 @@
   SignedValue.dat 原始字节
         │
         ▼
-ofdrw-viewer-ui 的 SignatureService：
+@ofdrw/ofdrw-viewer-ui 的 SignatureService：
   ASN.1 解析 SES_Signature
   从 TBS_Sign.eseal 取印章信息
   X.509 证书解析

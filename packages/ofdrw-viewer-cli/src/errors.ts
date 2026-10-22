@@ -5,7 +5,7 @@
  * 0 成功；1 用法/参数/路径错误；2 文档级失败；3 页级失败；130 用户中断。
  */
 
-import { isOFDError } from 'ofdrw-viewer-engine';
+import { isOFDError } from '@ofdrw/ofdrw-viewer-engine';
 
 /** CLI 进程退出码常量。 */
 export const EXIT_CODES = {

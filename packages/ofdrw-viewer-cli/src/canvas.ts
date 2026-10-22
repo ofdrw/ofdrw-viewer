@@ -9,7 +9,7 @@
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import type * as CanvasModule from '@napi-rs/canvas';
-import type { Canvas2DLike } from 'ofdrw-viewer-engine';
+import type { Canvas2DLike } from '@ofdrw/ofdrw-viewer-engine';
 import type { ImageFormat } from './output.js';
 
 const require = createRequire(import.meta.url);

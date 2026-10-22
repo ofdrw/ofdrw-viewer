@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PageInfo } from 'ofdrw-viewer-engine';
+import type { PageInfo } from '@ofdrw/ofdrw-viewer-engine';
 
 const engineMocks = vi.hoisted(() => ({
   open: vi.fn(),
 }));
 
-vi.mock('ofdrw-viewer-engine', () => ({
+vi.mock('@ofdrw/ofdrw-viewer-engine', () => ({
   OFDDocument: { open: engineMocks.open },
   OFDError: class extends Error {},
   isOFDError: () => false,

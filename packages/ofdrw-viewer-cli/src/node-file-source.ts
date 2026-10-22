@@ -8,8 +8,8 @@
 
 import { open } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
-import { OFDError } from 'ofdrw-viewer-engine';
-import type { ByteSource } from 'ofdrw-viewer-engine';
+import { OFDError } from '@ofdrw/ofdrw-viewer-engine';
+import type { ByteSource } from '@ofdrw/ofdrw-viewer-engine';
 import { CliError, EXIT_CODES, isCliError, isErrnoError } from './errors.js';
 
 /** 随机读取句柄的最小接口；`fs.FileHandle` 满足该接口。 */

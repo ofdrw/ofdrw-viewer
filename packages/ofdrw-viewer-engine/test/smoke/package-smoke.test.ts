@@ -14,7 +14,7 @@ import {
   OFDPage,
   RenderTask,
   getPageViewport,
-} from 'ofdrw-viewer-engine';
+} from '@ofdrw/ofdrw-viewer-engine';
 
 describe('package smoke', () => {
   it('通过包名解析到公共入口', () => {

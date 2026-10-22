@@ -1117,7 +1117,7 @@ class DenseOfdBuilder:
             "<ofd:DocBody><ofd:DocInfo>"
             f"<ofd:DocID>{doc_id}</ofd:DocID>"
             f"<ofd:Title>{escape(self.title)}</ofd:Title>"
-            "<ofd:Creator>ofdrw-view dense-text fixture</ofd:Creator>"
+            "<ofd:Creator>ofdrw-viewer dense-text fixture</ofd:Creator>"
             "<ofd:CreatorVersion>1.0</ofd:CreatorVersion>"
             f"<ofd:CreationDate>{self.created}</ofd:CreationDate>"
             "</ofd:DocInfo>"

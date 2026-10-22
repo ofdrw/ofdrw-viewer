@@ -14,7 +14,7 @@
     "types": ["node"],
     "baseUrl": ".",
     "paths": {
-      "ofdrw-viewer-engine": ["../ofdrw-viewer-engine/dist/index.d.ts"]
+      "@ofdrw/ofdrw-viewer-engine": ["../ofdrw-viewer-engine/dist/index.d.ts"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx"]

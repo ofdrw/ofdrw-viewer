@@ -1,11 +1,11 @@
-# ofdrw-view
+# ofdrw-viewer
 
 OFD 页面渲染引擎。
 
 ## 目录结构
 
 ```
-ofdrw-view/
+ofdrw-viewer/
   package.json                      # 项目配置
   docs/
     OFD渲染引擎设计方案.md
@@ -26,6 +26,16 @@ ofdrw-view/
         image/                      # JBIG2/TIFF 等图片解码
         platform/                   # 宿主注入的平台接口
 ```
+
+## 子包
+
+三个子包统一使用 `@ofdrw` npm 作用域，目录名保持 `ofdrw-viewer-*`：
+
+| 包名 | 目录 | 说明 |
+| --- | --- | --- |
+| `@ofdrw/ofdrw-viewer-engine` | `packages/ofdrw-viewer-engine` | 平台无关的 OFD 页面渲染引擎 |
+| `@ofdrw/ofdrw-viewer-ui` | `packages/ofdrw-viewer-ui` | 框架无关的 OFD 阅读器 UI |
+| `@ofdrw/ofdrw-viewer-cli` | `packages/ofdrw-viewer-cli` | OFD 转图片命令行工具（`ofdrw-viewer-cli` 命令） |
 
 ## OFD 转图片 CLI（ofdrw-viewer-cli）
 
@@ -123,3 +133,8 @@ Agent skill 源文件位于 `packages/ofdrw-viewer-cli/skills/ofdrw-viewer-cli/S
 - 根目录只放项目配置、脚本与文档，不放引擎实现。
 - 引擎公共 API 只从 `packages/ofdrw-viewer-engine/src/index.ts` 导出。
 - `docs/`、`references/`、`ofd_pdf_match/` 不进入 engine 包。
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE) 开源。
+Copyright (c) 2026 Quan Guanyu

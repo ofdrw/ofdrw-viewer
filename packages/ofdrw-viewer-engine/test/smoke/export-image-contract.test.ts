@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import type { OFDOpenOptions as PublicOFDOpenOptions } from 'ofdrw-viewer-engine';
+import type { OFDOpenOptions as PublicOFDOpenOptions } from '@ofdrw/ofdrw-viewer-engine';
 import type {
   EncodeImage,
   OFDOpenOptions,

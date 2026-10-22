@@ -22,7 +22,7 @@ export default {
   base: './',
   resolve: {
     alias: {
-      'ofdrw-viewer-engine': engineEntry,
+      '@ofdrw/ofdrw-viewer-engine': engineEntry,
     },
   },
   server: {

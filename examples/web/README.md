@@ -1,6 +1,6 @@
 # examples/web — OFD 渲染引擎最小 Web 验证页
 
-用于在真实浏览器里验证 `ofdrw-viewer-engine` 公共 API 的最小页面，不是阅读器完整 UI。
+用于在真实浏览器里验证 `@ofdrw/ofdrw-viewer-engine` 公共 API 的最小页面，不是阅读器完整 UI。
 
 ## 运行
 
@@ -50,7 +50,7 @@ WEB_PORT=5188 node examples/web/check.mjs
 
 ## 实现说明
 
-- Vite 直接 alias `ofdrw-viewer-engine` 到 `packages/ofdrw-viewer-engine/src/index.ts`，因此不依赖预先 `pnpm install` 的 workspace link，也不修改 engine `dist`。
+- Vite 直接 alias `@ofdrw/ofdrw-viewer-engine` 到 `packages/ofdrw-viewer-engine/src/index.ts`，因此不依赖预先 `pnpm install` 的 workspace link，也不修改 engine `dist`。
 - 不依赖 CDN、外部字体或远程图片；内置示例仅 5 KB。
 - 页面不自动播放或自动加载示例；所有加载都由用户操作触发。
 - 取消/翻页时页面会取消上一个 `RenderTask`，并等待其 promise 落定，避免同 Canvas 任务堆积。

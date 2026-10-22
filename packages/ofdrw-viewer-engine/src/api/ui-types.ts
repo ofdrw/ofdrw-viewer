@@ -1,5 +1,5 @@
 /**
- * ofdrw-viewer-ui 所需引擎 API 的公共类型（契约 r9）。
+ * @ofdrw/ofdrw-viewer-ui 所需引擎 API 的公共类型（契约 r9）。
  *
  * 本文件只定义类型与 API 形状，不包含 XML/ASN.1 解析或读取实现。实现分别由
  * t67/t68/t70/t71 落到 `OFDDocument`/`OFDPage`；ASN.1、证书和 `Seal.esl` 的

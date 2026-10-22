@@ -5,7 +5,7 @@
  * 保留每项文本与轴对齐包围盒，输出扁平数组，便于直接叠加到同页图片。
  */
 
-import type { TextContent } from 'ofdrw-viewer-engine';
+import type { TextContent } from '@ofdrw/ofdrw-viewer-engine';
 
 /** 单条空间文本记录；仅包含设计约定的五个字段。 */
 export interface TextRecord {

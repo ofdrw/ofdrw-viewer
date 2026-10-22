@@ -11,7 +11,7 @@
  * - 页间 gap 固定，首尾有 padding。
  */
 
-import type { PageInfo } from 'ofdrw-viewer-engine';
+import type { PageInfo } from '@ofdrw/ofdrw-viewer-engine';
 import type { Rotation, VisiblePageRange } from './state';
 
 /** 毫米到 96 DPI CSS 像素的换算系数（1 mm = 96 / 25.4 px）。 */

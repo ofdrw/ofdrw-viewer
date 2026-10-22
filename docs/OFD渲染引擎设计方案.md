@@ -3,7 +3,7 @@
 > 版本：0.5-r10（设计稿，按 pdf.js 形态 + Monorepo 子包 + Renderer 扩展点 + 纯页面内容调整）
 > 日期：2026-10-22  
 > 技术栈：TypeScript + Canvas 2D + fontkit  
-> 仓库：Monorepo，当前唯一子包 `ofdrw-viewer-engine`  
+> 仓库：Monorepo，当前唯一子包 `@ofdrw/ofdrw-viewer-engine`  
 > 范围：只做“把 OFD 页面画到 Canvas”的 engine 库，不含阅读器 UI、任何端实现（Web/Node/Electron/小程序宿主）、编辑、签章密码学验证；v1 包含注释/签章外观的静态渲染
 
 ---
@@ -15,9 +15,9 @@
 > 0.5-r9 变更（2026-10-22）：落地并文档化阅读器 UI API（P0/P1）：PageInfo/Outline/Bookmark/签章 XML 元数据/SignedValue/DocumentMetadata/prepare/TextContent；不解析 ASN.1/证书、不暴露 Seal.esl；P2 权限/附件/局部渲染/导出旋转延后。
 > 0.5-r10 变更（2026-10-22）：记录非标准兼容扩展 `Clips@TransFlag`（缺省 false=裁剪区不受外部对象 CTM 影响；true=受外部 CTM 影响、在对象 CTM 后应用），并明确其优先于 t48 图片 manual 逆 CTM 兼容路径；`CT_Clip` 标准 schema 无此属性，不作为标准能力。
 > 0.5-r10 P2 变更（2026-10-22）：权限只读声明不做 DRM、附件元信息/原始字节不解析内容、`exportImage.rotation` 仅导出方向；`page.renderRegion` 按用户决定不实现/不导出。
-> 0.4 变更：采用 Monorepo 子包 `ofdrw-viewer-engine`；`Renderer` 改为 `beginGroup/endGroup`，H5 的 `CanvasFactory`/scratch 完全内部化，公开 API 不再有 `RenderSurface`；`fallbackFonts` 更名为 `supplementaryFonts`；删除 engine 级独立块栅格缓存，改为复用 display list。
+> 0.4 变更：采用 Monorepo 子包 `@ofdrw/ofdrw-viewer-engine`；`Renderer` 改为 `beginGroup/endGroup`，H5 的 `CanvasFactory`/scratch 完全内部化，公开 API 不再有 `RenderSurface`；`fallbackFonts` 更名为 `supplementaryFonts`；删除 engine 级独立块栅格缓存，改为复用 display list。
 
-1. **引擎做成一个独立、平台无关的 TypeScript 库**：以 Monorepo 子包 `ofdrw-viewer-engine` 交付；公开 API 按 pdf.js 形态收敛为 `open → getPage → page.getViewport/page.render（可选 page.exportImage） → close`；核心只定义 `ByteSource`、Canvas、图片解码器、字体来源等接口，`Renderer` 作为正式扩展点但默认实现由 engine 提供，**v1 不实现任何端适配器**。
+1. **引擎做成一个独立、平台无关的 TypeScript 库**：以 Monorepo 子包 `@ofdrw/ofdrw-viewer-engine` 交付；公开 API 按 pdf.js 形态收敛为 `open → getPage → page.getViewport/page.render（可选 page.exportImage） → close`；核心只定义 `ByteSource`、Canvas、图片解码器、字体来源等接口，`Renderer` 作为正式扩展点但默认实现由 engine 提供，**v1 不实现任何端适配器**。
 2. **ZIP 不做整体解压**。打开时只读 `OFD.xml`、`Document.xml` 和页树；渲染某页时才按中央目录定位并解压该页的 `Content.xml`、`PageRes.xml`、模板页、字体和图片。天然支持 HTTP Range、`Blob.slice`、Node 文件句柄和微信文件系统。
 3. **文字绝不走 Canvas 文本 API**。统一走 `字体文件 → fontkit 解析 → 字形轮廓 → 路径 → fill/stroke`，因此不会受系统字体缺失、Canvas `fillText` 差异、小程序字体加载限制影响。
 4. **渲染分为“异步准备”和“同步绘制”两段**：先把该页需要的字体、图片、资源 XML 全部解析/解码完，再在一个同步循环里按文档顺序绘制，避免画到一半 `await` 导致 Canvas 状态被外部改写。
@@ -517,7 +517,7 @@ renderer ───────────────────────�
 
 ### 6.1 仓库组织（Monorepo / Packages）
 
-仓库采用 Monorepo 组织；**当前只交付一个子包** `ofdrw-viewer-engine`，后续阅读器/宿主适配等能力按独立子包扩展。
+仓库采用 Monorepo 组织；**当前只交付一个子包** `@ofdrw/ofdrw-viewer-engine`，后续阅读器/宿主适配等能力按独立子包扩展。
 
 ```
 <repo-root>/
@@ -527,7 +527,7 @@ renderer ───────────────────────�
     OFD渲染引擎设计方案.md
   packages/
     ofdrw-viewer-engine/
-      package.json             // name: "ofdrw-viewer-engine"
+      package.json             // name: "@ofdrw/ofdrw-viewer-engine"
       tsconfig.json
       src/
         index.ts
@@ -546,7 +546,7 @@ renderer ───────────────────────�
 约束：
 
 - 根目录只放 workspace 配置、脚本、文档，不放 engine 实现；
-- `packages/ofdrw-viewer-engine` 是唯一发布包，包名固定为 `ofdrw-viewer-engine`；
+- `packages/ofdrw-viewer-engine` 是引擎发布包，包名为 `@ofdrw/ofdrw-viewer-engine`；
 - 后续子包（例如 Web/Node 宿主适配、阅读器组件）只能**依赖** engine，engine 不能反向依赖任何宿主子包；
 - 子包之间通过 `package.json` 的 `exports` 和 workspace 协议引用，不使用跨包相对路径；
 - `docs/`、`references/`、`ofd_pdf_match/` 留在根目录，不打进 engine 包；
@@ -2512,7 +2512,7 @@ export class OFDDocument {
 
 ### 15.1.2 阅读器 UI API（r9/r10）
 
-面向 `ofdrw-viewer-ui` 的 P0/P1/P2 数据读取接口；完整字段/单位/错误见 `docs/公开API.md` §3/§4 与 `docs/ofdrw-viewer-ui-engine-api.md`。
+面向 `@ofdrw/ofdrw-viewer-ui` 的 P0/P1/P2 数据读取接口；完整字段/单位/错误见 `docs/公开API.md` §3/§4 与 `docs/ofdrw-viewer-ui-engine-api.md`。
 
 | 优先级 | API | 说明 |
 | --- | --- | --- |
@@ -2561,7 +2561,7 @@ export class OFDDocument {
 Web（默认 H5 renderer）：
 
 ```ts
-import { OFDDocument } from 'ofdrw-viewer-engine';
+import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
 
 const doc = await OFDDocument.open({
   source: { kind: 'blob', blob: file },
@@ -2589,7 +2589,7 @@ Node（显式注入 `createCanvas` 与 `encodeImage`）：
 
 ```ts
 import { createCanvas } from '@napi-rs/canvas';
-import { OFDDocument } from 'ofdrw-viewer-engine';
+import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
 
 const doc = await OFDDocument.open({
   source: { kind: 'node-file', path: '/data/a.ofd' },
@@ -2616,7 +2616,7 @@ await doc.close();
 自定义渲染器（正式扩展点）：
 
 ```ts
-import { OFDDocument } from 'ofdrw-viewer-engine';
+import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
 
 const doc = await OFDDocument.open({
   source,
@@ -2958,7 +2958,7 @@ v1 只交付 engine 库，因此不把 Chrome/Firefox/Safari/Electron/小程序�
 - [ ] 径向渐变 v1 明确 warning 降级，不静默画错。
 - [ ] 渐变/底纹的 v1 支持范围明确，降级有 warning。
 - [ ] 引擎核心在 Node canvas 黄金图通过；端适配不在 v1 验收范围。
-- [ ] `ofdrw-viewer-engine` 的 ESM/CJS/types 导出可被 workspace 内其他子包消费。
+- [ ] `@ofdrw/ofdrw-viewer-engine` 的 ESM/CJS/types 导出可被 workspace 内其他子包消费。
 - [ ] `close()` 释放资源；取消可用。
 
 ---

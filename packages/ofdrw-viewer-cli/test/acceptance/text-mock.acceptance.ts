@@ -10,7 +10,7 @@ import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { OFDDocument, OFDError } from 'ofdrw-viewer-engine';
+import { OFDDocument, OFDError } from '@ofdrw/ofdrw-viewer-engine';
 import { main } from '../../src/cli.js';
 import type { OutputStream } from '../../src/log.js';
 import { DENSE_OFD, cleanupTempDirs, createTempDir } from './helpers.js';

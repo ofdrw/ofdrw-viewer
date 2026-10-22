@@ -6,7 +6,7 @@
  */
 
 import { Buffer } from 'node:buffer';
-import type { ImageDecoderPlugin } from 'ofdrw-viewer-engine';
+import type { ImageDecoderPlugin } from '@ofdrw/ofdrw-viewer-engine';
 import { loadCanvasModule } from './canvas.js';
 
 /** 支持的宿主图片格式。 */

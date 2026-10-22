@@ -1,9 +1,9 @@
-# ofdrw-viewer-engine 公开 API
+# @ofdrw/ofdrw-viewer-engine 公开 API
 
 > 版本：v1.0（契约 r9）
 > 更新：2026-10-22  
 > 状态：v1 稳定接口；已收录 P0/P1 阅读器 UI API（PageInfo/Outline/Bookmark/签章元数据/SignedValue/元数据/prepare/TextContent）；P2 延后
-> 适用包：`ofdrw-viewer-engine`（唯一包名）  
+> 适用包：`@ofdrw/ofdrw-viewer-engine`（npm 作用域 `@ofdrw`）  
 > 公共入口：`packages/ofdrw-viewer-engine/src/index.ts`  
 > 设计依据：`docs/OFD渲染引擎设计方案.md` §15  
 > 内部契约：`docs/CONTRACTS.md`（模块间接口，不是调用方文档）  
@@ -35,7 +35,7 @@
 ### 1.1 Web（默认 H5 渲染器）
 
 ```ts
-import { OFDDocument } from 'ofdrw-viewer-engine';
+import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
 
 const doc = await OFDDocument.open({
   source: { kind: 'arraybuffer', data: await file.arrayBuffer() },
@@ -73,7 +73,7 @@ const transparent = await page.exportImage({ format: 'png', background: null });
 
 ```ts
 import { createCanvas } from '@napi-rs/canvas'; // 宿主依赖，engine 不内置
-import { OFDDocument } from 'ofdrw-viewer-engine';
+import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
 
 const doc = await OFDDocument.open({
   source: { kind: 'node-file', path: 'sample.ofd' }, // 本版本仅保留类型；见 §3.1

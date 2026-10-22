@@ -1,5 +1,5 @@
 /*
- * ofdrw-viewer-ui 主题变量与基础布局。
+ * @ofdrw/ofdrw-viewer-ui 主题变量与基础布局。
  *
  * 约定：
  * - 所有选择器以 `.ofd-viewer` 前缀限定在 light DOM 内，不污染宿主页面；

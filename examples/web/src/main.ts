@@ -13,7 +13,7 @@ import {
   type OFDSource,
   type OFDWarning,
   type RenderTask,
-} from 'ofdrw-viewer-engine';
+} from '@ofdrw/ofdrw-viewer-engine';
 
 /** 默认 DPI；与 engine 的默认值一致。 */
 const DEFAULT_DPI = 96;

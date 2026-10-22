@@ -12,13 +12,13 @@ const entry = fileURLToPath(new URL('./src/index.ts', import.meta.url));
  * - 各开发任务单测：`packages/ofdrw-viewer-engine/test/<module>/`；
  * - QA 黄金图/回归：`packages/ofdrw-viewer-engine/test/golden|e2e|acceptance/`。
  *
- * 源码统一通过包名 `ofdrw-viewer-engine` 别名引入。
+ * 源码统一通过包名 `@ofdrw/ofdrw-viewer-engine` 别名引入。
  */
 export default defineConfig({
   root: repoRoot,
   resolve: {
     alias: {
-      'ofdrw-viewer-engine': entry,
+      '@ofdrw/ofdrw-viewer-engine': entry,
     },
   },
   test: {

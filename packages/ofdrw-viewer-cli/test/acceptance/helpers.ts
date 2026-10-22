@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createCanvas, loadImage } from '@napi-rs/canvas';
-import { OFDDocument } from 'ofdrw-viewer-engine';
+import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
 
 /** 仓库根目录。 */
 export const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));

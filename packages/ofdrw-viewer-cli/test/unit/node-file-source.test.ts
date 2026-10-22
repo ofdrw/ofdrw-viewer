@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { OFDDocument, isOFDError } from 'ofdrw-viewer-engine';
+import { OFDDocument, isOFDError } from '@ofdrw/ofdrw-viewer-engine';
 import { NodeFileByteSource } from '../../src/node-file-source.js';
 import type { FileReadHandle } from '../../src/node-file-source.js';
 

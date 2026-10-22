@@ -8,8 +8,8 @@
 
 import type { FeatureState, ViewerFeature } from './features';
 
-export { OFDError, isOFDError, toOFDError } from 'ofdrw-viewer-engine';
-export type { OFDErrorCode, OFDErrorOptions } from 'ofdrw-viewer-engine';
+export { OFDError, isOFDError, toOFDError } from '@ofdrw/ofdrw-viewer-engine';
+export type { OFDErrorCode, OFDErrorOptions } from '@ofdrw/ofdrw-viewer-engine';
 
 /** 功能被关闭时使用的错误码；错误对象必须携带 `feature`。 */
 export const OFD_FEATURE_DISABLED = 'OFD_FEATURE_DISABLED' as const;

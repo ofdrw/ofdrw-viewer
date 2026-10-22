@@ -16,13 +16,13 @@ import {
   DEFAULT_RESOURCE_LIMITS,
   OFDDocument,
   isOFDError,
-} from 'ofdrw-viewer-engine';
+} from '@ofdrw/ofdrw-viewer-engine';
 import type {
   Canvas2DLike,
   OFDPage,
   OFDWarning,
   PageImageFormat,
-} from 'ofdrw-viewer-engine';
+} from '@ofdrw/ofdrw-viewer-engine';
 import { createCanvasLike, encodeCanvasImage } from './canvas.js';
 import { CliError, EXIT_CODES, errorMessage, isCliError } from './errors.js';
 import type { FontFile } from './fonts.js';

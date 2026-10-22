@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import * as engine from 'ofdrw-viewer-engine';
+import * as engine from '@ofdrw/ofdrw-viewer-engine';
 import {
   DEFAULT_CACHE_OPTIONS,
   DEFAULT_DPI,
@@ -16,7 +16,7 @@ import {
   getPageTransform,
   getPageViewport,
   isOFDError,
-} from 'ofdrw-viewer-engine';
+} from '@ofdrw/ofdrw-viewer-engine';
 
 describe('public API surface', () => {
   it('导出 15.1 要求的公共类与函数', () => {

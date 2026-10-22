@@ -11,7 +11,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { FontInput } from 'ofdrw-viewer-engine';
+import type { FontInput } from '@ofdrw/ofdrw-viewer-engine';
 
 /**
  * 系统字体候选组；每组按优先级取第一个可用文件。

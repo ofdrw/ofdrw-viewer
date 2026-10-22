@@ -12,5 +12,5 @@
  * @returns 永不返回；用于满足 `never` 位置的类型收窄。
  */
 export function notImplemented(feature: string): never {
-  throw new Error(`ofdrw-viewer-engine: not implemented: ${feature}`);
+  throw new Error(`@ofdrw/ofdrw-viewer-engine: not implemented: ${feature}`);
 }

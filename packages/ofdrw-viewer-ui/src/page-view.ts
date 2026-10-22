@@ -9,7 +9,7 @@
  * 签章覆盖层一起旋转；文字层坐标不需要重算。
  */
 
-import type { CanvasRenderingContext2DLike, PageInfo } from 'ofdrw-viewer-engine';
+import type { CanvasRenderingContext2DLike, PageInfo } from '@ofdrw/ofdrw-viewer-engine';
 import type { PageBox } from './page-layout';
 import type { Rotation, ViewerErrorInfo } from './state';
 

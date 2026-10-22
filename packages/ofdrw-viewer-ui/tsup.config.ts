@@ -11,7 +11,7 @@ const distDir = fileURLToPath(new URL('./dist', import.meta.url));
  *
  * - 单包多入口：核心 `.`、React `./react`、Vue `./vue`、Web Component `./element`；
  * - 同时产出 ESM/CJS 与 `.d.ts`，目标语法 ES2020；
- * - `ofdrw-viewer-engine`、React/Vue、签章 ASN.1 库与 `fflate` 保持 external：
+ * - `@ofdrw/ofdrw-viewer-engine`、React/Vue、签章 ASN.1 库与 `fflate` 保持 external：
  *   核心产物不打包框架，签章解析仍可在宿主侧按需动态加载；
  * - CSS 不经过 JS 注入，单独复制为 `dist/style.css`，由 `./style.css` 导出。
  */
@@ -31,7 +31,7 @@ export default defineConfig({
   treeshake: true,
   splitting: true,
   external: [
-    'ofdrw-viewer-engine',
+    '@ofdrw/ofdrw-viewer-engine',
     'react',
     'react-dom',
     'react/jsx-runtime',

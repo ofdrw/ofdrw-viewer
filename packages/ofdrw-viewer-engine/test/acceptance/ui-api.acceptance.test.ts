@@ -14,7 +14,7 @@ import {
   isOFDError,
   type DocumentMetadata,
   type TextContent,
-} from 'ofdrw-viewer-engine';
+} from '@ofdrw/ofdrw-viewer-engine';
 import { buildFixtureOfd, openTestDocument } from '../api/helpers';
 import type { XmlElementSpec } from '../fixtures/xml';
 import { findSystemCjkFont } from '../fixtures/fonts';

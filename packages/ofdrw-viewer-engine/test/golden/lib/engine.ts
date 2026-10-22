@@ -17,12 +17,12 @@ import {
   OFDDocument,
   getPageViewport,
   isOFDError,
-} from 'ofdrw-viewer-engine';
+} from '@ofdrw/ofdrw-viewer-engine';
 import type {
   Canvas2DLike,
   CanvasRenderingContext2DLike,
   OFDWarning,
-} from 'ofdrw-viewer-engine';
+} from '@ofdrw/ofdrw-viewer-engine';
 import { nodeImageDecoders } from '../../helpers/node-image-decoder';
 import { loadSystemSupplementaryFonts } from './system-fonts';
 import type { PortableWarning } from './types';

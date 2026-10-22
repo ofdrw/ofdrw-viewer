@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { OFDError } from 'ofdrw-viewer-engine';
+import { OFDError } from '@ofdrw/ofdrw-viewer-engine';
 import type {
   OFDDocument,
   OFDOpenOptions,
@@ -12,7 +12,7 @@ import type {
   TextContent,
   TextContentOptions,
   TextItem,
-} from 'ofdrw-viewer-engine';
+} from '@ofdrw/ofdrw-viewer-engine';
 import { convertDocument } from '../../src/convert.js';
 import type { ConvertOptions } from '../../src/convert.js';
 import { CliError, EXIT_CODES, isCliError } from '../../src/errors.js';

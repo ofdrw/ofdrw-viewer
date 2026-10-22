@@ -1,8 +1,7 @@
 {
-  "name": "ofdrw-viewer-cli",
+  "name": "@ofdrw/ofdrw-viewer-cli",
   "version": "0.1.0",
-  "private": true,
-  "description": "OFD 转图片命令行工具（ofdrw-viewer-engine 的 Node 子包）",
+  "description": "OFD 转图片命令行工具（@ofdrw/ofdrw-viewer-engine 的 Node 子包）",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -14,6 +13,27 @@
   "engines": {
     "node": ">=22"
   },
+  "keywords": [
+    "ofd",
+    "ofdrw",
+    "ofd-converter",
+    "ofd-to-image",
+    "cli",
+    "png",
+    "jpeg"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ofdrw/ofdrw-viewer.git",
+    "directory": "packages/ofdrw-viewer-cli"
+  },
+  "homepage": "https://github.com/ofdrw/ofdrw-viewer#readme",
+  "bugs": {
+    "url": "https://github.com/ofdrw/ofdrw-viewer/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
@@ -24,6 +44,6 @@
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.13",
-    "ofdrw-viewer-engine": "workspace:*"
+    "@ofdrw/ofdrw-viewer-engine": "workspace:*"
   }
 }

@@ -12,7 +12,7 @@ import {
   type Canvas2DLike,
   type CanvasRenderingContext2DLike,
   type OFDPage,
-} from 'ofdrw-viewer-engine';
+} from '@ofdrw/ofdrw-viewer-engine';
 import { buildFixtureOfd } from '../api/helpers';
 
 /** 最小合成 OFD；红矩形位于 (20,20)-(120,70) mm。 */
