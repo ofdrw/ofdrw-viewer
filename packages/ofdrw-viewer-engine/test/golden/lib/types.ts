@@ -214,9 +214,23 @@ export interface PageComparisonRecord {
 export interface KnownTolerancePage {
   /** 页号，从 1 开始（与 pdftoppm 一致）。 */
   page: number;
-  /** 该页实测最大关键色 ΔE2000。 */
+  /** 该页允许的最大关键色 ΔE2000。 */
   maxDeltaE: number;
+  /** 该页允许的最大关键色占比差（0..1）；省略时只校验 maxDeltaE。 */
+  maxCoverageDelta?: number;
   /** 容差原因；仅记录，不改变全局阈值。 */
+  reason: string;
+}
+
+/** 负样本期望：页面应产生的 warning 与内容存活条件。 */
+export interface NegativeSampleExpectation {
+  /** 负样本页号（1 起）；这些页允许比较失败。 */
+  pages: number[];
+  /** 页面必须出现的 warning 码（页级或样本级至少出现一次）。 */
+  expectedWarnings: string[];
+  /** 是否要求页面仍有可识别内容（非空白）；默认 true。 */
+  requireContent?: boolean;
+  /** 负样本原因。 */
   reason: string;
 }
 
@@ -274,6 +288,8 @@ export interface SampleReport {
   referenceMismatchReason?: string;
   /** 人工确认的 known tolerance 页；这些页不记为引擎失败。 */
   knownTolerancePages?: KnownTolerancePage[];
+  /** 负样本期望；满足时单列 expected-negative，不记为引擎失败。 */
+  negativeSample?: NegativeSampleExpectation;
 }
 
 /** 汇总计数。 */
@@ -304,6 +320,10 @@ export interface GoldenSummary {
   samplesKnownTolerance: number;
   /** known tolerance 页数（不计引擎失败）。 */
   pagesKnownTolerance: number;
+  /** 负样本（满足期望）的样本数（不计引擎失败）。 */
+  samplesExpectedNegative: number;
+  /** 负样本（满足期望）的页数（不计引擎失败）。 */
+  pagesExpectedNegative: number;
   /** 总耗时，ms。 */
   durationMs: number;
 }

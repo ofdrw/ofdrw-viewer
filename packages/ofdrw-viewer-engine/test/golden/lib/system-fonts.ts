@@ -10,31 +10,54 @@
 import { existsSync, readFileSync } from 'node:fs';
 import type { FontInput } from 'ofdrw-viewer-engine';
 
-/** 系统字体候选；按优先级排序，命中第一个可用文件即停止读取。 */
-const FONT_CANDIDATES: ReadonlyArray<{ family: string; paths: readonly string[] }> = [
-  {
-    family: 'Noto Sans CJK SC',
-    paths: [
-      '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-      '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
-    ],
-  },
-  {
-    family: 'Droid Sans Fallback',
-    paths: ['/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf'],
-  },
-  {
-    family: 'WenQuanYi Micro Hei',
-    paths: ['/usr/share/fonts/truetype/wqy/wqy-microhei.ttc'],
-  },
-  {
-    family: 'PingFang SC',
-    paths: ['/System/Library/Fonts/PingFang.ttc'],
-  },
-  {
-    family: 'SimSun',
-    paths: ['C:\\Windows\\Fonts\\simsun.ttc'],
-  },
+/**
+ * 系统字体候选组；每组按优先级取第一个可用文件。
+ *
+ * 第一组是 CJK 主字体（中文样本），第二组是西文衬线回退（Nimbus Roman，
+ * 缺失时用 Noto Serif CJK）。两组都注入，避免只取第一个导致 z p2 的
+ * Times New Roman 字形仍落到宿主默认字体。
+ */
+const FONT_CANDIDATE_GROUPS: ReadonlyArray<
+  ReadonlyArray<{ family: string; paths: readonly string[] }>
+> = [
+  [
+    {
+      family: 'Noto Sans CJK SC',
+      paths: [
+        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+      ],
+    },
+    {
+      family: 'Droid Sans Fallback',
+      paths: ['/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf'],
+    },
+    {
+      family: 'WenQuanYi Micro Hei',
+      paths: ['/usr/share/fonts/truetype/wqy/wqy-microhei.ttc'],
+    },
+    {
+      family: 'PingFang SC',
+      paths: ['/System/Library/Fonts/PingFang.ttc'],
+    },
+    {
+      family: 'SimSun',
+      paths: ['C:\\Windows\\Fonts\\simsun.ttc'],
+    },
+  ],
+  [
+    {
+      family: 'Nimbus Roman',
+      paths: [
+        '/usr/share/fonts/opentype/urw-base35/NimbusRoman-Regular.otf',
+        '/usr/share/fonts/type1/urw-base35/NimbusRoman-Regular.t1',
+      ],
+    },
+    {
+      family: 'Noto Serif CJK SC',
+      paths: ['/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc'],
+    },
+  ],
 ];
 
 /** 可覆盖的补充字体文件路径环境变量。 */
@@ -61,12 +84,13 @@ export function loadSystemSupplementaryFonts(): FontInput[] {
       description.push(override);
     }
   } else {
-    for (const candidate of FONT_CANDIDATES) {
+    for (const group of FONT_CANDIDATE_GROUPS) {
+      const candidate = group.find((item) => item.paths.some((path) => existsSync(path)));
+      if (!candidate) continue;
       const path = candidate.paths.find((item) => existsSync(item));
       if (!path) continue;
       fonts.push({ data: new Uint8Array(readFileSync(path)), family: candidate.family });
       description.push(path);
-      break;
     }
   }
   cachedFonts = fonts;

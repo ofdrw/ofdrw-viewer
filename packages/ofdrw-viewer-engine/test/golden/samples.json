@@ -860,7 +860,8 @@
       "sha256": "df7bf847df8c6e6416180ee5cbcfdc13b3bf6ab5314b12958588c709329374f3",
       "goldenPages": [],
       "notes": [
-        "OFD 这些页为图片版式（ImageObject/CompositeObject），PDF 同页为文字版式；参考配对不一致，差异不计引擎缺陷，待样本维护确认。"
+        "OFD 这些页为图片版式（ImageObject/CompositeObject），PDF 同页为文字版式；参考配对不一致，差异不计引擎缺陷，待样本维护确认。",
+        "p19 额外确认：OFD 有机器人图片，PDF 参考为黑底纯文字无机器人；仅该页加入 referenceMismatchPages。"
       ],
       "referenceMismatchPages": [
         4,
@@ -869,13 +870,14 @@
         16,
         17,
         18,
+        19,
         32,
         34,
         35,
         40,
         42
       ],
-      "referenceMismatchReason": "OFD 这些页为图片版式（ImageObject/CompositeObject），PDF 同页为文字版式；参考配对不一致，差异不计引擎缺陷，待样本维护确认。"
+      "referenceMismatchReason": "OFD 这些页为图片版式（ImageObject/CompositeObject），PDF 同页为文字版式；p19 OFD 含机器人图而参考无；参考配对不一致，差异不计引擎缺陷，待样本维护确认。"
     },
     {
       "name": "keyword",
@@ -974,7 +976,16 @@
         89
       ],
       "notes": [
-        "89 页 A4，整页 JPG 图片为主（ImageObject 带非单位 CTM），含 5 个 JBIG2、8 个 TTF；不提交仓库，本地存在时才跑。"
+        "89 页 A4，整页 JPG 图片为主（ImageObject 带非单位 CTM），含 5 个 JBIG2、8 个 TTF；不提交仓库，本地存在时才跑。",
+        "p1 已知色差按 per-page knownTolerance 记录（maxDeltaE 2.4/maxCoverageDelta 0.613），其他页仍用全局阈值。"
+      ],
+      "knownTolerancePages": [
+        {
+          "page": 1,
+          "maxDeltaE": 2.4,
+          "maxCoverageDelta": 0.613,
+          "reason": "p1 与 PDF 参考疑似同版，SSIM 0.9954/bbox 0，仅橙色底/扫描压缩造成关键色占比差 61.3%、ΔE 2.39；仅该页 known tolerance，不改变全局阈值。"
+        }
       ]
     },
     {
@@ -1320,7 +1331,19 @@
       "jb2Entries": 0,
       "sha256": "1fbdf67be374c2b453ef8a07051a697dcbbb32117cc7835d2639552101ca953c",
       "goldenPages": [],
-      "notes": []
+      "notes": [
+        "负样本：p1 缺 image_135.PNG，期望 W_IMAGE_DECODE 且页面继续；不计 golden failed。"
+      ],
+      "negativeSample": {
+        "pages": [
+          1
+        ],
+        "expectedWarnings": [
+          "W_IMAGE_DECODE"
+        ],
+        "requireContent": true,
+        "reason": "p1 故意缺失 image_135.PNG：应产生 W_IMAGE_DECODE 且页面继续、文本可见；参考红章图不计引擎 golden 失败。"
+      }
     },
     {
       "name": "testImageOverridePage",
@@ -1491,8 +1514,13 @@
       "sha256": "ae942157e68402aced7c604d0d17b6421f276cadbab363fa781fea5f948b3596",
       "goldenPages": [],
       "notes": [
-        "未列入 19.3 分组，作为补充回归（P1）。"
-      ]
+        "未列入 19.3 分组，作为补充回归（P1）。",
+        "p3 参考 PDF 缺 Tahoma 产生 .notdef 伪影，单独标 referenceMismatch；p2 仍按引擎缺陷处理，p4 与参考空白一致。"
+      ],
+      "referenceMismatchPages": [
+        3
+      ],
+      "referenceMismatchReason": "参考 PDF 宿主缺 Tahoma，底部产生 .notdef 伪影（bbox 214.577）；OFD 只有字体名无 FontFile，引擎跳过缺字正确。仅 p3 参考不匹配，不要求引擎画 tofu。"
     },
     {
       "name": "zsbk",

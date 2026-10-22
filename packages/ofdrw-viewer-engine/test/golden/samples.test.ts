@@ -117,13 +117,40 @@ describe('回归样本清单', () => {
 
   it('intro-数科 标注参考配对不匹配页，doc1File 标注文字页容差', () => {
     const intro = manifest.samples.find((sample) => sample.name === 'intro-数科')!;
-    expect(intro.referenceMismatchPages).toEqual([4, 14, 15, 16, 17, 18, 32, 34, 35, 40, 42]);
+    expect(intro.referenceMismatchPages).toEqual([4, 14, 15, 16, 17, 18, 19, 32, 34, 35, 40, 42]);
     expect(intro.referenceMismatchReason).toContain('图片版式');
+    expect(intro.referenceMismatchReason).toContain('p19');
+    expect(intro.referenceMismatchReason).toContain('机器人');
     expect(intro.notes.join('\n')).toContain('参考配对不一致');
 
     const doc = manifest.samples.find((sample) => sample.name === 'doc1File')!;
     expect(doc.notes.join('\n')).toContain('文字页容差');
     expect(doc.notes.join('\n')).toContain('普通页仍 0.5mm');
+  });
+
+  it('z p3 为参考 .notdef 伪影，不要求引擎画 tofu', () => {
+    const z = manifest.samples.find((sample) => sample.name === 'z')!;
+    expect(z.referenceMismatchPages).toEqual([3]);
+    expect(z.referenceMismatchReason).toContain('Tahoma');
+    expect(z.referenceMismatchReason).toContain('.notdef');
+    expect(z.referenceMismatchReason).toContain('无 FontFile');
+    expect(z.knownTolerancePages).toBeUndefined();
+  });
+
+  it('testImageNotFound p1 为负样本，manual p1 为 known tolerance', () => {
+    const notFound = manifest.samples.find((sample) => sample.name === 'testImageNotFound')!;
+    expect(notFound.negativeSample).toBeDefined();
+    expect(notFound.negativeSample!.pages).toEqual([1]);
+    expect(notFound.negativeSample!.expectedWarnings).toContain('W_IMAGE_DECODE');
+    expect(notFound.negativeSample!.requireContent).toBe(true);
+    expect(notFound.negativeSample!.reason).toContain('页面继续');
+
+    const manual = manifest.samples.find((sample) => sample.name === 'manual')!;
+    expect(manual.knownTolerancePages).toHaveLength(1);
+    expect(manual.knownTolerancePages![0]!.page).toBe(1);
+    expect(manual.knownTolerancePages![0]!.maxDeltaE).toBe(2.4);
+    expect(manual.knownTolerancePages![0]!.maxCoverageDelta).toBe(0.613);
+    expect(manual.knownTolerancePages![0]!.reason).toContain('不改变全局阈值');
   });
 
   it('keyword 页 1 标为参考不匹配，AddWatermark p3 标为 known tolerance', () => {

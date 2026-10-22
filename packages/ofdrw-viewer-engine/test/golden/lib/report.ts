@@ -24,7 +24,22 @@ export type SampleOutcome =
   | 'skipped'
   | 'unavailable'
   | 'reference-mismatch'
-  | 'known-tolerance';
+  | 'known-tolerance'
+  | 'expected-negative';
+
+/** known tolerance 判定：声明了 maxCoverageDelta 时也校验占比差。 */
+function withinKnownTolerance(
+  page: SampleReport['pages'][number],
+  spec: NonNullable<SampleReport['knownTolerancePages']>[number],
+): boolean {
+  if (!page.metrics) return false;
+  const epsilon = 1e-9;
+  if (page.metrics.keyColorMaxDE > spec.maxDeltaE + epsilon) return false;
+  if (spec.maxCoverageDelta !== undefined && page.metrics.keyColorCoverageDelta > spec.maxCoverageDelta + epsilon) {
+    return false;
+  }
+  return true;
+}
 
 /**
  * 根据单页结果判定样本结论。
@@ -42,18 +57,53 @@ export function sampleOutcome(sample: SampleReport): SampleOutcome {
   if (compared.length === 0) return 'skipped';
   const mismatchPages = new Set(sample.referenceMismatchPages ?? []);
   const knownPages = new Set((sample.knownTolerancePages ?? []).map((item) => item.page));
+  const negativePages = new Set(sample.negativeSample?.pages ?? []);
   const judged = compared.filter(
-    (page) => !mismatchPages.has(page.page) && !knownPages.has(page.page),
+    (page) => !mismatchPages.has(page.page) && !knownPages.has(page.page) && !negativePages.has(page.page),
   );
+  if (judged.some((page) => page.status !== 'pass')) return 'failed';
+
+  if (sample.negativeSample) {
+    const expected = sample.negativeSample;
+    for (const pageNumber of expected.pages) {
+      const page = sample.pages.find((item) => item.page === pageNumber);
+      if (!page) return 'failed';
+      if (
+        page.status === 'engine-error' ||
+        page.status === 'engine-unavailable' ||
+        page.status === 'skipped' ||
+        page.status === 'reference-missing'
+      ) {
+        return 'failed';
+      }
+      if (page.width === null || page.height === null || !page.enginePng) return 'failed';
+      const pageCodes = new Set(page.warnings.map((warning) => warning.code));
+      for (const warning of sample.warnings) {
+        if (warning.pageIndex === undefined || warning.pageIndex === pageNumber - 1) pageCodes.add(warning.code);
+      }
+      if (!expected.expectedWarnings.every((code) => pageCodes.has(code))) return 'failed';
+      if ((expected.requireContent ?? true) && !page.metrics?.actualBBoxMm) return 'failed';
+    }
+    const otherFailed = compared.filter((page) => !negativePages.has(page.page) && page.status !== 'pass');
+    if (otherFailed.length > 0) return 'failed';
+    return 'expected-negative';
+  }
+
   const mismatchFailed = compared.filter(
     (page) => mismatchPages.has(page.page) && page.status !== 'pass',
   );
   const knownFailed = compared.filter(
     (page) => knownPages.has(page.page) && page.status !== 'pass',
   );
-  if (judged.some((page) => page.status !== 'pass')) return 'failed';
   if (mismatchFailed.length > 0) return 'reference-mismatch';
-  if (knownFailed.length > 0) return 'known-tolerance';
+  if (knownFailed.length > 0) {
+    const specs = sample.knownTolerancePages ?? [];
+    const outside = knownFailed.filter((page) => {
+      const spec = specs.find((item) => item.page === page.page);
+      return !spec || !withinKnownTolerance(page, spec);
+    });
+    return outside.length > 0 ? 'failed' : 'known-tolerance';
+  }
   return 'passed';
 }
 
@@ -79,6 +129,8 @@ export function computeSummary(samples: readonly SampleReport[], durationMs: num
     pagesReferenceMismatch: 0,
     samplesKnownTolerance: 0,
     pagesKnownTolerance: 0,
+    samplesExpectedNegative: 0,
+    pagesExpectedNegative: 0,
     durationMs,
   };
   for (const sample of samples) {
@@ -88,19 +140,25 @@ export function computeSummary(samples: readonly SampleReport[], durationMs: num
     else if (outcome === 'unavailable') summary.samplesUnavailable += 1;
     else if (outcome === 'reference-mismatch') summary.samplesReferenceMismatch += 1;
     else if (outcome === 'known-tolerance') summary.samplesKnownTolerance += 1;
+    else if (outcome === 'expected-negative') summary.samplesExpectedNegative += 1;
     else summary.samplesSkipped += 1;
 
     const mismatchPages = new Set(sample.referenceMismatchPages ?? []);
     const knownPages = new Set((sample.knownTolerancePages ?? []).map((item) => item.page));
+    const negativePages = new Set(sample.negativeSample?.pages ?? []);
     for (const page of sample.pages) {
       summary.pages += 1;
+      const knownSpec = sample.knownTolerancePages?.find((item) => item.page === page.page);
       if (page.status === 'pass') summary.pagesPassed += 1;
-      else if (mismatchPages.has(page.page)) summary.pagesReferenceMismatch += 1;
+      else if (outcome === 'expected-negative' && negativePages.has(page.page)) {
+        summary.pagesExpectedNegative += 1;
+      } else if (mismatchPages.has(page.page)) summary.pagesReferenceMismatch += 1;
       else if (
-        knownPages.has(page.page) &&
+        knownSpec &&
         page.status !== 'skipped' &&
         page.status !== 'reference-missing' &&
-        page.status !== 'engine-unavailable'
+        page.status !== 'engine-unavailable' &&
+        withinKnownTolerance(page, knownSpec)
       ) {
         summary.pagesKnownTolerance += 1;
       } else if (page.status === 'skipped' || page.status === 'reference-missing' || page.status === 'engine-unavailable') {
@@ -142,6 +200,7 @@ function statusColor(status: string): string {
   if (status === 'skipped' || status === 'reference-missing') return '#8a6d3b';
   if (status === 'reference-mismatch') return '#8250df';
   if (status === 'known-tolerance') return '#9a6700';
+  if (status === 'expected-negative') return '#1a7f37';
   if (status === 'engine-unavailable') return '#6c6c6c';
   return '#c62828';
 }
@@ -164,7 +223,8 @@ function renderTolerance(tolerance: Tolerance): string {
     <tr><th>文字页判定</th><td>边缘密度 ≥ ${tolerance.textEdgeDensity} 且 SSIM ≥ ${tolerance.textSsimMin}；仅此类页启用暗墨主色（亮度 ≤ ${tolerance.textInkMaxLuminance}）、占比差 ≤ ${(tolerance.textCoverageDelta * 100).toFixed(0)}%、bbox ≤ ${tolerance.textLayoutMm} mm 的容差</td></tr>
     <tr><th>普通页目标</th><td>bbox/尺寸 0.5 mm、关键色 ΔE ≤ ${tolerance.colorDeltaE}、占比差 ≤ ${(tolerance.colorCoverageDelta * 100).toFixed(0)}%（不因文字页放宽）</td></tr>
     <tr><th>参考不匹配页</th><td>仅在 samples.json 的 <code>referenceMismatchPages</code> 显式列出的页单列，不记为引擎失败</td></tr>
-    <tr><th>known tolerance 页</th><td>仅在 samples.json 的 <code>knownTolerancePages</code> 显式列出的页单列并记录 maxDeltaE/原因；不改变上表阈值</td></tr>
+    <tr><th>known tolerance 页</th><td>仅在 samples.json 的 <code>knownTolerancePages</code> 显式列出的页单列并记录 maxDeltaE（可选 maxCoverageDelta）/原因；超出声明上限仍判失败，不改变上表阈值</td></tr>
+    <tr><th>负样本</th><td>仅在 samples.json 的 <code>negativeSample</code> 显式声明；断言 expectedWarnings、页面继续且有内容，单列 <code>expected-negative</code>，不计引擎失败</td></tr>
   </tbody></table>`;
 }
 
@@ -172,12 +232,15 @@ function renderTolerance(tolerance: Tolerance): string {
 function renderPageRow(sample: SampleReport, pageIndex: number): string {
   const page = sample.pages[pageIndex]!;
   const knownTolerance = sample.knownTolerancePages?.find((item) => item.page === page.page);
+  const negativePage = sample.negativeSample?.pages.includes(page.page) ?? false;
   const displayStatus =
-    page.status !== 'pass' && sample.referenceMismatchPages?.includes(page.page)
-      ? 'reference-mismatch'
-      : page.status !== 'pass' && knownTolerance
-        ? 'known-tolerance'
-        : page.status;
+    page.status !== 'pass' && negativePage
+      ? 'expected-negative'
+      : page.status !== 'pass' && sample.referenceMismatchPages?.includes(page.page)
+        ? 'reference-mismatch'
+        : page.status !== 'pass' && knownTolerance
+          ? 'known-tolerance'
+          : page.status;
   const links: string[] = [];
   if (page.enginePng) links.push(`<a href="${escapeHtml(page.enginePng)}">engine</a>`);
   if (page.referencePng) links.push(`<a href="${escapeHtml(page.referencePng)}">pdf-ref</a>`);
@@ -208,9 +271,12 @@ function renderSample(sample: SampleReport): string {
   const knownToleranceNotes = (sample.knownTolerancePages ?? [])
     .map(
       (item) =>
-        `<p class="notes">known tolerance p${item.page}: max ΔE2000 ${fmt(item.maxDeltaE, 4)}；${escapeHtml(item.reason)}</p>`,
+        `<p class="notes">known tolerance p${item.page}: max ΔE2000 ${fmt(item.maxDeltaE, 4)}${item.maxCoverageDelta === undefined ? '' : ` / max 占比差 ${(item.maxCoverageDelta * 100).toFixed(1)}%`}；${escapeHtml(item.reason)}</p>`,
     )
     .join('');
+  const negativeNotes = sample.negativeSample
+    ? `<p class="notes">expected-negative：pages ${sample.negativeSample.pages.join(', ')}；warnings ${sample.negativeSample.expectedWarnings.map(escapeHtml).join(', ')}；${escapeHtml(sample.negativeSample.reason)}</p>`
+    : '';
   return `<section class="sample" id="sample-${escapeHtml(sample.name)}">
     <h2>${escapeHtml(sample.name)}
       <span class="badge" style="background:${statusColor(outcome === 'passed' ? 'pass' : outcome)}">${outcome}</span>
@@ -226,6 +292,7 @@ function renderSample(sample: SampleReport): string {
     </p>
     ${sample.notes.length > 0 ? `<p class="notes">${sample.notes.map(escapeHtml).join('<br>')}</p>` : ''}
     ${knownToleranceNotes}
+    ${negativeNotes}
     ${warnings ? `<details><summary>warnings（字体缺失 ${sample.fontMissingCount}）</summary><ul>${warnings}</ul></details>` : ''}
     ${
       sample.pages.length > 0
@@ -291,10 +358,12 @@ export function renderHtml(report: GoldenReport): string {
   <div class="card"><b>${summary.samplesFailed}</b>样本失败</div>
   <div class="card"><b>${summary.samplesReferenceMismatch}</b>参考不匹配</div>
   <div class="card"><b>${summary.samplesKnownTolerance}</b>known tolerance</div>
+  <div class="card"><b>${summary.samplesExpectedNegative}</b>expected-negative</div>
   <div class="card"><b>${summary.samplesUnavailable}</b>引擎不可用</div>
   <div class="card"><b>${summary.samplesSkipped}</b>跳过</div>
   <div class="card"><b>${summary.pagesReferenceMismatch}</b>参考不匹配页</div>
   <div class="card"><b>${summary.pagesKnownTolerance}</b>known tolerance 页</div>
+  <div class="card"><b>${summary.pagesExpectedNegative}</b>expected-negative 页</div>
   <div class="card"><b>${(summary.durationMs / 1000).toFixed(1)} s</b>总耗时</div>
 </div>
 <h2>容差口径</h2>

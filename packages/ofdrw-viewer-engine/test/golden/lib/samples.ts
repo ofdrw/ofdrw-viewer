@@ -7,7 +7,7 @@
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { KnownTolerancePage, SampleReport } from './types';
+import type { KnownTolerancePage, NegativeSampleExpectation, SampleReport } from './types';
 
 /** 设计方案 19.3 的分组键（顺序固定，便于报告展示）。 */
 export const REQUIRED_GROUPS = Object.freeze([
@@ -75,6 +75,8 @@ export interface SampleManifestEntry {
   referenceMismatchReason?: string;
   /** 人工确认的 known tolerance 页；这些页不记为引擎失败。 */
   knownTolerancePages?: KnownTolerancePage[];
+  /** 负样本期望；满足时单列 expected-negative，不记为引擎失败。 */
+  negativeSample?: NegativeSampleExpectation;
 }
 
 /** 清单文件结构。 */
@@ -163,5 +165,8 @@ export function createEmptySampleReport(sample: SampleManifestEntry): SampleRepo
     ...(sample.referenceMismatchPages ? { referenceMismatchPages: [...sample.referenceMismatchPages] } : {}),
     ...(sample.referenceMismatchReason ? { referenceMismatchReason: sample.referenceMismatchReason } : {}),
     ...(sample.knownTolerancePages ? { knownTolerancePages: sample.knownTolerancePages.map((page) => ({ ...page })) } : {}),
+    ...(sample.negativeSample
+      ? { negativeSample: { ...sample.negativeSample, pages: [...sample.negativeSample.pages], expectedWarnings: [...sample.negativeSample.expectedWarnings] } }
+      : {}),
   };
 }
