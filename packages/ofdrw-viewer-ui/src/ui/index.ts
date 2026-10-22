@@ -15,8 +15,16 @@
  * - 监听核心状态/功能/侧栏/查找事件，反向刷新外壳；
  * - 不接管核心的侧栏 hidden 与断点属性，避免双写。
  */
-import type { ViewerState, SidebarView, ZoomMode } from '../state';
-import type { ViewerEventHandler, ViewerEventName } from '../types';
+import { createTranslator, type Translator } from '../i18n';
+import type { ViewerState, Rotation, SidebarView, ZoomMode } from '../state';
+import type {
+  ExportImageOptions,
+  ExportImagesOptions,
+  PageRange,
+  PrintOptions,
+  ViewerEventHandler,
+  ViewerEventName,
+} from '../types';
 import { UIShell } from './ui-shell';
 import type { UIShellElements, UIShellCommand, UIShellViewState } from './types';
 
@@ -66,9 +74,11 @@ export interface UIShellHost {
   /** 清除查找结果。 */
   clearFind(): unknown;
   /** 打开打印流程。 */
-  print(): unknown;
-  /** 导出当前页图片。 */
-  exportImage(): unknown;
+  print(options?: PrintOptions): unknown;
+  /** 导出单页图片。 */
+  exportImage(options?: ExportImageOptions): unknown;
+  /** 导出多页图片（ZIP）。 */
+  exportImages(options?: ExportImagesOptions): unknown;
   /** 进入/退出全屏。 */
   setFullscreen(value: boolean): unknown;
 }
@@ -174,6 +184,317 @@ function showDocumentProperties(viewer: UIShellHost, shell: UIShell): void {
   });
 }
 
+/** 输出对话框字段 ID 序号；仅用于 DOM label 关联。 */
+let outputFieldSequence = 0;
+
+/**
+ * 解析自定义页码范围文本，例如 `1-3,5`。
+ *
+ * @param text 用户输入；页码 1-based。
+ * @param pageCount 文档总页数。
+ * @returns 升序去重的页码数组；格式或边界非法时返回 null。
+ */
+function parseCustomPageRange(text: string, pageCount: number): number[] | null {
+  if (pageCount < 1) return null;
+  const pages = new Set<number>();
+  for (const raw of text.split(',')) {
+    const token = raw.trim();
+    if (!token) return null;
+    const match = /^(\d+)(?:\s*-\s*(\d+))?$/.exec(token);
+    if (!match) return null;
+    const from = Number(match[1]);
+    const to = match[2] === undefined ? from : Number(match[2]);
+    if (from < 1 || to < from || to > pageCount) return null;
+    for (let page = from; page <= to; page += 1) pages.add(page);
+  }
+  return pages.size > 0 ? [...pages].sort((a, b) => a - b) : null;
+}
+
+/**
+ * 创建打印/导出共用的页码范围控件。
+ *
+ * @param doc 对话框所属文档。
+ * @param translator 翻译器。
+ * @returns 字段元素与读取函数；读取失败时在字段内显示错误。
+ */
+function createOutputRangeField(
+  doc: Document,
+  translator: Translator,
+): { readonly field: HTMLElement; read(pageCount: number): PageRange | null } {
+  const id = `ofd-output-range-${++outputFieldSequence}`;
+  const field = doc.createElement('div');
+  field.className = 'ofd-output-field';
+  const label = doc.createElement('label');
+  label.htmlFor = id;
+  label.textContent = translator.t('output.range');
+  const select = doc.createElement('select');
+  select.id = id;
+  select.className = 'ofd-select';
+  for (const [value, text] of [
+    ['current', translator.t('output.rangeCurrent')],
+    ['all', translator.t('output.rangeAll')],
+    ['custom', translator.t('output.rangeCustom')],
+  ] as const) {
+    const option = doc.createElement('option');
+    option.value = value;
+    option.textContent = text;
+    select.append(option);
+  }
+  const custom = doc.createElement('input');
+  custom.className = 'ofd-input';
+  custom.type = 'text';
+  custom.placeholder = translator.t('output.rangePlaceholder');
+  custom.hidden = true;
+  custom.setAttribute('aria-describedby', `${id}-error`);
+  const error = doc.createElement('p');
+  error.className = 'ofd-output-error';
+  error.id = `${id}-error`;
+  error.setAttribute('role', 'alert');
+  error.hidden = true;
+  error.textContent = translator.t('output.rangeInvalid');
+  select.addEventListener('change', () => {
+    custom.hidden = select.value !== 'custom';
+    if (!custom.hidden) custom.focus();
+  });
+  field.append(label, select, custom, error);
+
+  return {
+    field,
+    read(pageCount: number): PageRange | null {
+      if (select.value === 'current') return 'current';
+      if (select.value === 'all') return 'all';
+      const pages = parseCustomPageRange(custom.value, pageCount);
+      const invalid = pages === null;
+      error.hidden = !invalid;
+      custom.setAttribute('aria-invalid', invalid ? 'true' : 'false');
+      if (invalid) custom.focus();
+      return pages;
+    },
+  };
+}
+
+/** 创建字段标签与控件容器。 */
+function createOutputField(doc: Document, text: string, ...controls: HTMLElement[]): HTMLElement {
+  const field = doc.createElement('div');
+  field.className = 'ofd-output-field';
+  const label = doc.createElement('span');
+  label.className = 'ofd-output-field__label';
+  label.textContent = text;
+  field.append(label, ...controls);
+  return field;
+}
+
+/**
+ * 打开打印选项对话框。
+ *
+ * @param viewer 阅读器实例。
+ * @param shell 当前外壳。
+ */
+function openPrintDialog(viewer: UIShellHost, shell: UIShell): void {
+  const doc = shell.root.ownerDocument;
+  const translator = createTranslator(viewer.getState().ui.locale);
+  const form = doc.createElement('form');
+  form.className = 'ofd-output-form';
+  form.setAttribute('aria-label', translator.t('output.printTitle'));
+  const range = createOutputRangeField(doc, translator);
+
+  const dpi = doc.createElement('select');
+  dpi.className = 'ofd-select';
+  for (const [value, text] of [
+    ['auto', translator.t('output.dpiAuto')],
+    ['72', '72'],
+    ['150', '150'],
+    ['200', '200'],
+    ['300', '300'],
+  ] as const) {
+    const option = doc.createElement('option');
+    option.value = value;
+    option.textContent = text;
+    dpi.append(option);
+  }
+
+  const background = doc.createElement('input');
+  background.type = 'checkbox';
+  const backgroundLabel = doc.createElement('label');
+  backgroundLabel.className = 'ofd-output-check';
+  backgroundLabel.append(background, doc.createTextNode(translator.t('output.backgroundWhite')));
+
+  const rotation = doc.createElement('select');
+  rotation.className = 'ofd-select';
+  for (const [value, text] of [
+    ['current', translator.t('output.rotationCurrent')],
+    ['0', '0°'],
+    ['90', '90°'],
+    ['180', '180°'],
+    ['270', '270°'],
+  ] as const) {
+    const option = doc.createElement('option');
+    option.value = value;
+    option.textContent = text;
+    rotation.append(option);
+  }
+
+  form.append(
+    range.field,
+    createOutputField(doc, translator.t('output.dpi'), dpi),
+    backgroundLabel,
+    createOutputField(doc, translator.t('output.rotation'), rotation),
+  );
+
+  shell.openDialog({
+    name: 'print',
+    title: translator.t('output.printTitle'),
+    content: form,
+    actions: [
+      { label: translator.t('output.cancel') },
+      {
+        label: translator.t('toolbar.print'),
+        primary: true,
+        closeOnClick: false,
+        onClick: () => {
+          const pages = range.read(viewer.getState().document.pageCount);
+          if (pages === null) return;
+          shell.closeDialog(false);
+          settle(
+            viewer.print({
+              pages,
+              dpi: dpi.value === 'auto' ? 'auto' : Number(dpi.value),
+              includeBackground: background.checked,
+              rotation:
+                rotation.value === 'current'
+                  ? 'current'
+                  : (Number(rotation.value) as Rotation),
+            }),
+            shell,
+          );
+        },
+      },
+    ],
+  });
+}
+
+/**
+ * 打开导出图片选项对话框。
+ *
+ * @param viewer 阅读器实例。
+ * @param shell 当前外壳。
+ */
+function openExportDialog(viewer: UIShellHost, shell: UIShell): void {
+  const doc = shell.root.ownerDocument;
+  const translator = createTranslator(viewer.getState().ui.locale);
+  const form = doc.createElement('form');
+  form.className = 'ofd-output-form';
+  form.setAttribute('aria-label', translator.t('output.exportTitle'));
+  const range = createOutputRangeField(doc, translator);
+
+  const format = doc.createElement('select');
+  format.className = 'ofd-select';
+  for (const value of ['png', 'jpeg', 'webp']) {
+    const option = doc.createElement('option');
+    option.value = value;
+    option.textContent = value.toUpperCase();
+    format.append(option);
+  }
+
+  const dpi = doc.createElement('select');
+  dpi.className = 'ofd-select';
+  for (const [value, text] of [
+    ['auto', translator.t('output.dpiAuto')],
+    ['72', '72'],
+    ['150', '150'],
+    ['200', '200'],
+    ['300', '300'],
+  ] as const) {
+    const option = doc.createElement('option');
+    option.value = value;
+    option.textContent = text;
+    dpi.append(option);
+  }
+
+  const quality = doc.createElement('input');
+  quality.type = 'range';
+  quality.min = '0.1';
+  quality.max = '1';
+  quality.step = '0.01';
+  quality.value = '0.92';
+  quality.className = 'ofd-output-quality';
+
+  const background = doc.createElement('select');
+  background.className = 'ofd-select';
+  for (const [value, text] of [
+    ['transparent', translator.t('output.backgroundTransparent')],
+    ['white', translator.t('output.backgroundWhite')],
+  ] as const) {
+    const option = doc.createElement('option');
+    option.value = value;
+    option.textContent = text;
+    background.append(option);
+  }
+
+  const rotation = doc.createElement('select');
+  rotation.className = 'ofd-select';
+  for (const [value, text] of [
+    ['0', '0°'],
+    ['90', '90°'],
+    ['180', '180°'],
+    ['270', '270°'],
+  ] as const) {
+    const option = doc.createElement('option');
+    option.value = value;
+    option.textContent = text;
+    rotation.append(option);
+  }
+
+  const updateFormat = (): void => {
+    const supportsAlpha = format.value === 'png';
+    background.disabled = !supportsAlpha;
+    if (!supportsAlpha) background.value = 'white';
+    quality.disabled = supportsAlpha;
+  };
+  format.addEventListener('change', updateFormat);
+  updateFormat();
+
+  form.append(
+    range.field,
+    createOutputField(doc, translator.t('output.format'), format),
+    createOutputField(doc, translator.t('output.dpi'), dpi),
+    createOutputField(doc, translator.t('output.quality'), quality),
+    createOutputField(doc, translator.t('output.background'), background),
+    createOutputField(doc, translator.t('output.rotation'), rotation),
+  );
+
+  shell.openDialog({
+    name: 'export',
+    title: translator.t('output.exportTitle'),
+    content: form,
+    actions: [
+      { label: translator.t('output.cancel') },
+      {
+        label: translator.t('toolbar.export'),
+        primary: true,
+        closeOnClick: false,
+        onClick: () => {
+          const pages = range.read(viewer.getState().document.pageCount);
+          if (pages === null) return;
+          const options: ExportImageOptions = {
+            format: format.value as ExportImageOptions['format'],
+            dpi: dpi.value === 'auto' ? 'auto' : Number(dpi.value),
+            quality: Number(quality.value),
+            background: background.value === 'transparent' ? null : '#ffffff',
+            rotation: Number(rotation.value) as Rotation,
+          };
+          shell.closeDialog(false);
+          if (pages === 'current') {
+            settle(viewer.exportImage(options), shell);
+          } else {
+            settle(viewer.exportImages({ ...options, pages }), shell);
+          }
+        },
+      },
+    ],
+  });
+}
+
 /**
  * 将外壳命令映射到核心公开方法。
  *
@@ -250,10 +571,10 @@ function dispatchCommand(
       settle(viewer.clearFind(), shell);
       return;
     case 'print.open':
-      settle(viewer.print(), shell);
+      openPrintDialog(viewer, shell);
       return;
     case 'export.open':
-      settle(viewer.exportImage(), shell);
+      openExportDialog(viewer, shell);
       return;
     case 'signatures.open':
       settle(viewer.openSidebar('signatures'), shell);

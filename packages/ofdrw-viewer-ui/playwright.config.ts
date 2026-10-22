@@ -1,4 +1,4 @@
-import { defineConfig } from 'playwright/test';
+import { defineConfig } from '@playwright/test';
 
 /**
  * ofdrw-viewer-ui 真实浏览器验收配置。
@@ -9,6 +9,7 @@ import { defineConfig } from 'playwright/test';
  */
 export default defineConfig({
   testDir: './test/e2e',
+  globalSetup: './test/acceptance/generate-fixtures.mjs',
   outputDir: './test/acceptance/artifacts/playwright',
   timeout: 60_000,
   expect: { timeout: 10_000 },

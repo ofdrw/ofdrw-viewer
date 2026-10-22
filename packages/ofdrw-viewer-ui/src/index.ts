@@ -41,6 +41,7 @@ export type { OFDViewerOptions, ResolvedViewerOptions } from './options';
 // 公共类型：来源、状态、功能、事件、导出/打印/签章选项与详情
 // ---------------------------------------------------------------------------
 export type * from './types';
+export type { UIDialogAction, UIDialogOptions } from './ui/types';
 
 // ---------------------------------------------------------------------------
 // 错误类型与工具

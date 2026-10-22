@@ -61,3 +61,6 @@ console.log(
     readFileSync(missingValuePath).byteLength / 1024
   ).toFixed(0)}KiB`,
 );
+
+/** Playwright globalSetup 入口；模块加载时已完成夹具生成。 */
+export default function globalSetup() {}

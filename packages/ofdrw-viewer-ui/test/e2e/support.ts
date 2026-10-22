@@ -1,8 +1,8 @@
 /**
  * E2E 共享操作：本地夹具、打开阅读器、等待渲染与读取状态。
  */
-import { expect } from 'playwright/test';
-import type { Page } from 'playwright/test';
+import { expect } from '@playwright/test';
+import type { Page } from '@playwright/test';
 
 /** 本地 OFD 夹具路径。 */
 export const FIXTURES = {

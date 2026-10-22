@@ -114,6 +114,48 @@ afterEach(() => {
 });
 
 describe('OFDViewer 核心', () => {
+  it('缺少原生 Fullscreen API 时使用沉浸式回退并保持一致状态', async () => {
+    const viewer = new OFDViewer({
+      container: document.body,
+      source: new ArrayBuffer(8),
+    });
+    await viewer.ready;
+    const warnings: string[] = [];
+    viewer.on('warning', (warning) => warnings.push(warning.code));
+    await viewer.setFullscreen(true);
+    expect(viewer.getState().view.fullscreen).toBe(true);
+    expect(viewer.getElements().root.classList.contains('ofd-viewer--fullscreen-fallback')).toBe(true);
+    expect(warnings).toContain('W_FULLSCREEN_FALLBACK');
+    await viewer.setFullscreen(false);
+    expect(viewer.getState().view.fullscreen).toBe(false);
+    expect(viewer.getElements().root.classList.contains('ofd-viewer--fullscreen-fallback')).toBe(false);
+    viewer.destroy();
+  });
+
+  it('公共读取 API 与签章门控一致', async () => {
+    const viewer = new OFDViewer({
+      container: document.body,
+      source: new ArrayBuffer(8),
+    });
+    await viewer.ready;
+    expect(viewer.getCurrentPage()).toBe(viewer.getPageNumber());
+    expect(viewer.getFindState()).toMatchObject({ query: '', current: 0, total: 0 });
+    expect(viewer.getSignatures()).toEqual([]);
+    viewer.setFeatures({ signatures: false });
+    expect(() => viewer.getSignatures()).toThrow(
+      expect.objectContaining({ code: 'OFD_FEATURE_DISABLED', feature: 'signatures' }),
+    );
+    await expect(viewer.focusSignature('missing')).rejects.toMatchObject({
+      code: 'OFD_FEATURE_DISABLED',
+      feature: 'signatures',
+    });
+    expect(() => viewer.showDialog({ name: 'print', title: 't' })).toThrow(
+      expect.objectContaining({ code: 'OFD_UNSUPPORTED' }),
+    );
+    viewer.closeDialog();
+    viewer.destroy();
+  });
+
   it('创建结构、打开文档并初始化页壳', async () => {
     const viewer = new OFDViewer({
       container: document.body,

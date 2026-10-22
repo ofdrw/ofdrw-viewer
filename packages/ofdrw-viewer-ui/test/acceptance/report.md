@@ -42,4 +42,26 @@ a11y 扫描结果（最终）：core / sidebar / findbar / 签章对话框均 0 
 - `W_FONT_MISSING`：helloworld/z/SESV4 缺 `SimSun/宋体`，属夹具资源缺失；`W_TEXT_LAYER_LIMIT`：dense-text 第 2 页文本节点上限；`W_BAD_NUMBER`：Page5 缺 `PublicRes.xml`。三者均不导致 console/page error。
 - 无头环境不验证系统打印对话框与全屏 API 的真实交互；打印通过 stub `window.print` 验证 DOM/`afterprint`/清理，导出通过真实 download 事件验证字节/ZIP。
 - 引擎首次整包探测会主动 abort 一次 GET，测试将 `ERR_ABORTED` 视为预期；实际内容由 Range 206 分段读取。
-- Playwright 依赖由本环境 node_modules 软链提供，未写入 `package.json`；干净环境需预装 Playwright 与 Chrome。
+- Playwright 依赖已写入包 `devDependencies`（`@playwright/test`）；`globalSetup` 自动生成派生夹具，干净检出执行 `pnpm install` 后可直接运行。
+
+
+## 复审 R2 修复（t21）
+
+| 评审项 | 状态 | 证据 |
+| --- | --- | --- |
+| F2 打印/导出选项对话框 | 已修复 | `src/ui/index.ts`；打印/导出按钮打开对话框，支持范围/全部页、DPI、质量、背景、旋转、格式；`output.spec.ts` 工具栏点击/取消，`ui-integration.test.ts` 字段覆盖 |
+| F3 getSignatures 守卫 | 已修复 | `viewer.ts` 入口 `assertFeature('signatures')`；`features.spec.ts` 断言同步抛 `OFD_FEATURE_DISABLED(feature=signatures)`，`focusSignature` 同样拒绝 |
+| F4 公共 API | 已补/延期记录 | 新增 `getCurrentPage`、`getFindState`、`focusSignature`、`showDialog`/`closeDialog`；`goToDestination` 在 README 标注 P1 延期与替代方式 |
+| F5 Playwright/夹具 | 已修复 | `@playwright/test` 入 devDependencies；`playwright.config.ts` globalSetup 自动生成夹具；删除派生夹具后 E2E 仍通过 |
+| F7 全屏回退 | 已修复 | 原生 API 缺失/失败时 `position:fixed` 沉浸式回退并保持状态；`viewer.test.ts` 覆盖进入/退出与 warning |
+| F8 features 矩阵 | 部分 | features E2E 参数化覆盖 18 键；React 18/视觉/读屏未执行，风险见下节 |
+
+## 复审 R2 未覆盖风险（t21）
+
+- **性能目标**：1000 页派生夹具（约 0.8MB）实测打开约 6.2s、全篇查找约 23.8s，
+  仍高于设计 §12.6 的 2s/5s；50–200MB 夹具未生成。当前 E2E 的 30s/60s 仅为防严重
+  回归上限，不能视为设计目标达成，需设计负责人书面豁免或在后续迭代优化抽取/分片。
+- **手势缩放**：Ctrl/Command+滚轮、双指捏合、双击缩放未实现（工具栏/API 可用），
+  需在设计/验收范围标注或后续补齐。
+- **测试矩阵**：本轮未运行 React 18 双版本矩阵与关键界面视觉回归/读屏抽查；
+  features E2E 已扩展到 18 个键的 API/状态，但未逐项覆盖全部控件与快捷键。

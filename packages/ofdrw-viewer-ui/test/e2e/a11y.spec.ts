@@ -23,7 +23,7 @@ declare global {
   }
 }
 
-async function scan(page: import('playwright/test').Page, context: string): Promise<AxeViolation[]> {
+async function scan(page: import('@playwright/test').Page, context: string): Promise<AxeViolation[]> {
   const result = await page.evaluate(async (selector) => {
     const axe = window.axe;
     if (!axe) throw new Error('axe 未加载');

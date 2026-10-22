@@ -23,7 +23,7 @@ Playwright 配置见包根 `playwright.config.ts`，测试页为 `test/e2e/index
 - `ofd_pdf_match/SESV4SignDoc.ofd`：1 页真实 V4 签章。
 - `test/acceptance/fixtures/thousand.ofd`、`signature-missing-value.ofd`：由脚本生成，已被 `.gitignore` 忽略。
 
-重新生成派生夹具：
+重新生成派生夹具（通常由 Playwright `globalSetup` 自动执行）：
 
 ```bash
 node test/acceptance/generate-fixtures.mjs
@@ -32,7 +32,7 @@ node test/acceptance/generate-fixtures.mjs
 ## 环境前提
 
 - 本机 Chrome（当前配置 `channel: 'chrome'`），无浏览器下载依赖。
-- Playwright 运行器可用；本仓库未在 `package.json` 增加 Playwright 依赖（不在 t11 改动范围），当前环境通过 `node_modules` 软链提供。若在干净检出运行，需要先安装 Playwright 与系统 Chrome。
+- Playwright 运行器由包 `devDependencies` 的 `@playwright/test` 提供；`playwright.config.ts` 的 `globalSetup` 会自动生成 `thousand.ofd` 与 `signature-missing-value.ofd`，干净检出无需手工预生成夹具。首次运行仍需 `pnpm install` 与系统 Chrome（配置使用 `channel: 'chrome'`）。
 - 无头 Chrome 需要 `--disable-gpu --disable-software-rasterizer`，否则 rAF 不触发；该参数已写入配置。
 - ffmpeg 二进制缺失时 `video: 'off'`，失败仍保留 screenshot/trace/console 日志。
 - 1320/桌面主视口 1440×900；移动 390×844；另测 1024/768/480 断点与容器宽度驱动。

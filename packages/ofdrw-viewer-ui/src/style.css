@@ -1256,6 +1256,53 @@
   width: calc(100% - 16px);
 }
 
+.ofd-viewer--fullscreen-fallback {
+  position: fixed;
+  inset: 0;
+  z-index: var(--ofd-z-dialog);
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border-radius: 0;
+  background: var(--ofd-bg);
+}
+
+/* 打印/导出选项对话框 */
+
+.ofd-output-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: min(320px, 70vw);
+}
+
+.ofd-output-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ofd-output-field__label {
+  color: var(--ofd-text-secondary);
+  font-size: 12px;
+}
+
+.ofd-output-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ofd-output-quality {
+  width: 100%;
+}
+
+.ofd-output-error {
+  margin: 0;
+  color: var(--ofd-danger);
+  font-size: 12px;
+}
+
 /* ------------------------------------------------------------------------- */
 /* Toast                                                                      */
 /* ------------------------------------------------------------------------- */

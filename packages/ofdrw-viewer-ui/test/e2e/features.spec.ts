@@ -147,3 +147,74 @@ test('动态 setFeatures/setFeatureDisplay 同步隐藏、禁用与恢复', asyn
   await expect(print).not.toHaveAttribute('aria-disabled', 'true');
   await expectNoPageErrors(page, issues);
 });
+
+
+test('features.signatures=false 时 getSignatures/focusSignature 同步拒绝', async ({ page, issues }) => {
+  await openViewer(page, FIXTURES.signature, { features: { signatures: false } });
+  const result = await page.evaluate(async () => {
+    const read = (action: () => unknown) => {
+      try {
+        action();
+        return null;
+      } catch (error) {
+        const value = error as { code?: string; feature?: string };
+        return { code: value.code, feature: value.feature };
+      }
+    };
+    return {
+      list: read(() => window.__viewer!.getSignatures()),
+      focus: await window.__viewer!.focusSignature('1').then(
+        () => null,
+        (error: { code?: string; feature?: string }) => ({
+          code: error.code,
+          feature: error.feature,
+        }),
+      ),
+    };
+  });
+  expect(result).toEqual({
+    list: { code: 'OFD_FEATURE_DISABLED', feature: 'signatures' },
+    focus: { code: 'OFD_FEATURE_DISABLED', feature: 'signatures' },
+  });
+  await expectNoPageErrors(page, issues);
+});
+
+test('18 个 features 均可独立关闭并同步到有效状态', async ({ page, issues }) => {
+  await openViewer(page, FIXTURES.multi);
+  const features = [
+    'toolbar',
+    'sidebar',
+    'thumbnails',
+    'outline',
+    'bookmarks',
+    'pageNavigation',
+    'pageNumberInput',
+    'zoom',
+    'rotate',
+    'fullscreen',
+    'textLayer',
+    'selection',
+    'find',
+    'print',
+    'export',
+    'signatures',
+    'documentProperties',
+    'keyboardShortcuts',
+  ] as const;
+  for (const feature of features) {
+    const state = await page.evaluate(({ name, names }) => {
+      const viewer = window.__viewer!;
+      const allOn = Object.fromEntries(names.map((key) => [key, true]));
+      viewer.setFeatures(allOn);
+      viewer.setFeatures({ [name]: false });
+      return {
+        enabled: viewer.isFeatureEnabled(name),
+        state: viewer.getFeatureState(name),
+      };
+    }, { name: feature, names: features });
+    expect(state.enabled, feature).toBe(false);
+    expect(state.state.enabled, feature).toBe(false);
+    expect(state.state.visible, feature).toBe(false);
+  }
+  await expectNoPageErrors(page, issues);
+});

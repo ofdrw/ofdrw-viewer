@@ -141,6 +141,10 @@ function createFakeHost(width = 1280): FakeHost {
       record('exportImage');
       return Promise.resolve();
     },
+    exportImages() {
+      record('exportImages');
+      return Promise.resolve();
+    },
     setFullscreen(value) {
       record(`setFullscreen:${value}`);
       return Promise.resolve();
@@ -149,6 +153,32 @@ function createFakeHost(width = 1280): FakeHost {
 }
 
 describe('内置 UI 接线', () => {
+  it('打印/导出选项对话框覆盖范围、DPI、质量、背景、旋转与格式', () => {
+    const host = createFakeHost();
+    const dispose = attachUIShell(host);
+    const shell = getUIShell(host)!;
+
+    (shell.toolbar.getControl('print') as HTMLButtonElement).click();
+    let dialog = document.querySelector<HTMLElement>('.ofd-dialog')!;
+    expect(dialog.textContent).toContain('打印选项');
+    expect(dialog.querySelectorAll('select')).toHaveLength(3);
+    expect(dialog.querySelector<HTMLInputElement>('input[type="checkbox"]')).not.toBeNull();
+    (dialog.querySelector('.ofd-dialog__action:not(.ofd-dialog__action--primary)') as HTMLButtonElement).click();
+
+    (shell.toolbar.getControl('export') as HTMLButtonElement).click();
+    dialog = document.querySelector<HTMLElement>('.ofd-dialog')!;
+    expect(dialog.textContent).toContain('导出图片选项');
+    expect(dialog.querySelectorAll('select')).toHaveLength(5);
+    expect(dialog.querySelector<HTMLInputElement>('input[type="range"]')).not.toBeNull();
+    const format = [...dialog.querySelectorAll<HTMLSelectElement>('select')].find((select) =>
+      [...select.options].some((option) => option.value === 'webp'),
+    )!;
+    expect([...format.options].map((option) => option.value)).toEqual(['png', 'jpeg', 'webp']);
+    (dialog.querySelector('.ofd-dialog__action:not(.ofd-dialog__action--primary)') as HTMLButtonElement).click();
+    expect(document.querySelector('.ofd-dialog')).toBeNull();
+    dispose();
+  });
+
   it('把工具栏/查找命令映射到核心方法', () => {
     const host = createFakeHost();
     const dispose = attachUIShell(host);
@@ -170,8 +200,12 @@ describe('内置 UI 接线', () => {
     (shell!.toolbar.getControl('fullscreen') as HTMLButtonElement).click();
     expect(host.calls).toContain('setFullscreen:true');
     (shell!.toolbar.getControl('print') as HTMLButtonElement).click();
+    expect(document.querySelector('.ofd-dialog')).not.toBeNull();
+    (document.querySelector('.ofd-dialog__action--primary') as HTMLButtonElement).click();
     expect(host.calls).toContain('print');
     (shell!.toolbar.getControl('export') as HTMLButtonElement).click();
+    expect(document.querySelector('.ofd-dialog')).not.toBeNull();
+    (document.querySelector('.ofd-dialog__action--primary') as HTMLButtonElement).click();
     expect(host.calls).toContain('exportImage');
     (shell!.toolbar.getControl('signatures') as HTMLButtonElement).click();
     expect(host.calls).toContain('openSidebar:signatures');

@@ -57,6 +57,7 @@ import { PageView } from './page-view';
 import { RenderQueue, type RenderQueueStats } from './render-queue';
 import {
   createInitialViewerState,
+  type FindState,
   type Rotation,
   type ScaleValue,
   type SidebarView,
@@ -79,7 +80,8 @@ import type {
   ViewerEventHandler,
   ViewerSource,
 } from './types';
-import type { UIShellElements } from './ui/types';
+import { getUIShell } from './ui';
+import type { UIDialogOptions, UIShellElements } from './ui/types';
 import type { UIShellHost } from './ui';
 
 /** 阅读器扩展：在实例创建/注册时执行，返回清理函数。 */
@@ -256,6 +258,7 @@ export class OFDViewer implements UIShellHost {
   private readonly onWindowResize = (): void => this.scheduleViewportUpdate();
   private readonly onFullscreenChange = (): void => {
     const value = !!this.ownerDocument.fullscreenElement;
+    if (!value) this.applyFullscreenFallback(false);
     if (value !== this.state.view.fullscreen) {
       this.patchView({ fullscreen: value });
       this.commit();
@@ -384,6 +387,16 @@ export class OFDViewer implements UIShellHost {
   /** 当前页码，1-based。 */
   getPageNumber(): number {
     return this.state.view.pageNumber;
+  }
+
+  /** `getPageNumber` 的别名，便于宿主按设计方案命名调用。 */
+  getCurrentPage(): number {
+    return this.getPageNumber();
+  }
+
+  /** 当前查找状态；未查找时 query 为空。 */
+  getFindState(): FindState {
+    return this.state.view.findState;
   }
 
   /** 当前缩放倍率。 */
@@ -776,24 +789,82 @@ export class OFDViewer implements UIShellHost {
    */
   async setFullscreen(value: boolean): Promise<void> {
     this.assertFeature('fullscreen');
+    const nativeSupported =
+      typeof this.root.requestFullscreen === 'function' &&
+      this.ownerDocument.fullscreenEnabled !== false;
+    if (value && !nativeSupported) {
+      this.applyFullscreenFallback(true);
+      this.warn('W_FULLSCREEN_FALLBACK', '当前环境不支持原生全屏，已使用沉浸式回退');
+      return;
+    }
     try {
       if (value) {
         if (this.ownerDocument.fullscreenElement !== this.root) {
-          await this.root.requestFullscreen?.();
+          await this.root.requestFullscreen();
         }
-      } else if (this.ownerDocument.fullscreenElement) {
-        await this.ownerDocument.exitFullscreen?.();
+        this.applyFullscreenFallback(false);
+      } else {
+        if (this.ownerDocument.fullscreenElement) {
+          await this.ownerDocument.exitFullscreen();
+        }
+        this.applyFullscreenFallback(false);
       }
       this.patchView({ fullscreen: value });
       this.commit();
     } catch (error) {
-      this.reportError(this.toErrorInfo(error, 'OFD_UNSUPPORTED', '全屏切换失败'));
+      if (value) {
+        this.applyFullscreenFallback(true);
+        this.warn(
+          'W_FULLSCREEN_FALLBACK',
+          `原生全屏失败，已使用沉浸式回退：${error instanceof Error ? error.message : String(error)}`,
+        );
+        return;
+      }
+      this.reportError(this.toErrorInfo(error, 'OFD_UNSUPPORTED', '退出全屏失败'));
     }
   }
 
   /** 切换全屏。 */
   toggleFullscreen(): void {
     void this.setFullscreen(!this.state.view.fullscreen);
+  }
+
+  /**
+   * 切换 position:fixed 沉浸式回退样式。
+   *
+   * @param enabled 是否启用回退。
+   */
+  private applyFullscreenFallback(enabled: boolean): void {
+    this.root.classList.toggle('ofd-viewer--fullscreen-fallback', enabled);
+    this.root.dataset.fullscreenFallback = enabled ? 'true' : 'false';
+    if (enabled) {
+      this.patchView({ fullscreen: true });
+      this.commit();
+    }
+  }
+
+  /**
+   * 打开内置 UI 对话框。
+   *
+   * @param options 对话框内容；需要内置 UI 已挂载。
+   * @returns 对话框元素。
+   * @throws {OFDViewerError} 未挂载内置 UI 时抛 `OFD_UNSUPPORTED`。
+   */
+  showDialog(options: UIDialogOptions): HTMLElement {
+    const shell = getUIShell(this);
+    if (!shell) {
+      throw new OFDViewerError('OFD_UNSUPPORTED', '内置 UI 未挂载，无法打开对话框');
+    }
+    return shell.openDialog(options);
+  }
+
+  /**
+   * 关闭内置 UI 当前对话框。
+   *
+   * @param restoreFocus 是否把焦点还给触发元素；默认 true。
+   */
+  closeDialog(restoreFocus = true): void {
+    getUIShell(this)?.closeDialog(restoreFocus);
   }
 
   /**
@@ -930,6 +1001,7 @@ export class OFDViewer implements UIShellHost {
 
   /** 当前签章摘要；未打开时为空。 */
   getSignatures(): readonly SignatureEntryInfo[] {
+    this.assertFeature('signatures');
     return this.state.document.signaturesSummary;
   }
 
@@ -956,6 +1028,15 @@ export class OFDViewer implements UIShellHost {
     this.assertFeature('signatures');
     const service = this.requireService('signature', '签章服务');
     await service.showSignature?.(id);
+  }
+
+  /**
+   * 聚焦签章；当前实现与 `showSignature` 一致，后续可扩展详情面板定位。
+   *
+   * @param id 签章 ID。
+   */
+  async focusSignature(id: string): Promise<void> {
+    await this.showSignature(id);
   }
 
   /**

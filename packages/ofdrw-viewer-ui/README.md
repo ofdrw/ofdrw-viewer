@@ -103,6 +103,23 @@ viewer.setFeatureDisplay('disable');
 功能关闭时，对应命令抛出带 `feature` 字段的 `OFD_FEATURE_DISABLED` 错误（
 `isFeatureDisabledError(error, 'print')` 可判断）。
 
+### 公共读取与控制 API
+
+- `getCurrentPage()`：`getPageNumber()` 的别名，返回 1-based 页码。
+- `getFindState()`：读取 `query`、`current`、`total`、`searching` 等查找状态。
+- `getSignatures()` / `getSignatureDetail(id)` / `showSignature(id)` /
+  `focusSignature(id)`：读取或定位签章；`features.signatures=false` 时同步抛
+  `OFD_FEATURE_DISABLED`（`feature='signatures'`）。
+- `showDialog(options)` / `closeDialog(restoreFocus?)`：控制内置 UI 对话框；未挂载
+  内置 UI 时抛 `OFD_UNSUPPORTED`。
+- 打印/导出按钮会打开选项对话框，可选择当前页/全部页/自定义范围、DPI、旋转、
+  打印背景，以及导出格式、质量、背景；确认后分别调用 `print(options)` /
+  `exportImages(options)` 或 `exportImage(options)`。
+
+**P1 延期**：`goToDestination(DocumentDestination)` 尚未暴露。当前替代方式是读取
+`getPageInfos()` 后用 `goToPage(pageIndex + 1)` 跳转；页内坐标/缩放锚点由调用方
+处理。该差异属于本迭代已知范围，后续补齐时保持向后兼容。
+
 ### 事件
 
 `on(event, handler)` 返回取消订阅函数，`once`/`off` 同样可用。事件包括
@@ -223,6 +240,9 @@ npx vite packages/ofdrw-viewer-ui/demo
 - 签章信息只解析并展示 SignedValue，不验签、不校验证书链/有效期/CRL/OCSP。
 - 打印调用浏览器打印对话框，不生成 PDF；图片导出不合并为 PDF。
 - 不提供局部/瓦片渲染；不修改 `@ofdrw/ofdrw-viewer-engine`。
+- MVP 的缩放入口为工具栏/API/下拉；Ctrl/Command+滚轮、双指捏合与双击缩放手势尚未实现。
+- 1000 页派生夹具（约 0.8MB）实测打开约 6.2s、全篇查找约 23.8s，未达到设计
+  §12.6 的 2s/5s 目标；50–200MB 夹具与设计负责人书面豁免尚未提供。
 
 ## 许可证
 

@@ -71,8 +71,18 @@ test('打印当前页/全部页：生成打印 DOM、调用 window.print 并清�
     await page.evaluate(() => (window as unknown as { __revoked: number }).__revoked),
   ).toBeGreaterThanOrEqual(4);
 
-  // 工具栏打印按钮：默认当前页（当前仍为第 1 页）。
+  // 工具栏打印：先打开选项对话框，取消不触发打印；确认后默认当前页。
   await page.locator('[data-ofd-control="print"]').click();
+  await expect(page.locator('.ofd-dialog')).toBeVisible();
+  await page.locator('.ofd-dialog__action:not(.ofd-dialog__action--primary)').click();
+  await expect(page.locator('.ofd-dialog')).toHaveCount(0);
+  expect(
+    await page.evaluate(() => (window as unknown as { __printCalls: number }).__printCalls),
+  ).toBe(1);
+
+  await page.locator('[data-ofd-control="print"]').click();
+  await expect(page.locator('.ofd-dialog')).toBeVisible();
+  await page.locator('.ofd-dialog__action--primary').click();
   await expect.poll(() => page.evaluate(() => (window as unknown as { __printCalls: number }).__printCalls)).toBe(2);
   snapshot = await page.evaluate(
     () => (window as unknown as { __printSnapshot: PrintSnapshot | null }).__printSnapshot,
@@ -80,6 +90,12 @@ test('打印当前页/全部页：生成打印 DOM、调用 window.print 并清�
   expect(snapshot!.pages).toBe(1);
   expect(snapshot!.pageNumbers).toEqual([1]);
   await expect(page.locator('.ofd-print-root')).toHaveCount(0);
+
+  // 导出选项对话框可取消，不触发下载。
+  await page.locator('[data-ofd-control="export"]').click();
+  await expect(page.locator('.ofd-dialog')).toBeVisible();
+  await page.locator('.ofd-dialog__action:not(.ofd-dialog__action--primary)').click();
+  await expect(page.locator('.ofd-dialog')).toHaveCount(0);
   await expectNoPageErrors(page, issues);
 });
 

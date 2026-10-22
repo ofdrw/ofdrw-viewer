@@ -3,8 +3,8 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { test as base, expect } from 'playwright/test';
-import type { Page, Request, TestInfo } from 'playwright/test';
+import { test as base, expect } from '@playwright/test';
+import type { Page, Request, TestInfo } from '@playwright/test';
 
 /** 控制台与网络异常收集器。 */
 export interface IssueCollector {
