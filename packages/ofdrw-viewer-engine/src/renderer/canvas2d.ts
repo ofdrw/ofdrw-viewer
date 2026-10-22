@@ -690,13 +690,23 @@ export class H5Canvas2DRenderer implements Renderer {
     alpha: number,
     smoothing: boolean,
     mask?: ImageHandle,
+    blendMode?: 'multiply',
   ): void {
     this.ensurePage();
     const context = this.context;
     applyState(context, this.state);
     const entry = this.resolveImage(image);
     const maskEntry = mask ? this.resolveImage(mask) : null;
-    this.drawImageEntry(context, this.state, entry, transform, alpha, smoothing, maskEntry);
+    this.drawImageEntry(
+      context,
+      this.state,
+      entry,
+      transform,
+      alpha,
+      smoothing,
+      maskEntry,
+      blendMode,
+    );
   }
 
   /** @inheritdoc */
@@ -874,6 +884,7 @@ export class H5Canvas2DRenderer implements Renderer {
    * @param alpha 额外透明度，0..1。
    * @param smoothing 是否启用平滑。
    * @param mask 可选蒙版句柄。
+   * @param blendMode 可选合成模式；缺省使用当前状态的 composite。
    */
   private drawImageEntry(
     context: CanvasRenderingContext2DLike,
@@ -883,6 +894,7 @@ export class H5Canvas2DRenderer implements Renderer {
     alpha: number,
     smoothing: boolean,
     mask: H5ImageHandle | null,
+    blendMode?: 'multiply',
   ): void {
     let source = image.source;
     let compositeEntry: CanvasFactoryEntry | null = null;
@@ -904,19 +916,24 @@ export class H5Canvas2DRenderer implements Renderer {
 
     try {
       context.save();
-      context.globalAlpha = clampUnit(state.alpha * clampUnit(alpha));
-      context.globalCompositeOperation = state.composite;
-      context.imageSmoothingEnabled = smoothing;
-      context.transform(
-        transform[0],
-        transform[1],
-        transform[2],
-        transform[3],
-        transform[4],
-        transform[5],
-      );
-      context.drawImage(source, 0, 0, 1, 1);
-      context.restore();
+      try {
+        context.globalAlpha = clampUnit(state.alpha * clampUnit(alpha));
+        // 签章白底使用 multiply；其他图片缺省沿用当前 composite（通常 source-over）。
+        context.globalCompositeOperation = blendMode ?? state.composite;
+        context.imageSmoothingEnabled = smoothing;
+        context.transform(
+          transform[0],
+          transform[1],
+          transform[2],
+          transform[3],
+          transform[4],
+          transform[5],
+        );
+        context.drawImage(source, 0, 0, 1, 1);
+      } finally {
+        // 保证 multiply 不泄漏到后续绘制。
+        context.restore();
+      }
     } finally {
       if (compositeEntry) this.canvasFactory.destroy(compositeEntry);
     }

@@ -194,13 +194,24 @@ export interface Renderer {
 
   /** 把解码结果转成渲染器内部句柄；核心不假设底层类型。 */
   createImage(image: DecodedImage): ImageHandle;
-  /** 绘制图片句柄；transform 为图片单位空间到当前空间的矩阵。 */
+  /**
+   * 绘制图片句柄。
+   *
+   * @param image 图像句柄。
+   * @param transform 图片单位空间 → 当前空间的矩阵。
+   * @param alpha 额外透明度，0..1。
+   * @param smoothing 是否启用平滑。
+   * @param mask 可选蒙版句柄。
+   * @param blendMode 可选合成模式；`'multiply'` 用于签章白底，缺省沿用当前 composite
+   *   （通常为 `source-over`）。
+   */
   drawImage(
     image: ImageHandle,
     transform: Matrix,
     alpha: number,
     smoothing: boolean,
     mask?: ImageHandle,
+    blendMode?: 'multiply',
   ): void;
 
   /** 进入独立合成目标；alpha 在 endGroup 时整体应用一次。 */

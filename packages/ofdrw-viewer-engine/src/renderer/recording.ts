@@ -62,6 +62,8 @@ export type RecordingCall =
       alpha: number;
       smoothing: boolean;
       mask?: ImageHandle;
+      /** 可选合成模式；仅签章白底使用 `'multiply'`。 */
+      blendMode?: 'multiply';
     }
   | { op: 'beginGroup'; options: GroupOptions }
   | { op: 'endGroup' }
@@ -200,8 +202,17 @@ export class RecordingRenderer implements Renderer {
     alpha: number,
     smoothing: boolean,
     mask?: ImageHandle,
+    blendMode?: 'multiply',
   ): void {
-    this.calls.push({ op: 'drawImage', image, transform, alpha, smoothing, mask });
+    this.calls.push({
+      op: 'drawImage',
+      image,
+      transform,
+      alpha,
+      smoothing,
+      mask,
+      ...(blendMode ? { blendMode } : {}),
+    });
   }
 
   /** @inheritdoc */
