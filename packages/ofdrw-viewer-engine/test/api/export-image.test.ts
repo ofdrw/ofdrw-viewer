@@ -30,7 +30,7 @@ function errorCode(error: unknown): string | undefined {
 }
 
 /** 100×100mm 单页，左上角 10mm 红色矩形。 */
-function buildPageOfd(): Uint8Array {
+function buildPageOfd(widthMm = 100, heightMm = 100): Uint8Array {
   const red: XmlElementSpec = {
     name: 'ofd:PathObject',
     attrs: { ID: 11, Boundary: '0 0 10 10', Fill: 'true', Stroke: 'false' },
@@ -39,7 +39,7 @@ function buildPageOfd(): Uint8Array {
       { name: 'ofd:FillColor', attrs: { Value: '255 0 0' } },
     ],
   };
-  return buildFixtureOfd({ pages: [{ id: 1, widthMm: 100, heightMm: 100, objects: [red] }] });
+  return buildFixtureOfd({ pages: [{ id: 1, widthMm, heightMm, objects: [red] }] });
 }
 
 /** @napi-rs Canvas 与页面导出公共画布接口的交叉类型。 */
@@ -451,6 +451,38 @@ describe('page.exportImage', () => {
       await expect(page.exportImage()).rejects.toMatchObject({ code: 'OFD_CLOSED' });
     } finally {
       await doc.close();
+    }
+  });
+
+  it('viewport 3 位归一化：228.6mm 导出 864px，864.3px 仍 ceil 到 865', async () => {
+    const encodeImage = async (canvas: Canvas2DLike, format: PageImageFormat, quality: number) =>
+      encodeWithNode(canvas, format, quality);
+    const normal = await openTestDocument(buildPageOfd(228.6, 228.6), {
+      createCanvas: nodeCanvas,
+      encodeImage,
+    });
+    try {
+      const page = await normal.getPage(0);
+      const result = await page.exportImage();
+      expect(result.width).toBe(864);
+      expect(result.height).toBe(864);
+      expect(result.dpi).toBe(96);
+    } finally {
+      await normal.close();
+    }
+
+    const widthMm = 864.3 / (96 / 25.4);
+    const fractional = await openTestDocument(buildPageOfd(widthMm, widthMm), {
+      createCanvas: nodeCanvas,
+      encodeImage,
+    });
+    try {
+      const page = await fractional.getPage(0);
+      const result = await page.exportImage();
+      expect(result.width).toBe(865);
+      expect(result.height).toBe(865);
+    } finally {
+      await fractional.close();
     }
   });
 

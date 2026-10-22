@@ -75,8 +75,9 @@ describe('OFDDocument 打开与来源', () => {
       expect(first.index).toBe(0);
       expect(first.getSize()).toEqual({ width: 100, height: 200 });
       const viewport = first.getViewport({ dpi: 300 });
-      expect(viewport.width).toBeCloseTo((100 / 25.4) * 300, 6);
-      expect(viewport.height).toBeCloseTo((200 / 25.4) * 300, 6);
+      // viewport 固定保留 3 位小数（0.001px）。
+      expect(viewport.width).toBe(1181.102);
+      expect(viewport.height).toBe(2362.205);
       expect(viewport.dpi).toBe(300);
       expect(first.getViewport()).toEqual(first.getViewport({ dpi: 96 }));
       const second = await doc.getPage(1);
