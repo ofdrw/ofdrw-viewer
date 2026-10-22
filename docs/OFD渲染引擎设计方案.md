@@ -11,9 +11,10 @@
 ## 0. 结论摘要
 
 > 0.5 变更：v1 增加 `Seal.esl`/`SignedValue.dat` 静态签章解析（ASN.1 v1/v4/v5 结构推断、位图与内嵌矢量 OFD 章）、签章位图 multiply、标准/manual 图片 Clips 顺序、GIF 首帧解码；P9 `dense-text-perf` 按极端样本例外计时。
+> 0.5-r8 变更：新增 `OFDPage.exportImage` 与 `OFDOpenOptions.encodeImage` 页面图片导出契约（详见 15.1.1）；engine 不新增编码依赖。
 > 0.4 变更：采用 Monorepo 子包 `ofdrw-viewer-engine`；`Renderer` 改为 `beginGroup/endGroup`，H5 的 `CanvasFactory`/scratch 完全内部化，公开 API 不再有 `RenderSurface`；`fallbackFonts` 更名为 `supplementaryFonts`；删除 engine 级独立块栅格缓存，改为复用 display list。
 
-1. **引擎做成一个独立、平台无关的 TypeScript 库**：以 Monorepo 子包 `ofdrw-viewer-engine` 交付；公开 API 按 pdf.js 形态收敛为 `open → getPage → page.getViewport/page.render → close`；核心只定义 `ByteSource`、Canvas、图片解码器、字体来源等接口，`Renderer` 作为正式扩展点但默认实现由 engine 提供，**v1 不实现任何端适配器**。
+1. **引擎做成一个独立、平台无关的 TypeScript 库**：以 Monorepo 子包 `ofdrw-viewer-engine` 交付；公开 API 按 pdf.js 形态收敛为 `open → getPage → page.getViewport/page.render（可选 page.exportImage） → close`；核心只定义 `ByteSource`、Canvas、图片解码器、字体来源等接口，`Renderer` 作为正式扩展点但默认实现由 engine 提供，**v1 不实现任何端适配器**。
 2. **ZIP 不做整体解压**。打开时只读 `OFD.xml`、`Document.xml` 和页树；渲染某页时才按中央目录定位并解压该页的 `Content.xml`、`PageRes.xml`、模板页、字体和图片。天然支持 HTTP Range、`Blob.slice`、Node 文件句柄和微信文件系统。
 3. **文字绝不走 Canvas 文本 API**。统一走 `字体文件 → fontkit 解析 → 字形轮廓 → 路径 → fill/stroke`，因此不会受系统字体缺失、Canvas `fillText` 差异、小程序字体加载限制影响。
 4. **渲染分为“异步准备”和“同步绘制”两段**：先把该页需要的字体、图片、资源 XML 全部解析/解码完，再在一个同步循环里按文档顺序绘制，避免画到一半 `await` 导致 Canvas 状态被外部改写。
@@ -2233,7 +2234,7 @@ export interface CanvasRenderingContext2DLike {
 | 字体 | fontkit（字节） | fontkit | fontkit | fontkit |
 | 解压 | `DecompressionStream`/fflate | 同 Web | `DecompressionStream`/fflate | fflate |
 | Worker | 可选 | 可选 | worker_threads | `wx.createWorker` |
-| 导出 | `toBlob`/`toDataURL` | 同 Web | canvas `encode` | `wx.canvasToTempFilePath` |
+| 导出 | `convertToBlob`/`toBlob` | 同 Web | 宿主 `encodeImage`（如 canvas `encode`） | `wx.canvasToTempFilePath` |
 
 ### 14.3 小程序注意事项
 
@@ -2269,7 +2270,7 @@ export interface CanvasRenderingContext2DLike {
 
 ### 15.1 设计
 
-公共 API 采用 pdf.js 的“文档 → 页 → 渲染任务”形态；engine 只渲染页面内容，不处理阅读器的缩放/旋转/背景/打印筛选。
+公共 API 采用 pdf.js 的“文档 → 页 → 渲染任务”形态；engine 只渲染页面内容，不处理阅读器的缩放/旋转/背景/打印筛选。`page.exportImage` 提供整页离屏编码，属于同一页面内容渲染路径的便捷封装。
 
 ```ts
 export type FontInput =
@@ -2342,11 +2343,16 @@ export interface OFDOpenOptions {
   /** 渲染器扩展点；默认 H5Canvas2DRenderer，普通用户无需传 */
   renderer?: Renderer;
   /**
-   * 默认 H5 渲染器/矢量签章嵌套渲染使用的临时画布工厂。
-   * 传了 renderer 时以 renderer 为准；不传时未注入则走 document/OffscreenCanvas。
-   * 参数/返回值单位均为像素。
+   * 临时画布工厂；供默认 H5 渲染器、矢量签章嵌套渲染和 page.exportImage 使用。
+   * 页面 render 传了 renderer 时以 renderer 为准；exportImage 仍使用本工厂。
+   * 未注入时走 document/OffscreenCanvas；参数/返回值单位均为像素。
    */
   createCanvas?: (width: number, height: number) => Canvas2DLike;
+  /**
+   * 页面图片编码钩子，供 page.exportImage 使用；不传时浏览器走
+   * canvas.convertToBlob/toBlob，Node/小程序宿主必须注入。
+   */
+  encodeImage?: (canvas: CanvasImageEncodeSource, format: PageImageFormat, quality: number) => Promise<Uint8Array>;
 }
 
 export type OFDSource =
@@ -2373,6 +2379,30 @@ export interface PageRenderParameters {
   signal?: AbortSignal;
 }
 
+export type PageImageFormat = 'png' | 'jpeg' | 'webp';
+export type PageImageMime = 'image/png' | 'image/jpeg' | 'image/webp';
+
+export interface PageImageExportOptions {
+  dpi?: number;                       // 默认 96；非有限/<=0 回退 96
+  format?: PageImageFormat;           // 默认 png
+  quality?: number;                   // jpeg/webp 0..1，默认 0.92；png 忽略
+  background?: string | null;         // 默认 #ffffff；png 可 null 透明
+  signal?: AbortSignal;
+}
+
+export interface PageImageResult {
+  data: Uint8Array;
+  mime: PageImageMime;                // 与 format 对应
+  width: number;                      // device px
+  height: number;                     // device px
+  dpi: number;                        // 实际使用的 DPI
+}
+
+export interface CanvasImageEncodeSource extends Canvas2DLike {
+  convertToBlob?(options?: { type?: string; quality?: number }): Promise<Blob>;
+  toBlob?(callback: (blob: Blob | null) => void, type?: string, quality?: number): void;
+}
+
 export class RenderTask {
   readonly promise: Promise<void>;
   cancel(): void;
@@ -2386,6 +2416,8 @@ export class OFDPage {
   getViewport(options?: ViewportOptions): Viewport;
   /** 渲染到用户提供的 canvasContext；不设置 canvas 尺寸、不清屏；会以 M_page 重置变换（覆盖预置 CTM） */
   render(params: PageRenderParameters): RenderTask;
+  /** 整页导出为图片；使用文档的 createCanvas/encodeImage，返回编码字节 */
+  exportImage(options?: PageImageExportOptions): Promise<PageImageResult>;
 }
 
 export class H5Canvas2DRenderer implements Renderer {
@@ -2407,11 +2439,29 @@ export class OFDDocument {
 }
 ```
 
-- `Renderer` 是公开扩展点（见 6.3）；**默认实现 `H5Canvas2DRenderer` 由 engine 内部创建**，普通用户不传 `renderer`。Node/小程序需要临时画布时传 `createCanvas`；显式 `renderer` 优先。矢量签章打开内嵌 OFD 时必须复用同一个 `createCanvas`。
+- `Renderer` 是公开扩展点（见 6.3）；**默认实现 `H5Canvas2DRenderer` 由 engine 内部创建**，普通用户不传 `renderer`。Node/小程序需要临时画布时传 `createCanvas`；显式 `renderer` 只优先接管页面 `render`，`exportImage` 仍使用文档的 `createCanvas`。矢量签章打开内嵌 OFD 时必须复用同一个 `createCanvas`。
 - `page.render` 不接收 `scale/rotation/pixelRatio/background/annotations`；这些是阅读器控制或宿主画布设置。
 - `page.render` 只画页面内容；canvas.width/height、CSS 尺寸、清屏、白底/背景色全部由用户负责。
 - `page.render` 返回 `RenderTask`；`cancel()` 后 `promise` 以 `OFD_ABORTED` 拒绝；与 pdf.js 的 `RenderTask` 形状一致。
 - `getPage` 失败（页码越界/页损坏）抛 `OFDError`；`page.getViewport` 只依赖页尺寸，不触发内容/字体/图片加载。
+
+### 15.1.1 页面图片导出（r8）
+
+`page.exportImage` 是 `page.render` 的整页离屏封装，不是第二条渲染路径：
+
+- **整页**：`viewport = page.getViewport({ dpi })`；输出 `width = Math.ceil(viewport.width)`、`height = Math.ceil(viewport.height)`，覆盖整页内容，不含阅读器缩放/旋转/裁剪/标注 UI。页面内容仍由 `page.render` 以 `M_page` 绘制。
+- **画布**：通过文档的 `createCanvas(width, height)` 创建独立离屏 canvas，不影响宿主主 canvas；Node/小程序未注入时沿用 H5 的 document/OffscreenCanvas 兜底。导出前写入/校验 canvas 宽高；不足时抛 `OFD_CANVAS_SIZE_MISMATCH`，不能静默裁剪。
+- **像素上限**：`width * height > limits.maxCanvasPixels` 时在创建画布前拒绝，抛 `OFD_CANVAS_TOO_LARGE`（沿用打开文档时的资源限制）。
+- **背景**：`background` 为 CSS 颜色，默认 `#ffffff`；先用 identity 变换填满背景，再开始页面渲染。PNG 可传 `null` 得到透明背景（先 `clearRect`，保证复用画布也透明）；JPEG/WebP 不支持 alpha，`null` 按白底处理，不报错。非法 CSS 颜色按默认白底处理，不能复用上一个 `fillStyle`。
+- **格式与质量**：`format` 默认 `png`，可选 `jpeg`/`webp`，MIME 分别为 `image/png`/`image/jpeg`/`image/webp`；`quality` 仅对 JPEG/WebP 生效，0..1，默认 `0.92`；PNG 忽略质量。非法 `dpi`（非有限或 <=0）回退 96；非法 `quality` 回退默认值并夹取到 0..1。
+- **编码**：优先调用 `OFDOpenOptions.encodeImage(canvas, format, quality)`，宿主可注入平台编码器（Node 的 `@napi-rs/canvas`/`node-canvas` 等）。未提供时，浏览器默认优先 `canvas.convertToBlob({ type, quality })`，其次 `canvas.toBlob(cb, type, quality)`；不使用 `toDataURL`。engine 不新增任何编码运行时依赖。
+- **编码结果**：`encodeImage` 必须返回非空 `Uint8Array`；编码器抛错、返回空/非 `Uint8Array`，或浏览器两个编码入口都不可用，均抛 `OFD_RENDERER_UNSUPPORTED`，原始异常放 `cause`。
+- **返回**：`{ data, mime, width, height, dpi }`；`width/height/dpi` 是实际输出值，`data` 归调用方所有，engine 不缓存。
+- **取消**：在开始、render 前后、encode 前后检查 `signal`；中止后以 `OFD_ABORTED` 拒绝，不返回部分结果。`encodeImage` 没有 signal 参数，已开始的编码无法中断，但编码结束后仍检查取消状态。
+- **close**：调用前文档已关闭抛 `OFD_CLOSED`；导出期间 close 与 render 竞争时按现有 close 语义以 `OFD_CLOSED` 拒绝，绝不返回编码结果。`close()` 可重复调用。
+- **错误传播**：`page.render` 的 canvas 尺寸/像素/资源限制/取消错误原样以 `OFDError` 传播；编码阶段只新增上述映射，不新增错误码，不把第三方异常裸抛。
+
+`exportImage` 复用同一套 `createCanvas` 与 `page.render`，因此 H5、Node 宿主和矢量签章嵌套 OFD 共用相同的画布/像素限制语义。
 
 ### 15.2 为什么用 `page.getViewport`
 
@@ -2447,22 +2497,24 @@ const ctx = canvas.getContext('2d')!;
 const task = page.render({ canvasContext: ctx, viewport });
 await task.promise;
 
+// 整页导出：默认白底 PNG；background: null 得到透明 PNG。
+const png = await page.exportImage({ dpi: 144, format: 'png', background: null });
+const jpeg = await page.exportImage({ dpi: 96, format: 'jpeg', quality: 0.9 });
+
 await doc.close();
 ```
 
-Node（显式注入 `createCanvas`）：
+Node（显式注入 `createCanvas` 与 `encodeImage`）：
 
 ```ts
 import { createCanvas } from '@napi-rs/canvas';
-import { OFDDocument, H5Canvas2DRenderer } from 'ofdrw-viewer-engine';
-
-const renderer = new H5Canvas2DRenderer({
-  createCanvas: (width, height) => createCanvas(width, height),
-});
+import { OFDDocument } from 'ofdrw-viewer-engine';
 
 const doc = await OFDDocument.open({
   source: { kind: 'node-file', path: '/data/a.ofd' },
-  renderer,
+  createCanvas: (width, height) => createCanvas(width, height),
+  // 宿主实现，例如把 canvas 交给 @napi-rs/canvas 的 encode；engine 不内置编码器。
+  encodeImage: (canvas, format, quality) => encodeNodeCanvas(canvas, format, quality),
   supplementaryFonts: [{ path: '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc' }],
 });
 
@@ -2475,6 +2527,8 @@ const canvas = createCanvas(
 const ctx = canvas.getContext('2d');
 const task = page.render({ canvasContext: ctx, viewport });
 await task.promise;
+
+const image = await page.exportImage({ dpi: 192, format: 'png' });
 await doc.close();
 ```
 
@@ -2547,11 +2601,11 @@ export class OFDError extends Error {
 | `OFD_ENCRYPTED` | 加密条目 |
 | `OFD_XML_PARSE` | 关键 XML 无法解析 |
 | `OFD_PAGE_NOT_FOUND` | 页码越界 |
-| `OFD_CANVAS_TOO_LARGE` | 超过画布像素限制 |
-| `OFD_CANVAS_SIZE_MISMATCH` | canvas 宽高小于 viewport |
-| `OFD_RENDERER_UNSUPPORTED` | renderer 缺少当前能力（如 H5 未注入 `createCanvas` 却遇到 group/pattern） |
-| `OFD_ABORTED` | 被 `RenderTask.cancel()`/`AbortSignal` 取消 |
-| `OFD_CLOSED` | 文档已关闭，不能再使用 |
+| `OFD_CANVAS_TOO_LARGE` | render/exportImage 的 viewport 超过 `maxCanvasPixels` |
+| `OFD_CANVAS_SIZE_MISMATCH` | canvas 宽高小于 viewport，或 exportImage 创建的画布尺寸不符 |
+| `OFD_RENDERER_UNSUPPORTED` | renderer 缺少当前能力；exportImage 缺少 `createCanvas`/编码器、格式不支持或编码失败 |
+| `OFD_ABORTED` | 被 `RenderTask.cancel()`/`AbortSignal` 取消，含 exportImage |
+| `OFD_CLOSED` | 文档已关闭，不能再 render/exportImage |
 | `OFD_LIMIT_EXCEEDED` | 超过资源限制 |
 | `OFD_FONT_PARSE` | 主字体无法解析（可回退时只 warning） |
 | `OFD_IMAGE_DECODE` | 图片解码失败（可跳过时只 warning） |
