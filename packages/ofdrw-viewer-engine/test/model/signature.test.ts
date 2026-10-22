@@ -46,6 +46,20 @@ async function openSampleSignatures(name: string) {
   return { document, bundle, warnings };
 }
 
+/** 直接解码一个真实 Signature.xml；不读取 Seal.esl/SignedValue.dat。 */
+async function decodeSampleSignature(
+  name: string,
+  path: string,
+  pageIds: readonly string[] = [],
+) {
+  const zip = await ZipReader.open(new ArrayBufferSource(readFileSync(samplePath(name))));
+  try {
+    return decodeSignature(parseXml(await zip.readEntry(path)), path, { pageIds });
+  } finally {
+    zip.close();
+  }
+}
+
 /** 判断字节是否以指定 PNG 文件头开始。 */
 function isPng(data: Uint8Array): boolean {
   return [0x89, 0x50, 0x4e, 0x47].every((byte, index) => data[index] === byte);
@@ -329,6 +343,155 @@ describe('签章模型（T14a）', () => {
     const warnings: OFDWarning[] = [];
     expect(decodeSealImage(seq(seq(), seq(), seq()), { onWarning: (warning) => warnings.push(warning) })).toBeUndefined();
     expect(warnings.some((warning) => warning.code === 'W_BAD_NUMBER')).toBe(true);
+  });
+
+  it('Signature.xml 元数据：Provider/时间/References/SignedValue 路径与多戳记顺序', async () => {
+    const n = await decodeSampleSignature(
+      'n.ofd',
+      'Doc_0/Signs/Sign_0/Signature.xml',
+      ['1001', '1021'],
+    );
+    expect(n.provider).toEqual({
+      name: 'iOFD® 2.1.1 ©2019-2020 dms360.cn',
+      company: 'dms360.cn',
+      version: '2.1.1',
+    });
+    expect(n.signatureDateTime).toBe('2020-01-25 15:31:56');
+    expect(n.references).toHaveLength(6);
+    expect(n.references[0]).toEqual({ fileRef: '/Doc_0/Document.xml' });
+    expect(n.references[5]).toEqual({ fileRef: '/Doc_0/Signs/Sign_0/Seal.esl' });
+    expect(n.signedValuePath).toBe('Doc_0/Signs/Sign_0/SignedValue.dat');
+    expect(n.signedValueFile).toBe(n.signedValuePath);
+    expect(n.hasSignedValue).toBe(true);
+    expect(n.stamps).toEqual([
+      expect.objectContaining({ pageId: '1021', pageIndex: 1 }),
+    ]);
+
+    const v4 = await decodeSampleSignature('v4signed.ofd', 'Doc_0/Signs/Sign_0/Signature.xml');
+    expect(v4.provider).toEqual({ name: 'gomain_eseal', company: 'BW', version: '2.0' });
+    expect(v4.signatureDateTime).toBe('20201010151120');
+    expect(v4.references).toHaveLength(13);
+    expect(v4.references[0]).toEqual({ fileRef: '/Doc_0/Attachs/Attachments.xml' });
+    expect(v4.signedValuePath).toBe('Doc_0/Signs/Sign_0/SignedValue.dat');
+    expect(v4.hasSignedValue).toBe(true);
+
+    const h = await decodeSampleSignature(
+      'h.ofd',
+      'Doc_0/Signs/Sign_0/Signature.xml',
+      ['1', '21', '43', '63', '83'],
+    );
+    expect(h.provider).toEqual({ name: 'ofdrw-sign', company: 'ofdrw', version: '1.5.2' });
+    expect(h.stamps.map((stamp) => stamp.id)).toEqual(['s002', 's003', 's004', 's005', 's006']);
+    expect(h.stamps.map((stamp) => stamp.pageIndex)).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it('Provider 子元素、SignedValue 的 BaseLoc 文本与包内规范化', () => {
+    const signature = decodeSignature(
+      node('Signature', { ID: 's1' }, [
+        node('SignedInfo', {}, [
+          node('Provider', {}, [
+            node('ProviderName', {}, [], 'provider-child'),
+            node('Company', {}, [], 'company-child'),
+            node('Version', {}, [], '3.0'),
+          ]),
+          node('SignatureDateTime', {}, [], '2026-01-02 03:04:05'),
+          node('References', {}, [
+            node('Reference', { FileRef: '/Doc_0/b.xml' }),
+            node('Reference', { FileRef: '/OFD.xml' }),
+          ]),
+          node('SignedValue', {}, [node('BaseLoc', {}, [], '/Doc_0/Signs/../Signs/Sign_0/SignedValue.dat')]),
+        ]),
+      ]),
+      'Doc_0/Signs/Sign_0/Signature.xml',
+    );
+    expect(signature.provider).toEqual({
+      name: 'provider-child',
+      company: 'company-child',
+      version: '3.0',
+    });
+    expect(signature.signatureDateTime).toBe('2026-01-02 03:04:05');
+    expect(signature.references).toEqual([{ fileRef: '/Doc_0/b.xml' }, { fileRef: '/OFD.xml' }]);
+    expect(signature.signedValuePath).toBe('Doc_0/Signs/Sign_0/SignedValue.dat');
+    expect(signature.hasSignedValue).toBe(true);
+  });
+
+  it('缺 SignedValue 时 hasSignedValue=false，路径省略', () => {
+    const signature = decodeSignature(
+      node('Signature', { ID: 's1' }, [node('SignedInfo', {}, [node('Provider', { ProviderName: 'p' })])]),
+      'Doc_0/Signs/Sign_0/Signature.xml',
+    );
+    expect(signature.provider).toEqual({ name: 'p' });
+    expect(signature.references).toEqual([]);
+    expect(signature.hasSignedValue).toBe(false);
+    expect(signature.signedValuePath).toBeUndefined();
+    expect(signature.signedValueFile).toBeUndefined();
+    expect(signature.signatureDateTime).toBeUndefined();
+  });
+
+  it('StampAnnot 未匹配 PageRef 省略 pageIndex 并 warning；坏 Boundary 跳过', () => {
+    const warnings: OFDWarning[] = [];
+    const signature = decodeSignature(
+      node('Signature', { ID: 's1' }, [
+        node('StampAnnot', { ID: 'a1', PageRef: '99', Boundary: '1 2 3 4' }),
+        node('StampAnnot', { ID: 'a2', PageRef: '1', Boundary: 'bad' }),
+        node('StampAnnot', { ID: 'a3', PageRef: '1', Boundary: '5 6 7 8' }),
+      ]),
+      'Doc_0/Signs/Sign_0/Signature.xml',
+      { id: 's1', pageIds: ['1'], onWarning: (warning) => warnings.push(warning) },
+    );
+    expect(signature.stamps).toHaveLength(2);
+    expect(signature.stamps[0]?.pageIndex).toBeUndefined();
+    expect(signature.stamps[1]).toEqual(expect.objectContaining({ id: 'a3', pageIndex: 0 }));
+    expect(warnings.some((warning) => warning.code === 'W_BAD_PATH')).toBe(true);
+    expect(warnings.some((warning) => warning.code === 'W_BAD_NUMBER')).toBe(true);
+  });
+
+  it('v5 Signature.xml 元数据与既有 Seal 解码共存', async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const header = seq(ia5('ES'), int(5), ia5('V'));
+    const sealInfo = seq(header, ia5('v5-id'), seq(), seq(ia5('PNG'), octet(png), int(30), int(40)));
+    const sealBytes = seq(
+      sealInfo,
+      octet(new Uint8Array([1])),
+      octet(new Uint8Array([2])),
+      octet(new Uint8Array([3])),
+      octet(new Uint8Array([4])),
+    );
+    const signatureXml = `<?xml version="1.0" encoding="UTF-8"?>
+<ofd:Signature xmlns:ofd="http://www.ofdspec.org/2016">
+  <ofd:SignedInfo>
+    <ofd:Provider ProviderName="v5-provider" Company="v5-company" Version="5.0"/>
+    <ofd:SignatureDateTime>2026-08-04 10:08:09</ofd:SignatureDateTime>
+    <ofd:References><ofd:Reference FileRef="/OFD.xml"/></ofd:References>
+    <ofd:StampAnnot ID="v5-stamp" PageRef="1" Boundary="1 2 3 4"/>
+    <ofd:Seal><ofd:BaseLoc>/Doc_0/Signs/Sign_0/Seal.esl</ofd:BaseLoc></ofd:Seal>
+  </ofd:SignedInfo>
+  <ofd:SignedValue>/Doc_0/Signs/Sign_0/SignedValue.dat</ofd:SignedValue>
+</ofd:Signature>`;
+    const bundle = await decodeSignatureBundle({
+      index: node('Signatures', {}, [
+        node('Signature', { ID: 's5', Type: 'Seal', BaseLoc: '/Doc_0/Signs/Sign_0/Signature.xml' }),
+      ]),
+      indexFilePath: 'Doc_0/Signs/Signatures.xml',
+      pageIds: ['1'],
+      readFile: (path) => {
+        if (path.endsWith('Seal.esl')) return sealBytes;
+        if (path.endsWith('Signature.xml')) return new TextEncoder().encode(signatureXml);
+        throw new Error(`unexpected ${path}`);
+      },
+    });
+    const signature = bundle.signatures[0]!;
+    expect(signature.provider).toEqual({
+      name: 'v5-provider',
+      company: 'v5-company',
+      version: '5.0',
+    });
+    expect(signature.signatureDateTime).toBe('2026-08-04 10:08:09');
+    expect(signature.references).toEqual([{ fileRef: '/OFD.xml' }]);
+    expect(signature.signedValuePath).toBe('Doc_0/Signs/Sign_0/SignedValue.dat');
+    expect(signature.hasSignedValue).toBe(true);
+    expect(signature.stamps[0]?.pageIndex).toBe(0);
+    expect(signature.seal?.version).toBe('v5');
   });
 
   it('signaturesFilePath 支持 Document.xml 路径与目录；候选索引优先同级 Signatures.xml', () => {

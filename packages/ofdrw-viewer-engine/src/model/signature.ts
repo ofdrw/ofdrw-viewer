@@ -13,6 +13,8 @@ import type {
   SignatureBundle,
   SignatureEntry,
   SignatureModel,
+  SignatureProvider,
+  SignatureReference,
   SignatureStamp,
 } from './types';
 import { dirnameOf, resolvePackagePath } from '../container/path';
@@ -137,13 +139,19 @@ export function decodeSignature(
   const id = normalizeResourceId(options.id ?? attr(root, 'ID'));
   const type = (options.type ?? attr(root, 'Type') ?? '').trim();
   const baseDir = dirnameOf(filePath);
+  const signedInfo = child(root, 'SignedInfo');
   const model: SignatureModel = {
     id,
     type,
     baseLoc: filePath,
-    stamps: decodeStampAnnots(root, options),
+    references: decodeReferences(root, signedInfo, options, id),
+    hasSignedValue: false,
+    stamps: decodeStampAnnots(root, { ...options, id }),
   };
-  const signedInfo = child(root, 'SignedInfo');
+  const provider = decodeProvider(root, signedInfo);
+  if (provider) model.provider = provider;
+  const signatureDateTime = decodeSignatureDateTime(root, signedInfo);
+  if (signatureDateTime) model.signatureDateTime = signatureDateTime;
   const sealNode = child(root, 'Seal') ?? (signedInfo ? child(signedInfo, 'Seal') : undefined);
   if (sealNode) {
     const rawSeal = childText(sealNode, 'BaseLoc') ?? (attr(sealNode, 'BaseLoc') ?? '').trim();
@@ -167,10 +175,95 @@ export function decodeSignature(
       });
     } else {
       const signedValueFile = resolveSignaturePath(baseDir, rawSignedValue, options, id);
-      if (signedValueFile) model.signedValueFile = signedValueFile;
+      if (signedValueFile) {
+        model.signedValueFile = signedValueFile;
+        model.signedValuePath = signedValueFile;
+        model.hasSignedValue = true;
+      }
     }
   }
   return model;
+}
+
+/**
+ * 解码 Provider；支持属性与子元素两种布局。
+ *
+ * @param root Signature.xml 根节点。
+ * @param signedInfo SignedInfo 节点。
+ * @returns Provider；无任何有效字段时返回 undefined。
+ */
+function decodeProvider(
+  root: XmlNode,
+  signedInfo: XmlNode | undefined,
+): SignatureProvider | undefined {
+  const node = (signedInfo ? child(signedInfo, 'Provider') : undefined) ?? child(root, 'Provider');
+  if (!node) return undefined;
+  const name = textOrAttr(node, 'ProviderName');
+  const company = textOrAttr(node, 'Company');
+  const version = textOrAttr(node, 'Version');
+  if (!name && !company && !version) return undefined;
+  const provider: SignatureProvider = {};
+  if (name) provider.name = name;
+  if (company) provider.company = company;
+  if (version) provider.version = version;
+  return provider;
+}
+
+/** 读取 Provider 的文本子元素，回退到同名属性。 */
+function textOrAttr(node: XmlNode, name: string): string | undefined {
+  const text = childText(node, name);
+  if (text) return text;
+  const value = (attr(node, name) ?? '').trim();
+  return value || undefined;
+}
+
+/**
+ * 解码 SignatureDateTime 原文。
+ *
+ * @param root Signature.xml 根节点。
+ * @param signedInfo SignedInfo 节点。
+ * @returns 原文；缺失时 undefined。
+ */
+function decodeSignatureDateTime(
+  root: XmlNode,
+  signedInfo: XmlNode | undefined,
+): string | undefined {
+  return (
+    (signedInfo ? childText(signedInfo, 'SignatureDateTime') : undefined) ??
+    childText(root, 'SignatureDateTime')
+  );
+}
+
+/**
+ * 解码 References/Reference 的 FileRef 列表。
+ *
+ * @param root Signature.xml 根节点。
+ * @param signedInfo SignedInfo 节点。
+ * @param options 解码选项。
+ * @param resourceId 签章 ID。
+ * @returns 保持 XML 顺序的引用；缺少 FileRef 的条目 warning 后跳过。
+ */
+function decodeReferences(
+  root: XmlNode,
+  signedInfo: XmlNode | undefined,
+  options: SignatureDecodeOptions,
+  resourceId: ResourceId,
+): SignatureReference[] {
+  const referencesNode =
+    (signedInfo ? child(signedInfo, 'References') : undefined) ?? child(root, 'References');
+  if (!referencesNode) return [];
+  const result: SignatureReference[] = [];
+  for (const node of children(referencesNode, 'Reference')) {
+    const fileRef = (attr(node, 'FileRef') ?? childText(node, 'FileRef') ?? '').trim();
+    if (!fileRef) {
+      emitWarning(options, 'W_BAD_NUMBER', `Signature ${resourceId} 的 Reference 缺少 FileRef，已跳过`, {
+        resourceId,
+      });
+      continue;
+    }
+    result.push({ fileRef });
+  }
+  return result;
 }
 
 /**
@@ -194,7 +287,7 @@ export async function decodeSignatureBundle(
         ...options,
         id: entry.id,
         type: entry.type,
-        pageIds: input.pageIds,
+        pageIds: undefined,
       });
     } catch (error) {
       emitWarning(options, 'W_BAD_NUMBER', `Signature ${entry.id} 读取/解析失败：${String(error)}`, {
@@ -327,8 +420,19 @@ function decodeStampAnnots(root: XmlNode, options: SignatureDecodeOptions): Sign
     };
     const clip = parseBox(attr(node, 'Clip'), options, 'StampAnnot.Clip');
     if (clip) stamp.clip = clip;
-    const pageIndex = normalizedPageIds?.indexOf(pageId);
-    if (pageIndex !== undefined && pageIndex >= 0) stamp.pageIndex = pageIndex;
+    if (normalizedPageIds) {
+      const pageIndex = normalizedPageIds.indexOf(pageId);
+      if (pageIndex >= 0) {
+        stamp.pageIndex = pageIndex;
+      } else {
+        emitWarning(
+          options,
+          'W_BAD_PATH',
+          `StampAnnot ${stamp.id ?? ''} 的 PageRef ${pageId} 未匹配页面`,
+          { resourceId: options.id ?? '' },
+        );
+      }
+    }
     result.push(stamp);
   }
   return result;
