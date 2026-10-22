@@ -3,6 +3,7 @@
 > 适用范围：`ofdrw-viewer-engine` v1（Web 优先）。
 > 依据：`docs/OFD渲染引擎设计方案.md` v0.4 第 6/8/10/14/15/19 节。
 > 冻结时间：T1 完成时。冻结后本文件与下列公共契约文件只读；变更必须先由架构负责人（architect）评估并同步 captain。
+> 最近修订：v1.0-r10（2026-10-22，T18e）。
 
 ## 1. 冻结范围与变更规则
 
@@ -579,6 +580,37 @@ interface ResourceIndex {
   - alpha<1、isolated、blend、mask 或子块自身需要 group 时，标记该 block 为“绘制期递归”，由 `drawIndependentBlock`/`drawObject` 在 draw 期递归并 `beginGroup`，组 alpha 只在 `endGroup` 乘一次；该 block 的父 DisplayList 复用降级为 best-effort，正确性优先；
   - 外层 block 的 alpha 仍按 §11.7 在 `drawIndependentBlock` 统一开 group，不能预先乘到父 list 的子命令上。
 
+### 7.13 `Clips@TransFlag` 兼容扩展（v1.0-r10）
+
+`Clips` 是图元对象的裁剪区容器；标准语义见 GB/T 33190—2016 §8.1.4、§8.4 和 §8.5 表 34：裁剪区数据以对象空间（Boundary 左上角为原点、mm）表达，图元数据在对象空间内经 CTM 变换，再由 Boundary 映射到页面空间。标准 `CT_Clip` schema 只有 `Area`/`DrawParam`/`CTM`，**没有 `TransFlag` 属性**。
+
+为兼容 zsbk 等生成器的写法，引擎识别非标准属性 `Clips@TransFlag`：
+
+```ts
+interface Clip {
+  /** 裁剪区是否受外部对象 CTM 影响；来自 Clips@TransFlag，缺省 false。 */
+  transFlag?: boolean;
+  // ctm/drawParam/areas 语义不变
+}
+```
+
+- `TransFlag` 是**兼容扩展，不是 GB/T 33190 标准属性**；不得据此声称符合标准，也不要求其他 OFD 生成器输出。
+- 缺省或 `false`：裁剪区**不受外部对象 CTM 影响**，保持标准对象空间路径，在对象 `CTM` **之前**应用，即 `translate(Boundary) → Clips → transform(obj.ctm)`。图片的 t48 manual 逆 CTM 是独立兼容例外，仍按下方优先级后置。
+- `true`：裁剪区**受外部对象 CTM 影响**，在对象 `CTM` **之后**应用，即 `translate(Boundary) → transform(obj.ctm) → Clips`。此时 Clips 内部仍按 `Clip.CTM × T(Boundary) × Area/Path/Text.CTM` 计算，只是外层 Canvas 已带对象 CTM；因此 zsbk 图片的单位正方形裁剪会随图片 CTM 覆盖整图。
+- 模型解码时把容器级 `Clips@TransFlag` 复制到该容器下每个 `Clip`；缺省 `false`，显式 `true`/`false` 原样，非法值按 `false` 并上报 `W_BAD_NUMBER`。渲染以“任一 `Clip.transFlag === true`”为整组 Clips 后置条件；混合值只可能来自手工构造模型，仍按 true 处理。
+- 该顺序适用于所有带 `Clips` 的图元对象（path/text/image/composite），不是仅图片。
+- `Clip.CTM`、`Area` 的并集/交集规则、`Path`/`Text` 轮廓与 `Fill`/`Stroke` 降级均不变；变化仅是整组 Clips 相对对象 CTM 的应用时机。
+
+**与 t48 manual 逆 CTM 路径的优先级**（自高到低）：
+
+1. `TransFlag=true`：整组 Clips 在对象 CTM 之后；**不再**尝试 manual 逆 CTM 判定，避免二次变换。
+2. `TransFlag=false`/缺省且对象是 `ImageObject`，`Clips`（含 `Clip.CTM`/`Area.CTM` 的合成）与图片 CTM 的面积比落在 `0.2–5`（典型 manual 样本≈1）：按 t48 兼容路径在对象 CTM 之后应用；仅图片，不推广到其他图元。
+3. 其余：按标准对象空间路径在对象 CTM 之前应用。
+
+因此 `TransFlag=true` 的优先级高于 t48 manual 启发式；`false` 不会关闭 manual 对图片的兼容，只会保持标准默认。`TransFlag` 不改变 `Boundary` 裁剪：Boundary 始终先于对象 CTM 应用。
+
+验证口径：zsbk p1 背景图（true、单位 1×1 clip）完整覆盖；intro p12（无 TransFlag、图片 manual 逆 CTM）保持通过；显式 false/true 的通用对象与图片用例见 `test/render/page.test.ts`，zsbk 真实像素见 `test/pipeline/zsbk-background.test.ts`。本扩展不进入公开 API，属于 P2 实现/文档口径。
+
 ## 8. 错误码与 warning 码
 
 ### 8.1 错误码（`OFDErrorCode`）
@@ -645,6 +677,7 @@ interface ResourceIndex {
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
+| v1.0-r10 | 2026-10-22（T18e） | 记录 `Clips@TransFlag` 非标准兼容扩展：标准 `CT_Clip` 无此属性；缺省/false 按对象空间在对象 CTM 前裁剪，true 在对象 CTM 后裁剪；true 优先于 t48 图片 manual 逆 CTM 兼容；模型 `Clip.transFlag?` 容器级复制、非法值 `W_BAD_NUMBER` 后 false。不涉及公开 API。 |
 | v1.0-r9 | T17a | 冻结 ofdrw-viewer-ui 引擎 API：PageInfo/Outline/Bookmark/签章 XML 元数据/SignedValueFile/DocumentMetadata/PagePrepareOptions/TextContent 全家族；`CacheOptions.textPages?` 默认 4；ASN.1/Seal.esl 不进入公共 API。t67/t68/t70/t71 实现，t72 补文档。 |
 | v1.0-r8 | T15a | 新增 `OFDPage.exportImage(options)` 与 `OFDOpenOptions.encodeImage(canvas,format,quality)`；整页 + dpi + 白底/PNG 透明；浏览器默认 convertToBlob/toBlob，Node 注入，不新增编码依赖；错误码复用 OFD_CANVAS_TOO_LARGE/OFD_CANVAS_SIZE_MISMATCH/OFD_RENDERER_UNSUPPORTED/OFD_ABORTED/OFD_CLOSED。 |
 | v1.0-r7 | T14m | 新增可选 `OFDOpenOptions.createCanvas`（`Canvas2DLike`），用于默认 H5 渲染器与矢量签章嵌套 OFD 离屏渲染；未注入保持 document/OffscreenCanvas 兜底。r8 起也供 `exportImage` 使用。 |

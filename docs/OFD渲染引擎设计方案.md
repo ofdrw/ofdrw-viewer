@@ -1,6 +1,6 @@
 # OFD 渲染引擎设计方案
 
-> 版本：0.5（设计稿，按 pdf.js 形态 + Monorepo 子包 + Renderer 扩展点 + 纯页面内容调整）  
+> 版本：0.5-r10（设计稿，按 pdf.js 形态 + Monorepo 子包 + Renderer 扩展点 + 纯页面内容调整）
 > 日期：2026-10-22  
 > 技术栈：TypeScript + Canvas 2D + fontkit  
 > 仓库：Monorepo，当前唯一子包 `ofdrw-viewer-engine`  
@@ -12,6 +12,7 @@
 
 > 0.5 变更：v1 增加 `Seal.esl`/`SignedValue.dat` 静态签章解析（ASN.1 v1/v4/v5 结构推断、位图与内嵌矢量 OFD 章）、签章位图 multiply、标准/manual 图片 Clips 顺序、GIF 首帧解码；P9 `dense-text-perf` 按极端样本例外计时。
 > 0.5-r8 变更：新增 `OFDPage.exportImage` 与 `OFDOpenOptions.encodeImage` 页面图片导出契约（详见 15.1.1）；engine 不新增编码依赖。
+> 0.5-r10 变更（2026-10-22）：记录非标准兼容扩展 `Clips@TransFlag`（缺省 false=裁剪区不受外部对象 CTM 影响；true=受外部 CTM 影响、在对象 CTM 后应用），并明确其优先于 t48 图片 manual 逆 CTM 兼容路径；`CT_Clip` 标准 schema 无此属性，不作为标准能力。
 > 0.4 变更：采用 Monorepo 子包 `ofdrw-viewer-engine`；`Renderer` 改为 `beginGroup/endGroup`，H5 的 `CanvasFactory`/scratch 完全内部化，公开 API 不再有 `RenderSurface`；`fallbackFonts` 更名为 `supplementaryFonts`；删除 engine 级独立块栅格缓存，改为复用 display list。
 
 1. **引擎做成一个独立、平台无关的 TypeScript 库**：以 Monorepo 子包 `ofdrw-viewer-engine` 交付；公开 API 按 pdf.js 形态收敛为 `open → getPage → page.getViewport/page.render（可选 page.exportImage） → close`；核心只定义 `ByteSource`、Canvas、图片解码器、字体来源等接口，`Renderer` 作为正式扩展点但默认实现由 engine 提供，**v1 不实现任何端适配器**。
@@ -106,7 +107,7 @@ OFD 页面空间：左上角为原点，X 向右，Y 向下，单位毫米。Can
 
 - `Boundary` 是图元在**当前空间**（页面空间或父容器空间）的外接矩形，同时是裁剪矩形。
 - `CTM` 是图元对象空间内的变换矩阵，格式 `a b c d e f`，与 Canvas `transform(a,b,c,d,e,f)` 同序。
-- `Boundary` 的平移在 `CTM` **之前**；`CTM` 只作用于图元数据（路径点、文字、图像单位矩形），不作用于 `Boundary` 本身。`Clips` 也位于对象空间，在 `CTM` **之前**应用，不乘图元 `CTM`（见 10.4.1）。
+- `Boundary` 的平移在 `CTM` **之前**；`CTM` 只作用于图元数据（路径点、文字、图像单位矩形），不作用于 `Boundary` 本身。标准 `Clips` 位于对象空间，在 `CTM` **之前**应用，不乘图元 `CTM`；非标准 `Clips@TransFlag=true` 的兼容顺序见 10.4.1。
 - 页面到设备变换：
 
 ```
@@ -129,8 +130,9 @@ ctx.translate(boundary.x, boundary.y);          // 对象原点
 ctx.beginPath();
 ctx.rect(0, 0, boundary.w, boundary.h);
 ctx.clip();
-applyClips(...);                                // Clips 也在 CTM 之前
+if (!clipsAfterCtm) applyClips(...);           // 标准：Clips 在 CTM 之前
 ctx.transform(ctm);                             // 再应用 CTM
+if (clipsAfterCtm) applyClips(...);             // TransFlag=true / 图片 manual：CTM 之后
 // 绘制图元数据
 ```
 
@@ -1272,8 +1274,11 @@ drawObject(prepared, renderer, binder, obj, style):
   renderer.save()
   renderer.translate(boundary.x, boundary.y)
   renderer.beginPath(); renderer.rect(0, 0, boundary.w, boundary.h); renderer.clip('nonzero')
-  applyClips(renderer, obj.clips)             // 对象空间，交集；在 CTM 之前
+  clipsAfterCtm = hasTransFlag(obj.clips)      // 非标准扩展，true=受对象 CTM 影响
+                  || imageManualInverseCtm(obj) // t48：仅图片、false/缺省时的逆 CTM 兼容
+  if (!clipsAfterCtm) applyClips(renderer, obj.clips)  // 标准：对象空间，在 CTM 之前
   renderer.transform(obj.ctm ?? identity)
+  if (clipsAfterCtm) applyClips(renderer, obj.clips)   // true 或 manual：在 CTM 之后
   if (obj.kind !== 'composite') {
     renderer.multiplyAlpha(obj.alpha / 255)    // 与父级 alpha 相乘，不覆盖
   }
@@ -1292,7 +1297,7 @@ drawObject(prepared, renderer, binder, obj, style):
 
 - `style` 是 `PreparedPage.styles` 里的最终值；`drawObject` **没有 `inherited` 参数**，也不调用 `flattenDrawParam`/`resolveStyle`。
 - `save/restore` 必须成对；每个对象独立，避免状态泄漏。
-- `Boundary` 和 `Clips` 都在 `CTM` 之前；`Boundary` 用当前空间（页面/父容器）坐标，`Clips` 用对象空间坐标，两者都不乘图元 `CTM`。`Clip` 内部自己的 `Area.CTM × T(Boundary) × Path.CTM` 在 10.4.1 单独处理。
+- `Boundary` 始终在 `CTM` 之前；标准 `Clips`（false/缺省）也在 `CTM` 之前，两者都不乘图元 `CTM`。`TransFlag=true` 的兼容 Clips 和图片 manual 逆 CTM 路径改在 `CTM` 之后，见 10.4.1；`Clip` 内部自己的 `Area.CTM × T(Boundary) × Path.CTM` 仍按 10.4.1 处理。
 - 零尺寸 `Boundary` 在进入绘制前直接跳过，不创建渲染器状态；负尺寸先归一化。
 - alpha 用 `multiplyAlpha`，不要用 `globalAlpha =` 覆盖父级；复合对象/独立块的组 alpha 由块整体合成，不逐个 child 乘（所以 composite 在 `drawObject` 里不要先乘一次）。
 - 对象绘制失败：捕获异常，warning，继续下一个对象；`restore` 必须在 `finally` 中执行。
@@ -1318,13 +1323,28 @@ Custom 层（非标准，放在最后）
 
 ### 10.4.1 裁剪（Clips）
 
-`Clips` 是图元对象自己的裁剪区，坐标在**对象空间**，即已经过 `Boundary` 平移、但尚未乘对象 `CTM` 的空间。因此标准图元的 `applyClips` 必须在 `renderer.transform(obj.ctm)` **之前**执行；图元 `CTM` 只作用于图元数据，不作用于裁剪区。
+`Clips` 是图元对象自己的裁剪区，标准语义见 GB/T 33190—2016 §8.1.4、§8.4 和 §8.5 表 34：裁剪区数据以**对象空间**表达，对象空间以 `Boundary` 左上角为原点、mm；图元数据在对象空间内经 `CTM` 变换，再由 `Boundary` 映射到页面空间。标准 `CT_Clip` schema 只有 `Area`/`DrawParam`/`CTM`，**没有 `TransFlag`**。
 
-真实文件存在一类 `manual` 兼容写法：`Clips/Area.CTM` 已经写成了图片 `CTM` 的**逆矩阵**，用于表达“在图片单位空间里裁剪”。这种 Clips 如果仍在 `CTM` 之前应用，会被二次变换，导致裁剪区与图片交集为空或只剩一条边。v1 的口径是：
+标准顺序（`TransFlag` 缺省/false；图片 manual 逆 CTM 的独立例外见下）：
 
-- 默认按标准顺序：`translate(Boundary) → clips → transform(obj.ctm)`；
-- 仅当 `Clips/Area.CTM` 的面积比落在 `0.2–5`（典型 `manual` 样本≈1）且明显是逆编码时，改为 `translate(Boundary) → transform(obj.ctm) → clips`；
-- 该判定只影响带 `Clips` 的 `ImageObject`，不影响普通路径/文字/注释；不允许把“先 CTM 后 Clips”推广到所有图元。
+```
+translate(Boundary) → applyClips → transform(obj.ctm)
+```
+
+即 `applyClips` 在 `renderer.transform(obj.ctm)` **之前**执行；图元 `CTM` 只作用于图元数据，不作用于裁剪区。这与 §8.5“Clips 采用对象空间坐标系”一致。
+
+真实文件存在两类兼容写法，v1 仅在明确条件下后置 Clips：
+
+- **非标准扩展 `Clips@TransFlag=true`**：裁剪区**受外部对象 CTM 影响**，顺序改为 `translate(Boundary) → transform(obj.ctm) → applyClips`；适用于所有图元（path/text/image/composite），不只图片。典型是 zsbk 的图片：`CTM=275.3954 0 0 189.04 0 0`，`Clip/Path Boundary=0 0 1 1`，后置后 1×1 裁剪随 CTM 覆盖整图。该属性不是标准属性，不要求其他生成器输出，也不据此声称标准符合性；缺省/false 仍走标准顺序。
+- **t48 图片 manual 逆 CTM**：`Clips/Area.CTM` 已写成图片 `CTM` 的**逆矩阵**，用于表达“在图片单位空间里裁剪”。该路径只在 `TransFlag` 缺省/false、对象为 `ImageObject`、且 `Clips`（含 `Clip.CTM`/`Area.CTM` 的合成）与图片 CTM 的面积比落在 `0.2–5`（典型样本≈1）时启用，同样后置；不影响普通路径/文字/注释，不推广为通用规则。
+
+优先级（自高到低）：
+
+1. `TransFlag=true`：整组 Clips 在对象 CTM 之后；不再尝试 manual 逆 CTM 判定，避免二次变换。
+2. `TransFlag` 缺省/false 且图片 manual 逆 CTM 判定成立：在对象 CTM 之后追加（t48 兼容）。
+3. 其余：标准对象空间顺序，在对象 CTM 之前。
+
+模型解码把容器级 `Clips@TransFlag` 复制到该容器下每个 `Clip`（`Clip.transFlag?: boolean`，缺省 false；非法值 `W_BAD_NUMBER` 后 false）。渲染以“任一 `Clip.transFlag=true`”为整组后置条件；`Clip.CTM`、Area 并集/交集、Path/Text 轮廓和 Fill/Stroke 降级语义均不变。`Boundary` 裁剪始终在对象 CTM 之前。
 
 - 多个 `Clip` 之间取**交集**：按顺序对 Canvas 执行 `clip()`，Canvas 会自动与当前裁剪区相交。
 - 一个 `Clip` 内多个 `Area` 取**并集**：把所有 Area 的轮廓合并到同一条路径，再执行一次 `clip(rule)`。
@@ -1343,7 +1363,6 @@ M_area = Area.CTM × translate(Path.Boundary.x, Path.Boundary.y) × Path.CTM
   - `Stroke=true`：Canvas 不能直接把 stroke 转成裁剪路径；v1 在 `W_UNSUPPORTED_CLIP` 下降级为仅 Fill，不引入 renderer 私有的裁剪掩码接口。
 - `Text` 裁剪：按第 12 节生成字形轮廓，再并入裁剪路径；默认按 Fill 处理。
 - 不同 Area 使用不同 `FillRule`（nonzero/evenodd）时，单条路径无法同时表达；v1 取第一个 Rule 并 warning，v2 再支持逐 Area 合成。
-- `Clips` 的 `TransFlag` 当前忽略；OFD 1.1 的扩展裁剪属性 warning。
 - 裁剪区本身不做抗锯齿补偿；边缘可能比参考渲染器略硬，这是 Canvas 的限制。
 - 样本验证：`testPathClip.ofd` 的 `Clip/Area CTM="0.3528 0 0 0.3528 0 0"`，`Path Boundary` 是 1163.5759×802.012，路径坐标也在千级；不做 `Area.CTM` 会完全对不上。
 
@@ -2766,7 +2785,7 @@ Warning 码：
   - `CGTransform` 子节点/兄弟节点/属性形式。
 - 矩阵/变换：
   - `T(boundary)*CTM` 顺序；页面偏移；旋转 0/90/180/270；负 Boundary 归一化；
-  - 裁剪顺序：标准 ImageObject `Clips` 在对象 CTM 前；manual 逆 CTM 编码仅在 CTM 后追加；两者都不能把普通图元改成“先 CTM 后裁剪”。
+  - 裁剪顺序：标准 `Clips`（false/缺省）在对象 CTM 前；`TransFlag=true` 对所有图元在对象 CTM 后；图片 manual 逆 CTM 仅在 false/缺省且无 true 时于 CTM 后追加；三条路径互斥。
 - 路径：
   - 所有命令、圆弧四种 flag 组合、退化弧、坏 token、零长度、evenodd。
 - 颜色：
@@ -3043,10 +3062,12 @@ v1 只交付 engine 库，因此不把 Chrome/Firefox/Safari/Electron/小程序�
 对象 Alpha/Visible 判断
   save
   translate(Boundary)
-  Boundary 裁剪（对象空间 [0,w]×[0,h]）
-  Clips 裁剪（标准：对象空间，多个 Clip 交集；Clip 内多个 Area 并集）
+  Boundary 裁剪（对象空间 [0,w]×[0,h]；始终在对象 CTM 之前）
+  if (!TransFlag && !imageManualInverseCtm)
+      Clips 裁剪（标准：对象空间，多个 Clip 交集；Clip 内多个 Area 并集）
   transform(CTM)
-  [仅 manual 逆编码 Clips] 追加裁剪（Area.CTM 面积比 0.2–5）
+  if (TransFlag=true || imageManualInverseCtm)
+      Clips 裁剪（TransFlag=true 适用所有图元；manual 仅图片且 false/缺省）
   multiplyAlpha
   fill / stroke / drawImage
   restore
