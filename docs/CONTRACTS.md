@@ -3,7 +3,7 @@
 > 适用范围：`@ofdrw/ofdrw-viewer-engine` v1（Web 优先）。
 > 依据：`docs/OFD渲染引擎设计方案.md` v0.4 第 6/8/10/14/15/19 节。
 > 冻结时间：T1 完成时。冻结后本文件与下列公共契约文件只读；变更必须先由架构负责人（architect）评估并同步 captain。
-> 最近修订：v1.0-r10（2026-10-22，T18e/P2）。
+> 最近修订：v1.0-r11（2026-10-22，t94/t96）。
 
 ## 1. 冻结范围与变更规则
 
@@ -153,7 +153,7 @@ WARNING_CODES
 OFDError、isOFDError、toOFDError
 ```
 
-公共类型包括 `OFDOpenOptions`、`OFDSource`、`PageRenderParameters`、`PageImageExportOptions`、`PageImageResult`、`PageImageFormat`、`PageImageMime`、`CanvasImageEncodeSource`、`EncodeImage`、`ResourceLimits`、`CacheOptions`、`FontInput`、`FontProvider`、`ImageDecoderPlugin`、`Renderer`/`Canvas2DLike`/`CanvasRenderingContext2DLike`、`Viewport`、`Matrix`、`Box`、`DrawStyle`、`PaintSpec`、`ResolvedPaint`、`PatternSpec`、`PatternPaint`、`DisplayList`、`DrawCommand`、`OFDWarning`、`OFDErrorCode`、`WarningCode` 等；UI API 类型见 §5.3（`PageInfo`、`OutlineNode`、`SignatureEntryInfo`、`SignedValueFile`、`DocumentMetadata`、`TextContent` 等）。
+公共类型包括 `OFDOpenOptions`、`OFDSource`、`PageRenderParameters`、`PageImageExportOptions`、`PageImageResult`、`PageImageFormat`、`PageImageMime`、`CanvasImageEncodeSource`、`EncodeImage`、`ResourceLimits`、`CacheOptions`、`FontInput`、`FontInputLoader`、`FontProvider`、`ImageDecoderPlugin`、`Renderer`/`Canvas2DLike`/`CanvasRenderingContext2DLike`、`Viewport`、`Matrix`、`Box`、`DrawStyle`、`PaintSpec`、`ResolvedPaint`、`PatternSpec`、`PatternPaint`、`DisplayList`、`DrawCommand`、`OFDWarning`、`OFDErrorCode`、`WarningCode` 等；UI API 类型见 §5.3（`PageInfo`、`OutlineNode`、`SignatureEntryInfo`、`SignedValueFile`、`DocumentMetadata`、`TextContent` 等）。
 
 **不导出** `CanvasFactory`（渲染器内部结构）。自定义画布的两个公共入口：
 
@@ -225,6 +225,26 @@ exportImage(options?: PageImageExportOptions): Promise<PageImageResult>;
 - **close**：调用前文档已关闭抛 `OFD_CLOSED`；导出期间 close 与 render 竞争时按现有 close 语义以 `OFD_CLOSED` 拒绝，绝不返回编码结果。`close()` 可重复。
 - **错误**：`page.render` 的尺寸/像素/资源限制/取消错误原样传播；编码阶段不新增错误码，不裸抛第三方异常。结果 `data` 归调用方，engine 不缓存。
 - **导出面**：`PageImageExportOptions`、`PageImageResult`、`PageImageFormat`、`PageImageMime`、`CanvasImageEncodeSource`、`EncodeImage` 与 `OFDPage#exportImage` 属于 T15b 实现面；`src/index.ts` 由 T12/T15b 在不破坏既有导出的前提下追加。
+
+### 5.2.1 `OFDOpenOptions.loadInput`（v1.0-r11）
+
+```ts
+/** 从宿主字体来源读取字节；url/path/filePath 由宿主平台实现。 */
+export type FontInputLoader = (
+  input: FontInput,
+) => Uint8Array | ArrayBuffer | null | Promise<Uint8Array | ArrayBuffer | null>;
+
+interface OFDOpenOptions {
+  /** 可选；不传时 Web 默认 url fetch，path/filePath 不支持。 */
+  loadInput?: FontInputLoader;
+}
+```
+
+- **兼容增量**：字段可选；不传时 `data` 直接使用、`url` 走 `fetch`、`path`/`filePath` 不支持并产生字体 warning。浏览器 Web 行为与 r10 一致。
+- **接线**：`OFDDocument.open` 把 `loadInput` 传给字体库；`FontProvider`/`supplementaryFonts` 返回的 `url`/`path`/`filePath` 都通过它读取。`data` 不经过 loader。
+- **返回值/错误**：返回 `null` 表示来源不可用；抛错/读取失败由字体层降级为 `W_FONT_MISSING`，不中断打开。字节超过 `maxFontBytes` 仍按既有字体 warning 处理。
+- **Node CLI**：`--font-dir` 扫描字体文件后以 `{ path }` 形式加入 `supplementaryFonts`，CLI 注入基于 `node:fs` 的 loader（`path`/`filePath` 用 `readFile`，`url` 用 fetch）；TTC/OTC 展开全部字体面，按实际 family 匹配。引擎不依赖 Node API，Web 默认行为不变。
+- **范围**：只解决字体来源字节读取；不做系统字体发现、不下载字体、不新增运行时依赖。
 
 ### 5.3 UI API 类型与签名（v1.0-r9/r10）
 
@@ -326,8 +346,8 @@ OFD 的 `ST_Array` 是空白/逗号分隔的数值数组，支持 `g <count> <va
 
 - 语义：`g N V` 表示把数值 `V` 重复展开 `N` 次；
 - 示例：`0 g 3 5 2` → `0,5,5,5,2`；`g 3 3.1305` → `3.1305, 3.1305, 3.1305`；
-- `N` 必须是正整数；展开后总长度上限 `100_000`（`MAX_EXPANDED_ARRAY_LENGTH`），超限按 `W_BAD_NUMBER` 处理并停止展开；
-- 非法的 `g` 组（缺 count/value、count≤0、value 非数值）按 `W_BAD_NUMBER` 跳过，不得让整页失败；合法的 `g` 组不能当坏 token 丢弃；
+- `N` 必须是 **≥0 的整数**；`N=0` 是合法空展开（例如 `g 0 0 3.175` → `3.175`，`g 0 0` → 空），不产生 warning；展开后总长度上限 `100_000`（`MAX_EXPANDED_ARRAY_LENGTH`），超限按 `W_BAD_NUMBER` 处理并停止展开；
+- 非法的 `g` 组（缺 count/value、count 为负或非整数、value 非数值）按 `W_BAD_NUMBER` 跳过，不得让整页失败；合法的 `g` 组（含 `N=0`）不能当坏 token 丢弃；
 - `g` 只作用于数值数组，不改变 XML 其他属性。
 
 实现分层约定：
@@ -476,7 +496,7 @@ PatternSpec {
   - `source: 'annotation'`；
   - `boundary` = Appearance.Boundary；
   - `displayList` 必填，且不含放置平移；
-  - `visible=false` 或空 Appearance 的注释不进入 `PreparedPage.annotationBlocks`，后者上报 `W_ANNOT_EMPTY`。
+  - `visible=false` 或空 Appearance 的注释不进入 `PreparedPage.annotationBlocks`；空 Appearance 在**模型解码阶段**上报一次 `W_ANNOT_EMPTY`，渲染阶段跳过时不再重复上报。
 - 绘制：`save(); translate(boundary.x, boundary.y); drawIndependentBlock(...); restore()`。
 
 ### 7.5 DecodeOptions（末位可选参数）
@@ -617,6 +637,14 @@ interface Clip {
 
 验证口径：zsbk p1 背景图（true、单位 1×1 clip）完整覆盖；intro p12（无 TransFlag、图片 manual 逆 CTM）保持通过；显式 false/true 的通用对象与图片用例见 `test/render/page.test.ts`，zsbk 真实像素见 `test/pipeline/zsbk-background.test.ts`。本扩展不进入公开 API，属于 P2 实现/文档口径。
 
+### 7.14 页尺寸回退与 warning（v1.0-r11）
+
+- 回退链固定为：页面 `Area/PhysicalBox` → 按 Template 引用顺序第一个有效模板 `Area` → `CommonData/PageArea` → A4（210×297 mm）。
+- 缺失页面 `Area`/`PhysicalBox` 在解码阶段**不提示**；回退到模板或 `CommonData` 成功时**不产生 warning**；只有最终回退 A4 才上报一次 `W_BAD_NUMBER`（消息含 A4 尺寸）。
+- 显式声明但宽/高非正的 `Area` 仍按 `W_BAD_NUMBER` 提示并进入回退链；非法模板 `Area` 也提示后跳过。
+- `getPage` 与 `getPageInfos` 必须复用同一 `resolvePageArea` 口径，不因轻量读取路径产生不同 warning。
+- 回退使用模板/`CommonData` 时页面原点归零（`x/y=0`），尺寸取 `w/h`。
+
 ## 8. 错误码与 warning 码
 
 ### 8.1 错误码（`OFDErrorCode`）
@@ -645,6 +673,8 @@ interface Clip {
 `W_FONT_MISSING`、`W_GLYPH_MISSING`、`W_IMAGE_DECODE`、`W_UNSUPPORTED_PAINT`、`W_UNSUPPORTED_CLIP`、`W_BAD_NUMBER`、`W_BAD_PATH`、`W_DUPLICATE_RESOURCE`、`W_COMPOSITE_DEPTH`、`W_PATTERN_LIMIT`、`W_ZERO_BOUNDARY`、`W_PHYSICALBOX_ORIGIN`、`W_IMAGE_NO_CTM`、`W_NEGATIVE_BOUNDARY`、`W_LAYER_ORDER`、`W_BLEND_MODE`、`W_RADIAL_UNSUPPORTED`、`W_GOURAUD_APPROX`、`W_ANNOT_EMPTY`、`W_JBIG2_DECODE`、`W_PERMISSION_FIELD`、`W_ATTACHMENT_FIELD`、`W_ATTACHMENT_RESOURCE`。
 
 约定：warning 不中断渲染；同一 `(code,pageIndex,objectId)` 由 `WarningCollector` 去重；未安装 handler 时静默。
+
+999 修复后的 warning 口径补充：`g` 组 `count=0` 是合法空展开、不报 `W_BAD_NUMBER`（§6.2.1）；页面积回退到模板/`CommonData` 成功不提示、仅最终 A4 提示（§7.14）；空注释 `Appearance` 只在模型解码阶段提示一次 `W_ANNOT_EMPTY`（§7.4）。
 
 ## 9. 并行开发规则
 
@@ -683,6 +713,7 @@ interface Clip {
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
+| v1.0-r11 | 2026-10-22（t94/t96） | 新增可选 `OFDOpenOptions.loadInput` / `FontInputLoader`：不传时 Web 默认 url/fetch、path/filePath 不支持；Node CLI `--font-dir` 注入 node:fs loader，真正读取并展开 TTF/OTF/TTC/OTC 的 family。同步 999 修复 warning 口径：`g N V` 的 N=0 为合法空展开；页面积缺失时模板/CommonData 回退成功不提示、仅最终 A4 提示；空注释 Appearance 仅在模型解码提示一次。公开 API 兼容增量。 |
 | v1.0-r10 | 2026-10-22（T18e/P2） | 记录 `Clips@TransFlag` 非标准兼容扩展：标准 `CT_Clip` 无此属性；缺省/false 按对象空间在对象 CTM 前裁剪，true 在对象 CTM 后裁剪；true 优先于 t48 图片 manual 逆 CTM 兼容；模型 `Clip.transFlag?` 容器级复制、非法值 `W_BAD_NUMBER` 后 false。不涉及公开 API。同时登记 P2 公开 API：权限只读声明不做 DRM、附件元信息/原始字节不解析内容、`exportImage.rotation` 仅导出方向；`renderRegion` 不实现/不导出；新增 `W_PERMISSION_FIELD`/`W_ATTACHMENT_FIELD`/`W_ATTACHMENT_RESOURCE`。 |
 | v1.0-r9 | T17a/T17h | 冻结并落地 ofdrw-viewer-ui 引擎 P0/P1 API：PageInfo/Outline/Bookmark/签章 XML 元数据/SignedValueFile/DocumentMetadata/PagePrepareOptions/TextContent 全家族；`CacheOptions.textPages?` 默认 4（按页 LRU，键不含 dpi）；ASN.1/Seal.esl 不进入公共 API，P2 权限/附件/局部渲染/导出旋转延后。t67/t68/t70/t71 实现，t72 接线文本，t73 同步文档。 |
 | v1.0-r8 | T15a | 新增 `OFDPage.exportImage(options)` 与 `OFDOpenOptions.encodeImage(canvas,format,quality)`；整页 + dpi + 白底/PNG 透明；浏览器默认 convertToBlob/toBlob，Node 注入，不新增编码依赖；错误码复用 OFD_CANVAS_TOO_LARGE/OFD_CANVAS_SIZE_MISMATCH/OFD_RENDERER_UNSUPPORTED/OFD_ABORTED/OFD_CLOSED。 |

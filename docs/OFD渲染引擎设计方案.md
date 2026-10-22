@@ -1,6 +1,6 @@
 # OFD 渲染引擎设计方案
 
-> 版本：0.5-r10（设计稿，按 pdf.js 形态 + Monorepo 子包 + Renderer 扩展点 + 纯页面内容调整）
+> 版本：0.5-r11（设计稿，按 pdf.js 形态 + Monorepo 子包 + Renderer 扩展点 + 纯页面内容调整）
 > 日期：2026-10-22  
 > 技术栈：TypeScript + Canvas 2D + fontkit  
 > 仓库：Monorepo，当前唯一子包 `@ofdrw/ofdrw-viewer-engine`  
@@ -15,6 +15,7 @@
 > 0.5-r9 变更（2026-10-22）：落地并文档化阅读器 UI API（P0/P1）：PageInfo/Outline/Bookmark/签章 XML 元数据/SignedValue/DocumentMetadata/prepare/TextContent；不解析 ASN.1/证书、不暴露 Seal.esl；P2 权限/附件/局部渲染/导出旋转延后。
 > 0.5-r10 变更（2026-10-22）：记录非标准兼容扩展 `Clips@TransFlag`（缺省 false=裁剪区不受外部对象 CTM 影响；true=受外部 CTM 影响、在对象 CTM 后应用），并明确其优先于 t48 图片 manual 逆 CTM 兼容路径；`CT_Clip` 标准 schema 无此属性，不作为标准能力。
 > 0.5-r10 P2 变更（2026-10-22）：权限只读声明不做 DRM、附件元信息/原始字节不解析内容、`exportImage.rotation` 仅导出方向；`page.renderRegion` 按用户决定不实现/不导出。
+> 0.5-r11 变更（2026-10-22）：新增可选 `OFDOpenOptions.loadInput`/`FontInputLoader`，Web 默认行为不变，Node CLI `--font-dir` 注入 `node:fs` 并真实解析 family；同步 `g` 组 count=0 合法、页面积成功回退不提示（仅最终 A4）、空注释外观只提示一次。
 > 0.4 变更：采用 Monorepo 子包 `@ofdrw/ofdrw-viewer-engine`；`Renderer` 改为 `beginGroup/endGroup`，H5 的 `CanvasFactory`/scratch 完全内部化，公开 API 不再有 `RenderSurface`；`fallbackFonts` 更名为 `supplementaryFonts`；删除 engine 级独立块栅格缓存，改为复用 display list。
 
 1. **引擎做成一个独立、平台无关的 TypeScript 库**：以 Monorepo 子包 `@ofdrw/ofdrw-viewer-engine` 交付；公开 API 按 pdf.js 形态收敛为 `open → getPage → page.getViewport/page.render（可选 page.exportImage） → close`；核心只定义 `ByteSource`、Canvas、图片解码器、字体来源等接口，`Renderer` 作为正式扩展点但默认实现由 engine 提供，**v1 不实现任何端适配器**。
@@ -281,11 +282,11 @@ function resolveStyle(obj: GraphicUnitBase, inherited: ResolvedStyle): ResolvedS
 | `Alpha` 默认值 | 表 26 写 0，XSD 写 255 | 缺失按 255；显式 0 按全透明 |
 | `MiterLimit` 默认值 | 表 21 写 3.528，XSD 写 4.234 | 缺失按 4.234 |
 | 图层顺序 | 标准图 16：每种类型都是“该类型模板在下、该类型页图层在上”，类型从 Background→Body→Foreground；业务也要求先按图层类型排序 | 按图 16 分组：Background 模板→Background 层→Body 模板→Body 层→Foreground 模板→Foreground 层→Custom 层；同组模板按引用顺序、页图层按 XML 顺序，后出现覆盖前面。`layerOrder` 默认 `type`，可切 `document` 严格模式 |
-| 页尺寸回退 | 页 `Area` → 模板页 `Area` → `CommonData/PageArea` | 页 `Area` 优先；否则按 `Template` 引用顺序取第一个带 `Area` 的模板；再缺用 `CommonData`；最后 A4（210×297），并 warning |
+| 页尺寸回退 | 页 `Area` → 模板页 `Area` → `CommonData/PageArea` | 页 `Area` 优先；否则按 `Template` 引用顺序取第一个带 `Area` 的模板；再缺用 `CommonData`；模板/CommonData 成功回退不提示，**仅最终 A4**（210×297）warning；显式宽高非正仍 warning |
 | `LineWidth=0` | 标准要求画 1 像素；设备相关 | 作为 hairline：设备空间 1px；无法保证时按 0.01mm 近似，并记录偏差 |
 | `Boundary` 零/负尺寸 | 标准要求正数；真实文件出现零尺寸和负高度 | 零宽/零高直接跳过该对象（无可见内容），warning；负尺寸归一化为正矩形（x/y 取最小角），归一化后仍为零则跳过 |
 | 图片缺失 `CTM` | 标准上 CTM 可省，省则 identity，图片单位正方形只有 1×1 | 默认严格 identity（1×1）；如业务文件确实依赖铺满，可显式设 `strictImageCtm=false` 兼容；缺失时 warning |
-| `DeltaX/DeltaY` 缺失/为 0/数量不足/含压缩组 | 标准要求数值队列；真实文件常见 `g 3 3.1305` 这类压缩组（如 `"g 3 3.1305"`），也可能数量不匹配 | 先展开 `g <count> <value>` 组；逐字符 pen；有合法值用合法值；显式 0 尊重 0；没有则用字体 advance × Size/upem × HScale；无法展开的 token 跳过并 warning |
+| `DeltaX/DeltaY` 缺失/为 0/数量不足/含压缩组 | 标准要求数值队列；真实文件常见 `g 3 3.1305` 这类压缩组（如 `"g 3 3.1305"`），也可能数量不匹配 | 先展开 `g <count> <value>` 组（`count=0` 合法，空展开不 warning）；逐字符 pen；有合法值用合法值；显式 0 尊重 0；没有则用字体 advance × Size/upem × HScale；无法展开的 token 跳过并 warning |
 | `CGTransform` 位置 | 表 45 画在 `TextObject` 下，XSD/真实文件常在 `TextCode` 内或紧邻 | 两种都解析；按 `CodePosition` 关联到对应 `TextCode`；属性名兼容 `CodePosition`/`CodecPosition`、`CodeCount`/`CodecCount`；绘制时把 `Glyphs` 当整串，不按字符格拆分 |
 | 命名空间 | OFD 1.0 用 `http://www.ofdspec.org/2016`，部分 1.1 文件用 `http://www.ofdspec.org` | 解析时忽略命名空间，按 local name 匹配 |
 | `Size` 与 `CTM` | 真实文件有两套：`Size` 以 mm 计且 CTM≈1；`Size`≈209 且 CTM≈0.0176 | 字号统一按“对象空间单位”处理；最终大小 = `Size × CTM 的缩放`，两套都成立 |
@@ -864,7 +865,7 @@ interface XmlNode {
   - 去空白、支持科学计数法；
   - `NaN`/`Infinity`/空串 → fallback + warning；
   - 数组解析按空白/逗号分割，坏 token 跳过并 warning。
-  - `DeltaX/DeltaY`（常见于 `TextCode`）支持 `g <count> <value>` 压缩组：`g N V` 表示把后面的数值 `V` 重复展开 `N` 次；例如 `0 g 3 5 2` 展开为 `0, 5, 5, 5, 2`，`g 3 3.1305` 展开为 3 个 `3.1305`。`count` 必须为正整数，展开后总长度设上限（默认 100,000）防炸。`g` 组只对数值数组生效，不改变 XML 其他属性。
+  - `DeltaX/DeltaY`（常见于 `TextCode`）支持 `g <count> <value>` 压缩组：`g N V` 表示把后面的数值 `V` 重复展开 `N` 次；例如 `0 g 3 5 2` 展开为 `0, 5, 5, 5, 2`，`g 3 3.1305` 展开为 3 个 `3.1305`。`count` 必须为 ≥0 的整数（0 表示空展开），展开后总长度设上限（默认 100,000）防炸。`g` 组只对数值数组生效，不改变 XML 其他属性；`count=0` 是合法空展开，负数/非整数/缺 count/value 才 warning。
 - 布尔解析：`true/1/yes` 为 true，`false/0/no` 为 false；其他 fallback。
 
 ### 8.2 核心类型
@@ -1125,6 +1126,14 @@ interface FontResource {
    - `OS/2.usWeightClass`、`head.macStyle`、`post.italicAngle`（若存在）。
 4. 字体对象按 `fontFile` 路径缓存；同一文件被多个 `FontResource` 引用时复用。
 
+### 9.1.1 宿主补充字体与 `loadInput`（r11）
+
+- 字体来源优先级不变：内嵌 `FontFile` → 宿主 `FontProvider` → `supplementaryFonts`；后两者可返回 `data`/`url`/`path`/`filePath` 四种 `FontInput`。
+- `data` 直接使用；`url`/`path`/`filePath` 需要字节加载器。`OFDOpenOptions.loadInput` 可选：不传时 Web 默认 `url` 走 `fetch`，`path`/`filePath` 不支持并产生字体 warning；传了则全部非 `data` 来源交给它读取。
+- loader 返回 `null` 表示来源不可用；抛错/读取失败降级为 `W_FONT_MISSING`，不中断打开；字节上限仍由 `maxFontBytes` 控制。
+- Node CLI 注入 `node:fs` loader（`path`/`filePath` 用 `readFile`，`url` 用 fetch）。`--font-dir` 递归扫描 `.ttf/.otf/.ttc/.otc`，以 `{ path }` 加入 `supplementaryFonts`；TTC/OTC 展开全部字体面，按 fontkit 实测 family 参与评分，不只看第 0 面。
+- Web 默认语义不变；引擎不依赖 Node API，不自动扫描系统字体，不下载字体。
+
 ### 9.2 图片资源
 
 ```ts
@@ -1377,10 +1386,12 @@ page.Area.PhysicalBox
   ?? A4 (210 x 297, origin 0,0)
 ```
 
-标准说“模板页中的定义”，没有说多个模板选哪个。业务确认口径：按页面 `Template` 的引用顺序，取**第一个**带 `Area/PhysicalBox` 的模板，不按 `ZOrder` 选；若多个模板尺寸不同，warning 并记录实际来源。
+标准说“模板页中的定义”，没有说多个模板选哪个。业务确认口径：按页面 `Template` 的引用顺序，取**第一个**带 `Area/PhysicalBox` 的模板，不按 `ZOrder` 选；若多个模板尺寸不同，按第一个带 Area 的模板；不额外 warning（与 999 噪声修复口径一致）。
 
 已用 `ofd_pdf_match/testImageOverridePage.ofd` 验证：页面本身没有 `Area`，模板 `Area` 是 369.3583×258.9389，`CommonData/PageArea` 是 210×297；按本口径应取模板尺寸，而不是 CommonData 的 A4。
 
+- **warning 口径**：缺失页面 `Area/PhysicalBox` 在解码期不提示；回退到模板或 `CommonData` 成功时不产生 warning；只有最终回退 A4 才提示一次 `W_BAD_NUMBER`。
+- 显式声明但宽/高非正的 `Area` 仍提示 `W_BAD_NUMBER` 并进入回退链；非法模板 `Area` 提示后跳过；`getPage` 与 `getPageInfos` 使用同一 `resolvePageArea`，口径一致。
 - 只使用 `PhysicalBox`，不用 `ApplicationBox`/`ContentBox` 裁剪页面；它们是显示/版心区域，阅读器通常显示整个物理页。
 - `PhysicalBox` 的宽或高 <=0 时视为缺失，继续回退并 warning；不要生成 0×0 画布。
 - `PhysicalBox` 的 x/y 按标准规范应为 0（表 7：物理盒左上角就是页面空间原点）；只有少数生成器会把内容坐标写成含页偏移的绝对坐标，此时才用 `S × T(-x,-y)` 把物理盒左上角挪到设备原点。
@@ -1557,7 +1568,7 @@ Document.xml/Annotations -> Annotations.xml
   - `Type`：`Link`/`Path`/`Highlight`/`Stamp`/`Watermark`，未知类型按 `Appearance` 画，没有 `Appearance` 就跳过；
   - `Visible`：默认 `true`，`false` 直接跳过；
   - `NoZoom`/`NoRotate`/`Print`：属于阅读器/打印控制提示，engine **不解释**；只画 `Appearance` 的静态外观；
-  - `Appearance`：`CT_PageBlock`，静态外观；可能为空（真实样本 `v4signed.ofd` 的 Stamp 就是空外观），空则 warning + 跳过。
+  - `Appearance`：`CT_PageBlock`，静态外观；可能为空（真实样本 `v4signed.ofd` 的 Stamp 就是空外观）。空外观在**模型解码阶段**上报一次 `W_ANNOT_EMPTY` 并跳过；渲染阶段不再重复提示。
 - `Appearance` 自带 `Boundary`，子对象坐标相对这个 `Boundary` 的左上角；变换顺序：
 
 ```
@@ -1921,7 +1932,7 @@ for unit of units:
 - `DeltaX` 数量不足：后面的字符用字体 advance；数量多：多余忽略并 warning。
 - 显式 0：尊重 0（字符重叠），不要当成缺失。
 - 非法 token：跳过，用上一个合法值或字体 advance；warning。
-- `g <count> <value>` 是合法压缩写法（真实文件常见，例如 `DeltaX="g 3 3.1305"`），必须先展开，不能当坏 token 丢弃。
+- `g <count> <value>` 是合法压缩写法（真实文件常见，例如 `DeltaX="g 3 3.1305"`），必须先展开，不能当坏 token 丢弃；`count=0` 是合法空展开（`g 0 0 3.175` → `3.175`），负数/非整数/缺 count/value 才 warning。
 - 没有 `DeltaX`：用字体 advance × `Size/upem` × `HScale`。
 - 有 `DeltaY` 时同样逐字符推进；竖排通常 `DeltaX` 省略、`DeltaY` 有值。
 - `ReadDirection` 不反转字符数组，而是改变步进方向：0 向右、90 向下、180 向左、270 向上。`X/Y` 始终是第一个逻辑字符的原点；因此 180/270 时第一个字符在右/下，后续字符向左/上排。依据图 63（90）和图 64（180）：`DeltaX0` 标注在逻辑首字符与次字符之间，视觉上对应最右侧/最下方的间隙。
@@ -2300,6 +2311,11 @@ export type FontInput =
   | { path: string; family?: string }       // Node
   | { filePath: string; family?: string };  // WeChat
 
+/** 从宿主字体来源读取字节；url/path/filePath 由宿主平台实现。 */
+export type FontInputLoader = (
+  input: FontInput,
+) => Uint8Array | ArrayBuffer | null | Promise<Uint8Array | ArrayBuffer | null>;
+
 export interface FontMatchRequest {
   fontName: string;
   familyName?: string;
@@ -2356,6 +2372,7 @@ export interface OFDOpenOptions {
   documentIndex?: number;              // 默认 0
   limits?: Partial<ResourceLimits>;
   supplementaryFonts?: FontInput[];    // 宿主补充的字体，按需用于缺字/缺字体
+  loadInput?: FontInputLoader;         // url/path/filePath 字节加载器；不传保持 Web 默认
   fontProvider?: FontProvider;         // 按需提供字体
   imageDecoders?: ImageDecoderPlugin[];// JBIG2/TIFF 等
   onWarning?: (warning: OFDWarning) => void;
@@ -2695,7 +2712,7 @@ Warning 码：
 
 | 码 | 含义 |
 |---|---|
-| `W_FONT_MISSING` | 字体资源缺失/不可用 |
+| `W_FONT_MISSING` | 字体资源缺失/来源不可用或加载失败 |
 | `W_GLYPH_MISSING` | 单个字符无字形 |
 | `W_IMAGE_DECODE` | 图片解码失败 |
 | `W_UNSUPPORTED_PAINT` | 渐变/底纹/ICC 降级 |
@@ -2713,7 +2730,7 @@ Warning 码：
 | `W_BLEND_MODE` | OFD 1.1 BlendMode 被忽略 |
 | `W_RADIAL_UNSUPPORTED` | 径向渐变 v1 未实现，已降级 |
 | `W_GOURAUD_APPROX` | Gouraud 网格不完整/超限，近似绘制 |
-| `W_ANNOT_EMPTY` | 注释 Appearance 为空，已跳过 |
+| `W_ANNOT_EMPTY` | 注释 Appearance 为空，模型解码阶段提示一次并跳过 |
 | `W_JBIG2_DECODE` | JBIG2/TIFF 解码失败或缺失插件 |
 
 默认 `onWarning` 为空（不打印）；调试时可传 `console.warn`。同一 warning 按 `(code, page, objectId)` 去重，避免刷屏。

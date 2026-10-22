@@ -1,8 +1,8 @@
 # @ofdrw/ofdrw-viewer-engine 公开 API
 
-> 版本：v1.0（契约 r9）
+> 版本：v1.0（契约 r11）
 > 更新：2026-10-22  
-> 状态：v1 稳定接口；已收录 P0/P1 阅读器 UI API（PageInfo/Outline/Bookmark/签章元数据/SignedValue/元数据/prepare/TextContent）；P2 延后
+> 状态：v1 稳定接口；P0/P1/P2 与 r11 字体加载器已收录；`page.renderRegion` 暂不实现/不导出
 > 适用包：`@ofdrw/ofdrw-viewer-engine`（npm 作用域 `@ofdrw`）  
 > 公共入口：`packages/ofdrw-viewer-engine/src/index.ts`  
 > 设计依据：`docs/OFD渲染引擎设计方案.md` §15  
@@ -136,7 +136,8 @@ Node/小程序没有浏览器 `document`/`OffscreenCanvas` 时必须注入 `crea
 | `documentIndex` | `number` | `0` | 多文档包时的文档索引；按带 `DocRoot` 的 `DocBody` 顺序计数；必须为非负整数，越界抛 `OFD_INVALID_PACKAGE` |
 | `limits` | `Partial<ResourceLimits>` | `DEFAULT_RESOURCE_LIMITS` | 资源限制覆盖；浅合并；单位见 §11 |
 | `cache` | `Partial<CacheOptions>` | `DEFAULT_CACHE_OPTIONS` | 缓存预算覆盖；浅合并；单位见 §11 |
-| `supplementaryFonts` | `FontInput[]` | 无 | 宿主补充字体；引擎不内置 CJK 字体；按需用于缺字/缺字体回退 |
+| `supplementaryFonts` | `FontInput[]` | 无 | 宿主补充字体；引擎不内置 CJK 字体；按需用于缺字/缺字体回退；`path`/`filePath` 需配合 `loadInput` |
+| `loadInput` | `FontInputLoader` | 无 | 字体来源字节加载器；不传时 Web 默认 `url` fetch、`data` 直读，`path`/`filePath` 不支持；Node CLI 注入 `node:fs` |
 | `fontProvider` | `FontProvider` | 无 | 宿主按需提供字体；优先于 `supplementaryFonts` 的匹配流程见 §8.1 |
 | `imageDecoders` | `ImageDecoderPlugin[]` | 无 | JBIG2/TIFF 等插件；PNG/JPEG/GIF 内置路径优先 |
 | `onWarning` | `(warning: OFDWarning) => void` | 无（不打印） | 非致命 warning 回调；同一 `(code,pageIndex,objectId)` 去重；回调抛错不影响渲染 |
@@ -212,7 +213,7 @@ interface PageInfo {
 
 - 返回按 `index` 升序的连续页；与 `getPage(index).getSize()` 使用同一条 `Page → Template → CommonData.PageArea → A4` 回退链，单位 mm。
 - 结果按页缓存到 `close()`；相同页重复请求不重复读 XML。1000 页冷启动目标 ≤300 ms、缓存命中 ≤50 ms（参考机/本地 ZIP）。
-- 单页缺失/非法 Area 只 warning 并回退，不影响其他页；没有页时返回空数组，不抛错。
+- **页尺寸 warning**：缺失 Area/PhysicalBox 不单独 warning；回退到模板或 `CommonData` 成功时不提示；只有最终回退 A4 才 warning。显式声明但宽/高非正的 Area 仍 warning 后进入回退链；不影响其他页。没有页时返回空数组，不抛错。
 - 错误：取消 `OFD_ABORTED`、关闭 `OFD_CLOSED`；不因单页损坏抛 `OFD_XML_PARSE`。
 
 ### 3.6 `document.getOutline(options?: { signal?: AbortSignal }): Promise<readonly OutlineNode[]>`
@@ -718,6 +719,11 @@ type FontInput =
   | { path: string; family?: string }
   | { filePath: string; family?: string };
 
+/** 从宿主字体来源读取字节；url/path/filePath 由宿主平台实现。 */
+type FontInputLoader = (
+  input: FontInput,
+) => Uint8Array | ArrayBuffer | null | Promise<Uint8Array | ArrayBuffer | null>;
+
 interface FontMatchRequest {
   fontName: string;
   familyName?: string;
@@ -739,6 +745,11 @@ interface FontProvider {
 - `fontProvider` 返回多个候选时按顺序尝试；`null` 表示无匹配。
 - `FontInput.family` 用于诊断/别名匹配；真实字体名以字体文件为准。
 - 字体解析失败抛 `OFD_FONT_PARSE` 的场景限于引擎必须加载的字体；可降级时只 warning。
+- **`OFDOpenOptions.loadInput` 可选（r11 兼容增量）**：不传时保持 Web 默认行为——`data` 直接使用，`url` 走 `fetch`，`path`/`filePath` 不支持并产生字体 warning；传了则所有非 `data` 来源都交给 loader。
+- loader 返回 `null` 表示该来源不可用；抛错/读取失败由字体层降级并上报 `W_FONT_MISSING`，不中断文档打开。
+- Node CLI 注入基于 `node:fs` 的 loader（`path`/`filePath` 用 `readFile`，`url` 仍用 fetch）；`--font-dir` 扫描到的字体以 `path` 来源传入，真正读取字节并解析实际 family。
+- `--font-dir` 递归扫描 `.ttf/.otf/.ttc/.otc`（大小写不敏感）；TTC/OTC 展开全部字体面，按 fontkit 实测 family 参与匹配；不自动扫描系统字体、不下载字体。
+- 浏览器/读者宿主如需本地字体，仍推荐 `data`（`ArrayBuffer`/`Uint8Array`）或 `url`；不要让 engine 直接依赖 Node API。
 
 ### 8.2 图片解码插件
 
@@ -826,7 +837,7 @@ interface OFDWarning {
 
 | `code` | 含义 |
 | --- | --- |
-| `W_FONT_MISSING` | 缺少字体，使用回退/替代字体 |
+| `W_FONT_MISSING` | 缺少字体，或字体来源不可用/加载失败（含 `path`/`filePath` 无 loader）；使用回退/替代字体 |
 | `W_GLYPH_MISSING` | 字体缺字形，跳过或使用 .notdef |
 | `W_IMAGE_DECODE` | 图片无法解码/读取，跳过该图 |
 | `W_UNSUPPORTED_PAINT` | 不支持/无法实现的填充，降级 |
@@ -844,7 +855,7 @@ interface OFDWarning {
 | `W_BLEND_MODE` | 混合模式不支持，降级 |
 | `W_RADIAL_UNSUPPORTED` | v1 不支持径向渐变，降级 |
 | `W_GOURAUD_APPROX` | Gouraud/网格渐变近似 |
-| `W_ANNOT_EMPTY` | 注释外观为空/索引缺失 |
+| `W_ANNOT_EMPTY` | 注释外观为空；模型解码阶段提示一次，渲染跳过不重复 |
 | `W_JBIG2_DECODE` | JBIG2 解码失败/超限，跳过 |
 
 P0/P1/P2 UI API 还会产生以下扩展码（`OFDWarning.code` 类型允许 `string`；宿主按字符串处理，`WARNING_CODES` 冻结表暂未列入这些新增码）：
@@ -961,6 +972,7 @@ P0/P1/P2 UI API 还会产生以下扩展码（`OFDWarning.code` 类型允许 `st
 | --- | --- |
 | `ByteSource` | 随机字节源 |
 | `FontInput` | 宿主字体来源 |
+| `FontInputLoader` | 字体来源字节加载器（`OFDOpenOptions.loadInput`） |
 | `FontProvider` | 字体匹配接口 |
 | `FontMatchRequest` | 字体匹配请求 |
 | `ImageDecoder` | 宿主图片解码器 |
@@ -1063,6 +1075,7 @@ P0/P1/P2 UI API 还会产生以下扩展码（`OFDWarning.code` 类型允许 `st
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
+| v1.0-r11 | 2026-10-22 | 新增可选 `OFDOpenOptions.loadInput` / `FontInputLoader`：不传时 Web 默认 `url` fetch、`path`/`filePath` 不支持；Node CLI `--font-dir` 注入 `node:fs` loader，真正读取并展开 TTF/OTF/TTC/OTC，按实际 family 匹配；999.ofd `W_FONT_MISSING` 归零。兼容旧版，无行为变化 |
 | v1.0-r10 | 2026-10-22 | 同步 P2：`getPermissions`（只读声明，不做 DRM）、`getAttachments`/`getAttachmentData`（原始字节，不解析内容）、`exportImage.rotation`（仅导出方向，90/270 宽高互换）；登记 `W_PERMISSION_FIELD`/`W_ATTACHMENT_FIELD`/`W_ATTACHMENT_RESOURCE`；`page.renderRegion` 暂不实现/无排期且不导出 |
 | v1.0-r9 | 2026-10-22 | 同步 P0/P1 阅读器 UI API：getPageInfos/getOutline/getBookmarks/getMetadata/getSignatureEntries/getSignedValue/page.prepare/page.getTextContent；新增 PageInfo/Outline/Bookmark/签章/SignedValue/Metadata/TextContent 类型与 `CacheOptions.textPages`；明确不解析 ASN.1/不暴露 Seal.esl/P2 延后 |
 | v1.0-r8 | 2026-10-22 | 初版公开 API 文档：document/page/render/exportImage、平台注入、错误/warning、限制/缓存、类型附录；建立与 `src/index.ts` 的同步检查 |
