@@ -2,7 +2,7 @@
  * 图片格式识别、头部尺寸读取与解码器插件适配。
  *
  * 识别顺序：扩展名 → magic → `unknown`（由调用方再走解码器探测）。
- * 本文件只做头部解析，不解码像素；JBIG2/TIFF 解码器在需要时通过动态 `import()` 加载，
+ * 本文件只做头部解析，不解码像素；GIF/JBIG2/TIFF 解码器在需要时通过动态 `import()` 加载，
  * 主包不静态引入解码表。
  */
 
@@ -169,8 +169,18 @@ export const tiffImageDecoderPlugin: ImageDecoderPlugin = {
   },
 };
 
-/** 内置 JBIG2/TIFF 插件集合，可直接展开到 `OFDOpenOptions.imageDecoders`。 */
+/** 延迟加载的 GIF 插件；第一帧解码，导入本对象不会加载 LZW 表。 */
+export const gifImageDecoderPlugin: ImageDecoderPlugin = {
+  format: 'gif',
+  async decode(data: Uint8Array): Promise<DecodedImage> {
+    const module = await import('./gif');
+    return module.decodeGif(data);
+  },
+};
+
+/** 内置 GIF/JBIG2/TIFF 插件集合，可直接展开到 `OFDOpenOptions.imageDecoders`。 */
 export const builtinImageDecoders: readonly ImageDecoderPlugin[] = Object.freeze([
+  gifImageDecoderPlugin,
   jbig2ImageDecoderPlugin,
   tiffImageDecoderPlugin,
 ]);
@@ -191,7 +201,7 @@ export function findImageDecoderPlugin(
 }
 
 /**
- * 动态加载内置 JBIG2/TIFF 解码器；其他格式返回 undefined。
+ * 动态加载内置 GIF/JBIG2/TIFF 解码器；其他格式返回 undefined。
  *
  * 该函数中的 `import()` 是唯一的解码器入口，保证构建工具把解码表拆成独立 chunk。
  *
@@ -204,6 +214,13 @@ export async function loadBuiltinImageDecoder(
   options: BuiltinDecoderOptions = {},
 ): Promise<ImageDecoderPlugin | undefined> {
   const normalized = format.toLowerCase();
+  if (normalized === 'gif') {
+    const module = await import('./gif');
+    return {
+      format: 'gif',
+      decode: (data: Uint8Array): Promise<DecodedImage> => module.decodeGif(data, options),
+    };
+  }
   if (normalized === 'jbig2') {
     const module = await import('./jbig2');
     return {
@@ -222,7 +239,7 @@ export async function loadBuiltinImageDecoder(
 }
 
 /**
- * 解析插件：优先使用宿主注入，其次按需加载内置 JBIG2/TIFF。
+ * 解析插件：优先使用宿主注入，其次按需加载内置 GIF/JBIG2/TIFF。
  *
  * @param format 图片格式。
  * @param plugins 宿主插件列表。
@@ -254,7 +271,7 @@ export async function decodeWithImageDecoder(
 ): Promise<DecodedImage | undefined> {
   let plugin = findImageDecoderPlugin(plugins, format);
   if (!plugin) {
-    // JBIG2/TIFF 有内置动态 chunk；宿主未注入时按需加载。
+    // GIF/JBIG2/TIFF 有内置动态 chunk；宿主未注入时按需加载。
     plugin = await loadBuiltinImageDecoder(format, options);
   }
   if (!plugin) {

@@ -168,7 +168,7 @@ describe('ImageDecoderPlugin 适配', () => {
     expect(findImageDecoderPlugin([plugin], 'tiff')).toBeUndefined();
   });
 
-  it('动态加载内置 JBIG2/TIFF 解码器并可解码', async () => {
+  it('动态加载内置 GIF/JBIG2/TIFF 解码器并可解码', async () => {
     const jbig2 = await loadBuiltinImageDecoder('jbig2');
     const tiff = await loadBuiltinImageDecoder('tiff');
     expect(jbig2?.format).toBe('jbig2');
@@ -186,8 +186,9 @@ describe('ImageDecoderPlugin 适配', () => {
     expect((await resolveImageDecoder('jbig2'))?.format).toBe('jbig2');
     expect((await loadBuiltinImageDecoder('JBIG2'))?.format).toBe('jbig2');
     const { builtinImageDecoders } = await import('../../src/image/format');
-    expect(builtinImageDecoders.map((item) => item.format)).toEqual(['jbig2', 'tiff']);
-    expect((await builtinImageDecoders[0]!.decode(jbig2Fixture())).width).toBe(100);
+    expect(builtinImageDecoders.map((item) => item.format)).toEqual(['gif', 'jbig2', 'tiff']);
+    const builtinJbig2 = builtinImageDecoders.find((item) => item.format === 'jbig2')!;
+    expect((await builtinJbig2.decode(jbig2Fixture())).width).toBe(100);
   });
 
   it('内置解码器接收 maxPixels 选项并在插件层拒绝超限', async () => {
