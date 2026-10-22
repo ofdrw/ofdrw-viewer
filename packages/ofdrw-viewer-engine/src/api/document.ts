@@ -59,6 +59,8 @@ import type {
   SignatureEntryInfo,
   SignatureStampInfo,
   SignedValueFile,
+  TextContent,
+  TextContentOptions,
 } from './ui-types';
 import type { FontInputLoader } from '../font/provider';
 import type { FontFaceSet } from '../font/types';
@@ -120,12 +122,20 @@ import type {
   SignatureStampSource,
 } from '../render/prepare';
 import { drawPage } from '../render/page';
+import { collectTextPageMm, toTextPagePx } from '../render/text-content';
+import type { TextPageMm } from '../render/text-content';
 
 /** Canvas 尺寸比较容差，避免浮点 viewport 与整数 canvas 的舍入误差。 */
 const CANVAS_SIZE_EPSILON = 1e-6;
 
 /** 矢量 OFD 印章离屏渲染的目标 DPI；上限由 maxImagePixels/maxCanvasPixels 收敛。 */
 const VECTOR_SEAL_DPI = 300;
+
+/** 文本内容默认文本项上限。 */
+const DEFAULT_TEXT_MAX_ITEMS = 20_000;
+
+/** 文本内容默认字符上限。 */
+const DEFAULT_TEXT_MAX_CHARS = 500_000;
 
 /** 页面图片导出默认 DPI。 */
 const DEFAULT_EXPORT_DPI = 96;
@@ -141,6 +151,26 @@ interface PageEntry {
   resources: PageResourceScope;
   /** 按 `page.templates` 引用顺序成功解码的模板页。 */
   templates: PageModel[];
+}
+
+/** 文本 mm 缓存的规范化配置；不含 dpi。 */
+interface TextBuildConfig {
+  layerOrder: 'document' | 'type';
+  includeChars: boolean;
+  includeAnnotations: boolean;
+  includeInvisible: boolean;
+  maxTextItems: number;
+  maxTextChars: number;
+}
+
+/** 进行中的文本构建；多个调用方共享同一 promise。 */
+interface TextPending {
+  /** 共享构建结果（mm）。 */
+  promise: Promise<TextPageMm>;
+  /** 无 waiter 时取消构建。 */
+  controller: AbortController;
+  /** 当前等待方数量。 */
+  waiters: number;
 }
 
 /** XML 缓存条目；同时记录估算字节数用于预算淘汰。 */
@@ -372,6 +402,10 @@ export class OFDDocument {
   private readonly preparedBundles = new Map<number, { dpi: number; bundle: PreparedPageBundle }>();
   /** prepare 并发去重。 */
   private readonly preparePending = new Map<number, Promise<PreparedPageBundle>>();
+  /** 文本 mm 缓存；按配置/页索引 LRU，不含 dpi。 */
+  private readonly textCache: DisposableLruCache<string, TextPageMm>;
+  /** 文本构建并发去重。 */
+  private readonly textPending = new Map<string, TextPending>();
   /** 模板页模型缓存（键：Content.xml 包内路径）。 */
   private readonly templateCache = new Map<string, Promise<PageModel>>();
   /** 页资源索引缓存（键：资源 XML 包内路径）。 */
@@ -450,6 +484,14 @@ export class OFDDocument {
     });
     this.pageCache = new DisposableLruCache<number, Promise<PageEntry>>({
       maxEntries: init.cacheOptions.pageModels,
+      sizeOf: () => 1,
+    });
+    const textPages = init.cacheOptions.textPages;
+    this.textCache = new DisposableLruCache<string, TextPageMm>({
+      maxEntries:
+        typeof textPages === 'number' && Number.isFinite(textPages)
+          ? Math.max(0, Math.floor(textPages))
+          : 4,
       sizeOf: () => 1,
     });
   }
@@ -642,6 +684,7 @@ export class OFDDocument {
       (params, signal) => this.renderPage(pageIndex, params, signal),
       (options) => this.exportPage(pageIndex, entry.model.size, options),
       (options) => this.preparePageIndex(pageIndex, options),
+      (options) => this.loadTextContent(pageIndex, options),
     );
   }
 
@@ -781,6 +824,138 @@ export class OFDDocument {
     })();
     this.trackActiveRun(run);
     return run;
+  }
+
+  /**
+   * 读取指定页文本内容：mm 缓存 + 共享构建 + 调用方独立取消 + dpi 输出换算。
+   *
+   * @param pageIndex 页索引。
+   * @param options 公开文本选项。
+   * @returns px 坐标文本内容。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED。
+   */
+  private async loadTextContent(
+    pageIndex: number,
+    options: TextContentOptions,
+  ): Promise<TextContent> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    if (!Number.isInteger(pageIndex) || pageIndex < 0 || pageIndex >= this.pageCount) {
+      throw new OFDError(
+        'OFD_PAGE_NOT_FOUND',
+        `页码越界：${pageIndex}（页数 ${this.pageCount}）`,
+      );
+    }
+    const dpi = normalizeTextDpi(options.dpi);
+    const config: TextBuildConfig = {
+      layerOrder: options.layerOrder ?? this.layerOrder,
+      includeChars: options.includeChars ?? true,
+      includeAnnotations: options.includeAnnotations ?? false,
+      includeInvisible: options.includeInvisible ?? false,
+      maxTextItems: normalizeTextLimit(options.maxTextItems, DEFAULT_TEXT_MAX_ITEMS),
+      maxTextChars: normalizeTextLimit(options.maxTextChars, DEFAULT_TEXT_MAX_CHARS),
+    };
+    const key = textCacheKey(pageIndex, config);
+    const cached = this.textCache.get(key);
+    if (cached) return toTextPagePx(cached, dpi);
+
+    let pending = this.textPending.get(key);
+    if (!pending) {
+      pending = this.startTextBuild(pageIndex, key, config);
+      this.textPending.set(key, pending);
+    }
+    pending.waiters += 1;
+    try {
+      const pageMm = await waitForAbort(pending.promise, options.signal);
+      return toTextPagePx(pageMm, dpi);
+    } finally {
+      pending.waiters -= 1;
+      if (pending.waiters <= 0) {
+        // 最后一个 waiter 离开：中止无人等待的构建，并允许下一次调用重新开始。
+        pending.controller.abort();
+        if (this.textPending.get(key) === pending) this.textPending.delete(key);
+      }
+    }
+  }
+
+  /**
+   * 启动共享文本构建；只在 close/无 waiter 时中止，调用方取消不污染其他 waiter。
+   *
+   * @param pageIndex 页索引。
+   * @param key 文本 mm 缓存键（不含 dpi）。
+   * @param config 规范化后的文本选项。
+   * @returns 可等待的构建句柄。
+   */
+  private startTextBuild(pageIndex: number, key: string, config: TextBuildConfig): TextPending {
+    const controller = new AbortController();
+    const combined = combineAbortSignals([controller.signal, this.closeController.signal]);
+    const pageWarning = createPageWarningHandler(this.warnings, pageIndex);
+    const onWarning = (code: string, message: string, objectId?: string): void => {
+      const warning: OFDWarning = { code, message };
+      if (objectId !== undefined) warning.objectId = objectId;
+      pageWarning(warning);
+    };
+    const promise = (async (): Promise<TextPageMm> => {
+      try {
+        const entry = await this.getPageEntry(pageIndex);
+        this.assertTextActive(combined.signal);
+        const prepared = this.preparedBundles.get(pageIndex);
+        const bundle: PreparedPageBundle =
+          prepared && prepared.dpi === DEFAULT_DPI
+            ? prepared.bundle
+            : await preparePage({
+                page: entry.model,
+                resources: entry.resources,
+                loader: this.createLoader(combined.signal, pageIndex),
+                dpi: DEFAULT_DPI,
+                strictImageCtm: this.strictImageCtm,
+                signal: combined.signal,
+                onWarning: pageWarning,
+              });
+        this.assertTextActive(combined.signal);
+        const pageMm = collectTextPageMm(bundle, {
+          layerOrder: config.layerOrder,
+          includeChars: config.includeChars,
+          includeAnnotations: config.includeAnnotations,
+          includeInvisible: config.includeInvisible,
+          maxTextItems: config.maxTextItems,
+          maxTextChars: config.maxTextChars,
+          pageIndex,
+          signal: combined.signal,
+          onWarning,
+        });
+        this.assertTextActive(combined.signal);
+        this.textCache.set(key, pageMm);
+        return pageMm;
+      } catch (error) {
+        if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭', { cause: error });
+        throw error;
+      } finally {
+        combined.dispose();
+      }
+    })();
+    const pending: TextPending = { promise, controller, waiters: 0 };
+    this.trackActiveRun(promise);
+    void promise
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .finally(() => {
+        if (this.textPending.get(key) === pending) this.textPending.delete(key);
+      });
+    return pending;
+  }
+
+  /**
+   * 文本构建进行中检查：close 优先于取消。
+   *
+   * @param signal 合并后的取消信号。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED。
+   */
+  private assertTextActive(signal: AbortSignal): void {
+    if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭');
+    throwIfAborted(signal);
   }
 
   /**
@@ -1061,7 +1236,7 @@ export class OFDDocument {
   /**
    * 关闭文档并释放全部缓存与句柄；可重复调用。
    *
-   * 进行中的渲染/导出/页信息/准备会先被中止；`close()` 不向调用方抛错。
+   * 进行中的渲染/导出/页信息/准备/文本会先被中止；`close()` 不向调用方抛错。
    */
   async close(): Promise<void> {
     if (this.closed) return;
@@ -1105,6 +1280,8 @@ export class OFDDocument {
     this.templateAreaCache.clear();
     this.preparedBundles.clear();
     this.preparePending.clear();
+    this.textCache.clear();
+    this.textPending.clear();
     this.templateCache.clear();
     this.resourceIndexCache.clear();
     this.annotationCache.clear();
@@ -2189,6 +2366,46 @@ export class OFDDocument {
  * 方法实现由后续任务落到 `OFDDocument`；本任务只冻结签名，不改变现有行为。
  */
 export interface OFDDocument extends OFDDocumentApi {}
+
+/**
+ * 规范化文本输出 DPI；非有限/非正值回退 96。
+ *
+ * @param dpi 调用方 DPI。
+ * @returns 有效 DPI。
+ */
+function normalizeTextDpi(dpi: number | undefined): number {
+  return typeof dpi === 'number' && Number.isFinite(dpi) && dpi > 0 ? dpi : DEFAULT_DPI;
+}
+
+/**
+ * 规范化文本限制；非整数/负数回退默认，0 表示不限。
+ *
+ * @param value 调用方限制。
+ * @param fallback 默认限制。
+ * @returns 非负整数限制。
+ */
+function normalizeTextLimit(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : fallback;
+}
+
+/**
+ * 构造文本 mm 缓存键；不包含 dpi。
+ *
+ * @param pageIndex 页索引。
+ * @param config 规范化文本选项。
+ * @returns 缓存键。
+ */
+function textCacheKey(pageIndex: number, config: TextBuildConfig): string {
+  return [
+    pageIndex,
+    config.layerOrder,
+    config.includeChars ? 1 : 0,
+    config.includeAnnotations ? 1 : 0,
+    config.includeInvisible ? 1 : 0,
+    config.maxTextItems,
+    config.maxTextChars,
+  ].join('\u0000');
+}
 
 /**
  * 规范化 getPageInfos 的 start；负数返回 -1 表示空结果。

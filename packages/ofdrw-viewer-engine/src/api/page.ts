@@ -13,7 +13,12 @@ import type {
   PageRenderParameters,
   ViewportOptions,
 } from './types';
-import type { OFDPageApi, PagePrepareOptions } from './ui-types';
+import type {
+  OFDPageApi,
+  PagePrepareOptions,
+  TextContent,
+  TextContentOptions,
+} from './ui-types';
 import { OFDError } from '../errors';
 import { createRenderTask } from './render-task';
 import type { RenderTask } from './render-task';
@@ -47,6 +52,14 @@ export type PageExportDriver = (options: PageImageExportOptions) => Promise<Page
  */
 export type PagePrepareDriver = (options: PagePrepareOptions) => Promise<void>;
 
+/**
+ * 页面文本内容驱动；由 `OFDDocument` 注入，负责缓存、准备、取消与 DPI 换算。
+ *
+ * @param options 文本内容选项（dpi/字符/可见性/上限/取消）。
+ * @returns px 坐标的公开文本内容。
+ */
+export type PageTextDriver = (options: TextContentOptions) => Promise<TextContent>;
+
 /** OFD 页面；渲染只画页面内容，不设置 canvas 尺寸、不清屏。 */
 export class OFDPage {
   /** 页索引，从 0 开始。 */
@@ -59,6 +72,8 @@ export class OFDPage {
   private readonly exportDriver: PageExportDriver | undefined;
   /** 页面准备驱动；由文档实例注入。 */
   private readonly prepareDriver: PagePrepareDriver | undefined;
+  /** 页面文本内容驱动；由文档实例注入。 */
+  private readonly textDriver: PageTextDriver | undefined;
 
   /**
    * 创建页面句柄；由 `OFDDocument.getPage()` 返回，宿主不应直接构造。
@@ -68,6 +83,7 @@ export class OFDPage {
    * @param driver 渲染驱动。
    * @param exportDriver 可选图片导出驱动；未注入时 exportImage 报不支持。
    * @param prepareDriver 可选页面准备驱动；未注入时 prepare 报不支持。
+   * @param textDriver 可选页面文本内容驱动；未注入时 getTextContent 报不支持。
    */
   constructor(
     index: number,
@@ -75,12 +91,14 @@ export class OFDPage {
     driver: PageRenderDriver,
     exportDriver?: PageExportDriver,
     prepareDriver?: PagePrepareDriver,
+    textDriver?: PageTextDriver,
   ) {
     this.index = index;
     this.pageSize = { width: pageSize.width, height: pageSize.height };
     this.driver = driver;
     this.exportDriver = exportDriver;
     this.prepareDriver = prepareDriver;
+    this.textDriver = textDriver;
   }
 
   /**
@@ -142,6 +160,23 @@ export class OFDPage {
   }
 
   /**
+   * 读取页面文本内容（阅读器文字层）。
+   *
+   * 内部按页缓存与 DPI 无关的 mm 布局，输出按 dpi 换算为 px；不调用 Canvas
+   * 文字 API、不改变页面绘制结果。无文本驱动（宿主手工构造）时报不支持。
+   *
+   * @param options 输出 DPI、字符/可见性/图层/上限与取消信号。
+   * @returns px 坐标的文本内容。
+   * @throws OFDError OFD_RENDERER_UNSUPPORTED / OFD_CLOSED / OFD_ABORTED。
+   */
+  async getTextContent(options?: TextContentOptions): Promise<TextContent> {
+    if (!this.textDriver) {
+      throw new OFDError('OFD_RENDERER_UNSUPPORTED', '当前页面未绑定文本内容驱动');
+    }
+    return this.textDriver(options ?? {});
+  }
+
+  /**
    * 预取页面模型、字体、图片与模板资源；不创建 canvas、不绘制。
    *
    * 已准备或正在准备时复用同一 bundle；重复调用幂等。取消返回
@@ -162,6 +197,6 @@ export class OFDPage {
 /**
  * UI API 类型声明合并。
  *
- * `getTextContent` 的实现由 t68/t71 落到 `OFDPage`；`prepare` 由 t67 实现。
+ * `getTextContent` 由 t72 实现，`prepare` 由 t67 实现。
  */
 export interface OFDPage extends OFDPageApi {}
