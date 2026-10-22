@@ -33,6 +33,8 @@ export interface FontFixtures {
   notoTtc: string | null;
   /** Times 兼容衬线字体（Nimbus Roman，可选）。 */
   nimbusRoman: string | null;
+  /** 真实 Times New Roman（用于验证显式连字 GID，可选）。 */
+  times: string | null;
   /** CFF CID 的单字体 OTF（仓库参考目录，可选）。 */
   cffOtf: string | null;
   /** 无 cmap/name/OS2 的剥离子集（从 doc1File.ofd 解压）。 */
@@ -60,6 +62,10 @@ const SYSTEM_FONTS = {
     '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
   ],
   nimbusRoman: ['/usr/share/fonts/opentype/urw-base35/NimbusRoman-Regular.otf'],
+  times: [
+    '/mnt/c/Windows/Fonts/times.ttf',
+    '/usr/share/fonts/truetype/msttcorefonts/Times_New_Roman.ttf',
+  ],
 };
 
 /**
@@ -128,6 +134,7 @@ export function ensureFixtures(): FontFixtures {
     cjkTtf: copySystemFont(SYSTEM_FONTS.cjkTtf, 'DroidSansFallbackFull.ttf'),
     notoTtc: copySystemFont(SYSTEM_FONTS.notoTtc, 'NotoSerifCJK-Bold.ttc'),
     nimbusRoman: copySystemFont(SYSTEM_FONTS.nimbusRoman, 'NimbusRoman-Regular.otf'),
+    times: copySystemFont(SYSTEM_FONTS.times, 'TimesNewRoman.ttf'),
     cffOtf: (() => {
       const source = join(
         REPO_ROOT,

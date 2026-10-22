@@ -116,6 +116,28 @@ describe('CGTransform N:1（连字）', () => {
   });
 });
 
+describe('CGTransform N:1（连字）DeltaX 压缩兼容', () => {
+  it('DeltaX 已压缩为每个输出字形一项时，每个单元只消费一项', () => {
+    const face = createTransformFace();
+    const layout = layoutText(
+      makeTextObject({
+        codes: [
+          makeTextCode({
+            text: 'ABlA',
+            // 3 个输出单元（AB 连字、l、A），DeltaX 只有 2 项。
+            deltaX: [4, 6],
+            cgTransforms: [transform(0, 2, [10])],
+          }),
+        ],
+      }),
+      createFakeFaceSet(face),
+    );
+    expect(layout.units).toHaveLength(3);
+    expect(layout.units.map((unit) => unit.deltaX)).toEqual([4, 6, 4]);
+    expect(layout.endX).toBe(14);
+  });
+});
+
 describe('CGTransform 1:N（一个字符多个字形）', () => {
   it('多个字形按字体 advance 连续排布，整串后按该字符 delta 推进', () => {
     const face = createTransformFace();

@@ -8,7 +8,7 @@
 import type { FontInput, FontMatchRequest, FontProvider } from '../platform/font-provider';
 import type { FontResource, ResourceId } from '../model/types';
 import type { FontAliasTable } from './aliases';
-import { expandFontNames } from './aliases';
+import { expandFontNames, normalizeFontName } from './aliases';
 import { createFontFace } from './face';
 import type {
   FontFace,
@@ -85,12 +85,80 @@ export function fontResourceRequest(font: FontResource): FontMatchRequest {
  * @returns 分值；越高越匹配。
  */
 function scoreFace(face: FontFace, font: FontResource, aliases?: FontAliasTable): number {
-  const wanted = new Set(expandFontNames([font.fontName, font.familyName], aliases));
-  const names = expandFontNames([face.family, face.postscriptName], aliases);
-  let score = names.some((name) => wanted.has(name)) ? 100 : 0;
+  const requested = [font.fontName, font.familyName].filter(
+    (name): name is string => typeof name === 'string' && name.length > 0,
+  );
+  const actual = [face.family, face.postscriptName].filter(
+    (name): name is string => typeof name === 'string' && name.length > 0,
+  );
+  const exactRequested = new Set(requested.map((name) => normalizeFontName(name)));
+  const exact = actual.some((name) => exactRequested.has(normalizeFontName(name)));
+  const wanted = new Set(expandFontNames(requested, aliases));
+  const alias = expandFontNames(actual, aliases).some((name) => wanted.has(name));
+  // 精确 family 必须高于别名替代：同时存在 Times New Roman 与 Nimbus Roman 时，
+  // 不能因为 Nimbus 属于 Times 别名组而抢先成为主字体。
+  let score = exact ? 200 : alias ? 100 : 0;
   if (face.bold === font.bold) score += 10;
   if (face.italic === font.italic) score += 5;
   return score;
+}
+
+/**
+ * 判断字体面是否可作为请求字体使用显式 Glyph ID。
+ *
+ * 显式 GID 属于 OFD 指定的原字体，替代字体（例如 Times 缺失时选到的 Nimbus）
+ * 的字形编号不可套用。这里仅接受归一化 family/PostScript 名完全相等；对于
+ * 中英文名称（例如“仿宋”与 FangSong）允许通过别名表匹配。纯 ASCII 的别名
+ * 替代关系（Times New Roman → Nimbus Roman）不视为同一字体。
+ *
+ * @param face 字体面。
+ * @param font 请求的字体资源。
+ * @param aliases 宿主扩展别名表。
+ * @returns 可信任显式 GID 时返回 true。
+ */
+function trustsExplicitGlyphs(
+  face: FontFace,
+  font: FontResource,
+  aliases?: FontAliasTable,
+): boolean {
+  const requested = [font.fontName, font.familyName].filter(
+    (name): name is string => typeof name === 'string' && name.length > 0,
+  );
+  const actual = [face.family, face.postscriptName].filter(
+    (name): name is string => typeof name === 'string' && name.length > 0,
+  );
+  if (requested.length === 0 || actual.length === 0) return false;
+  const requestedNames = new Set(requested.map((name) => normalizeFontName(name)));
+  if (actual.some((name) => requestedNames.has(normalizeFontName(name)))) return true;
+  // 只有中英文名混用时才放宽到别名匹配；Nimbus/Noto 这类纯西文替代字体
+  // 仍必须走 cmap 回退，避免把 Times 的 GID 套到 Nimbus 上。
+  const localized = [...requested, ...actual].some((name) => /[^\x00-\x7f]/.test(name));
+  if (!localized) return false;
+  const wanted = new Set(expandFontNames(requested, aliases));
+  return expandFontNames(actual, aliases).some((name) => wanted.has(name));
+}
+
+/**
+ * 按请求字体名决定字体面的显式 GID 信任标志。
+ *
+ * 内嵌字体（`authoritative`）始终可信任；宿主/补充字体重新按 family 判定，
+ * 因为补充字体在加载时并不知道最终请求的是哪个 FontResource。
+ *
+ * @param face 字体面。
+ * @param font 请求的字体资源。
+ * @param aliases 宿主扩展别名表。
+ * @returns 带正确 `explicitGlyphs` 的字体面；无需修改时返回原对象。
+ */
+function withExplicitGlyphTrust(
+  face: FontFace,
+  font: FontResource,
+  aliases?: FontAliasTable,
+): FontFace {
+  const trusted = face.key.startsWith('embedded:')
+    ? face.explicitGlyphs !== false
+    : trustsExplicitGlyphs(face, font, aliases);
+  if (face.explicitGlyphs === trusted) return face;
+  return { ...face, explicitGlyphs: trusted };
 }
 
 /**
@@ -243,8 +311,11 @@ export class FontLibrary {
       undefined,
     );
 
-    const primary =
+    const selectedPrimary =
       embeddedFace ?? this.pickProviderFace(providerFaces, font) ?? bestSupplementary;
+    const primary = selectedPrimary
+      ? withExplicitGlyphTrust(selectedPrimary, font, this.options.aliases)
+      : undefined;
 
     if (!primary) {
       this.warn(

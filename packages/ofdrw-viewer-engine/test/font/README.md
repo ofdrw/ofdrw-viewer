@@ -11,6 +11,7 @@
 | `DejaVuSans-Oblique.ttf` | 字体自带斜体判定 | 同上 | skip |
 | `NotoSerifCJK-Bold.ttc` | TTC 多字体面选择、CFF CID | 系统 Noto CJK TTC | skip |
 | `NotoSerifCJKsc-Regular.otf` | 单字体 CFF CID（可选） | 仓库 `references/ofdrw/...` | skip |
+| `TimesNewRoman.ttf` | 精确 family 的显式连字 GID `191` | 系统 `times.ttf`（WSL Windows 字体） | skip |
 | `stripped-nocmap.otf` | 无 cmap/name/OS2 剥离子集，按显式 gid 取字 | `ofd_pdf_match/doc1File.ofd` 内嵌字体 | skip |
 | `broken.ttf` | 损坏字体容错（扩展名与内容不符） | `ofd_pdf_match/intro-数科.ofd` 内嵌字体 | skip |
 | `simsun-extracted.ttf` | 真实 OFD 内嵌 CJK 子集 | `ofd_pdf_match/ano.ofd` 内嵌字体 | skip |

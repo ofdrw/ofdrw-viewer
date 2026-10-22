@@ -692,10 +692,20 @@ export function layoutText(
       );
     }
     const pending = buildUnits(codePoints, code.cgTransforms, faces, cache, state, options);
+    // 部分 OFD 生成器（如 z.ofd 的连字示例）在 CGTransform 压缩字符后，
+    // 也把 DeltaX 压缩成“每个输出字形一项”；此时数组长度等于输出单元数减 1。
+    // 若按 CodeCount 求和会跳过后续字形的间距，造成连字后文字挤在一起。
+    const perGlyphDeltas =
+      deltaX.length > 0 &&
+      deltaX.length === pending.length - 1 &&
+      deltaX.length < codePoints.length &&
+      (deltaY.length === 0 ||
+        (deltaY.length === pending.length - 1 && deltaY.length < codePoints.length));
     let deltaIndex = 0;
 
     for (const unit of pending) {
-      const deltaCount = unit.deltaCount ?? unit.codeCount;
+      const deltaCount =
+        perGlyphDeltas && unit.deltaCount === undefined ? 1 : (unit.deltaCount ?? unit.codeCount);
       const unitX = penX;
       const unitY = penY;
       const placements: GlyphPlacement[] = [];

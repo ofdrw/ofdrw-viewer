@@ -15,6 +15,11 @@
     "test:smoke": "pnpm -C packages/ofdrw-viewer-engine exec vitest run test/smoke",
     "test:golden": "pnpm -C packages/ofdrw-viewer-engine exec vitest run test/golden --passWithNoTests",
     "build": "pnpm -r --if-present run build",
+    "cli:typecheck": "pnpm -C packages/ofdrw-viewer-cli typecheck",
+    "cli:test": "pnpm -C packages/ofdrw-viewer-cli test",
+    "cli:test:acceptance": "pnpm -C packages/ofdrw-viewer-cli test:acceptance",
+    "cli:build": "pnpm -C packages/ofdrw-viewer-cli build",
+    "cli:build:sea": "pnpm -C packages/ofdrw-viewer-cli build:sea",
     "demo:web": "pnpm -C examples/web run dev"
   },
   "devDependencies": {
