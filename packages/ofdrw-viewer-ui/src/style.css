@@ -1,0 +1,748 @@
+/*
+ * ofdrw-viewer-ui 主题变量与基础布局。
+ *
+ * 约定：
+ * - 所有选择器以 `.ofd-viewer` 前缀限定在 light DOM 内，不污染宿主页面；
+ * - 颜色/阴影/圆角全部走 `--ofd-*` 变量，宿主可覆盖；
+ * - 不使用 `light-dark()`、`:has()` 等新语法；
+ * - 页面尺寸、缩放倍率由 JS 写入内联样式/`--scale-factor`，这里只提供默认值。
+ */
+
+.ofd-viewer {
+  /* 颜色（light 为默认值） */
+  --ofd-bg: #f3f4f6;
+  --ofd-toolbar-bg: #ffffff;
+  --ofd-sidebar-bg: #f7f7f8;
+  --ofd-page-bg: #ffffff;
+  --ofd-text: #1f2328;
+  --ofd-text-secondary: #5b616b;
+  --ofd-border: #d8dbe0;
+  --ofd-accent: #0b66d0;
+  --ofd-page-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  --ofd-find-highlight: rgba(255, 213, 0, 0.35);
+  --ofd-find-current: rgba(255, 140, 0, 0.55);
+  --ofd-selection: rgba(11, 102, 208, 0.25);
+  --ofd-signature-outline: rgba(11, 102, 208, 0.65);
+  --ofd-danger: #b3261e;
+  --ofd-hover-bg: rgba(0, 0, 0, 0.06);
+  --ofd-accent-soft: rgba(11, 102, 208, 0.12);
+  --ofd-page-overlay: rgba(255, 255, 255, 0.92);
+
+  /* 布局 */
+  --ofd-toolbar-height: 32px;
+  --ofd-sidebar-width: 200px;
+  --ofd-page-gap: 8px;
+  --ofd-page-margin: 24px;
+  --ofd-radius: 2px;
+  --ofd-font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC',
+    'Noto Sans CJK SC', sans-serif;
+
+  display: grid;
+  grid-template-rows: auto 1fr;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  color: var(--ofd-text);
+  background: var(--ofd-bg);
+  font-family: var(--ofd-font-family);
+  font-size: 13px;
+  line-height: 1.5;
+  box-sizing: border-box;
+  -webkit-text-size-adjust: 100%;
+}
+
+.ofd-viewer *,
+.ofd-viewer *::before,
+.ofd-viewer *::after {
+  box-sizing: border-box;
+}
+
+.ofd-viewer[data-theme='dark'] {
+  --ofd-bg: #1b1b1f;
+  --ofd-toolbar-bg: #26262b;
+  --ofd-sidebar-bg: #202024;
+  --ofd-page-bg: #2b2b30;
+  --ofd-text: #e6e6e9;
+  --ofd-text-secondary: #a9adb5;
+  --ofd-border: #3a3a42;
+  --ofd-accent: #6aa9ff;
+  --ofd-page-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  --ofd-find-highlight: rgba(255, 213, 0, 0.28);
+  --ofd-find-current: rgba(255, 170, 40, 0.55);
+  --ofd-selection: rgba(106, 169, 255, 0.3);
+  --ofd-signature-outline: rgba(106, 169, 255, 0.7);
+  --ofd-danger: #ff8a80;
+  --ofd-hover-bg: rgba(255, 255, 255, 0.08);
+  --ofd-accent-soft: rgba(106, 169, 255, 0.16);
+  --ofd-page-overlay: rgba(43, 43, 48, 0.92);
+}
+
+@media (prefers-color-scheme: dark) {
+  .ofd-viewer[data-theme='auto'] {
+    --ofd-bg: #1b1b1f;
+    --ofd-toolbar-bg: #26262b;
+    --ofd-sidebar-bg: #202024;
+    --ofd-page-bg: #2b2b30;
+    --ofd-text: #e6e6e9;
+    --ofd-text-secondary: #a9adb5;
+    --ofd-border: #3a3a42;
+    --ofd-accent: #6aa9ff;
+    --ofd-page-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+    --ofd-find-highlight: rgba(255, 213, 0, 0.28);
+    --ofd-find-current: rgba(255, 170, 40, 0.55);
+    --ofd-selection: rgba(106, 169, 255, 0.3);
+    --ofd-signature-outline: rgba(106, 169, 255, 0.7);
+    --ofd-danger: #ff8a80;
+    --ofd-hover-bg: rgba(255, 255, 255, 0.08);
+    --ofd-accent-soft: rgba(106, 169, 255, 0.16);
+    --ofd-page-overlay: rgba(43, 43, 48, 0.92);
+  }
+}
+
+@media (prefers-contrast: more) {
+  .ofd-viewer {
+    --ofd-border: #000000;
+    --ofd-text-secondary: #333333;
+    --ofd-page-shadow: none;
+  }
+
+  .ofd-viewer[data-theme='dark'] {
+    --ofd-border: #ffffff;
+    --ofd-text-secondary: #e6e6e9;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .ofd-viewer[data-theme='auto'] {
+      --ofd-border: #ffffff;
+      --ofd-text-secondary: #e6e6e9;
+    }
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* 工具栏                                                                     */
+/* ------------------------------------------------------------------------- */
+
+.ofd-viewer__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: var(--ofd-toolbar-height);
+  padding: 0 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  color: var(--ofd-text);
+  background: var(--ofd-toolbar-bg);
+  border-bottom: 1px solid var(--ofd-border);
+  scrollbar-width: thin;
+}
+
+.ofd-toolbar__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.ofd-toolbar__separator {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--ofd-border);
+  flex: 0 0 auto;
+}
+
+.ofd-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 26px;
+  padding: 2px 6px;
+  color: var(--ofd-text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--ofd-radius);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ofd-button:hover {
+  background: var(--ofd-hover-bg);
+}
+
+.ofd-button:focus-visible,
+.ofd-input:focus-visible,
+.ofd-select:focus-visible {
+  outline: 2px solid var(--ofd-accent);
+  outline-offset: 1px;
+}
+
+.ofd-button[aria-pressed='true'] {
+  color: var(--ofd-accent);
+  background: var(--ofd-accent-soft);
+}
+
+.ofd-button:disabled,
+.ofd-button[aria-disabled='true'] {
+  color: var(--ofd-text-secondary);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.ofd-toolbar__page-number {
+  width: 4.5em;
+  min-width: 3.5em;
+}
+
+.ofd-input,
+.ofd-select {
+  min-height: 26px;
+  padding: 2px 6px;
+  color: var(--ofd-text);
+  background: var(--ofd-bg);
+  border: 1px solid var(--ofd-border);
+  border-radius: var(--ofd-radius);
+  font: inherit;
+}
+
+.ofd-toolbar__page-count {
+  color: var(--ofd-text-secondary);
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------------- */
+/* 主体与侧栏                                                                 */
+/* ------------------------------------------------------------------------- */
+
+.ofd-viewer__body {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+
+.ofd-viewer__sidebar {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 var(--ofd-sidebar-width);
+  width: var(--ofd-sidebar-width);
+  min-height: 0;
+  color: var(--ofd-text);
+  background: var(--ofd-sidebar-bg);
+  border-right: 1px solid var(--ofd-border);
+}
+
+.ofd-viewer__sidebar[hidden] {
+  display: none;
+}
+
+.ofd-sidebar__tabs {
+  display: flex;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--ofd-border);
+}
+
+.ofd-sidebar__tab {
+  flex: 1 1 auto;
+  min-height: 32px;
+  padding: 4px 6px;
+  color: var(--ofd-text-secondary);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ofd-sidebar__tab[aria-selected='true'] {
+  color: var(--ofd-accent);
+  border-bottom-color: var(--ofd-accent);
+}
+
+.ofd-sidebar__panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+}
+
+.ofd-sidebar__empty {
+  padding: 16px 8px;
+  color: var(--ofd-text-secondary);
+  text-align: center;
+}
+
+.ofd-thumbnail {
+  display: block;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 6px;
+  color: var(--ofd-text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--ofd-radius);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ofd-thumbnail[aria-current='page'] {
+  border-color: var(--ofd-accent);
+  background: var(--ofd-accent-soft);
+}
+
+.ofd-thumbnail__canvas-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60px;
+  margin-bottom: 4px;
+  background: var(--ofd-page-bg);
+  box-shadow: var(--ofd-page-shadow);
+}
+
+.ofd-thumbnail__canvas-wrapper canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.ofd-thumbnail__label {
+  display: block;
+  text-align: center;
+}
+
+.ofd-outline__tree,
+.ofd-outline__children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ofd-outline__children {
+  padding-left: 16px;
+}
+
+.ofd-outline__item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 2px 4px;
+  border-radius: var(--ofd-radius);
+  cursor: pointer;
+}
+
+.ofd-outline__item:hover {
+  background: var(--ofd-hover-bg);
+}
+
+.ofd-outline__item[aria-current='true'] {
+  color: var(--ofd-accent);
+}
+
+.ofd-outline__toggle {
+  width: 16px;
+  min-width: 16px;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ofd-signature-summary-item {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 8px;
+  color: var(--ofd-text);
+  background: transparent;
+  border: 1px solid var(--ofd-border);
+  border-radius: var(--ofd-radius);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ofd-signature-summary-item:hover {
+  border-color: var(--ofd-accent);
+}
+
+.ofd-signature-badge {
+  display: inline-block;
+  padding: 0 4px;
+  color: var(--ofd-text-secondary);
+  border: 1px solid var(--ofd-border);
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+/* ------------------------------------------------------------------------- */
+/* 主区域与页面                                                               */
+/* ------------------------------------------------------------------------- */
+
+.ofd-viewer__main {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--ofd-page-margin) 0;
+  scroll-behavior: auto;
+}
+
+.ofd-page {
+  position: relative;
+  margin: 0 auto var(--ofd-page-gap);
+  background: var(--ofd-page-bg);
+  box-shadow: var(--ofd-page-shadow);
+  border-radius: var(--ofd-radius);
+  transform-origin: center center;
+  contain: layout style;
+}
+
+.ofd-page:last-child {
+  margin-bottom: 0;
+}
+
+.ofd-page__canvas-wrapper {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  overflow: hidden;
+}
+
+.ofd-page__canvas-wrapper canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.ofd-page__text-layer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  overflow: hidden;
+  transform: scale(var(--scale-factor, 1));
+  transform-origin: 0 0;
+  user-select: text;
+  -webkit-user-select: text;
+  z-index: 1;
+}
+
+.ofd-page__text-layer[data-selectable='false'] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.ofd-text-item {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  color: transparent;
+  white-space: pre;
+  transform-origin: 0 0;
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.ofd-text-item::selection,
+.ofd-text-char::selection {
+  color: transparent;
+  background: var(--ofd-selection);
+}
+
+.ofd-text-char {
+  display: inline-block;
+  color: transparent;
+  transform-origin: 0 0;
+}
+
+.ofd-page__signature-layer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.ofd-signature-box {
+  position: absolute;
+  pointer-events: auto;
+  border: 1px solid var(--ofd-signature-outline);
+  border-radius: 1px;
+  cursor: pointer;
+  background: transparent;
+}
+
+.ofd-signature-box:focus-visible {
+  outline: 2px solid var(--ofd-accent);
+  outline-offset: 1px;
+}
+
+.ofd-find-highlight {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  background: var(--ofd-find-highlight);
+  border-radius: 1px;
+}
+
+.ofd-find-highlight[data-current='true'] {
+  background: var(--ofd-find-current);
+}
+
+.ofd-page__loading,
+.ofd-page__error {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--ofd-text-secondary);
+  background: var(--ofd-page-overlay);
+  text-align: center;
+}
+
+.ofd-page__error {
+  color: var(--ofd-danger);
+}
+
+/* ------------------------------------------------------------------------- */
+/* 查找栏、对话框、Toast                                                      */
+/* ------------------------------------------------------------------------- */
+
+.ofd-viewer__findbar {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+  padding: 6px 8px;
+  color: var(--ofd-text);
+  background: var(--ofd-toolbar-bg);
+  border: 1px solid var(--ofd-border);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  transform: translateX(-50%);
+}
+
+.ofd-viewer__findbar[hidden] {
+  display: none;
+}
+
+.ofd-findbar__count {
+  min-width: 5em;
+  color: var(--ofd-text-secondary);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.ofd-viewer__dialog-layer,
+.ofd-viewer__toast-layer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.ofd-viewer__dialog-layer:empty,
+.ofd-viewer__toast-layer:empty {
+  display: none;
+}
+
+.ofd-dialog {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(480px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  overflow: auto;
+  padding: 16px;
+  color: var(--ofd-text);
+  background: var(--ofd-toolbar-bg);
+  border: 1px solid var(--ofd-border);
+  border-radius: 4px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+}
+
+.ofd-toast {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  max-width: min(360px, calc(100% - 24px));
+  padding: 8px 12px;
+  color: var(--ofd-text);
+  background: var(--ofd-toolbar-bg);
+  border: 1px solid var(--ofd-border);
+  border-left: 3px solid var(--ofd-accent);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  pointer-events: auto;
+}
+
+.ofd-toast[data-level='warning'] {
+  border-left-color: #d97706;
+}
+
+.ofd-toast[data-level='error'] {
+  border-left-color: var(--ofd-danger);
+}
+
+/* ------------------------------------------------------------------------- */
+/* 响应式                                                                     */
+/* ------------------------------------------------------------------------- */
+
+@media (max-width: 1023px) {
+  .ofd-viewer__sidebar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 15;
+    box-shadow: 0 0 16px rgba(0, 0, 0, 0.24);
+  }
+
+  .ofd-viewer__main {
+    padding: 16px 0;
+  }
+}
+
+@media (max-width: 767px) {
+  .ofd-viewer {
+    --ofd-toolbar-height: 44px;
+    --ofd-sidebar-width: min(80vw, 280px);
+    --ofd-page-margin: 8px;
+  }
+
+  .ofd-viewer__toolbar {
+    padding: 0 4px;
+  }
+
+  .ofd-button {
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  .ofd-viewer__findbar {
+    top: auto;
+    bottom: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ofd-viewer *,
+  .ofd-viewer *::before,
+  .ofd-viewer *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* 打印                                                                       */
+/* ------------------------------------------------------------------------- */
+
+@media print {
+  .ofd-viewer {
+    display: block;
+    height: auto;
+    background: #ffffff;
+  }
+
+  .ofd-viewer__toolbar,
+  .ofd-viewer__sidebar,
+  .ofd-viewer__findbar,
+  .ofd-viewer__dialog-layer,
+  .ofd-viewer__toast-layer {
+    display: none !important;
+  }
+
+  .ofd-viewer__body,
+  .ofd-viewer__main {
+    display: block;
+    overflow: visible;
+    padding: 0;
+    height: auto;
+  }
+
+  .ofd-page {
+    margin: 0;
+    border-radius: 0;
+    box-shadow: none;
+    break-after: page;
+    page-break-after: always;
+  }
+
+  .ofd-page:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+}
+
+.ofd-print-root {
+  position: absolute;
+  left: -10000px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.ofd-print-page {
+  display: block;
+  margin: 0;
+  padding: 0;
+  background: #ffffff;
+  break-after: page;
+  page-break-after: always;
+}
+
+.ofd-print-page:last-child {
+  break-after: auto;
+  page-break-after: auto;
+}
+
+.ofd-print-page img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+@media print {
+  .ofd-print-root {
+    position: static;
+    left: auto;
+    top: auto;
+    width: auto;
+    height: auto;
+    overflow: visible;
+  }
+}
