@@ -2,8 +2,9 @@
  * 图片 CLI 黑盒验收（真实进程）。
  *
  * 全部用例只通过 `dist/bin.js` 子进程观察 CLI 行为：
- * 参数、页码范围、输出目录、格式、DPI、字体目录、退出码、SIGINT、
- * 覆盖写与原子写残留。engine 公共 API 仅用于计算期望的 viewport 尺寸。
+ * 参数、页码范围、输出目录、格式、DPI、字体目录、--text 空间文本、
+ * 退出码、SIGINT、覆盖写与原子写残留。engine 公共 API 只用于计算期望的
+ * viewport 尺寸与空间文本 oracle。
  */
 
 import { spawn } from 'node:child_process';
@@ -13,6 +14,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   CLI_BIN,
+  DENSE_OFD,
   HELLO_OFD,
   MULTI_OFD,
   cleanupTempDirs,
@@ -24,6 +26,8 @@ import {
   listFiles,
   readHexPrefix,
   readSamplePageCount,
+  readTextJson,
+  readTextOracle,
   readViewport,
   runCli,
 } from './helpers.js';
@@ -43,13 +47,13 @@ const AVAILABLE_FONT = findAvailableFont();
 afterEach(cleanupTempDirs);
 
 describe('图片 CLI 黑盒验收：帮助与版本', () => {
-  it('--help 退出 0 并列出用法与全部图片期参数', async () => {
+  it('--help 退出 0 并列出用法与全部参数（含 --text）', async () => {
     const cwd = await createTempDir();
     const result = await runCli(['--help'], { cwd });
 
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('用法: ofdrw-viewer-cli <input.ofd> [options]');
-    for (const option of ['--out', '--format', '--dpi', '--pages', '--font-dir']) {
+    for (const option of ['--out', '--format', '--dpi', '--pages', '--font-dir', '--text']) {
       expect(result.stdout).toContain(option);
     }
     expect(result.stderr).toBe('');
@@ -86,7 +90,7 @@ describe('图片 CLI 黑盒验收：图片导出', () => {
     expect(image.cornerIsWhite).toBe(true);
     // helloworld 的文字字体缺失，页面本身为空白；非空白与内容绘制改由 999 样本验证。
     expect(await findTempArtifacts(outDir)).toEqual([]);
-    // 本期不生成 JSON。
+    // 不传 --text 时不生成 JSON。
     expect((await listFiles(outDir)).some((name) => name.endsWith('.json'))).toBe(false);
   });
 
@@ -316,18 +320,6 @@ describe('图片 CLI 黑盒验收：退出码与错误信息', () => {
     expect(existsSync(outDir)).toBe(false);
   });
 
-  it('--text 在本期作为未知参数退出 1，不输出 JSON', async () => {
-    const cwd = await createTempDir();
-    const outDir = join(cwd, 'out');
-
-    const result = await runCli([HELLO_OFD, '-o', outDir, '--text'], { cwd });
-
-    expect(result.code).toBe(1);
-    expect(result.stderr).toContain('未知参数：--text');
-    expect(result.stderr).not.toContain('Unknown option');
-    expect(existsSync(outDir)).toBe(false);
-  });
-
   it('输入文件不存在退出 1', async () => {
     const cwd = await createTempDir();
     const outDir = join(cwd, 'out');
@@ -440,6 +432,269 @@ describe('图片 CLI 黑盒验收：退出码与错误信息', () => {
     expect(result.stdout).toContain('完成：0/1 页，1 页失败');
     expect(await listFiles(outDir)).toEqual([]);
     expect(await findTempArtifacts(outDir)).toEqual([]);
+  });
+});
+
+describe('图片 CLI 黑盒验收：--text 空间文本', () => {
+  it('dense 第 1 页：JSON 结构、顺序与坐标和 engine oracle 全量一致', async () => {
+    const cwd = await createTempDir();
+    const outDir = join(cwd, 'out');
+
+    const result = await runCli([DENSE_OFD, '-o', outDir, '--text', '--pages', '1'], { cwd });
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('完成：1/1 页（图片 + 文本）');
+    expect(await listFiles(outDir)).toEqual([
+      'dense-text-perf-p001.json',
+      'dense-text-perf-p001.png',
+    ]);
+
+    const { records, bytes } = await readTextJson(join(outDir, 'dense-text-perf-p001.json'));
+    const oracle = await readTextOracle(DENSE_OFD, 0, 96);
+    expect(records).toHaveLength(147);
+    expect(records).toHaveLength(oracle.length);
+    // 全量逐项比较 text/x/y/w/h，顺序也必须一致。
+    expect(records).toEqual(oracle);
+    for (const record of records) {
+      expect(Object.keys(record)).toEqual(['text', 'x', 'y', 'w', 'h']);
+      expect(typeof record.text).toBe('string');
+      expect(record.text.length).toBeGreaterThan(0);
+      for (const value of [record.x, record.y, record.w, record.h]) {
+        expect(Number.isFinite(value)).toBe(true);
+      }
+    }
+    expect(records[0]).toEqual(oracle[0]);
+    expect(records.at(-1)).toEqual(oracle.at(-1));
+    // 体积基线：本机实测 48,079 B。
+    expect(bytes).toBeGreaterThan(40_000);
+    expect(bytes).toBeLessThan(60_000);
+
+    // 图片与 JSON 使用同一 DPI，坐标落在页面内。
+    const viewport = await readViewport(DENSE_OFD, 0, 96);
+    const image = await inspectImage(join(outDir, 'dense-text-perf-p001.png'));
+    expect({ width: image.width, height: image.height }).toEqual({
+      width: Math.ceil(viewport.width),
+      height: Math.ceil(viewport.height),
+    });
+    for (const record of records) {
+      expect(record.x).toBeGreaterThanOrEqual(0);
+      expect(record.y).toBeGreaterThanOrEqual(0);
+      expect(record.x + record.w).toBeLessThanOrEqual(image.width + 1);
+      expect(record.y + record.h).toBeLessThanOrEqual(image.height + 1);
+    }
+    expect(await findTempArtifacts(outDir)).toEqual([]);
+  });
+
+  it('dense 第 2 页：8,331 项保持顺序、JSON 体积、性能与原子写', async () => {
+    const cwd = await createTempDir();
+    const outDir = join(cwd, 'out');
+    const startedAt = Date.now();
+
+    const result = await runCli([DENSE_OFD, '-o', outDir, '--text', '--pages', '2'], {
+      cwd,
+      timeoutMs: 120_000,
+    });
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(result.code).toBe(0);
+    const { records, bytes } = await readTextJson(join(outDir, 'dense-text-perf-p002.json'));
+    const oracle = await readTextOracle(DENSE_OFD, 1, 96);
+    expect(records).toHaveLength(8331);
+    expect(oracle).toHaveLength(8331);
+    // 8,331 项全量比较，额外固定抽样保证首/末/中段顺序。
+    expect(records).toEqual(oracle);
+    for (const index of [0, 1, 2, 4165, 8328, 8329, 8330]) {
+      expect(records[index]).toEqual(oracle[index]);
+    }
+    // 体积基线：本机实测 873,182 B。
+    expect(bytes).toBeGreaterThan(800_000);
+    expect(bytes).toBeLessThan(1_000_000);
+    // 性能基线：本机约 1.1 s；给足慢机余量，避免把性能门禁写死。
+    expect(elapsedMs).toBeLessThan(30_000);
+
+    const viewport = await readViewport(DENSE_OFD, 1, 96);
+    const image = await inspectImage(join(outDir, 'dense-text-perf-p002.png'));
+    expect({ width: image.width, height: image.height }).toEqual({
+      width: Math.ceil(viewport.width),
+      height: Math.ceil(viewport.height),
+    });
+    expect(image.nonWhiteSamples).toBeGreaterThan(0);
+    expect(await findTempArtifacts(outDir)).toEqual([]);
+  });
+
+  it('dense 全量 2 页：每页均生成 PNG + JSON 且页号补零一致', async () => {
+    const cwd = await createTempDir();
+    const outDir = join(cwd, 'out');
+
+    const result = await runCli([DENSE_OFD, '-o', outDir, '--text'], { cwd });
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('完成：2/2 页（图片 + 文本）');
+    expect(await listFiles(outDir)).toEqual([
+      'dense-text-perf-p001.json',
+      'dense-text-perf-p001.png',
+      'dense-text-perf-p002.json',
+      'dense-text-perf-p002.png',
+    ]);
+    const first = await readTextJson(join(outDir, 'dense-text-perf-p001.json'));
+    const second = await readTextJson(join(outDir, 'dense-text-perf-p002.json'));
+    expect(first.records).toHaveLength(147);
+    expect(second.records).toHaveLength(8331);
+    expect(await findTempArtifacts(outDir)).toEqual([]);
+  });
+
+  it('helloworld 空文本页写 []，仍输出图片', async () => {
+    const cwd = await createTempDir();
+    const outDir = join(cwd, 'out');
+
+    const result = await runCli([HELLO_OFD, '-o', outDir, '--text'], { cwd });
+
+    expect(result.code).toBe(0);
+    expect(await listFiles(outDir)).toEqual([
+      'helloworld-p001.json',
+      'helloworld-p001.png',
+    ]);
+    const { records, bytes } = await readTextJson(join(outDir, 'helloworld-p001.json'));
+    expect(records).toEqual([]);
+    expect(bytes).toBe(2);
+  });
+
+  it('不传 --text 时 dense 两页都不生成 JSON', async () => {
+    const cwd = await createTempDir();
+    const outDir = join(cwd, 'out');
+
+    const result = await runCli([DENSE_OFD, '-o', outDir], { cwd });
+
+    expect(result.code).toBe(0);
+    expect(await listFiles(outDir)).toEqual([
+      'dense-text-perf-p001.png',
+      'dense-text-perf-p002.png',
+    ]);
+  });
+
+  it('--text 与 jpeg/webp 组合：图片扩展名与 JSON 页号一致', async () => {
+    for (const spec of [
+      { format: 'jpeg', extension: 'jpg' },
+      { format: 'webp', extension: 'webp' },
+    ] as const) {
+      const cwd = await createTempDir();
+      const outDir = join(cwd, 'out');
+      const imageName = `dense-text-perf-p001.${spec.extension}`;
+
+      const result = await runCli(
+        [DENSE_OFD, '-o', outDir, '--text', '--pages', '1', '--format', spec.format],
+        { cwd },
+      );
+
+      expect(result.code).toBe(0);
+      const files = await listFiles(outDir);
+      expect(files).toHaveLength(2);
+      expect(files).toContain('dense-text-perf-p001.json');
+      expect(files).toContain(imageName);
+      const { records } = await readTextJson(join(outDir, 'dense-text-perf-p001.json'));
+      expect(records).toHaveLength(147);
+      const prefix = await readHexPrefix(join(outDir, imageName), 12);
+      if (spec.format === 'jpeg') {
+        expect(prefix.startsWith(JPEG_MAGIC)).toBe(true);
+      } else {
+        expect(prefix.slice(0, 8)).toBe(RIFF_MAGIC);
+        expect(prefix.slice(16, 24)).toBe('57454250');
+      }
+    }
+  });
+
+  it('--text --dpi 144：JSON 坐标与 144 DPI oracle 一致，图片同 DPI', async () => {
+    const cwd = await createTempDir();
+    const outDir = join(cwd, 'out');
+
+    const result = await runCli(
+      [DENSE_OFD, '-o', outDir, '--text', '--pages', '1', '--dpi', '144'],
+      { cwd },
+    );
+
+    expect(result.code).toBe(0);
+    const { records } = await readTextJson(join(outDir, 'dense-text-perf-p001.json'));
+    const oracle = await readTextOracle(DENSE_OFD, 0, 144);
+    expect(records).toHaveLength(147);
+    expect(records).toEqual(oracle);
+    const viewport = await readViewport(DENSE_OFD, 0, 144);
+    const image = await inspectImage(join(outDir, 'dense-text-perf-p001.png'));
+    expect({ width: image.width, height: image.height }).toEqual({
+      width: Math.ceil(viewport.width),
+      height: Math.ceil(viewport.height),
+    });
+  });
+
+  it('--text 未指定 -o 时 PNG 与 JSON 共用默认目录', async () => {
+    const cwd = await createTempDir();
+
+    const result = await runCli([DENSE_OFD, '--text', '--pages', '1'], { cwd });
+
+    expect(result.code).toBe(0);
+    expect(await listFiles(join(cwd, 'dense-text-perf'))).toEqual([
+      'dense-text-perf-p001.json',
+      'dense-text-perf-p001.png',
+    ]);
+  });
+
+  it('文本 JSON 写盘失败按页失败退出 3，仍保留同页图片', async () => {
+    const cwd = await createTempDir();
+    const outDir = join(cwd, 'out');
+    await mkdir(outDir, { recursive: true });
+    const jsonPath = join(outDir, 'dense-text-perf-p001.json');
+    await mkdir(jsonPath);
+
+    const result = await runCli([DENSE_OFD, '-o', outDir, '--text', '--pages', '1'], { cwd });
+
+    expect(result.code).toBe(3);
+    expect(result.stderr).toContain('CLI_TEXT_WRITE_FAILED');
+    expect(await listFiles(outDir)).toEqual(['dense-text-perf-p001.png']);
+    expect((await stat(jsonPath)).isDirectory()).toBe(true);
+    expect(await findTempArtifacts(outDir)).toEqual([]);
+  });
+
+  it('图片写盘失败按页失败退出 3，仍保留同页 JSON', async () => {
+    const cwd = await createTempDir();
+    const outDir = join(cwd, 'out');
+    await mkdir(outDir, { recursive: true });
+    const imagePath = join(outDir, 'dense-text-perf-p001.png');
+    await mkdir(imagePath);
+
+    const result = await runCli([DENSE_OFD, '-o', outDir, '--text', '--pages', '1'], { cwd });
+
+    expect(result.code).toBe(3);
+    expect(result.stderr).toContain('CLI_IMAGE_WRITE_FAILED');
+    expect(await listFiles(outDir)).toEqual(['dense-text-perf-p001.json']);
+    const { records } = await readTextJson(join(outDir, 'dense-text-perf-p001.json'));
+    expect(records).toHaveLength(147);
+    expect((await stat(imagePath)).isDirectory()).toBe(true);
+    expect(await findTempArtifacts(outDir)).toEqual([]);
+  });
+
+  it('--text 导出中收到 SIGINT 退出 130，已产出文件完整且无 .tmp 残留', async () => {
+    const cwd = await createTempDir();
+    const outDir = join(cwd, 'out');
+
+    const result = await runCli([MULTI_OFD, '-o', outDir, '--text', '--dpi', '600'], {
+      cwd,
+      sigintAfterMs: 700,
+      timeoutMs: 60_000,
+    });
+
+    expect(result.code).toBe(130);
+    expect(result.stdout).toContain('已取消：');
+    expect(await findTempArtifacts(outDir)).toEqual([]);
+    for (const name of await listFiles(outDir)) {
+      if (name.endsWith('.json')) {
+        const { records } = await readTextJson(join(outDir, name));
+        expect(Array.isArray(records)).toBe(true);
+      } else if (name.endsWith('.png')) {
+        const image = await inspectImage(join(outDir, name));
+        expect(image.bytes.subarray(0, 8).toString('hex')).toBe(PNG_MAGIC);
+      } else {
+        throw new Error(`SIGINT 后出现非预期产物：${name}`);
+      }
+    }
   });
 });
 

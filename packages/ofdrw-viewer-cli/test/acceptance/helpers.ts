@@ -40,6 +40,9 @@ export const HELLO_OFD = join(SAMPLE_DIR, 'helloworld.ofd');
 /** 多页样本（5 页）。 */
 export const MULTI_OFD = join(SAMPLE_DIR, '999.ofd');
 
+/** 文本主样本：2 页，第 1 页 147 项、第 2 页 8,331 项。 */
+export const DENSE_OFD = join(SAMPLE_DIR, 'dense-text-perf.ofd');
+
 /** 验收用字体候选：优先仓库本地夹具，其次常见系统字体。 */
 const FONT_CANDIDATES = [
   join(REPO_ROOT, 'test', '.fixtures', 'fonts', 'DroidSansFallbackFull.ttf'),
@@ -363,6 +366,72 @@ export async function copyFontInto(
   const target = join(targetDir, `acceptance-${process.pid}.ttf`);
   await copyFile(fontPath, target);
   return target;
+}
+
+/** 空间文本记录；与 CLI 输出的五个字段一致。 */
+export interface TextRecord {
+  /** 文本内容。 */
+  readonly text: string;
+  /** 包围盒左上角 x，px。 */
+  readonly x: number;
+  /** 包围盒左上角 y，px。 */
+  readonly y: number;
+  /** 包围盒宽，px。 */
+  readonly w: number;
+  /** 包围盒高，px。 */
+  readonly h: number;
+}
+
+/**
+ * 用 engine 公共 API 读取一页空间文本，作为 CLI JSON 的 oracle。
+ *
+ * 独立按 `rect` 映射为 text/x/y/w/h，并过滤空 text，避免复用 CLI 的
+ * `buildTextRecords` 掩盖字段映射错误。
+ *
+ * @param samplePath OFD 样本路径
+ * @param pageIndex 页索引（0 起）
+ * @param dpi 输出 DPI
+ * @returns 与 CLI JSON 同结构的记录数组
+ */
+export async function readTextOracle(
+  samplePath: string,
+  pageIndex: number,
+  dpi: number,
+): Promise<TextRecord[]> {
+  const document = await OFDDocument.open({
+    source: { kind: 'arraybuffer', data: await readFile(samplePath) },
+  });
+  try {
+    const page = await document.getPage(pageIndex);
+    const content = await page.getTextContent({ dpi, includeChars: false });
+    return content.items
+      .filter((item) => item.text.length > 0)
+      .map((item) => ({
+        text: item.text,
+        x: item.rect.x,
+        y: item.rect.y,
+        w: item.rect.width,
+        h: item.rect.height,
+      }));
+  } finally {
+    await document.close();
+  }
+}
+
+/**
+ * 读取 CLI 写出的空间文本 JSON 及其字节数。
+ *
+ * @param filePath JSON 绝对路径
+ * @returns 解析后的记录数组与文件字节数
+ */
+export async function readTextJson(
+  filePath: string,
+): Promise<{ records: TextRecord[]; bytes: number }> {
+  const raw = await readFile(filePath);
+  return {
+    records: JSON.parse(raw.toString('utf8')) as TextRecord[],
+    bytes: raw.byteLength,
+  };
 }
 
 /**

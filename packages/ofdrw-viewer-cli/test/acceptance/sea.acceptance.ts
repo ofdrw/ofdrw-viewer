@@ -2,7 +2,7 @@
  * SEA 自包含可执行文件黑盒验收。
  *
  * 在 PATH 只含空目录、TMPDIR 指向隔离临时目录的环境中运行 SEA 产物，
- * 验证无 Node 依赖、冷/热启动、图片转换与缓存命中。
+ * 验证无 Node 依赖、冷/热启动、图片/文本转换与缓存命中。
  */
 
 import { spawnSync } from 'node:child_process';
@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   CLI_DIR,
+  DENSE_OFD,
   HELLO_OFD,
   MULTI_OFD,
   SEA_BIN,
@@ -19,7 +20,10 @@ import {
   createTempDir,
   findTempArtifacts,
   inspectImage,
+  listFiles,
   readHexPrefix,
+  readTextJson,
+  readTextOracle,
   runSea,
 } from './helpers.js';
 
@@ -164,6 +168,38 @@ describe('图片 CLI 黑盒验收：SEA 无 Node 运行', () => {
     const warmMarker = await stat(markerPath);
     expect(warmMarker.mtimeMs).toBe(coldMarker.mtimeMs);
     expect(await findTempArtifacts(cacheRoot)).toEqual([]);
+  });
+
+
+  it('PATH 不含 node 时 --text 导出 dense 第 1 页，PNG 与 JSON 坐标一致', async () => {
+    const iso = await createIsolation();
+    expectNodeUnavailable(iso.env);
+    const outDir = join(iso.root, 'out-text');
+
+    const result = await runSea([DENSE_OFD, '-o', outDir, '--text', '--pages', '1'], {
+      cwd: iso.cwd,
+      env: iso.env,
+      timeoutMs: 180_000,
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('完成：1/1 页（图片 + 文本）');
+    expect(await listFiles(outDir)).toEqual([
+      'dense-text-perf-p001.json',
+      'dense-text-perf-p001.png',
+    ]);
+    const { records } = await readTextJson(join(outDir, 'dense-text-perf-p001.json'));
+    const oracle = await readTextOracle(DENSE_OFD, 0, 96);
+    expect(records).toHaveLength(147);
+    expect(records).toEqual(oracle);
+
+    const image = await inspectImage(join(outDir, 'dense-text-perf-p001.png'));
+    expect({ width: image.width, height: image.height }).toEqual({
+      width: 794,
+      height: 1123,
+    });
+    expect(image.nonWhiteSamples).toBeGreaterThan(0);
+    expect(await findTempArtifacts(outDir)).toEqual([]);
   });
 
   it('TMPDIR 不可用时退出 2 并给出 CLI_SEA_EXTRACT_FAILED', async () => {
