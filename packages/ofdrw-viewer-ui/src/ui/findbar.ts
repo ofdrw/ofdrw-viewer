@@ -164,11 +164,6 @@ export class Findbar {
       });
       this.count.removeAttribute('aria-busy');
     }
-    this.count.setAttribute(
-      'aria-label',
-      this.translator.t('findbar.results', { current, total }),
-    );
-
     this.refreshDisabled();
   }
 

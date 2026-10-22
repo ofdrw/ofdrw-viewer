@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { resolveFeatureStates } from '../../../src/features';
 import { createDefaultFeatureStates } from '../../../src/features';
+import { createFindState } from '../../../src/state';
 import { setClientWidth, cleanupShells, createShell } from './helpers';
 
 afterEach(() => {
@@ -467,6 +468,33 @@ describe('可访问名称', () => {
       expect(shell.sidebar.getTab(view)?.textContent?.length).toBeGreaterThan(0);
     }
     expect(shell.sidebar.getPanel('thumbnails')?.getAttribute('role')).toBe('tabpanel');
+  });
+
+  it('查找计数由 live region 文本播报且不再使用 aria-label', () => {
+    const { shell } = createShell({ width: 1280, state: { pageCount: 10 } });
+    const count = shell.elements.findbar.querySelector<HTMLElement>(
+      '.ofd-findbar__count',
+    );
+    expect(count).not.toBeNull();
+    expect(count!.hasAttribute('aria-label')).toBe(false);
+    expect(count!.getAttribute('aria-live')).toBe('polite');
+    expect(count!.getAttribute('aria-atomic')).toBe('true');
+
+    expect(shell.openFindbar()).toBe(true);
+    expect(count!.textContent).toBe('');
+    shell.findbar.update(
+      createFindState({ query: '合同', total: 3, current: 2, highlightAll: true }),
+    );
+    expect(count!.textContent).toBe('2 / 3');
+    expect(count!.hasAttribute('aria-label')).toBe(false);
+    expect(count!.getAttribute('aria-live')).toBe('polite');
+    expect(count!.getAttribute('aria-atomic')).toBe('true');
+
+    shell.findbar.update(
+      createFindState({ query: '合同', total: 0, current: 0, highlightAll: true }),
+    );
+    expect(count!.textContent).toBe('无结果');
+    expect(count!.hasAttribute('aria-label')).toBe(false);
   });
 
   it('对话框按钮与 Esc 关闭仍返回触发按钮', () => {
