@@ -59,7 +59,13 @@
       "jb2Entries": 0,
       "sha256": "2be07ec79d05c702b1b11bc49122019ce0d7f8646949a2d3c19448850e8fe7ac",
       "goldenPages": [],
-      "notes": []
+      "notes": [
+        "p2 标题参考墨迹边缘差异（约 1px/字高 0.794mm）已由用户裁决记 referenceMismatch；p1/p3 仍 pass。"
+      ],
+      "referenceMismatchPages": [
+        2
+      ],
+      "referenceMismatchReason": "用户裁决：p2 标题字体/内容正确，参考标题边缘墨迹比引擎多约 1px、字高多 0.794mm；layoutΔ=0.79375mm、ΔE0、coverage0、SSIM .9735，按参考墨迹边缘差异记 referenceMismatch，不是 knownTolerance。"
     },
     {
       "name": "20240531141733",
