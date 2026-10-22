@@ -210,6 +210,16 @@ export interface PageComparisonRecord {
   notes: string[];
 }
 
+/** 人工确认的已知容差页。 */
+export interface KnownTolerancePage {
+  /** 页号，从 1 开始（与 pdftoppm 一致）。 */
+  page: number;
+  /** 该页实测最大关键色 ΔE2000。 */
+  maxDeltaE: number;
+  /** 容差原因；仅记录，不改变全局阈值。 */
+  reason: string;
+}
+
 /** 单样本结果。 */
 export interface SampleReport {
   /** 样本名（不含扩展名）。 */
@@ -262,6 +272,8 @@ export interface SampleReport {
   referenceMismatchPages?: number[];
   /** 参考配对不匹配原因。 */
   referenceMismatchReason?: string;
+  /** 人工确认的 known tolerance 页；这些页不记为引擎失败。 */
+  knownTolerancePages?: KnownTolerancePage[];
 }
 
 /** 汇总计数。 */
@@ -288,6 +300,10 @@ export interface GoldenSummary {
   samplesReferenceMismatch: number;
   /** 参考配对不匹配页数（不计引擎失败）。 */
   pagesReferenceMismatch: number;
+  /** known tolerance 样本数（不计引擎失败）。 */
+  samplesKnownTolerance: number;
+  /** known tolerance 页数（不计引擎失败）。 */
+  pagesKnownTolerance: number;
   /** 总耗时，ms。 */
   durationMs: number;
 }

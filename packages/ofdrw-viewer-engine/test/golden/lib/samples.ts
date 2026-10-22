@@ -7,7 +7,7 @@
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { SampleReport } from './types';
+import type { KnownTolerancePage, SampleReport } from './types';
 
 /** 设计方案 19.3 的分组键（顺序固定，便于报告展示）。 */
 export const REQUIRED_GROUPS = Object.freeze([
@@ -73,6 +73,8 @@ export interface SampleManifestEntry {
   referenceMismatchPages?: number[];
   /** 参考配对不匹配原因。 */
   referenceMismatchReason?: string;
+  /** 人工确认的 known tolerance 页；这些页不记为引擎失败。 */
+  knownTolerancePages?: KnownTolerancePage[];
 }
 
 /** 清单文件结构。 */
@@ -160,5 +162,6 @@ export function createEmptySampleReport(sample: SampleManifestEntry): SampleRepo
     notes: [...sample.notes],
     ...(sample.referenceMismatchPages ? { referenceMismatchPages: [...sample.referenceMismatchPages] } : {}),
     ...(sample.referenceMismatchReason ? { referenceMismatchReason: sample.referenceMismatchReason } : {}),
+    ...(sample.knownTolerancePages ? { knownTolerancePages: sample.knownTolerancePages.map((page) => ({ ...page })) } : {}),
   };
 }

@@ -126,6 +126,19 @@ describe('回归样本清单', () => {
     expect(doc.notes.join('\n')).toContain('普通页仍 0.5mm');
   });
 
+  it('keyword 页 1 标为参考不匹配，AddWatermark p3 标为 known tolerance', () => {
+    const keyword = manifest.samples.find((sample) => sample.name === 'keyword')!;
+    expect(keyword.referenceMismatchPages).toEqual([1]);
+    expect(keyword.referenceMismatchReason).toContain('斜向水印');
+    expect(keyword.referenceMismatchReason).toContain('表格');
+
+    const watermark = manifest.samples.find((sample) => sample.name === 'AddWatermarkAnnot')!;
+    expect(watermark.knownTolerancePages).toHaveLength(1);
+    expect(watermark.knownTolerancePages![0]!.page).toBe(3);
+    expect(watermark.knownTolerancePages![0]!.maxDeltaE).toBeCloseTo(6.7545, 4);
+    expect(watermark.knownTolerancePages![0]!.reason).toContain('不改变全局阈值');
+  });
+
   it('本地样本存在时：PDF/OFD 页数一致、尺寸换算正确、文件可访问', () => {
     const sampleDir = join(REPO_ROOT, 'ofd_pdf_match');
     if (!existsSync(sampleDir)) {

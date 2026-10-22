@@ -205,7 +205,14 @@
       "jb2Entries": 0,
       "sha256": "dfed483fa08c30d0ee1326cff1b7bd158a5cc29a8dffa9c8425d5a830f21a125",
       "goldenPages": [],
-      "notes": []
+      "notes": [],
+      "knownTolerancePages": [
+        {
+          "page": 3,
+          "maxDeltaE": 6.7545,
+          "reason": "p3 引擎与参考肉眼一致，关键色 ΔE 6.7545 为文字页阈值 6 的边缘余量；仅该页 known tolerance，不改变全局阈值。"
+        }
+      ]
     },
     {
       "name": "DigitalSign",
@@ -898,7 +905,11 @@
       "goldenPages": [],
       "notes": [
         "未列入 19.3 分组，作为补充回归（P1）。"
-      ]
+      ],
+      "referenceMismatchPages": [
+        1
+      ],
+      "referenceMismatchReason": "参考 PDF 有 OFD 中不存在的斜向水印，且表格右列存在文字重叠；红章/白底/warning 已通过，严格 golden 色差属参考不匹配，不记为引擎失败。"
     },
     {
       "name": "keyword2",
