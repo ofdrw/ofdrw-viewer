@@ -467,7 +467,7 @@ describe('drawPage 图片 Clips 顺序', () => {
       visible: true,
       resourceId: '4',
       ctm: [100, 0, 0, 50, 0, 0],
-      clips: [{ areas: [{ kind: 'path', path: clipPath }] }],
+      clips: [{ transFlag: false, areas: [{ kind: 'path', path: clipPath }] }],
     };
     const model = page([{ type: 'Body', children: [image] }]);
     const bundle = await preparePage({
@@ -509,7 +509,7 @@ describe('drawPage 图片 Clips 顺序', () => {
       visible: true,
       resourceId: '348',
       ctm: [321.255, -0.7009, 0.527, 241.5607, 0, 0.7009],
-      clips: [{ areas: [{ kind: 'path', path: clipPath }] }],
+      clips: [{ transFlag: false, areas: [{ kind: 'path', path: clipPath }] }],
     };
     const model = page([{ type: 'Body', children: [image] }]);
     const bundle = await preparePage({
@@ -526,12 +526,86 @@ describe('drawPage 图片 Clips 顺序', () => {
     expect(ops.indexOf('drawImage')).toBeGreaterThan(ops.indexOf('transform'));
   });
 
+  it('TransFlag=true 时通用对象 Clips 在对象 CTM 之后应用', async () => {
+    const clippedPath = {
+      ...path('p1', 10, 20, 100, 50),
+      ctm: [100, 0, 0, 50, 0, 0] as const,
+      clips: [
+        {
+          transFlag: true,
+          areas: [
+            {
+              kind: 'path' as const,
+              path: {
+                kind: 'path' as const,
+                boundary: { x: 0, y: 0, w: 100, h: 50 },
+                alpha: 255,
+                visible: true,
+                data: 'M 0 0 L 100 0 L 100 50 L 0 50 C',
+                fill: true,
+                stroke: false,
+                rule: 'nonzero' as const,
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const model = page([{ type: 'Body', children: [clippedPath] }]);
+    const bundle = await preparePage({
+      page: model,
+      resources: scope(),
+      loader: loader(),
+    });
+    const renderer = new FakeRenderer();
+    drawPage(bundle, renderer, {} as never, { width: 794, height: 1123, dpi: 96 });
+
+    const ops = renderer.ops();
+    expect(ops.lastIndexOf('clip')).toBeGreaterThan(ops.indexOf('transform'));
+  });
+
+  it('TransFlag=true 的图片单位正方形 Clips 在 CTM 之后覆盖整图（zsbk 背景）', async () => {
+    const clipPath = {
+      kind: 'path' as const,
+      boundary: { x: 0, y: 0, w: 1, h: 1 },
+      alpha: 255,
+      visible: true,
+      data: 'M 0 1 L 1 1 L 1 0 L 0 0 C',
+      fill: true,
+      stroke: false,
+      rule: 'nonzero' as const,
+    };
+    const image: PageObject = {
+      kind: 'image',
+      id: '5',
+      boundary: { x: 10.9589, y: 10.9515, w: 275.3954, h: 189.04 },
+      alpha: 255,
+      visible: true,
+      resourceId: '7',
+      ctm: [275.3954, 0, 0, 189.04, 0, 0],
+      clips: [{ transFlag: true, areas: [{ kind: 'path', path: clipPath }] }],
+    };
+    const model = page([{ type: 'Background', children: [image] }]);
+    const bundle = await preparePage({
+      page: model,
+      resources: scope({ images: [{ id: '7', mediaFile: 'Res/image_7.jpg', format: 'jpeg' }] }),
+      loader: loader(),
+    });
+    const renderer = new FakeRenderer();
+    drawPage(bundle, renderer, {} as never, { width: 1123, height: 794, dpi: 96 });
+
+    const ops = renderer.ops();
+    expect(ops.lastIndexOf('clip')).toBeGreaterThan(ops.indexOf('transform'));
+    expect(ops.indexOf('drawImage')).toBeGreaterThan(ops.indexOf('transform'));
+  });
+
   it('非图片对象的 Clips 仍保持在对象 CTM 之前', async () => {
     const clippedPath = {
       ...path('p1', 10, 20, 100, 50),
       ctm: [100, 0, 0, 50, 0, 0] as const,
       clips: [
         {
+          transFlag: false,
           areas: [
             {
               kind: 'path' as const,

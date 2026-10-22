@@ -315,12 +315,25 @@ export function drawObjects(context: DrawObjectContext, objects: readonly PageOb
 }
 
 /**
+ * 判断对象是否声明裁剪区受外部对象 CTM 影响。
+ *
+ * `Clips@TransFlag=true` 是兼容扩展：裁剪区在对象 CTM 之后应用；缺省/false
+ * 保持标准对象空间路径，在对象 CTM 之前应用。
+ *
+ * @param object 图元对象。
+ * @returns 存在 true 标记时返回 true。
+ */
+function clipsFollowObjectCtm(object: GraphicUnitBase): boolean {
+  return (object.clips ?? []).some((clip) => clip.transFlag === true);
+}
+
+/**
  * 判断图片 Clips 是否使用图片 CTM 的逆矩阵编码。
  *
  * 标准 ImageObject 的 Clips 位于对象空间，必须在对象 CTM 之前应用；manual 等
  * 生产工具会把 Clips 预先乘上图片 CTM 的逆矩阵，使裁剪路径在页面坐标系中
  * 表达。若 Clips 面积矩阵与图片 CTM 的面积比在 0.2..5 内（矩阵互逆时约 1），
- * 则判定为逆矩阵编码。
+ * 则判定为逆矩阵编码。该兼容路径仅在未声明 TransFlag=true 时生效。
  *
  * @param object 图片对象。
  * @returns 需要在对象 CTM 之后应用 Clips 时返回 true。
@@ -388,11 +401,12 @@ export function drawObject(
   );
   const { renderer } = context;
   const textPath = textPathProvider(context);
-  // 标准 ImageObject 的 Clips 与 Boundary 同在对象空间，必须在 CTM 之前应用。
-  // 少数生产工具（如 manual）把 Clips 预先乘了图片 CTM 的逆矩阵，只有这类
-  // 逆矩阵编码的图片裁剪才需要在 CTM 之后应用。
-  const imageClipsAfterCtm =
-    object.kind === 'image' && imageClipsUseInverseCtm(object);
+  // 标准对象空间的 Clips 在 CTM 之前；TransFlag=true 的兼容裁剪区在 CTM 之后。
+  // 图片另有 manual 的逆 CTM 编码兼容路径，仅在未声明 true 时生效。
+  const hasTransFlag = clipsFollowObjectCtm(object);
+  const clipsAfterCtm =
+    hasTransFlag ||
+    (object.kind === 'image' && !hasTransFlag && imageClipsUseInverseCtm(object));
   const applyObjectClips = (): void => {
     applyClips(
       {
@@ -409,9 +423,9 @@ export function drawObject(
     renderer.beginPath();
     renderer.rect(0, 0, boundary.w, boundary.h);
     renderer.clip('nonzero');
-    if (!imageClipsAfterCtm) applyObjectClips();
+    if (!clipsAfterCtm) applyObjectClips();
     if (object.ctm) renderer.transform(object.ctm);
-    if (imageClipsAfterCtm) applyObjectClips();
+    if (clipsAfterCtm) applyObjectClips();
     if (object.kind !== 'composite') {
       renderer.multiplyAlpha(object.alpha / 255);
     }
