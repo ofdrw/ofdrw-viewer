@@ -7,7 +7,13 @@
 
 import type { PageSize } from '../model/types';
 import type { Viewport } from '../common/types';
-import type { PageRenderParameters, ViewportOptions } from './types';
+import type {
+  PageImageExportOptions,
+  PageImageResult,
+  PageRenderParameters,
+  ViewportOptions,
+} from './types';
+import { OFDError } from '../errors';
 import { createRenderTask } from './render-task';
 import type { RenderTask } from './render-task';
 import { getPageViewport } from './viewport';
@@ -24,6 +30,14 @@ export type PageRenderDriver = (
   signal: AbortSignal,
 ) => Promise<void>;
 
+/**
+ * 页面图片导出驱动；由 `OFDDocument` 注入，负责离屏画布、渲染与编码。
+ *
+ * @param options 导出格式、DPI、背景与取消信号。
+ * @returns 编码后的图片与输出信息。
+ */
+export type PageExportDriver = (options: PageImageExportOptions) => Promise<PageImageResult>;
+
 /** OFD 页面；渲染只画页面内容，不设置 canvas 尺寸、不清屏。 */
 export class OFDPage {
   /** 页索引，从 0 开始。 */
@@ -32,6 +46,8 @@ export class OFDPage {
   private readonly pageSize: PageSize;
   /** 渲染驱动；由文档实例注入。 */
   private readonly driver: PageRenderDriver;
+  /** 图片导出驱动；由文档实例注入。 */
+  private readonly exportDriver: PageExportDriver | undefined;
 
   /**
    * 创建页面句柄；由 `OFDDocument.getPage()` 返回，宿主不应直接构造。
@@ -39,11 +55,18 @@ export class OFDPage {
    * @param index 页索引，从 0 开始。
    * @param pageSize 页尺寸，单位 mm。
    * @param driver 渲染驱动。
+   * @param exportDriver 可选图片导出驱动；未注入时 exportImage 报不支持。
    */
-  constructor(index: number, pageSize: PageSize, driver: PageRenderDriver) {
+  constructor(
+    index: number,
+    pageSize: PageSize,
+    driver: PageRenderDriver,
+    exportDriver?: PageExportDriver,
+  ) {
     this.index = index;
     this.pageSize = { width: pageSize.width, height: pageSize.height };
     this.driver = driver;
+    this.exportDriver = exportDriver;
   }
 
   /**
@@ -85,5 +108,22 @@ export class OFDPage {
       (signal) => this.driver(params, signal),
       params?.signal,
     );
+  }
+
+  /**
+   * 将整页导出为图片字节。
+   *
+   * 使用文档级 `OFDOpenOptions.createCanvas` 创建独立离屏画布，复用页面渲染
+   * 管线；默认 PNG/96 DPI/白底，详细语义见 `PageImageExportOptions`。
+   *
+   * @param options 导出参数；省略时使用默认值。
+   * @returns 编码后的图片、MIME、设备像素宽高与实际 DPI。
+   * @throws OFDError 取消、文档已关闭、像素超限、画布/编码器不可用或编码失败。
+   */
+  async exportImage(options?: PageImageExportOptions): Promise<PageImageResult> {
+    if (!this.exportDriver) {
+      throw new OFDError('OFD_RENDERER_UNSUPPORTED', '当前页面未绑定图片导出驱动');
+    }
+    return this.exportDriver(options ?? {});
   }
 }

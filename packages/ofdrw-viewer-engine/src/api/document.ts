@@ -23,6 +23,7 @@ import type {
   FontResource,
   ImageResource,
   PageModel,
+  PageSize,
   ResourceId,
   SealImage,
   SignatureBundle,
@@ -33,8 +34,14 @@ import type { Canvas2DLike, CanvasRenderingContext2DLike, Renderer } from '../re
 import type { OFDWarning, WarningCollector } from '../warnings';
 import type {
   CacheOptions,
+  CanvasImageEncodeSource,
+  EncodeImage,
   OFDOpenOptions,
   OFDSource,
+  PageImageExportOptions,
+  PageImageFormat,
+  PageImageMime,
+  PageImageResult,
   PageRenderParameters,
   ResourceLimits,
 } from './types';
@@ -46,6 +53,7 @@ import type { PageAreaCandidate } from '../model/page-area';
 import { DEFAULT_CACHE_OPTIONS, DEFAULT_RESOURCE_LIMITS } from './types';
 import { OFDPage as OFDPageClass } from './page';
 import { combineAbortSignals, throwIfAborted, wrapError } from './render-task';
+import { getPageViewport } from './viewport';
 import { openByteSource } from './source';
 import {
   createWarningCollector,
@@ -93,6 +101,12 @@ const CANVAS_SIZE_EPSILON = 1e-6;
 /** 矢量 OFD 印章离屏渲染的目标 DPI；上限由 maxImagePixels/maxCanvasPixels 收敛。 */
 const VECTOR_SEAL_DPI = 300;
 
+/** 页面图片导出默认 DPI。 */
+const DEFAULT_EXPORT_DPI = 96;
+
+/** 页面图片导出 JPEG/WebP 默认质量。 */
+const DEFAULT_EXPORT_QUALITY = 0.92;
+
 /** 页面级运行时：模型、资源作用域与按引用顺序解码的模板页。 */
 interface PageEntry {
   /** 页面模型；`area`/`size` 已按回退链解析。 */
@@ -131,6 +145,10 @@ interface DocumentInit {
   annotationsIndexError?: string;
   /** 宿主临时画布工厂；供矢量 OFD 章与内部 H5 渲染器复用。 */
   createCanvas?: (width: number, height: number) => Canvas2DLike;
+  /** 文档级导出画布工厂；仅来自 `OFDOpenOptions.createCanvas`。 */
+  exportCanvas?: (width: number, height: number) => Canvas2DLike;
+  /** 页面图片编码钩子；仅来自 `OFDOpenOptions.encodeImage`。 */
+  encodeImage?: EncodeImage;
   /** 宿主字体提供者；矢量章独立打开内嵌 OFD 时继承。 */
   fontProvider?: FontProvider;
   /** 宿主补充字体；矢量章独立打开内嵌 OFD 时继承。 */
@@ -288,6 +306,10 @@ export class OFDDocument {
   private readonly annotationsIndexError: string | undefined;
   /** 宿主临时画布工厂；未注入时矢量章使用浏览器默认工厂。 */
   private readonly createCanvas: ((width: number, height: number) => Canvas2DLike) | undefined;
+  /** 文档级导出画布工厂；严格使用 `OFDOpenOptions.createCanvas`。 */
+  private readonly exportCanvas: ((width: number, height: number) => Canvas2DLike) | undefined;
+  /** 页面图片编码钩子；未注入时使用浏览器 Canvas 原生编码。 */
+  private readonly encodeImage: EncodeImage | undefined;
   /** 宿主字体提供者；供矢量章嵌套文档继承。 */
   private readonly fontProvider: FontProvider | undefined;
   /** 宿主补充字体；供矢量章嵌套文档继承。 */
@@ -326,8 +348,8 @@ export class OFDDocument {
 
   /** 每个 Canvas 的渲染 Promise 链；同一 Canvas 串行。 */
   private readonly canvasChains = new WeakMap<Canvas2DLike, Promise<void>>();
-  /** 进行中的渲染 promise（close 时等待）。 */
-  private readonly activeRuns = new Set<Promise<void>>();
+  /** 进行中的渲染/导出 promise（close 时等待）。 */
+  private readonly activeRuns = new Set<Promise<unknown>>();
   /** 进行中渲染的内部取消器（close 时中止）。 */
   private readonly activeControllers = new Set<AbortController>();
   /** 文档级取消器；close 时中止，供所有渲染合并。 */
@@ -355,6 +377,8 @@ export class OFDDocument {
     this.signatureIndexPath = init.signatureIndexPath;
     this.annotationsIndexError = init.annotationsIndexError;
     this.createCanvas = init.createCanvas;
+    this.exportCanvas = init.exportCanvas;
+    this.encodeImage = init.encodeImage;
     this.fontProvider = init.fontProvider;
     this.supplementaryFonts = init.supplementaryFonts;
     this.pageCount = init.document.pageCount;
@@ -532,6 +556,8 @@ export class OFDDocument {
         ...(signaturePath ? { signatureIndexPath: signaturePath } : {}),
         ...(annotationsIndexError ? { annotationsIndexError } : {}),
         ...(createCanvas ? { createCanvas } : {}),
+        ...(options.createCanvas ? { exportCanvas: options.createCanvas } : {}),
+        ...(options.encodeImage ? { encodeImage: options.encodeImage } : {}),
         ...(options.fontProvider ? { fontProvider: options.fontProvider } : {}),
         ...(options.supplementaryFonts ? { supplementaryFonts: options.supplementaryFonts } : {}),
       });
@@ -559,8 +585,11 @@ export class OFDDocument {
       );
     }
     const entry = await this.getPageEntry(pageIndex);
-    return new OFDPageClass(pageIndex, entry.model.size, (params, signal) =>
-      this.renderPage(pageIndex, params, signal),
+    return new OFDPageClass(
+      pageIndex,
+      entry.model.size,
+      (params, signal) => this.renderPage(pageIndex, params, signal),
+      (options) => this.exportPage(pageIndex, entry.model.size, options),
     );
   }
 
@@ -687,6 +716,193 @@ export class OFDDocument {
         if (this.canvasChains.get(canvas) === chain) this.canvasChains.delete(canvas);
       });
     await chain;
+  }
+
+  /**
+   * 导出整页图片（被 `OFDPage.exportImage` 调用）。
+   *
+   * 导出使用独立的离屏画布与页面渲染管线，不经过宿主主 Canvas；导出期间
+   * 注册到 activeRuns，`close()` 会中止并等待本次导出结束。
+   *
+   * @param pageIndex 页索引。
+   * @param pageSize 页尺寸，单位 mm。
+   * @param options 导出参数。
+   * @returns 编码后的图片结果。
+   */
+  private exportPage(
+    pageIndex: number,
+    pageSize: PageSize,
+    options: PageImageExportOptions,
+  ): Promise<PageImageResult> {
+    this.assertOpen();
+    const controller = new AbortController();
+    this.activeControllers.add(controller);
+    const combined = combineAbortSignals([
+      options?.signal,
+      controller.signal,
+      this.closeController.signal,
+    ]);
+    const run = (async (): Promise<PageImageResult> => {
+      try {
+        return await this.runExportPage(pageIndex, pageSize, options, combined.signal);
+      } catch (error) {
+        // close 与导出竞争时以 OFD_CLOSED 结束，不返回编码结果。
+        if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭', { cause: error });
+        throw error;
+      } finally {
+        combined.dispose();
+        this.activeControllers.delete(controller);
+      }
+    })();
+    this.activeRuns.add(run);
+    void run.then(
+      () => undefined,
+      () => undefined,
+    ).finally(() => {
+      this.activeRuns.delete(run);
+    });
+    return run;
+  }
+
+  /**
+   * 执行整页导出：创建画布、填背景、渲染并编码。
+   *
+   * @param pageIndex 页索引。
+   * @param pageSize 页尺寸，单位 mm。
+   * @param options 导出参数。
+   * @param signal 合并后的取消信号。
+   * @returns 编码后的图片结果。
+   */
+  private async runExportPage(
+    pageIndex: number,
+    pageSize: PageSize,
+    options: PageImageExportOptions,
+    signal: AbortSignal,
+  ): Promise<PageImageResult> {
+    const exportOptions = options ?? {};
+    const dpi = normalizeExportDpi(exportOptions.dpi);
+    const format = normalizeExportFormat(exportOptions.format);
+    const quality = normalizeExportQuality(exportOptions.quality, format);
+    const viewport = getPageViewport(pageSize, { dpi });
+    const width = Math.max(1, Math.ceil(viewport.width));
+    const height = Math.max(1, Math.ceil(viewport.height));
+    if (this.limits.maxCanvasPixels > 0 && width * height > this.limits.maxCanvasPixels) {
+      throw new OFDError(
+        'OFD_CANVAS_TOO_LARGE',
+        `导出画布 ${width}×${height} 超过画布像素上限 ${this.limits.maxCanvasPixels}`,
+      );
+    }
+    this.assertExportActive(signal);
+
+    let entry: { canvas: Canvas2DLike; context: CanvasRenderingContext2DLike };
+    try {
+      const factory = new H5CanvasFactory(
+        this.exportCanvas ? { createCanvas: this.exportCanvas } : {},
+      );
+      entry = factory.create(width, height);
+    } catch (error) {
+      throw wrapError(error, 'OFD_RENDERER_UNSUPPORTED', '页面图片导出创建画布失败');
+    }
+    const { canvas, context } = entry;
+    if (canvas.width !== width || canvas.height !== height) {
+      throw new OFDError(
+        'OFD_CANVAS_SIZE_MISMATCH',
+        `导出画布尺寸 ${canvas.width}×${canvas.height} 与请求 ${width}×${height} 不符`,
+      );
+    }
+
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.globalAlpha = 1;
+    context.globalCompositeOperation = 'source-over';
+    context.clearRect(0, 0, width, height);
+    const background = resolveExportBackground(context, exportOptions.background, format);
+    if (background !== null) {
+      context.fillStyle = background;
+      context.fillRect(0, 0, width, height);
+    }
+    this.assertExportActive(signal);
+
+    await this.renderPage(
+      pageIndex,
+      {
+        canvasContext: context,
+        viewport: { width: viewport.width, height: viewport.height, dpi },
+        signal,
+      },
+      signal,
+    );
+    this.assertExportActive(signal);
+
+    const data = await this.encodeExportCanvas(canvas, format, quality);
+    this.assertExportActive(signal);
+    return {
+      data,
+      mime: mimeOfPageImageFormat(format),
+      width,
+      height,
+      dpi,
+    };
+  }
+
+  /**
+   * 编码整页画布：优先取文档级 encodeImage，其次浏览器 Canvas 原生入口。
+   *
+   * @param canvas 已绘制的整页画布。
+   * @param format 输出格式。
+   * @param quality 规范化后的质量；PNG 固定为 1。
+   * @returns 非空编码字节。
+   */
+  private async encodeExportCanvas(
+    canvas: Canvas2DLike,
+    format: PageImageFormat,
+    quality: number,
+  ): Promise<Uint8Array> {
+    const source = canvas as CanvasImageEncodeSource;
+    const mime = mimeOfPageImageFormat(format);
+    if (this.encodeImage) {
+      try {
+        return ensureEncodedBytes(
+          await this.encodeImage(source, format, quality),
+          'encodeImage 返回无效图片',
+        );
+      } catch (error) {
+        throw encodeExportError('页面图片编码失败', error);
+      }
+    }
+    if (typeof source.convertToBlob === 'function') {
+      try {
+        const blob = await source.convertToBlob({ type: mime, quality });
+        return await blobToBytes(blob);
+      } catch (error) {
+        throw encodeExportError('convertToBlob 编码失败', error);
+      }
+    }
+    if (typeof source.toBlob === 'function') {
+      try {
+        const blob = await new Promise<Blob | null>((resolve, reject) => {
+          try {
+            source.toBlob!((value) => resolve(value), mime, quality);
+          } catch (error) {
+            reject(error);
+          }
+        });
+        return await blobToBytes(blob);
+      } catch (error) {
+        throw encodeExportError('toBlob 编码失败', error);
+      }
+    }
+    throw encodeExportError('页面图片导出缺少编码器：请注入 OFDOpenOptions.encodeImage');
+  }
+
+  /**
+   * 断言导出仍可继续；close 优先于取消上报 OFD_CLOSED。
+   *
+   * @param signal 合并后的取消信号。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED。
+   */
+  private assertExportActive(signal: AbortSignal): void {
+    if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭');
+    throwIfAborted(signal);
   }
 
   /**
@@ -1434,6 +1650,107 @@ function emptyResourceSet(): ResourceDefinitionSet {
  */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** 规范化导出 DPI；非有限或 <=0 回退 96。 */
+function normalizeExportDpi(dpi: number | undefined): number {
+  return dpi !== undefined && Number.isFinite(dpi) && dpi > 0 ? dpi : DEFAULT_EXPORT_DPI;
+}
+
+/** 规范化导出格式；缺省 png，未知格式报不支持。 */
+function normalizeExportFormat(format: PageImageFormat | undefined): PageImageFormat {
+  if (format === undefined) return 'png';
+  if (format === 'png' || format === 'jpeg' || format === 'webp') return format;
+  throw new OFDError('OFD_RENDERER_UNSUPPORTED', `不支持的页面图片格式：${String(format)}`);
+}
+
+/** 规范化 JPEG/WebP 质量；非法值回退 0.92 并夹取到 0..1，PNG 固定 1。 */
+function normalizeExportQuality(
+  quality: number | undefined,
+  format: PageImageFormat,
+): number {
+  if (format === 'png') return 1;
+  if (quality === undefined || !Number.isFinite(quality)) return DEFAULT_EXPORT_QUALITY;
+  return Math.min(1, Math.max(0, quality));
+}
+
+/** 页面图片格式对应的 MIME。 */
+function mimeOfPageImageFormat(format: PageImageFormat): PageImageMime {
+  switch (format) {
+    case 'png':
+      return 'image/png';
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'webp':
+      return 'image/webp';
+  }
+}
+
+/**
+ * 解析导出背景：默认白底；PNG null 透明，JPEG/WebP null 视为白底。
+ *
+ * @param context 导出画布上下文，用于 CSS 颜色有效性探测。
+ * @param background 请求的背景色。
+ * @param format 输出格式。
+ * @returns CSS 颜色字符串；null 表示保持透明。
+ */
+function resolveExportBackground(
+  context: CanvasRenderingContext2DLike,
+  background: string | null | undefined,
+  format: PageImageFormat,
+): string | null {
+  if (background === null) return format === 'png' ? null : '#ffffff';
+  if (typeof background !== 'string' || background.trim() === '') return '#ffffff';
+  return isCssColor(context, background) ? background : '#ffffff';
+}
+
+/**
+ * 探测 Canvas 是否接受某个 CSS 颜色；避免无效值沿用旧 fillStyle。
+ *
+ * Canvas 对非法 fillStyle 赋值会保留旧值；用两个哨兵颜色可区分“非法”与
+ * “颜色本身恰好等于哨兵”。
+ */
+function isCssColor(context: CanvasRenderingContext2DLike, value: string): boolean {
+  const first = '#010203';
+  const second = '#040506';
+  try {
+    context.fillStyle = first;
+    context.fillStyle = value;
+    if (normalizeFillStyle(context.fillStyle) !== first) return true;
+    context.fillStyle = second;
+    context.fillStyle = value;
+    return normalizeFillStyle(context.fillStyle) !== second;
+  } catch {
+    return false;
+  }
+}
+
+/** 归一化 fillStyle 的字符串形式；非字符串返回空串。 */
+function normalizeFillStyle(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+/** 校验编码器结果为非空 Uint8Array。 */
+function ensureEncodedBytes(value: unknown, message: string): Uint8Array {
+  if (!(value instanceof Uint8Array) || value.byteLength === 0) {
+    throw new OFDError('OFD_RENDERER_UNSUPPORTED', message);
+  }
+  return value;
+}
+
+/** 读取 Blob 字节；非 Blob 或空结果统一报不支持。 */
+async function blobToBytes(blob: Blob | null): Promise<Uint8Array> {
+  if (!blob || typeof (blob as { arrayBuffer?: unknown }).arrayBuffer !== 'function') {
+    throw new OFDError('OFD_RENDERER_UNSUPPORTED', '编码器未返回有效 Blob');
+  }
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  return ensureEncodedBytes(bytes, '编码器返回空图片');
+}
+
+/** 构造编码阶段错误；保留原始 cause。 */
+function encodeExportError(message: string, cause?: unknown): OFDError {
+  if (cause === undefined) return new OFDError('OFD_RENDERER_UNSUPPORTED', message);
+  return new OFDError('OFD_RENDERER_UNSUPPORTED', `${message}：${errorMessage(cause)}`, { cause });
 }
 
 /**

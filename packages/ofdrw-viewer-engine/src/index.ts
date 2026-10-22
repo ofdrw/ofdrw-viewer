@@ -33,12 +33,18 @@ export type {
 export { DEFAULT_CACHE_OPTIONS, DEFAULT_RESOURCE_LIMITS } from './api/types';
 export type {
   CacheOptions,
+  CanvasImageEncodeSource,
+  EncodeImage,
   FontInput,
   OFDDocumentInfo,
   OFDOpenOptions,
   OFDPageSize,
   OFDSource,
   OFDViewport,
+  PageImageExportOptions,
+  PageImageFormat,
+  PageImageMime,
+  PageImageResult,
   PageRenderParameters,
   PageSize,
   ResourceLimits,
