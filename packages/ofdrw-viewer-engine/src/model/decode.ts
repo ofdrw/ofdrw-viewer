@@ -29,6 +29,7 @@ import { decodeResourceSet } from './resource-decode';
 import { flattenPageTree } from './page-tree';
 import { decodeDocumentNavigation } from './navigation';
 import { decodeDocInfo } from './doc-info';
+import { decodePermissions } from './permissions';
 
 /**
  * 解码函数通用选项。
@@ -135,12 +136,18 @@ export function decodeDocument(
   if (annotationsRaw) {
     annotationsFile = resolveRelativePath(baseDir, annotationsRaw, options?.onWarning);
   }
+  let attachmentsFile: string | undefined;
+  const attachmentsRaw = childText(root, 'Attachments');
+  if (attachmentsRaw) {
+    attachmentsFile = resolveRelativePath(baseDir, attachmentsRaw, options?.onWarning);
+  }
   const version = (attr(root, 'Version') ?? '').trim();
   const navigation = decodeDocumentNavigation(
     root,
     tree.pages.map((page) => page.id),
     options,
   );
+  const permissions = decodePermissions(child(root, 'Permissions'), options);
   return {
     id: normalizeResourceId(attr(root, 'ID')),
     version,
@@ -151,9 +158,11 @@ export function decodeDocument(
     ...(commonData ? { commonData } : {}),
     templatePages: commonData?.templatePages ?? {},
     ...(annotationsFile ? { annotationsFile } : {}),
+    ...(attachmentsFile ? { attachmentsFile } : {}),
     pageAnnotIndex: {},
     outlines: navigation.outlines,
     bookmarks: navigation.bookmarks,
+    permissions,
   };
 }
 

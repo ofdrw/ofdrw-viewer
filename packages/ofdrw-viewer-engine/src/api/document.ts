@@ -18,6 +18,7 @@ import type { ImageDecoderPlugin } from '../platform/image-decoder';
 import type { Box, DecodedImage, Viewport } from '../common/types';
 import type {
   Annotation,
+  AttachmentModel,
   ColorSpaceDef,
   DocumentModel,
   DocInfo,
@@ -49,8 +50,10 @@ import type {
 } from './types';
 import type { OFDPage } from './page';
 import type {
+  AttachmentInfo,
   BookmarkItem,
   DocumentMetadata,
+  DocumentPermissions,
   OFDDocumentApi,
   OutlineNode,
   PageInfo,
@@ -95,6 +98,7 @@ import {
   decodePageResources,
 } from '../model/decode';
 import { resolvePageArea, applyPageArea } from '../model/page-area';
+import { decodeAttachments } from '../model/attachments';
 import {
   decodeSignature,
   decodeSignatureBundle,
@@ -188,6 +192,8 @@ interface DocumentInit {
   document: DocumentModel;
   /** 打开时解析的文档属性缓存；close 后不可再取。 */
   metadata: DocumentMetadata;
+  /** 打开时解析的权限声明缓存；close 后不可再取。 */
+  permissions: DocumentPermissions;
   limits: ResourceLimits;
   cacheOptions: CacheOptions;
   warnings: WarningCollector;
@@ -349,6 +355,7 @@ export class OFDDocument {
   private readonly zip: ZipReader;
   private readonly document: DocumentModel;
   private readonly metadata: DocumentMetadata;
+  private readonly permissions: DocumentPermissions;
   private readonly limits: ResourceLimits;
   private readonly warnings: WarningCollector;
   private readonly renderer: Renderer;
@@ -422,6 +429,12 @@ export class OFDDocument {
   private readonly signatureSealPromises = new Map<string | SealImage, Promise<DecodedImage>>();
   /** 本文档解码出的印章图片，关闭时释放 ImageBitmap。 */
   private readonly signatureSealImages = new Set<DecodedImage>();
+  /** Attachments.xml 解码结果缓存；无附件时为已解析的空数组。 */
+  private attachmentsCache: readonly AttachmentModel[] | undefined;
+  /** 公开附件元信息缓存；与 attachmentsCache 对应。 */
+  private attachmentsInfoCache: readonly AttachmentInfo[] | undefined;
+  /** 公开附件并发加载去重。 */
+  private attachmentsPending: Promise<readonly AttachmentModel[]> | undefined;
 
   /** 每个 Canvas 的渲染 Promise 链；同一 Canvas 串行。 */
   private readonly canvasChains = new WeakMap<Canvas2DLike, Promise<void>>();
@@ -442,6 +455,7 @@ export class OFDDocument {
     this.zip = init.zip;
     this.document = init.document;
     this.metadata = init.metadata;
+    this.permissions = init.permissions;
     this.limits = init.limits;
     this.warnings = init.warnings;
     this.renderer = init.renderer;
@@ -637,6 +651,7 @@ export class OFDDocument {
         zip,
         document,
         metadata,
+        permissions: document.permissions,
         limits,
         cacheOptions,
         warnings,
@@ -1137,6 +1152,121 @@ export class OFDDocument {
   }
 
   /**
+   * 读取文档权限声明；打开阶段已解析并缓存，不加载页面内容。
+   *
+   * 仅返回声明值，不执行 DRM 强制；缺省字段按 OFD 规范回退为允许。
+   *
+   * @param options 取消信号。
+   * @returns 权限声明；无 Permissions 时返回默认全 true。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED。
+   */
+  async getPermissions(options: { signal?: AbortSignal } = {}): Promise<DocumentPermissions> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    return this.permissions;
+  }
+
+  /**
+   * 读取附件元信息；首次调用按需解析 Attachments.xml 并缓存到 close。
+   *
+   * 只读取附件索引，不读取附件内容；无 Attachments.xml 时返回空数组。
+   * 条目字段非法时 warning 后跳过/回退，不阻断其他条目。
+   *
+   * @param options 取消信号。
+   * @returns 附件元信息，保持 XML 顺序。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED。
+   */
+  async getAttachments(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<readonly AttachmentInfo[]> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    const cached = this.attachmentsInfoCache;
+    if (cached) return cached;
+    const models = await this.getAttachmentModels(options.signal);
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    if (this.attachmentsInfoCache) return this.attachmentsInfoCache;
+    const infos = models.map(toAttachmentInfo);
+    this.attachmentsInfoCache = infos;
+    return infos;
+  }
+
+  /**
+   * 读取附件原始字节；不解析附件内容。
+   *
+   * 未声明 Attachments 或附件 ID 不存在时返回 undefined。声明了附件但文件缺失/
+   * 读取失败时 warning 并返回 undefined；资源限制/包损坏错误原样抛出。
+   *
+   * @param attachmentId 附件 ID；按资源 ID 规则规范化后匹配。
+   * @param options 取消信号。
+   * @returns 附件原始字节；不可用时 undefined。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED / OFD_LIMIT_EXCEEDED / OFD_INVALID_PACKAGE。
+   */
+  async getAttachmentData(
+    attachmentId: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<Uint8Array | undefined> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    const normalizedId = normalizeResourceId(attachmentId);
+    const models = await this.getAttachmentModels(options.signal);
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    if (!this.document.attachmentsFile) return undefined;
+    const entry = models.find((item) => item.id === normalizedId);
+    if (!entry) {
+      this.documentWarningHandler({
+        code: 'W_ATTACHMENT_RESOURCE',
+        message: `附件 ${JSON.stringify(attachmentId)} 不存在`,
+        objectId: normalizedId || attachmentId,
+      });
+      return undefined;
+    }
+    const path = entry.fileLoc;
+    if (!path) {
+      this.documentWarningHandler({
+        code: 'W_ATTACHMENT_RESOURCE',
+        message: `附件 ${entry.id} 未声明可用的 FileLoc`,
+        resourceId: entry.id,
+        objectId: entry.id,
+      });
+      return undefined;
+    }
+    const combined = combineAbortSignals([options.signal, this.closeController.signal]);
+    const run = (async (): Promise<Uint8Array | undefined> => {
+      try {
+        throwIfAborted(combined.signal);
+        let bytes: Uint8Array;
+        try {
+          bytes = await this.zip.readEntry(path, {
+            maxBytes: this.limits.maxEntryBytes,
+            onWarning: this.documentWarningHandler,
+          });
+        } catch (error) {
+          if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭', { cause: error });
+          if (combined.signal.aborted) throw createAbortError();
+          if (isOFDError(error) && error.code !== 'OFD_ENTRY_NOT_FOUND') throw error;
+          this.documentWarningHandler({
+            code: 'W_ATTACHMENT_RESOURCE',
+            message: `附件 ${entry.id} 读取失败：${path}（${errorMessage(error)}）`,
+            resourceId: entry.id,
+            objectId: entry.id,
+          });
+          return undefined;
+        }
+        if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭');
+        throwIfAborted(combined.signal);
+        return bytes;
+      } finally {
+        combined.dispose();
+      }
+    })();
+    this.trackActiveRun(run);
+    return run;
+  }
+
+  /**
    * 读取签章 XML 元数据；按 Signatures.xml 顺序返回并缓存到 close。
    *
    * 只读取 Signatures.xml / Signature.xml；不读取 Seal.esl 或 SignedValue.dat，
@@ -1432,21 +1562,108 @@ export class OFDDocument {
     options: PageImageExportOptions,
     signal: AbortSignal,
   ): Promise<PageImageResult> {
+    this.assertExportActive(signal);
     const exportOptions = options ?? {};
     const dpi = normalizeExportDpi(exportOptions.dpi);
     const format = normalizeExportFormat(exportOptions.format);
     const quality = normalizeExportQuality(exportOptions.quality, format);
+    const rotation = this.resolveExportRotation(pageIndex, exportOptions.rotation);
     const viewport = getPageViewport(pageSize, { dpi });
     const width = Math.max(1, Math.ceil(viewport.width));
     const height = Math.max(1, Math.ceil(viewport.height));
-    if (this.limits.maxCanvasPixels > 0 && width * height > this.limits.maxCanvasPixels) {
+    const swapped = rotation === 90 || rotation === 270;
+    const outputWidth = swapped ? height : width;
+    const outputHeight = swapped ? width : height;
+    if (
+      this.limits.maxCanvasPixels > 0 &&
+      outputWidth * outputHeight > this.limits.maxCanvasPixels
+    ) {
       throw new OFDError(
         'OFD_CANVAS_TOO_LARGE',
-        `导出画布 ${width}×${height} 超过画布像素上限 ${this.limits.maxCanvasPixels}`,
+        `导出画布 ${outputWidth}×${outputHeight} 超过画布像素上限 ${this.limits.maxCanvasPixels}`,
       );
     }
+
+    const source = this.createExportSurface(width, height);
+    const background = resolveExportBackground(source.context, exportOptions.background, format);
+    fillExportBackground(source.context, width, height, background);
+
+    await this.renderPage(
+      pageIndex,
+      {
+        canvasContext: source.context,
+        viewport: { width: viewport.width, height: viewport.height, dpi },
+        signal,
+      },
+      signal,
+    );
     this.assertExportActive(signal);
 
+    let finalCanvas = source.canvas;
+    if (rotation !== 0) {
+      // 先绘制到原始方向画布，再旋转换向到输出画布；背景在旋转后重新铺满，避免角部黑边。
+      const rotated = this.createExportSurface(outputWidth, outputHeight);
+      fillExportBackground(rotated.context, outputWidth, outputHeight, background);
+      rotated.context.save();
+      applyExportRotation(
+        rotated.context,
+        rotation,
+        outputWidth,
+        outputHeight,
+      );
+      rotated.context.drawImage(source.canvas, 0, 0, width, height);
+      rotated.context.restore();
+      this.assertExportActive(signal);
+      finalCanvas = rotated.canvas;
+    }
+
+    const data = await this.encodeExportCanvas(finalCanvas, format, quality);
+    this.assertExportActive(signal);
+    return {
+      data,
+      mime: mimeOfPageImageFormat(format),
+      width: outputWidth,
+      height: outputHeight,
+      dpi,
+    };
+  }
+
+  /**
+   * 解析导出旋转；非法值 warning 后回退 0。
+   *
+   * @param pageIndex 页索引。
+   * @param rotation 调用方旋转值。
+   * @returns 0/90/180/270。
+   */
+  private resolveExportRotation(
+    pageIndex: number,
+    rotation: PageImageExportOptions['rotation'],
+  ): ExportRotation {
+    if (rotation === undefined) return 0;
+    if (rotation === 0 || rotation === 90 || rotation === 180 || rotation === 270) {
+      return rotation;
+    }
+    createPageWarningHandler(this.warnings, pageIndex)({
+      code: 'W_BAD_NUMBER',
+      message: `导出旋转 ${String(rotation)} 非法，已回退 0`,
+      // 使用独立 objectId，避免与页面解析阶段的 W_BAD_NUMBER 去重。
+      objectId: 'exportImage.rotation',
+    });
+    return 0;
+  }
+
+  /**
+   * 创建并校验导出画布。
+   *
+   * @param width 画布宽，设备像素。
+   * @param height 画布高，设备像素。
+   * @returns 画布与 2D 上下文。
+   * @throws OFDError 创建失败或尺寸不符。
+   */
+  private createExportSurface(
+    width: number,
+    height: number,
+  ): { canvas: Canvas2DLike; context: CanvasRenderingContext2DLike } {
     let entry: { canvas: Canvas2DLike; context: CanvasRenderingContext2DLike };
     try {
       const factory = new H5CanvasFactory(
@@ -1456,45 +1673,14 @@ export class OFDDocument {
     } catch (error) {
       throw wrapError(error, 'OFD_RENDERER_UNSUPPORTED', '页面图片导出创建画布失败');
     }
-    const { canvas, context } = entry;
+    const { canvas } = entry;
     if (canvas.width !== width || canvas.height !== height) {
       throw new OFDError(
         'OFD_CANVAS_SIZE_MISMATCH',
         `导出画布尺寸 ${canvas.width}×${canvas.height} 与请求 ${width}×${height} 不符`,
       );
     }
-
-    context.setTransform(1, 0, 0, 1, 0, 0);
-    context.globalAlpha = 1;
-    context.globalCompositeOperation = 'source-over';
-    context.clearRect(0, 0, width, height);
-    const background = resolveExportBackground(context, exportOptions.background, format);
-    if (background !== null) {
-      context.fillStyle = background;
-      context.fillRect(0, 0, width, height);
-    }
-    this.assertExportActive(signal);
-
-    await this.renderPage(
-      pageIndex,
-      {
-        canvasContext: context,
-        viewport: { width: viewport.width, height: viewport.height, dpi },
-        signal,
-      },
-      signal,
-    );
-    this.assertExportActive(signal);
-
-    const data = await this.encodeExportCanvas(canvas, format, quality);
-    this.assertExportActive(signal);
-    return {
-      data,
-      mime: mimeOfPageImageFormat(format),
-      width,
-      height,
-      dpi,
-    };
+    return entry;
   }
 
   /**
@@ -1856,6 +2042,69 @@ export class OFDDocument {
     });
     this.annotationCache.set(path, promise);
     return promise;
+  }
+
+  /**
+   * 获取附件模型；无 Attachments.xml 时缓存空数组，多个调用方共享加载。
+   *
+   * @param signal 调用方取消信号；只影响本次等待，不取消共享加载。
+   * @returns 附件模型，保持 XML 顺序。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED。
+   */
+  private async getAttachmentModels(
+    signal?: AbortSignal,
+  ): Promise<readonly AttachmentModel[]> {
+    const cached = this.attachmentsCache;
+    if (cached) return cached;
+    if (!this.document.attachmentsFile) {
+      this.attachmentsCache = [];
+      return [];
+    }
+    let pending = this.attachmentsPending;
+    if (!pending) {
+      pending = this.loadAttachments();
+      this.attachmentsPending = pending;
+      this.trackActiveRun(pending);
+      void pending
+        .then(
+          () => undefined,
+          () => undefined,
+        )
+        .finally(() => {
+          if (this.attachmentsPending === pending) this.attachmentsPending = undefined;
+        });
+    }
+    return waitForAbort(pending, signal);
+  }
+
+  /**
+   * 读取并解析 Attachments.xml；索引缺失/损坏只 warning 并返回空数组。
+   *
+   * @returns 附件模型；无附件或读取失败时为空数组。
+   * @throws OFDError OFD_CLOSED。
+   */
+  private async loadAttachments(): Promise<readonly AttachmentModel[]> {
+    const path = this.document.attachmentsFile;
+    if (!path) return [];
+    let root: XmlNode;
+    try {
+      root = await this.readXml(path, this.documentWarningHandler);
+    } catch (error) {
+      if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭', { cause: error });
+      this.documentWarningHandler({
+        code: 'W_ATTACHMENT_RESOURCE',
+        message: `附件索引 ${path} 加载失败：${errorMessage(error)}`,
+        objectId: path,
+      });
+      this.attachmentsCache = [];
+      return [];
+    }
+    if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭');
+    const result = decodeAttachments(root, path, {
+      onWarning: this.documentWarningHandler,
+    });
+    this.attachmentsCache = result;
+    return result;
   }
 
   /**
@@ -2536,6 +2785,63 @@ function normalizeExportQuality(
   if (format === 'png') return 1;
   if (quality === undefined || !Number.isFinite(quality)) return DEFAULT_EXPORT_QUALITY;
   return Math.min(1, Math.max(0, quality));
+}
+
+/** 导出旋转角度；与公开类型一致。 */
+type ExportRotation = 0 | 90 | 180 | 270;
+
+/**
+ * 在导出画布上应用旋转；调用方负责 save/restore。
+ *
+ * @param context 输出画布上下文。
+ * @param rotation 旋转角度，顺时针。
+ * @param width 输出宽，设备像素。
+ * @param height 输出高，设备像素。
+ */
+function applyExportRotation(
+  context: CanvasRenderingContext2DLike,
+  rotation: Exclude<ExportRotation, 0>,
+  width: number,
+  height: number,
+): void {
+  switch (rotation) {
+    case 90:
+      context.translate(width, 0);
+      context.rotate(Math.PI / 2);
+      break;
+    case 180:
+      context.translate(width, height);
+      context.rotate(Math.PI);
+      break;
+    case 270:
+      context.translate(0, height);
+      context.rotate(-Math.PI / 2);
+      break;
+  }
+}
+
+/**
+ * 重置导出画布状态并填充背景；`null` 表示保持透明。
+ *
+ * @param context 画布上下文。
+ * @param width 画布宽，设备像素。
+ * @param height 画布高，设备像素。
+ * @param background CSS 背景色或 null。
+ */
+function fillExportBackground(
+  context: CanvasRenderingContext2DLike,
+  width: number,
+  height: number,
+  background: string | null,
+): void {
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.globalAlpha = 1;
+  context.globalCompositeOperation = 'source-over';
+  context.clearRect(0, 0, width, height);
+  if (background !== null) {
+    context.fillStyle = background;
+    context.fillRect(0, 0, width, height);
+  }
 }
 
 /** 页面图片格式对应的 MIME。 */

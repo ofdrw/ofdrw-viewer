@@ -113,7 +113,7 @@ export type PageImageFormat = 'png' | 'jpeg' | 'webp';
 /** 页面图片导出结果的 MIME 类型。 */
 export type PageImageMime = 'image/png' | 'image/jpeg' | 'image/webp';
 
-/** 页面图片导出参数；整页导出，不包含阅读器缩放/旋转。 */
+/** 页面图片导出参数；整页导出，不包含阅读器缩放；可选导出旋转。 */
 export interface PageImageExportOptions {
   /** 输出精度 DPI，默认 96；非有限或 <=0 时回退 96。 */
   dpi?: number;
@@ -121,6 +121,11 @@ export interface PageImageExportOptions {
   format?: PageImageFormat;
   /** JPEG/WebP 质量，0..1，默认 0.92；PNG 忽略。 */
   quality?: number;
+  /**
+   * 导出旋转角度，默认 0；仅改变导出图片方向，不改变页面模型或正常渲染。
+   * 90/270 时输出宽高互换。
+   */
+  rotation?: 0 | 90 | 180 | 270;
   /**
    * 背景色 CSS 字符串，默认 `#ffffff`。
    * PNG 可传 `null` 得到透明背景；JPEG/WebP 不支持透明，`null` 按白底处理。

@@ -596,6 +596,58 @@ export interface DocInfo {
   docUsage?: string;
 }
 
+/** Document.xml 权限声明模型；布尔项缺省均为 true。 */
+export interface PermissionModel {
+  /** 是否允许编辑，默认 true。 */
+  edit: boolean;
+  /** 是否允许添加/修改标注，默认 true。 */
+  annot: boolean;
+  /** 是否允许导出，默认 true。 */
+  export: boolean;
+  /** 是否允许数字签名，默认 true。 */
+  signature: boolean;
+  /** 是否允许添加水印，默认 true。 */
+  watermark: boolean;
+  /** 是否允许截屏，默认 true。 */
+  printScreen: boolean;
+  /** 打印权限；未声明表示可打印且份数不限。 */
+  print?: {
+    /** 是否允许打印，默认 true。 */
+    printable: boolean;
+    /** 允许份数；未声明表示不限。 */
+    copies?: number;
+  };
+  /** 有效期；未声明表示不受限，日期保留 XML 原文。 */
+  validPeriod?: {
+    /** 开始日期原文。 */
+    start?: string;
+    /** 结束日期原文。 */
+    end?: string;
+  };
+}
+
+/** Attachments.xml 中的附件条目；尺寸按 GB/T 33190 的 KB 原文换算为 byte。 */
+export interface AttachmentModel {
+  /** Attachment@ID，已按资源 ID 规则规范化。 */
+  id: ResourceId;
+  /** Attachment@Name。 */
+  name: string;
+  /** Attachment@Format；未声明时省略。 */
+  format?: string;
+  /** 附件大小，byte；由 Attachment@Size（KB）换算，未声明时省略。 */
+  size?: number;
+  /** Attachment@CreationDate 原文。 */
+  creationDate?: string;
+  /** Attachment@ModDate 原文。 */
+  modDate?: string;
+  /** Attachment@Visible；缺省 true。 */
+  visible: boolean;
+  /** Attachment@Usage；缺省 `none`。 */
+  usage: string;
+  /** FileLoc 解析后的包内路径；未声明或路径非法时省略。 */
+  fileLoc?: string;
+}
+
 /** 文档模型；打开文档后页数与页引用即固定。 */
 export interface DocumentModel {
   id: ResourceId;
@@ -620,6 +672,10 @@ export interface DocumentModel {
   outlines?: readonly OutlineNode[];
   /** Document.xml 书签列表；无书签时为空数组。 */
   bookmarks?: readonly BookmarkItem[];
+  /** Document.xml 权限声明；无 Permissions 时使用默认全 true。 */
+  permissions: PermissionModel;
+  /** Document.xml 声明的附件列表 Attachments.xml 包内路径；无附件时缺省。 */
+  attachmentsFile?: string;
 }
 
 /** 页树前序遍历结果。 */

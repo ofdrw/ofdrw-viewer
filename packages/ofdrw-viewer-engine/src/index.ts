@@ -51,10 +51,12 @@ export type {
   ViewportOptions,
 } from './api/types';
 export type {
+  AttachmentInfo,
   BookmarkItem,
   DestinationType,
   DocumentDestination,
   DocumentMetadata,
+  DocumentPermissions,
   OFDDocumentApi,
   OFDPageApi,
   OutlineNode,

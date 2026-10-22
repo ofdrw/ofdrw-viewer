@@ -7,8 +7,9 @@ import type { Canvas } from '@napi-rs/canvas';
 import { PNG } from 'pngjs';
 import { describe, expect, it } from 'vitest';
 import type { OFDDocument } from '../../src/api/document';
-import type { PageImageFormat } from '../../src/api/types';
+import type { PageImageExportOptions, PageImageFormat } from '../../src/api/types';
 import { OFDError, isOFDError } from '../../src/errors';
+import type { OFDWarning } from '../../src/warnings';
 import { RecordingRenderer } from '../../src/renderer/recording';
 import type { Canvas2DLike, CanvasRenderingContext2DLike } from '../../src/renderer/types';
 import type { XmlElementSpec } from '../fixtures/xml';
@@ -497,6 +498,124 @@ describe('page.exportImage', () => {
         page.exportImage({ format: 'gif' as unknown as PageImageFormat }),
       );
       expect(errorCode(error)).toBe('OFD_RENDERER_UNSUPPORTED');
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('rotation 支持 0/90/180/270：尺寸/方向/背景正确，编码钩子收到输出画布', async () => {
+    const encodedSizes: Array<{ width: number; height: number }> = [];
+    const doc = await openTestDocument(buildPageOfd(100, 50), {
+      createCanvas: nodeCanvas,
+      encodeImage: async (canvas, format, quality) => {
+        encodedSizes.push({ width: canvas.width, height: canvas.height });
+        return encodeWithNode(canvas, format, quality);
+      },
+    });
+    try {
+      const page = await doc.getPage(0);
+      const cases: Array<{
+        rotation: PageImageExportOptions['rotation'];
+        width: number;
+        height: number;
+        red: [number, number];
+        whiteCorners: Array<[number, number]>;
+      }> = [
+        {
+          rotation: undefined,
+          width: 378,
+          height: 189,
+          red: [10, 10],
+          whiteCorners: [[377, 0], [0, 188], [377, 188]],
+        },
+        {
+          rotation: 0,
+          width: 378,
+          height: 189,
+          red: [10, 10],
+          whiteCorners: [[377, 0], [0, 188], [377, 188]],
+        },
+        {
+          rotation: 90,
+          width: 189,
+          height: 378,
+          red: [188, 0],
+          whiteCorners: [[0, 0], [0, 377], [188, 377]],
+        },
+        {
+          rotation: 180,
+          width: 378,
+          height: 189,
+          red: [377, 188],
+          whiteCorners: [[0, 0], [377, 0], [0, 188]],
+        },
+        {
+          rotation: 270,
+          width: 189,
+          height: 378,
+          red: [0, 377],
+          whiteCorners: [[0, 0], [188, 0], [188, 377]],
+        },
+      ];
+
+      for (const item of cases) {
+        const result = await page.exportImage(
+          item.rotation === undefined ? {} : { rotation: item.rotation },
+        );
+        expect(result.width).toBe(item.width);
+        expect(result.height).toBe(item.height);
+        expect(encodedSizes.at(-1)).toEqual({ width: item.width, height: item.height });
+        const png = PNG.sync.read(Buffer.from(result.data));
+        expect(png.width).toBe(item.width);
+        expect(png.height).toBe(item.height);
+        expect(pixelOf(png, ...item.red)).toEqual([255, 0, 0, 255]);
+        for (const [x, y] of item.whiteCorners) {
+          expect(pixelOf(png, x, y)).toEqual([255, 255, 255, 255]);
+        }
+      }
+      expect(encodedSizes).toHaveLength(cases.length);
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('rotation 90 + 透明背景：四角保持透明，不产生黑边', async () => {
+    const doc = await openTestDocument(buildPageOfd(100, 50), {
+      createCanvas: nodeCanvas,
+      encodeImage: async (canvas, format, quality) => encodeWithNode(canvas, format, quality),
+    });
+    try {
+      const page = await doc.getPage(0);
+      const result = await page.exportImage({ rotation: 90, background: null });
+      expect(result.width).toBe(189);
+      expect(result.height).toBe(378);
+      const png = PNG.sync.read(Buffer.from(result.data));
+      for (const [x, y] of [[0, 0], [0, 377], [188, 377]] as const) {
+        expect(pixelOf(png, x, y)[3]).toBe(0);
+      }
+      expect(pixelOf(png, 188, 0)).toEqual([255, 0, 0, 255]);
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('非法 rotation warning 并回退 0；不改变页面尺寸/正常渲染参数', async () => {
+    const warnings: OFDWarning[] = [];
+    const doc = await openTestDocument(buildPageOfd(100, 50), {
+      createCanvas: nodeCanvas,
+      encodeImage: async (canvas, format, quality) => encodeWithNode(canvas, format, quality),
+      onWarning: (warning) => warnings.push(warning),
+    });
+    try {
+      const page = await doc.getPage(0);
+      const before = page.getSize();
+      const result = await page.exportImage({ rotation: 45 as unknown as 0 });
+      expect(result.width).toBe(378);
+      expect(result.height).toBe(189);
+      expect(warnings.some((warning) => warning.code === 'W_BAD_NUMBER')).toBe(true);
+      expect(page.getSize()).toEqual(before);
+      const png = PNG.sync.read(Buffer.from(result.data));
+      expect(pixelOf(png, 10, 10)).toEqual([255, 0, 0, 255]);
     } finally {
       await doc.close();
     }

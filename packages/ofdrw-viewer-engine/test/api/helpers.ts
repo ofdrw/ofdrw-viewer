@@ -170,6 +170,8 @@ export interface FixtureOfdOptions {
   docRoot?: string;
   /** 覆盖 OFD.xml 原始 XML；用于多文档包测试。 */
   ofdXml?: string;
+  /** 追加到 Document.xml 根下的子节点（如 Permissions）。 */
+  documentChildren?: XmlElementSpec[];
 }
 
 /** 构造页面根 XML。 */
@@ -369,6 +371,7 @@ export function buildFixtureOfd(options: FixtureOfdOptions): Uint8Array {
         ...(commonChildren.length > 0 ? [{ name: 'ofd:CommonData', children: commonChildren }] : []),
         ...(annotationsElement ? [annotationsElement] : []),
         { name: 'ofd:Pages', children: pageElements },
+        ...(options.documentChildren ?? []),
       ],
     }),
   });

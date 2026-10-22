@@ -176,6 +176,56 @@ export interface DocumentMetadata {
   customData?: Readonly<Record<string, string>>;
 }
 
+/** 文档权限声明；字段缺省值按 OFD 规格回退。 */
+export interface DocumentPermissions {
+  /** 是否允许编辑，默认 true。 */
+  edit: boolean;
+  /** 是否允许添加/修改标注，默认 true。 */
+  annot: boolean;
+  /** 是否允许导出，默认 true。 */
+  export: boolean;
+  /** 是否允许数字签名，默认 true。 */
+  signature: boolean;
+  /** 是否允许添加水印，默认 true。 */
+  watermark: boolean;
+  /** 是否允许截屏，默认 true。 */
+  printScreen: boolean;
+  /** 打印权限；未声明表示可打印且份数不限。 */
+  print?: {
+    /** 是否允许打印，默认 true。 */
+    printable: boolean;
+    /** 允许份数；未声明表示不限。 */
+    copies?: number;
+  };
+  /** 访问有效期；未声明表示不受限，日期保留 XML 原文。 */
+  validPeriod?: {
+    /** 开始日期原文。 */
+    start?: string;
+    /** 结束日期原文。 */
+    end?: string;
+  };
+}
+
+/** 附件元信息；只描述 Attachments.xml，不包含附件内容。 */
+export interface AttachmentInfo {
+  /** Attachment@ID，已规范化。 */
+  id: string;
+  /** Attachment@Name。 */
+  name: string;
+  /** Attachment@Format；未声明时省略。 */
+  format?: string;
+  /** 附件大小，byte；由 XML 的 KB 值换算，未声明时省略。 */
+  size?: number;
+  /** Attachment@CreationDate 原文。 */
+  creationDate?: string;
+  /** Attachment@ModDate 原文。 */
+  modDate?: string;
+  /** Attachment@Visible；缺省 true。 */
+  visible?: boolean;
+  /** Attachment@Usage；缺省 `none`。 */
+  usage?: string;
+}
+
 /** 页面预取参数。 */
 export interface PagePrepareOptions {
   /** 取消信号；中止后 promise 以 `OFD_ABORTED` 拒绝。 */
@@ -368,6 +418,15 @@ export interface OFDDocumentApi {
   ): Promise<SignedValueFile | undefined>;
   /** 读取文档属性；无 DocInfo 时仍返回版本与页数。 */
   getMetadata(options?: { signal?: AbortSignal }): Promise<DocumentMetadata>;
+  /** 读取文档权限声明；只读，不执行 DRM 强制。 */
+  getPermissions(options?: { signal?: AbortSignal }): Promise<DocumentPermissions>;
+  /** 读取附件元信息；无 Attachments.xml 返回空数组。 */
+  getAttachments(options?: { signal?: AbortSignal }): Promise<readonly AttachmentInfo[]>;
+  /** 读取附件原始字节；附件不存在或内容缺失时返回 undefined。 */
+  getAttachmentData(
+    attachmentId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<Uint8Array | undefined>;
 }
 
 /**
