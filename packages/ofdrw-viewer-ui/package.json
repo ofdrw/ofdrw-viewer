@@ -39,11 +39,6 @@
   "files": [
     "dist"
   ],
-  "sideEffects": [
-    "**/*.css",
-    "./dist/element.js",
-    "./dist/element.cjs"
-  ],
   "engines": {
     "node": ">=22"
   },
