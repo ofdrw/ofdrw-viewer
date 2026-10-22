@@ -124,6 +124,8 @@ interface DocumentInit {
   fontLibrary: FontLibrary;
   /** Signs/Signatures.xml 包内路径；文档无签章索引时缺省。 */
   signatureIndexPath?: string;
+  /** Document 声明但读取失败的 Annotations 索引路径；用于页级 warning。 */
+  annotationsIndexError?: string;
 }
 
 /**
@@ -273,6 +275,8 @@ export class OFDDocument {
   private readonly documentWarningHandler: (warning: OFDWarning) => void;
   /** Signs/Signatures.xml 包内路径；无签章索引时 undefined，loader 不注册签章方法。 */
   private readonly signatureIndexPath: string | undefined;
+  /** Document 声明但读取失败的 Annotations 索引路径；无失败时为 undefined。 */
+  private readonly annotationsIndexError: string | undefined;
 
   /** 已解析 XML 的 LRU（键：包内路径）。 */
   private readonly xmlCache: DisposableLruCache<string, XmlCacheEntry>;
@@ -332,6 +336,7 @@ export class OFDDocument {
     this.fontLibrary = init.fontLibrary;
     this.documentWarningHandler = createDocumentWarningHandler(init.warnings);
     this.signatureIndexPath = init.signatureIndexPath;
+    this.annotationsIndexError = init.annotationsIndexError;
     this.pageCount = init.document.pageCount;
     this.xmlCache = new DisposableLruCache<string, XmlCacheEntry>({
       maxBytes: init.cacheOptions.xmlBytes,
@@ -375,6 +380,7 @@ export class OFDDocument {
     const onWarning = createDocumentWarningHandler(warnings);
     let source: ByteSource | undefined;
     let zip: ZipReader | undefined;
+    let annotationsIndexError: string | undefined;
     try {
       if (!options || !options.source) {
         throw new OFDError('OFD_INVALID_PACKAGE', 'OFDDocument.open 缺少 source');
@@ -433,6 +439,7 @@ export class OFDDocument {
           );
           document = { ...document, pageAnnotIndex: index.pageAnnotIndex };
         } catch (error) {
+          annotationsIndexError = document.annotationsFile;
           onWarning({
             code: 'W_ANNOT_EMPTY',
             message: `注释索引 ${document.annotationsFile} 解析失败：${errorMessage(error)}`,
@@ -495,6 +502,7 @@ export class OFDDocument {
         documentResources,
         fontLibrary,
         ...(zip.hasEntry(signaturePath) ? { signatureIndexPath: signaturePath } : {}),
+        ...(annotationsIndexError ? { annotationsIndexError } : {}),
       });
     } catch (error) {
       // 打开失败时释放已获得的 ZIP/文件句柄。
@@ -815,6 +823,12 @@ export class OFDDocument {
     // 注释文件：DocumentModel.pageAnnotIndex 按页 ID 索引。
     const annotationFile = this.document.pageAnnotIndex[model.id];
     if (annotationFile) model = { ...model, annotationFile };
+    if (!annotationFile && this.annotationsIndexError) {
+      pageWarning({
+        code: 'W_ANNOT_EMPTY',
+        message: `注释索引 ${this.annotationsIndexError} 读取失败，本页注释已跳过`,
+      });
+    }
 
     // 页资源与模板资源（均按 XML/引用顺序）。
     const pageResources = await Promise.all(
