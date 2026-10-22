@@ -65,6 +65,15 @@ describe('style.css 主题与布局契约', () => {
     expect(css).toContain('prefers-reduced-motion: reduce');
   });
 
+  it('输入占位符使用次要文本色且不透明', async () => {
+    const css = await loadStyle();
+    expect(css).toMatch(
+      /\.ofd-input::placeholder\s*\{[^}]*color:\s*var\(--ofd-text-secondary\);[^}]*opacity:\s*1;/s,
+    );
+    // 正常输入文字仍使用主文本色，不受占位符规则影响。
+    expect(css).toMatch(/\.ofd-input,[\s\S]*?color:\s*var\(--ofd-text\);/);
+  });
+
   it('组件规则不出现硬编码颜色（颜色集中在 --ofd-* 变量）', async () => {
     const css = await loadStyle();
     const offenders = css

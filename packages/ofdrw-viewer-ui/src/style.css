@@ -269,6 +269,12 @@
   font: inherit;
 }
 
+/* 占位符需显式着色：浏览器默认灰色在浅色背景上对比度不足。 */
+.ofd-input::placeholder {
+  color: var(--ofd-text-secondary);
+  opacity: 1;
+}
+
 .ofd-toolbar__page-count {
   color: var(--ofd-text-secondary);
   white-space: nowrap;
