@@ -1591,7 +1591,15 @@
       "jb2Entries": 0,
       "sha256": "11e999be300882eebb730e68ef96666b921a15e8f624380bf8b302d2ad729830",
       "goldenPages": [],
-      "notes": []
+      "notes": [],
+      "knownTolerancePages": [
+        {
+          "page": 1,
+          "maxDeltaE": 3.6,
+          "maxCoverageDelta": 0.7,
+          "reason": "PDF 背景图片压缩导致 key color 覆盖差，布局/内容一致；用户已批准，仅本页不改变全局阈值。"
+        }
+      ]
     },
     {
       "name": "发票监制章-数科",
