@@ -129,7 +129,15 @@ export class HttpRangeSource implements ByteSource {
     this.url = url;
     this.headers = { ...(options.headers ?? {}) };
     this.allowFullDownload = options.allowFullDownload ?? true;
-    const fetchImpl = options.fetch ?? (globalThis.fetch as FetchLike | undefined);
+    const globalFetch = (globalThis as { fetch?: FetchLike }).fetch;
+    // 浏览器原生 fetch 必须绑定 globalThis；直接保存后在实例上以方法调用会触发
+    // Illegal invocation。注入的 fetch 优先且保持原样，便于测试/宿主自定义。
+    const fetchImpl =
+      options.fetch ??
+      (globalFetch
+        ? (input: string, init?: { method?: string; headers?: Record<string, string> }) =>
+            globalFetch.call(globalThis, input, init)
+        : undefined);
     if (!fetchImpl) {
       throw new OFDError('OFD_INVALID_PACKAGE', '当前环境没有 fetch，无法使用 HttpRangeSource');
     }

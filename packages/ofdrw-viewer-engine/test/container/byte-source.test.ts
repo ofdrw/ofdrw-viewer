@@ -78,6 +78,61 @@ describe('container/byte-source', () => {
     expect(calls.map((call) => call.method)).toEqual(['HEAD', 'GET']);
   });
 
+  it('直接构造且不传 fetch 时，以 globalThis 为 receiver 调用全局 fetch', async () => {
+    const originalFetch = globalThis.fetch;
+    const receivers: unknown[] = [];
+    const payload = sequence(4);
+    globalThis.fetch = function (
+      this: unknown,
+      _input: string,
+      init?: { method?: string; headers?: Record<string, string> },
+    ): Promise<FetchResponseLike> {
+      receivers.push(this);
+      if (this !== globalThis) throw new TypeError('Illegal invocation');
+      if (init?.method === 'HEAD') {
+        return Promise.resolve(makeResponse(200, new Uint8Array(0), { 'content-length': '4' }));
+      }
+      return Promise.resolve(
+        makeResponse(206, payload, { 'content-range': 'bytes 0-3/4' }),
+      );
+    } as unknown as typeof fetch;
+
+    try {
+      const source = new HttpRangeSource('https://example.com/direct.ofd');
+      await source.ready();
+      expect(source.size).toBe(4);
+      expect([...(await source.read(0, 4))]).toEqual([0, 1, 2, 3]);
+      expect(receivers).toHaveLength(2);
+      expect(receivers.every((receiver) => receiver === globalThis)).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('注入 fetch 优先于全局 fetch', async () => {
+    const originalFetch = globalThis.fetch;
+    const globalFetch = vi.fn<typeof fetch>();
+    globalThis.fetch = globalFetch;
+
+    const injected = vi.fn<FetchLike>(async (_url, init) => {
+      if (init?.method === 'HEAD') {
+        return makeResponse(200, new Uint8Array(0), { 'content-length': '2' });
+      }
+      return makeResponse(206, new Uint8Array([7, 8]), { 'content-range': 'bytes 0-1/2' });
+    });
+    try {
+      const source = await HttpRangeSource.open('https://example.com/injected.ofd', {
+        fetch: injected,
+      });
+      expect(source.size).toBe(2);
+      expect([...(await source.read(0, 2))]).toEqual([7, 8]);
+      expect(globalFetch).not.toHaveBeenCalled();
+      expect(injected).toHaveBeenCalledTimes(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('HTTP HEAD 不可用时回退 GET Range 0-0 探测', async () => {
     const bytes = sequence(50);
     const fetchImpl: FetchLike = async (_url, init) => {
