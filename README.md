@@ -102,7 +102,7 @@ packages/ofdrw-viewer-cli/dist/sea/ofdrw-viewer-cli --version
 packages/ofdrw-viewer-cli/dist/sea/ofdrw-viewer-cli ofd_pdf_match/dense-text-perf.ofd -o /tmp/out --text --pages 1
 ```
 
-构建机需要 Node ≥ 25.5（当前 Linux x64 实测 Node 26.10）；产物约 180.9 MB。首次运行把 `@napi-rs/canvas` 资产解压到 `<tmpdir>/ofdrw-viewer-cli/u<uid>-<version>-<platform>-<arch>-<digest>/`，目录 0700、文件 0600；后续命中 `.complete` 缓存。需要可写的 `TMPDIR`/`TEMP`/`TMP`。多平台 release 由 `.github/workflows/release-cli.yml` 的 matrix 构建，并生成 `SHA256SUMS`。
+构建机需要 Node ≥ 25.5（当前 Linux x64 实测 Node 26.10）；产物约 180.9 MB。首次运行把 `@napi-rs/canvas` 资产解压到 `<tmpdir>/ofdrw-viewer-cli-u<uid>/u<uid>-<version>-<platform>-<arch>-<digest>/`（Windows 无 uid 时根为 `<tmpdir>/ofdrw-viewer-cli`；旧共享根不再复用），目录 0700、文件 0600；后续命中 `.complete` 缓存。需要可写的 `TMPDIR`/`TEMP`/`TMP`。多平台 release 由 `.github/workflows/release-cli.yml` 的 matrix 构建，并生成 `SHA256SUMS`。
 
 ### 测试
 

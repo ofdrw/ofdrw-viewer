@@ -160,8 +160,9 @@ out/
 - 只对可信的 OFD 文件运行；超大页面/高 DPI 可能占用大量内存；
 - 不自动扫描系统字体，不自动下载字体或二进制；
 - v1 不支持批量/目录、PDF、OCR、注释文字、Linux musl；
-- 首次运行自包含可执行文件时会把原生模块解压到 `<tmpdir>/ofdrw-viewer-cli/u<uid>-<version>-<platform>-<arch>-<digest>/`，需要可写的 `TMPDIR`/`TEMP`/`TMP`；目录 0700、文件 0600，复用前校验属主与全资产摘要；
-- 缓存根 `<tmpdir>/ofdrw-viewer-cli` 是共享路径；多用户 Linux 主机上建议每个用户使用独立 `TMPDIR`，否则后续用户可能因根目录属主校验失败；
+- 首次运行自包含可执行文件时会把原生模块解压到 `<tmpdir>/ofdrw-viewer-cli-u<uid>/u<uid>-<version>-<platform>-<arch>-<digest>/`（Windows 无 uid 时根为 `<tmpdir>/ofdrw-viewer-cli`），需要可写的 `TMPDIR`/`TEMP`/`TMP`；目录 0700、文件 0600，复用前校验属主与全资产摘要；
+- POSIX 缓存根按当前 uid 隔离（`ofdrw-viewer-cli-u<uid>`），不同用户不会撞首个用户的 0700 根；旧共享根不再读取/复用；Windows 无 uid 时保留固定根名；
+- 根名可预测：其他用户预建同名根会因属主/权限校验 fail-closed 退出 2（不加载资产），仅造成该用户启动 DoS；
 - CLI 的 npm `files` 只有 `dist`，release 压缩包只有可执行文件、README、LICENSE；skill 不进入包或发布，也不安装到用户目录；
 - macOS 首次运行可能被 Gatekeeper 拦截；Windows 可能触发 SmartScreen。按用户环境说明处理，不要绕过系统安全策略。
 

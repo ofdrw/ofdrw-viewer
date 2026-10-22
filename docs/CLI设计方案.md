@@ -461,7 +461,7 @@ Node 侧实现位于 `image-decoder.ts`：
 
 - `sea.isSea()` 为 false 时直接返回；
 - 读取 `sea.getAssetKeys()` / `sea.getRawAsset()`；
-- 缓存根为 `os.tmpdir()/ofdrw-viewer-cli`，版本目录为 `u<uid>-<version>-<platform>-<arch>-<digest>/`；
+- POSIX 缓存根为 `os.tmpdir()/ofdrw-viewer-cli-u<uid>`，Windows 无 uid 时为 `os.tmpdir()/ofdrw-viewer-cli`；版本目录为 `u<uid>-<version>-<platform>-<arch>-<digest>/`；旧共享根 `ofdrw-viewer-cli` 不再读取/复用；
 - 用 `.complete` 标记避免重复解压；先写 staging 目录，校验摘要后 `rename`；
 - 设置 `OFDRW_CANVAS_DIR` 与 `NAPI_RS_NATIVE_LIBRARY_PATH`；
 - POSIX 下校验缓存根、版本目录、`.complete`、`canvas/`、`native/` 与全部清单资产的属主=当前 uid、目录 0700、文件 0600，拒绝符号链接；Windows 拒绝符号链接/重解析点；
@@ -507,7 +507,8 @@ LICENSE
 - Windows 未签名，可能触发 SmartScreen；
 - 单文件体积约 180 MB（Linux x64 实测），压缩后仍较大；
 - 首次启动需解压约 36 MB 原生模块，后续命中缓存；
-- 缓存根 `os.tmpdir()/ofdrw-viewer-cli` 是共享路径，版本目录带当前 uid；在多个用户共用 `/tmp` 的 Linux 主机上，后续用户可能因根目录属主/权限校验失败而无法启动，建议各用户使用独立 `TMPDIR`；
+- POSIX 缓存根带当前 uid（`ofdrw-viewer-cli-u<uid>`），不同用户不会撞首个用户的 0700 根；旧共享根不再读取/复用。Windows 无 uid 时保留固定根名，`TEMP` 通常按用户隔离；
+- 根名可预测：其他用户预建同名根会因属主/权限校验 fail-closed 退出 2（不加载未验证资产），仅造成该用户启动 DoS；
 - 安全更新需要重新构建并发布。
 
 ## 9. Agent skill
@@ -669,7 +670,7 @@ description: Convert OFD documents into per-page PNG/JPEG/WebP images with the o
 已知风险与后续项：
 
 - SEA 内嵌原生模块依赖临时目录可写；极简容器需提供可写 tmp；
-- 共享缓存根在多用户 Linux 主机上的属主校验限制，见 §8.6；
+- 可预测 uid 的其他用户可预建 `ofdrw-viewer-cli-u<uid>` 根，导致该用户 SEA 启动 fail-closed（exit 2，不加载资产）；按用户隔离根不再有跨用户 0700 根冲突；
 - 二进制约 180.9 MB，分发体积较大；
 - macOS 未签名、未公证、Windows 未签名，首次运行有系统提示；
 - 文本 JSON 在超大文档上可能很大（默认 500k 字符上限），需要截断 warning；
