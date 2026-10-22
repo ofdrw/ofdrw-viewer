@@ -19,5 +19,9 @@
     "build": "pnpm run clean && tsc -p tsconfig.build.json && node -e \"if(process.platform!=='win32')require('node:fs').chmodSync('dist/bin.js',0o755)\"",
     "build:sea": "node scripts/build-sea.mjs",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.13",
+    "ofdrw-viewer-engine": "workspace:*"
   }
 }

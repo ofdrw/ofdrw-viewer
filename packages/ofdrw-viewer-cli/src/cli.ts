@@ -1,8 +1,8 @@
 /**
  * CLI 参数解析、帮助/版本、运行时编排与退出码。
  *
- * 本阶段只覆盖图片 CLI 的参数与输出基础：解析并按文档校验参数、准备输出
- * 目录、扫描补充字体，然后把控制权交给图片链路（`convert.ts`）。
+ * 参数与路径校验通过后，把控制权交给 `convert.ts`；转换期间监听一次
+ * SIGINT，通过 AbortSignal 取消当前页导出并以 130 退出。
  */
 
 import { stat } from 'node:fs/promises';
@@ -26,6 +26,9 @@ import {
   resolveDefaultOutputDir,
 } from './output.js';
 import type { ImageFormat } from './output.js';
+import { parsePageRanges } from './pages.js';
+
+export { parsePageRanges, resolvePageNumbers, validatePageNumbers } from './pages.js';
 
 /** 命令名，同时用作包名与 bin 名。 */
 export const CLI_NAME = 'ofdrw-viewer-cli';
@@ -96,6 +99,12 @@ export interface CliRuntime {
   readonly platform?: string;
   /** CPU 架构，默认 `process.arch`。 */
   readonly arch?: string;
+  /**
+   * 测试注入的取消信号；提供时不再注册 SIGINT 监听。
+   *
+   * 生产环境由 CLI 主流程创建 AbortController 并在 SIGINT 时触发。
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -176,92 +185,6 @@ export function parseCliArgs(
 }
 
 /**
- * 解析页码范围，如 `1-3,5`。
- *
- * 支持逗号分隔的单页与闭区间；重复/重叠页以及乱序输入会自动去重并升序
- * 排列。允许逗号与连字符两侧出现空白。
- *
- * @param raw 原始页码范围字符串
- * @returns 升序去重的页号数组（1 起）
- * @throws {CliError} 语法非法、页号小于 1 或区间倒置时抛出（退出码 1）
- */
-export function parsePageRanges(raw: string): number[] {
-  const pages = new Set<number>();
-  for (const token of raw.split(',')) {
-    const match = /^(\d+)(?:\s*-\s*(\d+))?$/.exec(token.trim());
-    if (match === null) {
-      throw invalidPageRanges(raw);
-    }
-    const start = Number(match[1]);
-    const end = match[2] === undefined ? start : Number(match[2]);
-    if (
-      !Number.isSafeInteger(start) ||
-      !Number.isSafeInteger(end) ||
-      start < 1 ||
-      end < start
-    ) {
-      throw invalidPageRanges(raw);
-    }
-    for (let pageNumber = start; pageNumber <= end; pageNumber += 1) {
-      pages.add(pageNumber);
-    }
-  }
-  return [...pages].sort((left, right) => left - right);
-}
-
-/**
- * 校验页号不超过文档总页数。
- *
- * 该接口在拿到 `pageCount` 后调用；页码越界属于用法错误（退出码 1）。
- *
- * @param pageNumbers 待校验页号（1 起）
- * @param pageCount 文档总页数
- * @throws {CliError} 页号越界或页数非法时抛出
- */
-export function validatePageNumbers(
-  pageNumbers: readonly number[],
-  pageCount: number,
-): void {
-  if (!Number.isSafeInteger(pageCount) || pageCount < 1) {
-    throw new CliError('CLI_INVALID_PAGES', `文档页数非法：${pageCount}`, EXIT_CODES.USAGE);
-  }
-  const outOfRange = pageNumbers.filter(
-    (pageNumber) =>
-      !Number.isSafeInteger(pageNumber) || pageNumber < 1 || pageNumber > pageCount,
-  );
-  if (outOfRange.length > 0) {
-    throw new CliError(
-      'CLI_INVALID_PAGES',
-      `页码越界：${outOfRange.join(', ')}（文档共 ${pageCount} 页）`,
-      EXIT_CODES.USAGE,
-    );
-  }
-}
-
-/**
- * 结合文档页数得到最终页号列表。
- *
- * 未指定 `--pages` 时返回 `1..pageCount`；指定时先校验越界。
- *
- * @param selected `parsePageRanges` 的结果；`undefined` 表示全部页
- * @param pageCount 文档总页数
- * @returns 升序页号数组
- */
-export function resolvePageNumbers(
-  selected: readonly number[] | undefined,
-  pageCount: number,
-): number[] {
-  if (selected !== undefined) {
-    validatePageNumbers(selected, pageCount);
-    return [...new Set(selected)].sort((left, right) => left - right);
-  }
-  if (!Number.isSafeInteger(pageCount) || pageCount < 1) {
-    throw new CliError('CLI_INVALID_PAGES', `文档页数非法：${pageCount}`, EXIT_CODES.USAGE);
-  }
-  return Array.from({ length: pageCount }, (_, index) => index + 1);
-}
-
-/**
  * 校验输入文件存在且为普通文件。
  *
  * @param inputPath 输入文件绝对路径
@@ -338,10 +261,29 @@ export async function main(
         : await loadSupplementaryFonts(options.fontDir, logger);
     await prepareOutputDirectory(options.outDir);
 
-    const summary = await convertDocument({ ...options, fontFiles });
-    logger.info(summary.message);
-    logger.flushWarningSummary();
-    return summary.failedPages > 0 ? EXIT_CODES.PAGE : EXIT_CODES.OK;
+    // SIGINT 只触发一次取消，由 convert 内的 AbortSignal 通知当前页导出。
+    const controller = new AbortController();
+    const signal = runtime.signal ?? controller.signal;
+    let interruptedBySignal = false;
+    const handleSigint = (): void => {
+      interruptedBySignal = true;
+      controller.abort();
+    };
+    const listenForSigint = runtime.signal === undefined;
+    if (listenForSigint) process.once('SIGINT', handleSigint);
+
+    try {
+      const summary = await convertDocument(
+        { ...options, fontFiles },
+        { logger, signal },
+      );
+      logger.info(summary.message);
+      logger.flushWarningSummary();
+      if (summary.interrupted || interruptedBySignal) return EXIT_CODES.INTERRUPTED;
+      return summary.failedPages > 0 ? EXIT_CODES.PAGE : EXIT_CODES.OK;
+    } finally {
+      if (listenForSigint) process.off('SIGINT', handleSigint);
+    }
   } catch (error) {
     const failure = toCliError(error);
     logger.error(failure.code, failure.message);
@@ -400,13 +342,4 @@ function resolvePathOption(raw: string, cwd: string, optionName: string): string
     throw new CliError('CLI_USAGE', `${optionName} 不能为空`, EXIT_CODES.USAGE);
   }
   return resolve(cwd, trimmed);
-}
-
-/** 构造统一的页码范围错误。 */
-function invalidPageRanges(raw: string): CliError {
-  return new CliError(
-    'CLI_INVALID_PAGES',
-    `--pages 语法非法：${JSON.stringify(raw)}；示例：1-3,5`,
-    EXIT_CODES.USAGE,
-  );
 }

@@ -33,7 +33,7 @@ describe('CliError', () => {
 
 describe('退出码映射', () => {
   it('CliError 使用自身退出码', () => {
-    expect(exitCodeForError(new CliError('CLI_ENGINE_UNAVAILABLE', 'x', 2))).toBe(2);
+    expect(exitCodeForError(new CliError('CLI_PAGE_TOO_LARGE', 'x', 2))).toBe(2);
   });
 
   it('未知异常映射为文档级失败', () => {

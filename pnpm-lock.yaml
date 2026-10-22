@@ -20,7 +20,14 @@ importers:
 
   examples/web: {}
 
-  packages/ofdrw-viewer-cli: {}
+  packages/ofdrw-viewer-cli:
+    dependencies:
+      '@napi-rs/canvas':
+        specifier: ^1.0.13
+        version: 1.0.13
+      ofdrw-viewer-engine:
+        specifier: workspace:*
+        version: link:../ofdrw-viewer-engine
 
   packages/ofdrw-viewer-engine:
     dependencies:

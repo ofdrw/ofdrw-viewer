@@ -58,6 +58,18 @@ export class Logger {
     this.#stderr.write(`${message}\n`);
   }
 
+  /**
+   * 输出单页失败信息到 stderr，格式为 `页面 N/M 失败 [CODE]：message`。
+   *
+   * @param pageNumber 当前页号（1 起）
+   * @param totalPages 本次计划导出的总页数
+   * @param code 错误码
+   * @param message 面向用户的说明
+   */
+  pageError(pageNumber: number, totalPages: number, code: string, message: string): void {
+    this.#stderr.write(`页面 ${pageNumber}/${totalPages} 失败 [${code}]：${message}\n`);
+  }
+
   /** 返回 warning 码到出现次数的只读快照。 */
   warningCounts(): ReadonlyMap<string, number> {
     return new Map(this.#warningCounts);

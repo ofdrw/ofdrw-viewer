@@ -1,0 +1,352 @@
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { OFDError } from 'ofdrw-viewer-engine';
+import type {
+  OFDDocument,
+  OFDOpenOptions,
+  OFDPage,
+  PageImageResult,
+} from 'ofdrw-viewer-engine';
+import { convertDocument } from '../../src/convert.js';
+import type { ConvertOptions } from '../../src/convert.js';
+import { CliError, EXIT_CODES, isCliError } from '../../src/errors.js';
+import { Logger } from '../../src/log.js';
+import { createStreamCapture } from '../unit/helpers.js';
+
+/** 真实存在的示例文件，供 NodeFileByteSource 打开；假文档不解析其内容。 */
+const SAMPLE_INPUT = fileURLToPath(
+  new URL('../../../../ofd_pdf_match/helloworld.ofd', import.meta.url),
+);
+
+const tempDirs: string[] = [];
+
+/** 创建并登记临时目录，测试结束后统一清理。 */
+async function createTempDir(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'ofdrw-cli-convert-'));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+/** 单页导出的可控行为。 */
+interface FakePageSpec {
+  readonly viewport?: { width: number; height: number };
+  readonly exportImage?: (options: { signal?: AbortSignal }) => Promise<PageImageResult>;
+}
+
+/** 构造满足 convert 所需最小接口的假文档。 */
+function createFakeDocument(
+  pageCount: number,
+  specs: readonly FakePageSpec[],
+  onClose?: () => void | Promise<void>,
+): OFDDocument {
+  return {
+    pageCount,
+    async getPage(index: number): Promise<OFDPage> {
+      const spec = specs[index];
+      if (spec === undefined) throw new OFDError('OFD_PAGE_NOT_FOUND', `缺少页 ${index}`);
+      return {
+        getViewport: () => spec.viewport ?? { width: 100, height: 100 },
+        exportImage:
+          spec.exportImage ??
+          (async () => ({
+            data: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+            mime: 'image/png',
+            width: 100,
+            height: 100,
+            dpi: 96,
+          })),
+      } as unknown as OFDPage;
+    },
+    async close() {
+      await onClose?.();
+    },
+  } as unknown as OFDDocument;
+}
+
+/** 构造打开实现的 mock，并保留调用参数。 */
+function createOpenMock(
+  implementation: (options: OFDOpenOptions) => Promise<OFDDocument>,
+): typeof OFDDocument.open {
+  return vi.fn(implementation) as unknown as typeof OFDDocument.open;
+}
+
+/** 构造转换输入。 */
+function createOptions(outDir: string, overrides: Partial<ConvertOptions> = {}): ConvertOptions {
+  return {
+    inputPath: SAMPLE_INPUT,
+    outDir,
+    format: 'png',
+    dpi: 96,
+    pageNumbers: undefined,
+    fontFiles: [{ path: '/fonts/a.ttf' }],
+    ...overrides,
+  };
+}
+
+/** 列出目录内容（含子目录）。 */
+async function listDir(dir: string): Promise<string[]> {
+  return (await readdir(dir, { recursive: true })).sort();
+}
+
+describe('convertDocument 图片链路', () => {
+  it('逐页导出、命名并注入 Canvas/解码器/字体', async () => {
+    const outDir = await createTempDir();
+    const capture = createStreamCapture();
+    const logger = new Logger({ stderr: capture.stderr });
+    const exportImage = vi.fn(
+      async (_options: { signal?: AbortSignal }): Promise<PageImageResult> => ({
+        data: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+        mime: 'image/png',
+        width: 100,
+        height: 100,
+        dpi: 96,
+      }),
+    );
+    const close = vi.fn();
+    const document = createFakeDocument(
+      2,
+      [{ exportImage }, { exportImage }],
+      close,
+    );
+    const openCalls: OFDOpenOptions[] = [];
+    const openDocument = createOpenMock(async (options) => {
+      openCalls.push(options);
+      return document;
+    });
+
+    const summary = await convertDocument(createOptions(outDir), {
+      logger,
+      openDocument,
+    });
+
+    expect(summary).toMatchObject({
+      totalPages: 2,
+      succeededPages: 2,
+      failedPages: 0,
+      interrupted: false,
+    });
+    expect(summary.message).toContain('完成：2/2 页');
+    expect(close).toHaveBeenCalledOnce();
+    expect(await listDir(outDir)).toEqual(['helloworld-p001.png', 'helloworld-p002.png']);
+    expect(exportImage).toHaveBeenCalledTimes(2);
+    expect(exportImage.mock.calls[0]?.[0]).toMatchObject({
+      dpi: 96,
+      format: 'png',
+      quality: 0.9,
+      background: '#ffffff',
+    });
+    const openOptions = openCalls[0];
+    expect(openOptions?.source).toMatchObject({ kind: 'custom' });
+    expect(openOptions?.supplementaryFonts).toEqual([{ path: '/fonts/a.ttf' }]);
+    expect(openOptions?.imageDecoders?.map((decoder) => decoder.format)).toEqual([
+      'png',
+      'jpeg',
+      'webp',
+    ]);
+    expect(typeof openOptions?.createCanvas).toBe('function');
+    expect(typeof openOptions?.encodeImage).toBe('function');
+  });
+
+  it('单页失败后继续后续页，并输出 1 起页号', async () => {
+    const outDir = await createTempDir();
+    const capture = createStreamCapture();
+    const logger = new Logger({ stderr: capture.stderr });
+    const document = createFakeDocument(3, [
+      {},
+      {
+        exportImage: async () => {
+          throw new OFDError('OFD_IMAGE_DECODE', '图片坏了');
+        },
+      },
+      {},
+    ]);
+
+    const summary = await convertDocument(createOptions(outDir, { pageNumbers: [1, 2, 3] }), {
+      logger,
+      openDocument: createOpenMock(async () => document),
+    });
+
+    expect(summary).toMatchObject({
+      totalPages: 3,
+      succeededPages: 2,
+      failedPages: 1,
+      interrupted: false,
+    });
+    expect(summary.message).toContain('2/3 页，1 页失败');
+    expect(capture.stderrText()).toContain('页面 2/3 失败 [OFD_IMAGE_DECODE]：图片坏了');
+    expect(await listDir(outDir)).toEqual(['helloworld-p001.png', 'helloworld-p003.png']);
+  });
+
+  it('写入失败按页级失败处理且不残留临时文件', async () => {
+    const outDir = await createTempDir();
+    await mkdir(join(outDir, 'helloworld-p002.png'));
+    const capture = createStreamCapture();
+    const logger = new Logger({ stderr: capture.stderr });
+    const document = createFakeDocument(2, [{}, {}]);
+
+    const summary = await convertDocument(createOptions(outDir), {
+      logger,
+      openDocument: createOpenMock(async () => document),
+    });
+
+    expect(summary).toMatchObject({ succeededPages: 1, failedPages: 1 });
+    expect(capture.stderrText()).toContain('页面 2/2 失败 [CLI_IMAGE_WRITE_FAILED]');
+    const entries = await readdir(outDir);
+    expect(entries.sort()).toEqual(['helloworld-p001.png', 'helloworld-p002.png']);
+    expect(entries.some((entry) => entry.includes('.tmp-'))).toBe(false);
+  });
+
+  it('全部页失败仍返回摘要并逐页报错', async () => {
+    const outDir = await createTempDir();
+    const capture = createStreamCapture();
+    const logger = new Logger({ stderr: capture.stderr });
+    const document = createFakeDocument(2, [
+      {
+        exportImage: async () => {
+          throw new OFDError('OFD_CANVAS_TOO_LARGE', '太大');
+        },
+      },
+      {
+        exportImage: async () => {
+          throw new OFDError('OFD_IMAGE_DECODE', '坏了');
+        },
+      },
+    ]);
+
+    const summary = await convertDocument(createOptions(outDir), {
+      logger,
+      openDocument: createOpenMock(async () => document),
+    });
+
+    expect(summary).toMatchObject({ succeededPages: 0, failedPages: 2 });
+    expect(summary.message).toContain('0/2 页，2 页失败');
+    expect(await readdir(outDir)).toEqual([]);
+  });
+
+  it('已取消信号不导出任何页', async () => {
+    const outDir = await createTempDir();
+    const capture = createStreamCapture();
+    const logger = new Logger({ stderr: capture.stderr });
+    const controller = new AbortController();
+    controller.abort();
+    const document = createFakeDocument(2, [{}, {}]);
+
+    const summary = await convertDocument(createOptions(outDir), {
+      logger,
+      signal: controller.signal,
+      openDocument: createOpenMock(async () => document),
+    });
+
+    expect(summary).toMatchObject({
+      totalPages: 2,
+      succeededPages: 0,
+      failedPages: 0,
+      interrupted: true,
+    });
+    expect(summary.message).toContain('已取消：0/2 页');
+    expect(await readdir(outDir)).toEqual([]);
+  });
+
+  it('导出中取消视为中断，不把 OFD_ABORTED 计为失败', async () => {
+    const outDir = await createTempDir();
+    const capture = createStreamCapture();
+    const logger = new Logger({ stderr: capture.stderr });
+    const controller = new AbortController();
+    const document = createFakeDocument(2, [
+      {
+        exportImage: async () => {
+          controller.abort();
+          throw new OFDError('OFD_ABORTED', '已取消');
+        },
+      },
+      {},
+    ]);
+
+    const summary = await convertDocument(createOptions(outDir), {
+      logger,
+      signal: controller.signal,
+      openDocument: createOpenMock(async () => document),
+    });
+
+    expect(summary).toMatchObject({ succeededPages: 0, failedPages: 0, interrupted: true });
+    expect(capture.stderrText()).toBe('');
+    expect(await readdir(outDir)).toEqual([]);
+  });
+
+  it('页面像素超限按文档级失败抛出', async () => {
+    const outDir = await createTempDir();
+    const logger = new Logger({ stderr: createStreamCapture().stderr });
+    const document = createFakeDocument(1, [
+      { viewport: { width: 10_000, height: 10_000 } },
+    ]);
+
+    try {
+      await convertDocument(createOptions(outDir), {
+        logger,
+        openDocument: createOpenMock(async () => document),
+      });
+      throw new Error('预期抛出页面超限错误');
+    } catch (error) {
+      expect(isCliError(error)).toBe(true);
+      expect((error as CliError).code).toBe('CLI_PAGE_TOO_LARGE');
+      expect((error as CliError).exitCode).toBe(EXIT_CODES.DOCUMENT);
+    }
+    expect(await readdir(outDir)).toEqual([]);
+  });
+
+  it('直接使用 custom NodeFileByteSource 打开本地文件', async () => {
+    const outDir = await createTempDir();
+    const inputPath = join(outDir, 'input.ofd');
+    await writeFile(inputPath, 'fake-ofd');
+    const logger = new Logger({ stderr: createStreamCapture().stderr });
+    const openCalls: OFDOpenOptions[] = [];
+    let openedSource: { read?: unknown; close: () => Promise<void> } | undefined;
+    const document = createFakeDocument(1, [{}], async () => {
+      await openedSource?.close();
+    });
+    const openDocument = createOpenMock(async (options) => {
+      openCalls.push(options);
+      if (options.source.kind === 'custom') {
+        openedSource = options.source.source as unknown as typeof openedSource;
+      }
+      return document;
+    });
+
+    const summary = await convertDocument(createOptions(outDir, { inputPath }), {
+      logger,
+      openDocument,
+    });
+
+    expect(summary.succeededPages).toBe(1);
+    expect(openCalls).toHaveLength(1);
+    const source = openCalls[0]?.source;
+    expect(source?.kind).toBe('custom');
+    if (source?.kind === 'custom') {
+      expect(source.source.size).toBe('fake-ofd'.length);
+      // 转换结束（含文档 close）后 filehandle 必须已释放。
+      await expect(source.source.read(0, 4)).rejects.toMatchObject({ code: 'OFD_CLOSED' });
+    }
+  });
+
+  it('engine warning 转发为 1 起页号', async () => {
+    const outDir = await createTempDir();
+    const capture = createStreamCapture();
+    const logger = new Logger({ stderr: capture.stderr });
+    const document = createFakeDocument(1, [{}]);
+    const openDocument = createOpenMock(async (options) => {
+      options.onWarning?.({ code: 'W_FONT_MISSING', message: '缺字体', pageIndex: 0 });
+      return document;
+    });
+
+    await convertDocument(createOptions(outDir), { logger, openDocument });
+
+    expect(capture.stderrText()).toContain('警告 [W_FONT_MISSING] 第 1 页：缺字体');
+  });
+});

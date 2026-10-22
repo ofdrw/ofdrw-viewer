@@ -5,6 +5,8 @@
  * 0 成功；1 用法/参数/路径错误；2 文档级失败；3 页级失败；130 用户中断。
  */
 
+import { isOFDError } from 'ofdrw-viewer-engine';
+
 /** CLI 进程退出码常量。 */
 export const EXIT_CODES = {
   /** 全部页成功（允许 warning）。 */
@@ -39,7 +41,8 @@ export type CliErrorCode =
   | 'CLI_OUTPUT_CREATE_FAILED'
   | 'CLI_FONT_DIR_INVALID'
   | 'CLI_FONT_DIR_UNREADABLE'
-  | 'CLI_ENGINE_UNAVAILABLE'
+  | 'CLI_IMAGE_WRITE_FAILED'
+  | 'CLI_PAGE_TOO_LARGE'
   | 'CLI_UNEXPECTED';
 
 /** 可携带退出码的 CLI 错误。 */
@@ -91,8 +94,8 @@ export function errorMessage(value: unknown): string {
 
 /** 归一化后的错误描述，供日志与退出码计算使用。 */
 export interface CliFailure {
-  /** 稳定错误码；未知异常归为 `CLI_UNEXPECTED`。 */
-  readonly code: CliErrorCode;
+  /** 稳定错误码；engine 错误透传 `OFD_*`，未知异常归为 `CLI_UNEXPECTED`。 */
+  readonly code: string;
   /** 面向用户的消息。 */
   readonly message: string;
   /** 进程退出码。 */
@@ -104,11 +107,15 @@ export interface CliFailure {
 /**
  * 将任意抛出值归一化为 `CliFailure`。
  *
- * 非 `CliError` 统一按 `CLI_UNEXPECTED` + 退出码 2 处理，并保留堆栈。
+ * engine 的 `OFDError` 保留原始错误码并按文档级失败（退出码 2）处理；
+ * 其余非 `CliError` 统一归为 `CLI_UNEXPECTED`，并保留堆栈。
  */
 export function toCliError(error: unknown): CliFailure {
   if (isCliError(error)) {
     return { code: error.code, message: error.message, exitCode: error.exitCode };
+  }
+  if (isOFDError(error)) {
+    return { code: error.code, message: error.message, exitCode: EXIT_CODES.DOCUMENT };
   }
   return {
     code: 'CLI_UNEXPECTED',
