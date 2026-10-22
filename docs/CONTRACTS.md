@@ -143,9 +143,27 @@ WARNING_CODES
 OFDError、isOFDError、toOFDError
 ```
 
-公共类型包括 `OFDOpenOptions`、`OFDSource`、`PageRenderParameters`、`ResourceLimits`、`CacheOptions`、`FontInput`、`FontProvider`、`ImageDecoderPlugin`、`Renderer`/`CanvasRenderingContext2DLike`、`Viewport`、`Matrix`、`Box`、`DrawStyle`、`PaintSpec`、`ResolvedPaint`、`PatternSpec`、`PatternPaint`、`DisplayList`、`DrawCommand`、`OFDWarning`、`OFDErrorCode`、`WarningCode` 等。
+公共类型包括 `OFDOpenOptions`、`OFDSource`、`PageRenderParameters`、`ResourceLimits`、`CacheOptions`、`FontInput`、`FontProvider`、`ImageDecoderPlugin`、`Renderer`/`Canvas2DLike`/`CanvasRenderingContext2DLike`、`Viewport`、`Matrix`、`Box`、`DrawStyle`、`PaintSpec`、`ResolvedPaint`、`PatternSpec`、`PatternPaint`、`DisplayList`、`DrawCommand`、`OFDWarning`、`OFDErrorCode`、`WarningCode` 等。
 
-**不导出** `CanvasFactory`（渲染器内部结构）；需要自定义画布时传 `H5Canvas2DRendererOptions.createCanvas`。
+**不导出** `CanvasFactory`（渲染器内部结构）。自定义画布的两个公共入口：
+
+- 直接构造渲染器时传 `H5Canvas2DRendererOptions.createCanvas`；
+- 使用默认 H5 渲染器时传 `OFDOpenOptions.createCanvas`（v1.0-r7，见 §5.1）。
+
+### 5.1 `OFDOpenOptions.createCanvas`（v1.0-r7）
+
+```ts
+interface OFDOpenOptions {
+  /** 临时画布工厂；仅内部默认 H5 渲染器使用；单位像素。 */
+  createCanvas?: (width: number, height: number) => Canvas2DLike;
+}
+```
+
+- **向后兼容**：字段可选；未提供时 `OFDDocument.open` 仍创建 `new H5Canvas2DRenderer()`，H5CanvasFactory 继续按 `globalThis.document.createElement('canvas')` → `OffscreenCanvas` 兜底；行为与 r6 完全一致。
+- **接线**：`OFDDocument.open` 未收到 `renderer` 时，把该函数作为 `H5Canvas2DRendererOptions.createCanvas` 传给内部 H5 渲染器；最终由 `H5CanvasFactory.create(width,height)` 使用，并统一写入像素宽高。`CanvasFactory` 仍不导出，宿主只接触 `Canvas2DLike`。
+- **优先级**：显式 `renderer` 优先；此时 `createCanvas` 不由 engine 使用，自定义渲染器自行管理临时画布。
+- **矢量签章嵌套渲染**：t55 打开 `Seal.esl`/`SignedValue.dat` 内嵌 OFD 时，必须把同一 `createCanvas` 继续传给嵌套 `OFDDocument.open`；父/子文档共用宿主工厂，不另建 DOM/Node 工厂，也不把 Canvas 暴露给 engine 渲染层。
+- **缺省回退**：浏览器/Worker 未注入时仍走 document/OffscreenCanvas；两者都不可用时由 H5CanvasFactory 抛既有 `OFD_RENDERER_UNSUPPORTED`，不新增错误码。
 
 ## 6. 单元/分层签名索引
 
@@ -515,10 +533,11 @@ interface ResourceIndex {
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
-| v1.0 | T1 | 初始冻结：工程骨架、模块接口、错误/warning 码、并行规则 |
+| v1.0-r7 | T14m | 新增可选 `OFDOpenOptions.createCanvas`（`Canvas2DLike`），仅用于 engine 内部默认 H5 渲染器；未注入保持 document/OffscreenCanvas 兜底；显式 `renderer` 优先。用于 t55 矢量签章嵌套 OFD 离屏渲染。 |
 | v1.0-r6 | T6c 复审 | 修正 §7.9 模板 `ZOrder` 口径：页面 `Template/@ZOrder` 优先，页面引用缺省 `Background`（标准/设计 10.4）；`Body` 仅显式使用 |
 | v1.0-r5 | T6b | 明确 displayList deferred 图像句柄/replay resolver 与嵌套 composite group 规则；不新增公共字段，group 不进入 DisplayList |
 | v1.0-r4 | T6b | 明确准备阶段运行时：`PreparePageLoader`（字体/图片/模板/注释）注入，`PreparedPageBundle` 携带 page/templates/fonts/images/blocks，`drawPage` 接收 bundle；`PreparedPage` 保持 model 形状，不用 WeakMap |
 | v1.0-r3 | T2/T4 | 记录 ST_Array `g N V` 重复展开语义（`0 g 3 5 2` → `0,5,5,5,2`）与 DeltaX/DeltaY “先展开、再按码点消费”约定 |
 | v1.0-r2 | T6a | 依据 GB/T 33190—2016 CT_ImageObject 与设计方案 8.2，纠正 `ImageObject.substitution/imageMask` 为可选 `ResourceId`（`ST_RefID`）；T6a 通过 `ImageDrawContext.substitutionMode/dpi` 实现 auto/always/never |
 | v1.0-r1 | T1 | 按 T3 反馈补齐：`PatternSpec.cell/styleRoot/tile`、`IndependentBlock.boundary/displayList`、`CommonData.defaultColorSpaceId`、`DocumentModel.templatePages/pageAnnotIndex/annotationsFile`、`ResourceIndex.colorSpaces/defaultColorSpace`、`DecodeOptions` 末位参数、`decodeAnnotationsIndex`、`flattenPageTree` options；`ImageObject.substitution/imageMask` 定为 boolean；`TemplateRef.zOrder` 改为可选 |
+| v1.0 | T1 | 初始冻结：工程骨架、模块接口、错误/warning 码、并行规则 |

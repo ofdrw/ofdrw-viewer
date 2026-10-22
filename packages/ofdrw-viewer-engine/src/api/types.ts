@@ -9,7 +9,7 @@ import type { ResourceId, PageSize } from '../model/types';
 import type { ByteSource } from '../platform/byte-source';
 import type { FontInput, FontProvider } from '../platform/font-provider';
 import type { ImageDecoderPlugin } from '../platform/image-decoder';
-import type { CanvasRenderingContext2DLike, Renderer } from '../renderer/types';
+import type { Canvas2DLike, CanvasRenderingContext2DLike, Renderer } from '../renderer/types';
 import type { OFDWarning } from '../warnings';
 import type { Viewport } from '../common/types';
 
@@ -126,7 +126,16 @@ export interface OFDOpenOptions {
   strictImageCtm?: boolean;
   /** 图层顺序：默认 `type`（设计方案图 16），`document` 为严格 XML 顺序。 */
   layerOrder?: 'document' | 'type';
-  /** 渲染器扩展点；不传时由 engine 内部创建 H5Canvas2DRenderer。 */
+  /**
+   * 临时画布工厂；仅当未提供 `renderer` 时由 engine 内部 H5Canvas2DRenderer 使用。
+   * 未注入时保持 H5 默认的 document/OffscreenCanvas 兜底；Node/小程序宿主应注入。
+   *
+   * @param width 画布宽度，像素。
+   * @param height 画布高度，像素。
+   * @returns 宿主画布。
+   */
+  createCanvas?: (width: number, height: number) => Canvas2DLike;
+  /** 渲染器扩展点；不传时由 engine 内部创建 H5Canvas2DRenderer。自定义 renderer 时本项优先，createCanvas 不参与。 */
   renderer?: Renderer;
 }
 

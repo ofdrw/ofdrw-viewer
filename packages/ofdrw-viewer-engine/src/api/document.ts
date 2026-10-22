@@ -486,7 +486,11 @@ export class OFDDocument {
         maxFontBytes: limits.maxFontBytes,
       });
 
-      const renderer: Renderer = options.renderer ?? new H5Canvas2DRenderer();
+      const renderer: Renderer =
+        options.renderer ??
+        new H5Canvas2DRenderer(
+          options.createCanvas ? { createCanvas: options.createCanvas } : undefined,
+        );
       const signaturePath = signaturesFilePath(documentPath);
       return new OFDDocument({
         source,
