@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { OFDDocument, isOFDError } from 'ofdrw-viewer-engine';
 import { NodeFileByteSource } from '../../src/node-file-source.js';
+import type { FileReadHandle } from '../../src/node-file-source.js';
 
 /** 仓库根目录。 */
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -52,6 +53,54 @@ describe('NodeFileByteSource', () => {
         whole.set(chunk, offset);
       }
       expect(whole).toEqual(bytes);
+    } finally {
+      await source.close();
+    }
+  });
+
+  it('模拟 FileHandle 短读时循环读取直到填满请求长度', async () => {
+    const data = sampleBytes(10);
+    const reads: number[] = [];
+    let closed = false;
+    const handle: FileReadHandle = {
+      async read(buffer, offset, length, position) {
+        reads.push(position);
+        const count = Math.min(3, length, data.length - position);
+        if (count <= 0) return { bytesRead: 0 };
+        buffer.set(data.subarray(position, position + count), offset);
+        return { bytesRead: count };
+      },
+      async close() {
+        closed = true;
+      },
+    };
+    const source = new NodeFileByteSource(handle, data.length);
+    try {
+      expect(await source.read(0, 10)).toEqual(data);
+      expect(reads).toEqual([0, 3, 6, 9]);
+    } finally {
+      await source.close();
+    }
+    expect(closed).toBe(true);
+  });
+
+  it('短读提前遇到 EOF 时返回实际长度', async () => {
+    const data = sampleBytes(7);
+    const reads: number[] = [];
+    const handle: FileReadHandle = {
+      async read(buffer, offset, length, position) {
+        reads.push(position);
+        const count = Math.min(3, length, data.length - position);
+        if (count <= 0) return { bytesRead: 0 };
+        buffer.set(data.subarray(position, position + count), offset);
+        return { bytesRead: count };
+      },
+      async close() {},
+    };
+    const source = new NodeFileByteSource(handle, 10);
+    try {
+      expect(await source.read(0, 10)).toEqual(data);
+      expect(reads).toEqual([0, 3, 6, 7]);
     } finally {
       await source.close();
     }

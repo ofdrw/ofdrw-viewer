@@ -138,11 +138,7 @@ export function parseCliArgs(
       },
     });
   } catch (error) {
-    throw new CliError(
-      'CLI_USAGE',
-      `参数解析失败：${errorMessage(error)}`,
-      EXIT_CODES.USAGE,
-    );
+    throw new CliError('CLI_USAGE', formatParseArgsError(error), EXIT_CODES.USAGE);
   }
 
   const { values, positionals } = parsed;
@@ -182,6 +178,42 @@ export function parseCliArgs(
       fontDir,
     },
   };
+}
+
+/**
+ * 把 Node `parseArgs` 的英文错误映射为简体中文。
+ *
+ * @param error `parseArgs` 抛出的错误；其他异常按通用参数错误处理
+ * @returns 面向用户的中文错误信息
+ */
+function formatParseArgsError(error: unknown): string {
+  const message = errorMessage(error);
+  switch (parseArgsErrorCode(error)) {
+    case 'ERR_PARSE_ARGS_UNKNOWN_OPTION': {
+      const option = /Unknown option '([^']+)'/.exec(message)?.[1];
+      return option === undefined ? '存在未知参数' : `未知参数：${option}`;
+    }
+    case 'ERR_PARSE_ARGS_INVALID_OPTION_VALUE': {
+      const option =
+        /Option '([^']+)'/.exec(message)?.[1]?.replace(/\s*<[^>]*>/g, '') ?? '参数';
+      if (message.includes('argument missing')) return `缺少参数值：${option}`;
+      if (message.includes('does not take an argument')) return `参数不接受值：${option}`;
+      return `参数值无效：${option}`;
+    }
+    case 'ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL': {
+      const argument = /Unexpected argument '([^']+)'/.exec(message)?.[1];
+      return argument === undefined ? '存在不支持的参数' : `不支持的参数：${argument}`;
+    }
+    default:
+      return '参数解析失败';
+  }
+}
+
+/** 读取 `parseArgs` 错误对象上的字符串 `code`。 */
+function parseArgsErrorCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return undefined;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : undefined;
 }
 
 /**

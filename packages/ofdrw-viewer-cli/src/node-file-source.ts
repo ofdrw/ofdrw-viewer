@@ -12,15 +12,45 @@ import { OFDError } from 'ofdrw-viewer-engine';
 import type { ByteSource } from 'ofdrw-viewer-engine';
 import { CliError, EXIT_CODES, isCliError, isErrnoError } from './errors.js';
 
+/** 随机读取句柄的最小接口；`fs.FileHandle` 满足该接口。 */
+export interface FileReadHandle {
+  /**
+   * 读取指定位置。
+   *
+   * @param buffer 目标缓冲
+   * @param offset buffer 内写入偏移，byte
+   * @param length 期望读取长度，byte
+   * @param position 文件内读取位置，byte
+   * @returns 实际读取字节数
+   */
+  read(
+    buffer: Uint8Array,
+    offset: number,
+    length: number,
+    position: number,
+  ): Promise<{ bytesRead: number }>;
+
+  /** 关闭底层文件句柄。 */
+  close(): Promise<void>;
+}
+
 /** 基于 `fs.FileHandle` 的只读随机访问字节源。 */
 export class NodeFileByteSource implements ByteSource {
   /** 文件总字节数，byte。 */
   readonly size: number;
 
-  readonly #handle: FileHandle;
+  readonly #handle: FileReadHandle;
   #closed = false;
 
-  private constructor(handle: FileHandle, size: number) {
+  /**
+   * 从已打开的读取句柄构造；通常应使用 `open()`。
+   *
+   * 公开构造器便于单测注入模拟短读的 `FileReadHandle`。
+   *
+   * @param handle 读取句柄，`fs.FileHandle` 或测试替身
+   * @param size 文件总字节数，byte
+   */
+  constructor(handle: FileReadHandle, size: number) {
     this.#handle = handle;
     this.size = size;
   }
@@ -73,8 +103,20 @@ export class NodeFileByteSource implements ByteSource {
 
     const readable = Math.min(length, this.size - offset);
     const buffer = new Uint8Array(readable);
-    const { bytesRead } = await this.#handle.read(buffer, 0, readable, offset);
-    return buffer.subarray(0, bytesRead);
+    let filled = 0;
+    // FileHandle.read 允许短读；必须循环到请求长度或 EOF，满足 ZipReader.readExact。
+    while (filled < readable) {
+      const { bytesRead } = await this.#handle.read(
+        buffer,
+        filled,
+        readable - filled,
+        offset + filled,
+      );
+      const next = Math.min(bytesRead, readable - filled);
+      if (next <= 0) break;
+      filled += next;
+    }
+    return buffer.subarray(0, filled);
   }
 
   /** 关闭文件句柄；重复调用安全。 */

@@ -266,8 +266,24 @@ describe('CLI 图片导出 e2e', () => {
     const result = await runCli([input, '-o', outDir, '--text'], cwd);
 
     expect(result.code).toBe(EXIT_CODES.USAGE);
-    expect(result.stderr).toContain('--text');
+    expect(result.stderr).toContain('未知参数：--text');
+    expect(result.stderr).not.toContain('Unknown option');
     expect(existsSync(outDir)).toBe(false);
+  });
+
+  it.each([
+    { name: '缺少参数值', arg: '--out', expected: '缺少参数值：-o, --out' },
+    { name: '布尔参数带值', arg: '--help=yes', expected: '参数不接受值：-h, --help' },
+  ])('参数错误中文化：$name', async ({ arg, expected }) => {
+    const cwd = await createTempDir();
+    const input = join(SAMPLE_DIR, 'helloworld.ofd');
+
+    const result = await runCli([input, arg], cwd);
+
+    expect(result.code).toBe(EXIT_CODES.USAGE);
+    expect(result.stderr).toContain(expected);
+    expect(result.stderr).toContain('用法:');
+    expect(result.stderr).not.toMatch(/Unknown option|argument missing|does not take an argument/);
   });
 
   it('已取消信号返回 130 且不写图片', async () => {
