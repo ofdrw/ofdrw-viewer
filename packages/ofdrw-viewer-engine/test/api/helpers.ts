@@ -168,6 +168,8 @@ export interface FixtureOfdOptions {
   extraEntries?: ZipEntryInput[];
   /** DocRoot；默认 `Doc_0/Document.xml`。 */
   docRoot?: string;
+  /** 覆盖 OFD.xml 原始 XML；用于多文档包测试。 */
+  ofdXml?: string;
 }
 
 /** 构造页面根 XML。 */
@@ -232,7 +234,7 @@ export function buildFixtureOfd(options: FixtureOfdOptions): Uint8Array {
   const entries: ZipEntryInput[] = [];
   entries.push({
     name: 'OFD.xml',
-    data: buildXmlDocument({
+    data: options.ofdXml ?? buildXmlDocument({
       name: 'ofd:OFD',
       attrs: { 'xmlns:ofd': OFD_NS, DocType: 'ofd', Version: '1.1' },
       children: [

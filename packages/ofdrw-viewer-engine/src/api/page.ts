@@ -1,8 +1,8 @@
 /**
  * 页面公共入口（对应设计方案 15.1 / 10.6）。
  *
- * `OFDPage` 只持有页尺寸与渲染驱动：`getSize`/`getViewport` 是纯计算，
- * `render` 创建 `RenderTask` 并交由 `OFDDocument` 执行真正的准备/绘制。
+ * `OFDPage` 持有页尺寸与文档注入的渲染/导出/准备驱动：`getSize`/`getViewport`
+ * 是纯计算，`render` 创建 `RenderTask` 并交由 `OFDDocument` 执行真正的准备/绘制。
  */
 
 import type { PageSize } from '../model/types';
@@ -13,7 +13,7 @@ import type {
   PageRenderParameters,
   ViewportOptions,
 } from './types';
-import type { OFDPageApi } from './ui-types';
+import type { OFDPageApi, PagePrepareOptions } from './ui-types';
 import { OFDError } from '../errors';
 import { createRenderTask } from './render-task';
 import type { RenderTask } from './render-task';
@@ -39,6 +39,14 @@ export type PageRenderDriver = (
  */
 export type PageExportDriver = (options: PageImageExportOptions) => Promise<PageImageResult>;
 
+/**
+ * 页面准备驱动；由 `OFDDocument` 注入，复用 preparePage 并缓存 bundle。
+ *
+ * @param options 取消信号。
+ * @returns 准备完成时 resolve。
+ */
+export type PagePrepareDriver = (options: PagePrepareOptions) => Promise<void>;
+
 /** OFD 页面；渲染只画页面内容，不设置 canvas 尺寸、不清屏。 */
 export class OFDPage {
   /** 页索引，从 0 开始。 */
@@ -49,6 +57,8 @@ export class OFDPage {
   private readonly driver: PageRenderDriver;
   /** 图片导出驱动；由文档实例注入。 */
   private readonly exportDriver: PageExportDriver | undefined;
+  /** 页面准备驱动；由文档实例注入。 */
+  private readonly prepareDriver: PagePrepareDriver | undefined;
 
   /**
    * 创建页面句柄；由 `OFDDocument.getPage()` 返回，宿主不应直接构造。
@@ -57,17 +67,20 @@ export class OFDPage {
    * @param pageSize 页尺寸，单位 mm。
    * @param driver 渲染驱动。
    * @param exportDriver 可选图片导出驱动；未注入时 exportImage 报不支持。
+   * @param prepareDriver 可选页面准备驱动；未注入时 prepare 报不支持。
    */
   constructor(
     index: number,
     pageSize: PageSize,
     driver: PageRenderDriver,
     exportDriver?: PageExportDriver,
+    prepareDriver?: PagePrepareDriver,
   ) {
     this.index = index;
     this.pageSize = { width: pageSize.width, height: pageSize.height };
     this.driver = driver;
     this.exportDriver = exportDriver;
+    this.prepareDriver = prepareDriver;
   }
 
   /**
@@ -127,11 +140,28 @@ export class OFDPage {
     }
     return this.exportDriver(options ?? {});
   }
+
+  /**
+   * 预取页面模型、字体、图片与模板资源；不创建 canvas、不绘制。
+   *
+   * 已准备或正在准备时复用同一 bundle；重复调用幂等。取消返回
+   * `OFD_ABORTED`，文档关闭返回 `OFD_CLOSED`。
+   *
+   * @param options 取消信号。
+   * @returns 准备完成时 resolve。
+   * @throws OFDError 取消、文档已关闭或准备失败。
+   */
+  async prepare(options?: PagePrepareOptions): Promise<void> {
+    if (!this.prepareDriver) {
+      throw new OFDError('OFD_RENDERER_UNSUPPORTED', '当前页面未绑定准备驱动');
+    }
+    return this.prepareDriver(options ?? {});
+  }
 }
 
 /**
  * UI API 类型声明合并。
  *
- * `getTextContent`/`prepare` 的实现由 t68/t71 落到 `OFDPage`；本任务只冻结签名。
+ * `getTextContent` 的实现由 t68/t71 落到 `OFDPage`；`prepare` 由 t67 实现。
  */
 export interface OFDPage extends OFDPageApi {}

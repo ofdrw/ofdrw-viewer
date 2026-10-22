@@ -1,0 +1,279 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it, vi } from 'vitest';
+import { isOFDError } from '../../src/errors';
+import type { OFDWarning } from '../../src/warnings';
+import { ZipReader } from '../../src/container/zip-reader';
+import { buildXmlDocument } from '../fixtures/xml';
+import { OFD_NS, buildFixtureOfd, openTestDocument } from './helpers';
+
+/** 读取仓库根下的真实样例。 */
+function sample(name: string): Uint8Array {
+  const path = fileURLToPath(new URL(`../../../../ofd_pdf_match/${name}`, import.meta.url));
+  return new Uint8Array(readFileSync(path));
+}
+
+/** 读取错误码。 */
+function errorCode(error: unknown): string | undefined {
+  return isOFDError(error) ? error.code : undefined;
+}
+
+/** 构造两份文档的 OFD.xml；DocRoot 与 DocInfo 一一对应。 */
+function multiDocumentOfdXml(): string {
+  return buildXmlDocument({
+    name: 'ofd:OFD',
+    attrs: { 'xmlns:ofd': OFD_NS, DocType: 'ofd', Version: '1.3' },
+    children: [
+      {
+        name: 'ofd:DocBody',
+        children: [
+          {
+            name: 'ofd:DocInfo',
+            children: [
+              { name: 'ofd:DocID', children: ['first-id'] },
+              { name: 'ofd:Title', children: ['第一份'] },
+            ],
+          },
+          { name: 'ofd:DocRoot', children: ['Doc_0/Document.xml'] },
+        ],
+      },
+      {
+        name: 'ofd:DocBody',
+        children: [
+          {
+            name: 'ofd:DocInfo',
+            children: [
+              { name: 'ofd:DocID', children: ['second-id'] },
+              { name: 'ofd:Title', children: ['第二份'] },
+            ],
+          },
+          { name: 'ofd:DocRoot', children: ['Doc_1/Document.xml'] },
+        ],
+      },
+    ],
+  });
+}
+
+/** 构造第二个文档的 Document.xml（仅页树，无资源）。 */
+function secondDocumentXml(): string {
+  return buildXmlDocument({
+    name: 'ofd:Document',
+    attrs: { 'xmlns:ofd': OFD_NS, Version: '1.3' },
+    children: [
+      {
+        name: 'ofd:Pages',
+        children: [
+          { name: 'ofd:Page', attrs: { ID: 2, BaseLoc: 'Pages/Page_0/Content.xml' } },
+        ],
+      },
+    ],
+  });
+}
+
+describe('UI API：大纲/书签/文档属性', () => {
+  it('z.ofd getOutline 保持 XML 顺序并映射 XYZ；getBookmarks 为空', async () => {
+    const doc = await openTestDocument(sample('z.ofd'));
+    try {
+      const outline = await doc.getOutline();
+      expect(outline).toHaveLength(5);
+      expect(outline[0]?.title).toBe('11.4字型变换');
+      expect(outline[0]?.expanded).toBe(true);
+      expect(outline[0]?.dest).toEqual({
+        type: 'XYZ',
+        pageIndex: 0,
+        leftMm: 80.43,
+        topMm: 26.07,
+        zoom: 1,
+      });
+      expect(outline[4]?.dest?.pageIndex).toBe(3);
+      expect(await doc.getBookmarks()).toEqual([]);
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('Page5.ofd getBookmarks 保留书签与 XYZ 坐标', async () => {
+    const doc = await openTestDocument(sample('Page5.ofd'));
+    try {
+      const bookmarks = await doc.getBookmarks();
+      expect(bookmarks).toEqual([
+        {
+          name: '新建书签',
+          dest: {
+            type: 'XYZ',
+            pageIndex: 0,
+            rightMm: 167.873,
+            bottomMm: 131.0356,
+          },
+        },
+      ]);
+      expect(await doc.getOutline()).toEqual([]);
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('getMetadata 返回 OFD 版本/页数/DocInfo 字段', async () => {
+    const bytes = sample('h.ofd');
+    const doc = await openTestDocument(bytes);
+    try {
+      expect(await doc.getMetadata()).toEqual({
+        version: '1.0',
+        pageCount: 5,
+        packageSize: bytes.byteLength,
+        docId: '5e07a151ff9847bea6b5e12b9d7c6e9a',
+        creationDate: '2020-04-25',
+        creator: 'OFD R&W',
+        creatorVersion: '1.2.0',
+      });
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('getMetadata 解析 Author/ModDate/Keywords/CustomData；空 Keywords 省略', async () => {
+    const doc = await openTestDocument(sample('n.ofd'));
+    try {
+      const metadata = await doc.getMetadata();
+      expect(metadata.version).toBe('1.0');
+      expect(metadata.pageCount).toBe(2);
+      expect(metadata.author).toBe('iOFD® 2.1.1 ©2019-2020 dms360.cn');
+      expect(metadata.creationDate).toBe('2020-01-25');
+      expect(metadata.modDate).toBe('2020-01-25');
+      expect(metadata.keywords).toBeUndefined();
+      expect(metadata.docId).toBe('1f43817abaec4df79066eb046bc526bf');
+      expect(metadata.customData).toMatchObject({
+        'user.name': 'vita',
+        'os.name': 'Windows 7',
+      });
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('多文档包按 documentIndex 取对应 DocInfo 与页数', async () => {
+    const bytes = buildFixtureOfd({
+      pages: [{ id: 1, widthMm: 100, heightMm: 100, objects: [] }],
+      ofdXml: multiDocumentOfdXml(),
+      extraEntries: [
+        { name: 'Doc_1/Document.xml', data: secondDocumentXml() },
+      ],
+    });
+    const first = await openTestDocument(bytes, { documentIndex: 0 });
+    try {
+      const metadata = await first.getMetadata();
+      expect(metadata.title).toBe('第一份');
+      expect(metadata.docId).toBe('first-id');
+      expect(metadata.pageCount).toBe(1);
+      expect(metadata.version).toBe('1.3');
+    } finally {
+      await first.close();
+    }
+    const second = await openTestDocument(bytes, { documentIndex: 1 });
+    try {
+      const metadata = await second.getMetadata();
+      expect(metadata.title).toBe('第二份');
+      expect(metadata.docId).toBe('second-id');
+      expect(metadata.pageCount).toBe(1);
+    } finally {
+      await second.close();
+    }
+  });
+
+  it('无 DocInfo 时 getMetadata 仍返回版本与页数；非法日期 warning 后省略', async () => {
+    const noInfoXml = buildXmlDocument({
+      name: 'ofd:OFD',
+      attrs: { 'xmlns:ofd': OFD_NS, DocType: 'ofd', Version: '1.4' },
+      children: [
+        { name: 'ofd:DocBody', children: [{ name: 'ofd:DocRoot', children: ['Doc_0/Document.xml'] }] },
+      ],
+    });
+    const noInfo = await openTestDocument(
+      buildFixtureOfd({
+        pages: [{ id: 1, widthMm: 100, heightMm: 100, objects: [] }],
+        ofdXml: noInfoXml,
+      }),
+    );
+    try {
+      const metadata = await noInfo.getMetadata();
+      expect(metadata).toMatchObject({ version: '1.4', pageCount: 1 });
+      expect(metadata.title).toBeUndefined();
+      expect(metadata.docId).toBeUndefined();
+    } finally {
+      await noInfo.close();
+    }
+
+    const badDateXml = buildXmlDocument({
+      name: 'ofd:OFD',
+      attrs: { 'xmlns:ofd': OFD_NS, DocType: 'ofd', Version: '1.4' },
+      children: [
+        {
+          name: 'ofd:DocBody',
+          children: [
+            {
+              name: 'ofd:DocInfo',
+              children: [
+                { name: 'ofd:Title', children: ['保留'] },
+                { name: 'ofd:CreationDate', children: ['not-a-date'] },
+              ],
+            },
+            { name: 'ofd:DocRoot', children: ['Doc_0/Document.xml'] },
+          ],
+        },
+      ],
+    });
+    const warnings: OFDWarning[] = [];
+    const badDate = await openTestDocument(
+      buildFixtureOfd({
+        pages: [{ id: 1, widthMm: 100, heightMm: 100, objects: [] }],
+        ofdXml: badDateXml,
+      }),
+      { onWarning: (warning) => warnings.push(warning) },
+    );
+    try {
+      const metadata = await badDate.getMetadata();
+      expect(metadata.title).toBe('保留');
+      expect(metadata.creationDate).toBeUndefined();
+      expect(warnings.some((warning) => warning.code === 'W_METADATA_FIELD')).toBe(true);
+    } finally {
+      await badDate.close();
+    }
+  });
+
+  it('三个方法缓存于 document，不额外读取页面 XML', async () => {
+    const doc = await openTestDocument(sample('z.ofd'));
+    const readEntry = vi.spyOn(ZipReader.prototype, 'readEntry');
+    try {
+      readEntry.mockClear();
+      await doc.getOutline();
+      await doc.getBookmarks();
+      await doc.getMetadata();
+      expect(readEntry).not.toHaveBeenCalled();
+    } finally {
+      readEntry.mockRestore();
+      await doc.close();
+    }
+  });
+
+  it('abort 拒绝 OFD_ABORTED，close 后拒绝 OFD_CLOSED', async () => {
+    const doc = await openTestDocument(sample('h.ofd'));
+    const controller = new AbortController();
+    controller.abort();
+    const aborted = await Promise.allSettled([
+      doc.getOutline({ signal: controller.signal }),
+      doc.getBookmarks({ signal: controller.signal }),
+      doc.getMetadata({ signal: controller.signal }),
+    ]);
+    expect(aborted.map((item) => (item.status === 'rejected' ? errorCode(item.reason) : undefined))).toEqual([
+      'OFD_ABORTED',
+      'OFD_ABORTED',
+      'OFD_ABORTED',
+    ]);
+    await doc.close();
+    for (const promise of [doc.getOutline(), doc.getBookmarks(), doc.getMetadata()]) {
+      const result = await Promise.allSettled([promise]);
+      expect(result[0]?.status).toBe('rejected');
+      if (result[0]?.status === 'rejected') expect(errorCode(result[0].reason)).toBe('OFD_CLOSED');
+    }
+  });
+});

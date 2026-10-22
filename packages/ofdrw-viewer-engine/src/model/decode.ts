@@ -13,6 +13,7 @@ import type {
   ColorSpaceDef,
   CommonData,
   DocumentModel,
+  DocInfo,
   PageModel,
   PageTree,
   ResourceDefinitionSet,
@@ -26,6 +27,8 @@ import type { ContentDecodeContext } from './content';
 import { decodeAnnotationsNode, decodePageBlockNode, decodePageContentNode } from './content';
 import { decodeResourceSet } from './resource-decode';
 import { flattenPageTree } from './page-tree';
+import { decodeDocumentNavigation } from './navigation';
+import { decodeDocInfo } from './doc-info';
 
 /**
  * 解码函数通用选项。
@@ -50,31 +53,41 @@ export interface OfdRootInfo {
   docRoots: string[];
   /** 选中的文档索引；默认 0。 */
   docRootIndex: number;
+  /** DocBody 顺序对应的 DocInfo；DocBody 无 DocInfo 时为 undefined。 */
+  docInfos: Array<DocInfo | undefined>;
 }
 
 /**
  * 解析 OFD.xml。
  *
  * @param root OFD.xml 根节点。
- * @returns 版本与 DocRoot 列表。
+ * @param options 解码选项；DocInfo 非法字段通过 warning 上报。
+ * @returns 版本、DocRoot 列表与各 DocBody 的 DocInfo。
  */
-export function decodeOfdRoot(root: XmlNode): OfdRootInfo {
+export function decodeOfdRoot(root: XmlNode, options?: DecodeOptions): OfdRootInfo {
   const version = (attr(root, 'Version') ?? '1.0').trim() || '1.0';
   const docRoots: string[] = [];
-  const pushDocRoot = (value: string | undefined): void => {
-    if (value === undefined) return;
+  const docInfos: Array<DocInfo | undefined> = [];
+  const pushDocRoot = (value: string | undefined): boolean => {
+    if (value === undefined) return false;
     const normalized = normalizeDocRoot(value);
-    if (normalized) docRoots.push(normalized);
+    if (!normalized) return false;
+    docRoots.push(normalized);
+    return true;
   };
   // 标准结构：OFD/DocBody/DocRoot；同时兼容根节点直接放 DocRoot 的简化文件。
   for (const docBody of children(root, 'DocBody')) {
-    pushDocRoot(childText(docBody, 'DocRoot'));
+    const pushed = pushDocRoot(childText(docBody, 'DocRoot'));
+    if (pushed) {
+      const infoNode = child(docBody, 'DocInfo');
+      docInfos.push(infoNode ? decodeDocInfo(infoNode, options) : undefined);
+    }
   }
   // 简化文件可能把 DocRoot 直接放在 OFD 根下；支持多个。
   for (const docRoot of children(root, 'DocRoot')) {
     pushDocRoot((docRoot.text ?? '').trim());
   }
-  return { version, docRoots, docRootIndex: 0 };
+  return { version, docRoots, docRootIndex: 0, docInfos };
 }
 
 /**
@@ -123,6 +136,11 @@ export function decodeDocument(
     annotationsFile = resolveRelativePath(baseDir, annotationsRaw, options?.onWarning);
   }
   const version = (attr(root, 'Version') ?? '').trim();
+  const navigation = decodeDocumentNavigation(
+    root,
+    tree.pages.map((page) => page.id),
+    options,
+  );
   return {
     id: normalizeResourceId(attr(root, 'ID')),
     version,
@@ -134,6 +152,8 @@ export function decodeDocument(
     templatePages: commonData?.templatePages ?? {},
     ...(annotationsFile ? { annotationsFile } : {}),
     pageAnnotIndex: {},
+    outlines: navigation.outlines,
+    bookmarks: navigation.bookmarks,
   };
 }
 

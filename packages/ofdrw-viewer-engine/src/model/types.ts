@@ -288,6 +288,22 @@ export interface SignatureStamp {
   clip?: Box;
 }
 
+/** Signature.xml 的 Provider 信息。 */
+export interface SignatureProvider {
+  /** ProviderName 或 Provider@ProviderName。 */
+  name?: string;
+  /** Company 或 Provider@Company。 */
+  company?: string;
+  /** Version 或 Provider@Version。 */
+  version?: string;
+}
+
+/** Signature.xml 的保护范围引用。 */
+export interface SignatureReference {
+  /** Reference@FileRef，保持 XML 原文。 */
+  fileRef: string;
+}
+
 /** 单个签章；只描述静态外观所需信息，不含签名值验证。 */
 export interface SignatureModel {
   /** Signature ID。 */
@@ -300,6 +316,16 @@ export interface SignatureModel {
   sealFile?: string;
   /** SignedValue.dat 的包内路径；无 Seal.esl 时作为图片兜底。 */
   signedValueFile?: string;
+  /** SignedValue.dat 的规范化包内路径；与 signedValueFile 同步。 */
+  signedValuePath?: string;
+  /** 是否声明并成功解析出 SignedValue.dat 路径。 */
+  hasSignedValue: boolean;
+  /** Signature.xml 的 Provider 信息；无有效字段时省略。 */
+  provider?: SignatureProvider;
+  /** SignatureDateTime 原文；不转换时区。 */
+  signatureDateTime?: string;
+  /** References/Reference@FileRef，保持 XML 顺序。 */
+  references: SignatureReference[];
   /** Seal.esl/SignedValue.dat 解码出的印章图片；损坏时为缺省。 */
   seal?: SealImage;
   /** 该签章的所有戳记，保持 XML 顺序。 */
@@ -497,6 +523,75 @@ export interface CommonData {
   templatePages?: Record<ResourceId, TemplatePageDef>;
 }
 
+/** OFD 跳转目标类型。 */
+export type DocumentDestinationType = 'XYZ' | 'Fit' | 'FitH' | 'FitV' | 'FitR';
+
+/** 文档跳转目标；坐标单位 mm，页索引从 0 开始。 */
+export interface DocumentDestination {
+  /** OFD Dest@Type。 */
+  type: DocumentDestinationType;
+  /** 目标页索引，从 0 开始。 */
+  pageIndex: number;
+  /** 目标区域左边界，mm；按 Type 可选。 */
+  leftMm?: number;
+  /** 目标区域上边界，mm；按 Type 可选。 */
+  topMm?: number;
+  /** 目标区域右边界，mm；按 Type 可选。 */
+  rightMm?: number;
+  /** 目标区域下边界，mm；按 Type 可选。 */
+  bottomMm?: number;
+  /** XYZ 的缩放倍率；1 = 100%。 */
+  zoom?: number;
+}
+
+/** 大纲节点；children 保持 XML 顺序与层级。 */
+export interface OutlineNode {
+  /** 标题。 */
+  title: string;
+  /** OFD Expanded；缺省表示未声明。 */
+  expanded?: boolean;
+  /** 子节点，保持 XML 顺序。 */
+  children: OutlineNode[];
+  /** 跳转目标；无效或缺失时省略。 */
+  dest?: DocumentDestination;
+}
+
+/** 书签条目。 */
+export interface BookmarkItem {
+  /** Bookmark@Name。 */
+  name: string;
+  /** 跳转目标；无效或缺失时省略。 */
+  dest?: DocumentDestination;
+}
+
+/** OFD.xml 的 DocInfo 文档属性。 */
+export interface DocInfo {
+  /** DocInfo/DocID。 */
+  docId?: string;
+  /** DocInfo/Title。 */
+  title?: string;
+  /** DocInfo/Author。 */
+  author?: string;
+  /** DocInfo/Subject。 */
+  subject?: string;
+  /** DocInfo/Abstract。 */
+  abstract?: string;
+  /** DocInfo/CreationDate 原文。 */
+  creationDate?: string;
+  /** DocInfo/ModDate 原文。 */
+  modDate?: string;
+  /** DocInfo/Creator。 */
+  creator?: string;
+  /** DocInfo/CreatorVersion。 */
+  creatorVersion?: string;
+  /** DocInfo/Keywords，按空白/逗号切分。 */
+  keywords?: string[];
+  /** CustomDatas 的 Name → 文本。 */
+  customData?: Record<string, string>;
+  /** DocInfo/DocUsage。 */
+  docUsage?: string;
+}
+
 /** 文档模型；打开文档后页数与页引用即固定。 */
 export interface DocumentModel {
   id: ResourceId;
@@ -517,6 +612,10 @@ export interface DocumentModel {
   annotationsFile?: string;
   /** 页 ID → 分页注释文件路径；T10 按 page.id 懒加载。 */
   pageAnnotIndex: Record<ResourceId, string>;
+  /** Document.xml 大纲树；无大纲时为空数组。 */
+  outlines?: readonly OutlineNode[];
+  /** Document.xml 书签列表；无书签时为空数组。 */
+  bookmarks?: readonly BookmarkItem[];
 }
 
 /** 页树前序遍历结果。 */

@@ -15,11 +15,12 @@
 import type { ByteSource } from '../platform/byte-source';
 import type { FontInput, FontProvider } from '../platform/font-provider';
 import type { ImageDecoderPlugin } from '../platform/image-decoder';
-import type { DecodedImage, Viewport } from '../common/types';
+import type { Box, DecodedImage, Viewport } from '../common/types';
 import type {
   Annotation,
   ColorSpaceDef,
   DocumentModel,
+  DocInfo,
   FontResource,
   ImageResource,
   PageModel,
@@ -46,15 +47,25 @@ import type {
   ResourceLimits,
 } from './types';
 import type { OFDPage } from './page';
-import type { OFDDocumentApi } from './ui-types';
+import type {
+  BookmarkItem,
+  DocumentMetadata,
+  OFDDocumentApi,
+  OutlineNode,
+  PageInfo,
+  PageInfoOptions,
+  PagePrepareOptions,
+} from './ui-types';
 import type { FontInputLoader } from '../font/provider';
 import type { FontFaceSet } from '../font/types';
 import type { PageAreaCandidate } from '../model/page-area';
+import { decodePageAreaXml } from '../model/page-info';
+import type { PageAreaInfo } from '../model/page-info';
 
 import { DEFAULT_CACHE_OPTIONS, DEFAULT_RESOURCE_LIMITS } from './types';
 import { OFDPage as OFDPageClass } from './page';
-import { combineAbortSignals, throwIfAborted, wrapError } from './render-task';
-import { getPageViewport } from './viewport';
+import { combineAbortSignals, createAbortError, throwIfAborted, wrapError } from './render-task';
+import { DEFAULT_DPI, getPageViewport } from './viewport';
 import { openByteSource } from './source';
 import {
   createWarningCollector,
@@ -93,7 +104,11 @@ import {
 } from '../image/format';
 import { H5Canvas2DRenderer, H5CanvasFactory } from '../renderer/canvas2d';
 import { preparePage } from '../render/prepare';
-import type { PreparePageLoader, SignatureStampSource } from '../render/prepare';
+import type {
+  PreparedPageBundle,
+  PreparePageLoader,
+  SignatureStampSource,
+} from '../render/prepare';
 import { drawPage } from '../render/page';
 
 /** Canvas 尺寸比较容差，避免浮点 viewport 与整数 canvas 的舍入误差。 */
@@ -131,6 +146,8 @@ interface DocumentInit {
   source: ByteSource;
   zip: ZipReader;
   document: DocumentModel;
+  /** 打开时解析的文档属性缓存；close 后不可再取。 */
+  metadata: DocumentMetadata;
   limits: ResourceLimits;
   cacheOptions: CacheOptions;
   warnings: WarningCollector;
@@ -291,6 +308,7 @@ export class OFDDocument {
   private readonly source: ByteSource;
   private readonly zip: ZipReader;
   private readonly document: DocumentModel;
+  private readonly metadata: DocumentMetadata;
   private readonly limits: ResourceLimits;
   private readonly warnings: WarningCollector;
   private readonly renderer: Renderer;
@@ -334,6 +352,16 @@ export class OFDDocument {
   private readonly pageCache: DisposableLruCache<number, Promise<PageEntry>>;
   /** 并发页面加载去重。 */
   private readonly pagePending = new Map<number, Promise<PageEntry>>();
+  /** getPageInfos 页尺寸缓存；按页索引。 */
+  private readonly pageInfoCache = new Map<number, PageInfo>();
+  /** getPageInfos 并发去重。 */
+  private readonly pageInfoPending = new Map<number, Promise<PageInfo>>();
+  /** 模板页 Area 缓存（键：Content.xml 包内路径）；只用于页尺寸回退。 */
+  private readonly templateAreaCache = new Map<string, Promise<Box | undefined>>();
+  /** prepare 已完成的 bundle；当前每页保留一个 DPI。 */
+  private readonly preparedBundles = new Map<number, { dpi: number; bundle: PreparedPageBundle }>();
+  /** prepare 并发去重。 */
+  private readonly preparePending = new Map<number, Promise<PreparedPageBundle>>();
   /** 模板页模型缓存（键：Content.xml 包内路径）。 */
   private readonly templateCache = new Map<string, Promise<PageModel>>();
   /** 页资源索引缓存（键：资源 XML 包内路径）。 */
@@ -365,6 +393,7 @@ export class OFDDocument {
     this.source = init.source;
     this.zip = init.zip;
     this.document = init.document;
+    this.metadata = init.metadata;
     this.limits = init.limits;
     this.warnings = init.warnings;
     this.renderer = init.renderer;
@@ -436,7 +465,7 @@ export class OFDDocument {
 
       // 1) OFD.xml → DocRoot（支持多文档包）。
       const ofdRoot = await readXmlEntry(zip, 'OFD.xml', limits.maxXmlBytes, onWarning);
-      const rootInfo = decodeOfdRoot(ofdRoot);
+      const rootInfo = decodeOfdRoot(ofdRoot, { onWarning });
       const documentIndex = options.documentIndex ?? 0;
       let docRoot: string;
       if (!Number.isInteger(documentIndex) || documentIndex < 0) {
@@ -541,10 +570,17 @@ export class OFDDocument {
       const signaturePath = signatureIndexCandidates(documentPath).find((path) =>
         zip?.hasEntry(path),
       );
+      const metadata: DocumentMetadata = {
+        version: rootInfo.version,
+        pageCount: document.pageCount,
+        packageSize: source.size,
+        ...metadataFromDocInfo(rootInfo.docInfos[documentIndex]),
+      };
       return new OFDDocument({
         source,
         zip,
         document,
+        metadata,
         limits,
         cacheOptions,
         warnings,
@@ -591,13 +627,330 @@ export class OFDDocument {
       entry.model.size,
       (params, signal) => this.renderPage(pageIndex, params, signal),
       (options) => this.exportPage(pageIndex, entry.model.size, options),
+      (options) => this.preparePageIndex(pageIndex, options),
     );
+  }
+
+  /**
+   * 批量读取页尺寸信息，不构建 display list、不解码字体/图片。
+   *
+   * 支持分片与取消；返回连续页、按索引升序。页尺寸与 `getPage(index).getSize()`
+   * 使用同一 Area/模板/CommonData 回退链。结果按页缓存到 `close()`。
+   *
+   * @param options 起始页、页数与取消信号。
+   * @returns 页信息数组；越界时为空数组或截断到实际页数。
+   * @throws OFDError 取消或文档已关闭。
+   */
+  async getPageInfos(options: PageInfoOptions = {}): Promise<readonly PageInfo[]> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    const total = this.pageCount;
+    const start = normalizeInfoStart(options.start, total);
+    const count = normalizeInfoCount(options.count, total - start);
+    if (start < 0 || start >= total || count <= 0) return [];
+
+    const controller = new AbortController();
+    this.activeControllers.add(controller);
+    const combined = combineAbortSignals([
+      options.signal,
+      controller.signal,
+      this.closeController.signal,
+    ]);
+    const run = (async (): Promise<readonly PageInfo[]> => {
+      const infos: PageInfo[] = [];
+      try {
+        const end = Math.min(total, start + count);
+        // 分小批并发读取，兼顾 1000 页性能与取消响应；不跨页并发全部 I/O。
+        const batchSize = 128;
+        for (let from = start; from < end; from += batchSize) {
+          this.assertInfoActive(combined.signal);
+          const to = Math.min(end, from + batchSize);
+          const batch = await Promise.all(
+            Array.from({ length: to - from }, (_, offset) => this.getPageInfo(from + offset)),
+          );
+          this.assertInfoActive(combined.signal);
+          infos.push(...batch);
+        }
+        return infos;
+      } catch (error) {
+        if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭', { cause: error });
+        throw error;
+      } finally {
+        combined.dispose();
+        this.activeControllers.delete(controller);
+      }
+    })();
+    this.trackActiveRun(run);
+    return run;
+  }
+
+  /**
+   * 预取一页：复用 preparePage 并缓存 bundle。
+   *
+   * 已准备或正在准备时复用；不创建 canvas。caller 的 signal 只影响本次等待，
+   * 不取消共享准备流程；close 会中止共享流程。
+   *
+   * @param pageIndex 页索引。
+   * @param options 取消信号。
+   * @throws OFDError 取消、文档已关闭或准备失败。
+   */
+  private async preparePageIndex(
+    pageIndex: number,
+    options: PagePrepareOptions,
+  ): Promise<void> {
+    this.assertOpen();
+    if (!Number.isInteger(pageIndex) || pageIndex < 0 || pageIndex >= this.pageCount) {
+      throw new OFDError(
+        'OFD_PAGE_NOT_FOUND',
+        `页码越界：${pageIndex}（页数 ${this.pageCount}）`,
+      );
+    }
+    throwIfAborted(options.signal);
+    const prepared = this.preparedBundles.get(pageIndex);
+    if (prepared && prepared.dpi === DEFAULT_DPI) {
+      throwIfAborted(options.signal);
+      return;
+    }
+
+    let pending = this.preparePending.get(pageIndex);
+    if (!pending) {
+      pending = this.runPreparePage(pageIndex);
+      this.preparePending.set(pageIndex, pending);
+      void pending
+        .catch(() => undefined)
+        .finally(() => {
+          if (this.preparePending.get(pageIndex) === pending) {
+            this.preparePending.delete(pageIndex);
+          }
+        });
+    }
+    await waitForAbort(pending, options.signal);
+  }
+
+  /**
+   * 执行页面准备；共享流程只受 close 控制，单个调用方取消不污染缓存。
+   *
+   * @param pageIndex 页索引。
+   * @returns 准备好的页面 bundle。
+   * @throws OFDError 关闭或准备失败。
+   */
+  private async runPreparePage(pageIndex: number): Promise<PreparedPageBundle> {
+    const controller = new AbortController();
+    this.activeControllers.add(controller);
+    const combined = combineAbortSignals([controller.signal, this.closeController.signal]);
+    const run = (async (): Promise<PreparedPageBundle> => {
+      try {
+        throwIfAborted(combined.signal);
+        const entry = await this.getPageEntry(pageIndex);
+        throwIfAborted(combined.signal);
+        const pageWarning = createPageWarningHandler(this.warnings, pageIndex);
+        const bundle = await preparePage({
+          page: entry.model,
+          resources: entry.resources,
+          loader: this.createLoader(combined.signal, pageIndex),
+          dpi: DEFAULT_DPI,
+          strictImageCtm: this.strictImageCtm,
+          signal: combined.signal,
+          onWarning: pageWarning,
+        });
+        throwIfAborted(combined.signal);
+        if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭');
+        this.preparedBundles.set(pageIndex, { dpi: DEFAULT_DPI, bundle });
+        return bundle;
+      } catch (error) {
+        if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭', { cause: error });
+        throw error;
+      } finally {
+        combined.dispose();
+        this.activeControllers.delete(controller);
+      }
+    })();
+    this.trackActiveRun(run);
+    return run;
+  }
+
+  /**
+   * 读取单页尺寸信息；按页缓存并合并并发请求。
+   *
+   * @param pageIndex 页索引。
+   * @returns 页信息。
+   */
+  private getPageInfo(pageIndex: number): Promise<PageInfo> {
+    const cached = this.pageInfoCache.get(pageIndex);
+    if (cached) return Promise.resolve(cached);
+    const pending = this.pageInfoPending.get(pageIndex);
+    if (pending) return pending;
+    const promise = this.loadPageInfo(pageIndex)
+      .then((info) => {
+        this.pageInfoCache.set(pageIndex, info);
+        return info;
+      })
+      .finally(() => {
+        this.pageInfoPending.delete(pageIndex);
+      });
+    this.pageInfoPending.set(pageIndex, promise);
+    return promise;
+  }
+
+  /**
+   * 轻量解码页尺寸：只读 Page.xml 的 Area 与模板引用。
+   *
+   * @param pageIndex 页索引。
+   * @returns 页信息；缺页/非法 Area 时 warning 并使用回退尺寸。
+   */
+  private async loadPageInfo(pageIndex: number): Promise<PageInfo> {
+    const pageWarning = createPageWarningHandler(this.warnings, pageIndex);
+    const ref = this.document.pages[pageIndex];
+    let areaInfo: PageAreaInfo = { templates: [] };
+    if (!ref?.loc) {
+      pageWarning({
+        code: 'W_BAD_PATH',
+        message: `第 ${pageIndex} 页缺少 Content 文件，页尺寸按回退链处理`,
+      });
+    } else {
+      try {
+        const bytes = await this.zip.readEntry(ref.loc, {
+          maxBytes: this.limits.maxXmlBytes,
+          onWarning: pageWarning,
+        });
+        areaInfo = decodePageAreaXml(bytes, ref.id, pageWarning);
+      } catch (error) {
+        pageWarning({
+          code: 'W_BAD_PATH',
+          message: `第 ${pageIndex} 页 Content.xml 读取失败：${errorMessage(error)}`,
+        });
+      }
+    }
+
+    const templateAreas: PageAreaCandidate[] = [];
+    for (const reference of areaInfo.templates) {
+      const template = this.withTemplateLoc(reference);
+      let area: Box | undefined;
+      if (template.loc) {
+        area = await this.loadTemplateArea(template.loc);
+      }
+      if (!area) {
+        pageWarning({
+          code: 'W_UNSUPPORTED_PAINT',
+          message: `模板页 ${template.id} 无可用 Area，页尺寸继续回退`,
+          resourceId: template.id,
+        });
+      }
+      templateAreas.push({ id: template.id, ...(area ? { area } : {}) });
+    }
+
+    const resolution = resolvePageArea({
+      ...(areaInfo.area ? { pageArea: areaInfo.area } : {}),
+      templateAreas,
+      ...(this.document.commonData?.pageArea
+        ? { commonDataArea: this.document.commonData.pageArea }
+        : {}),
+      onWarning: pageWarning,
+    });
+    const source =
+      resolution.source === 'page'
+        ? 'page'
+        : resolution.source === 'template'
+          ? 'template'
+          : 'default';
+    return {
+      index: pageIndex,
+      widthMm: resolution.size.width,
+      heightMm: resolution.size.height,
+      ...(resolution.area.x !== 0 ? { xMm: resolution.area.x } : {}),
+      ...(resolution.area.y !== 0 ? { yMm: resolution.area.y } : {}),
+      source,
+    };
+  }
+
+  /**
+   * 只读取模板页 Area；按模板 Content.xml 路径缓存。
+   *
+   * @param loc 模板 Content.xml 包内路径。
+   * @returns Area；读取/解析失败时为 undefined。
+   */
+  private loadTemplateArea(loc: string): Promise<Box | undefined> {
+    const cached = this.templateAreaCache.get(loc);
+    if (cached) return cached;
+    const promise = this.zip
+      .readEntry(loc, { maxBytes: this.limits.maxXmlBytes, onWarning: this.documentWarningHandler })
+      .then((bytes) => decodePageAreaXml(bytes, '').area)
+      .catch(() => undefined);
+    this.templateAreaCache.set(loc, promise);
+    return promise;
+  }
+
+  /**
+   * getPageInfos 进行中检查：close 优先于取消。
+   *
+   * @param signal 合并后的取消信号。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED。
+   */
+  private assertInfoActive(signal: AbortSignal): void {
+    if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭');
+    throwIfAborted(signal);
+  }
+
+  /**
+   * 把 promise 加入 close 等待集合，并在完成后移除。
+   *
+   * @param run 进行中的异步任务。
+   */
+  private trackActiveRun<T>(run: Promise<T>): void {
+    this.activeRuns.add(run);
+    void run
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .finally(() => {
+        this.activeRuns.delete(run);
+      });
+  }
+
+  /**
+   * 读取文档大纲；打开阶段已解析并缓存，不加载页面内容。
+   *
+   * @param options 取消信号。
+   * @returns 大纲树；无大纲返回空数组。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED。
+   */
+  async getOutline(options: { signal?: AbortSignal } = {}): Promise<readonly OutlineNode[]> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    return this.document.outlines ?? [];
+  }
+
+  /**
+   * 读取文档书签；打开阶段已解析并缓存，不加载页面内容。
+   *
+   * @param options 取消信号。
+   * @returns 书签列表；无书签返回空数组。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED。
+   */
+  async getBookmarks(options: { signal?: AbortSignal } = {}): Promise<readonly BookmarkItem[]> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    return this.document.bookmarks ?? [];
+  }
+
+  /**
+   * 读取文档属性；打开阶段解析 OFD.xml/DocInfo 并缓存。
+   *
+   * @param options 取消信号。
+   * @returns OFD 版本、页数、包大小与 DocInfo 字段。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED。
+   */
+  async getMetadata(options: { signal?: AbortSignal } = {}): Promise<DocumentMetadata> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    return this.metadata;
   }
 
   /**
    * 关闭文档并释放全部缓存与句柄；可重复调用。
    *
-   * 进行中的渲染会先被中止；`close()` 不向调用方抛错。
+   * 进行中的渲染/导出/页信息/准备会先被中止；`close()` 不向调用方抛错。
    */
   async close(): Promise<void> {
     if (this.closed) return;
@@ -634,6 +987,11 @@ export class OFDDocument {
     this.signatureBundlePromise = undefined;
     this.pageCache.clear();
     this.pagePending.clear();
+    this.pageInfoCache.clear();
+    this.pageInfoPending.clear();
+    this.templateAreaCache.clear();
+    this.preparedBundles.clear();
+    this.preparePending.clear();
     this.templateCache.clear();
     this.resourceIndexCache.clear();
     this.annotationCache.clear();
@@ -680,15 +1038,19 @@ export class OFDDocument {
         const entry = await this.getPageEntry(pageIndex);
         throwIfAborted(combined.signal);
         const pageWarning = createPageWarningHandler(this.warnings, pageIndex);
-        const bundle = await preparePage({
-          page: entry.model,
-          resources: entry.resources,
-          loader: this.createLoader(combined.signal, pageIndex),
-          dpi: params.viewport.dpi,
-          strictImageCtm: this.strictImageCtm,
-          signal: combined.signal,
-          onWarning: pageWarning,
-        });
+        const prepared = this.preparedBundles.get(pageIndex);
+        const bundle =
+          prepared && prepared.dpi === params.viewport.dpi
+            ? prepared.bundle
+            : await preparePage({
+                page: entry.model,
+                resources: entry.resources,
+                loader: this.createLoader(combined.signal, pageIndex),
+                dpi: params.viewport.dpi,
+                strictImageCtm: this.strictImageCtm,
+                signal: combined.signal,
+                onWarning: pageWarning,
+              });
         throwIfAborted(combined.signal);
         drawPage(bundle, this.renderer, params.canvasContext, params.viewport, {
           layerOrder: this.layerOrder,
@@ -1633,6 +1995,89 @@ export class OFDDocument {
  * 方法实现由后续任务落到 `OFDDocument`；本任务只冻结签名，不改变现有行为。
  */
 export interface OFDDocument extends OFDDocumentApi {}
+
+/**
+ * 规范化 getPageInfos 的 start；负数返回 -1 表示空结果。
+ *
+ * @param start 原始起始页索引，从 0 开始。
+ * @param pageCount 总页数。
+ * @returns 可用的起始索引；-1 表示越界。
+ */
+function normalizeInfoStart(start: number | undefined, pageCount: number): number {
+  if (start === undefined || !Number.isFinite(start)) return 0;
+  const value = Math.trunc(start);
+  if (value < 0) return -1;
+  return Math.min(value, pageCount);
+}
+
+/**
+ * 规范化 getPageInfos 的 count；默认剩余全部，非法/负数按 0 处理。
+ *
+ * @param count 原始返回页数。
+ * @param remaining 从 start 到文档末尾的剩余页数。
+ * @returns 实际请求页数。
+ */
+function normalizeInfoCount(count: number | undefined, remaining: number): number {
+  if (remaining <= 0) return 0;
+  if (count === undefined || !Number.isFinite(count)) return remaining;
+  return Math.min(Math.max(0, Math.trunc(count)), remaining);
+}
+
+/**
+ * 等待 promise，同时让单个调用方的 signal 只影响本次等待。
+ *
+ * @param promise 共享准备流程。
+ * @param signal 调用方取消信号。
+ * @returns promise 结果。
+ * @throws OFDError signal 中止时 OFD_ABORTED。
+ */
+function waitForAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(createAbortError(signal.reason));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      cleanup();
+      reject(createAbortError(signal.reason));
+    };
+    const cleanup = (): void => {
+      signal.removeEventListener('abort', onAbort);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+/**
+ * 把模型 DocInfo 映射为公共 DocumentMetadata 的可选字段。
+ *
+ * @param info 已解码 DocInfo；无 DocInfo 时为 undefined。
+ * @returns 仅包含存在字段的对象。
+ */
+function metadataFromDocInfo(info: DocInfo | undefined): Partial<DocumentMetadata> {
+  if (!info) return {};
+  const result: Partial<DocumentMetadata> = {};
+  if (info.title) result.title = info.title;
+  if (info.author) result.author = info.author;
+  if (info.subject) result.subject = info.subject;
+  if (info.abstract) result.abstract = info.abstract;
+  if (info.creationDate) result.creationDate = info.creationDate;
+  if (info.modDate) result.modDate = info.modDate;
+  if (info.creator) result.creator = info.creator;
+  if (info.creatorVersion) result.creatorVersion = info.creatorVersion;
+  if (info.keywords) result.keywords = info.keywords;
+  if (info.docId) result.docId = info.docId;
+  if (info.customData) result.customData = info.customData;
+  return result;
+}
 
 /**
  * 空的资源定义集合；用于单个资源 XML 解析失败时保持集合顺序。
