@@ -9,6 +9,12 @@ import type { DisplayList, DrawCommand } from '../common/display-list';
 import type { Box, DrawStyle, FillRule, ImageHandle, Matrix, ResolvedPaint } from '../common/types';
 import type { Renderer } from '../renderer/types';
 
+/** 图片合成扩展：公共 `DrawCommand` 冻结，blend 仅作为 render 显示列表的附加字段。 */
+type BlendedDrawImage = Extract<DrawCommand, { op: 'drawImage' }> & {
+  /** 可选合成模式；`'multiply'` 用于签章白底。 */
+  blendMode?: 'multiply';
+};
+
 /** 斜接限制的安全默认值（设计方案附录 A）。 */
 const DEFAULT_MITER_LIMIT = 4.234;
 
@@ -179,6 +185,7 @@ export class DisplayListBuilder {
    * @param alpha 透明度，0..1。
    * @param smoothing 是否平滑采样。
    * @param mask 可选蒙版句柄。
+   * @param blendMode 可选合成模式；仅签章白底传 `'multiply'`，缺省 source-over。
    */
   drawImage(
     image: ImageHandle,
@@ -186,9 +193,17 @@ export class DisplayListBuilder {
     alpha: number,
     smoothing: boolean,
     mask?: ImageHandle,
+    blendMode?: 'multiply',
   ): this {
-    const command: DrawCommand = { op: 'drawImage', image, transform, alpha, smoothing };
-    if (mask) command.mask = mask;
+    const command: BlendedDrawImage = {
+      op: 'drawImage',
+      image,
+      transform,
+      alpha,
+      smoothing,
+      ...(mask ? { mask } : {}),
+      ...(blendMode ? { blendMode } : {}),
+    };
     return this.push(command);
   }
 
@@ -369,6 +384,7 @@ export function replayDisplayList(
           command.alpha,
           command.smoothing,
           mask,
+          (command as BlendedDrawImage).blendMode,
         );
         break;
       }

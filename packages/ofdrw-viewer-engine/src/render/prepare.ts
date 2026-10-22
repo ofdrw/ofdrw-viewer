@@ -701,7 +701,8 @@ function buildSignatureBlock(source: DecodedSignatureStamp): SignatureBlock {
     resourceId: source.imageResourceId,
   };
   const handle = createDeferredImageHandle(imageObject, source.image, 'main', 'never');
-  builder.drawImage(handle, [space.width, 0, 0, space.height, 0, 0], 1, true);
+  // 签章 Seal 多为全不透明白底 PNG；白底必须 multiply，避免盖住下方文字/表格。
+  builder.drawImage(handle, [space.width, 0, 0, space.height, 0, 0], 1, true, undefined, 'multiply');
   return {
     id: source.blockId,
     signatureId: source.signatureId,

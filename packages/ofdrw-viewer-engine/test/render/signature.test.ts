@@ -7,6 +7,7 @@ import type { DecodedImage } from '../../src/common/types';
 import type {
   Annotation,
   ImageObject,
+  ImageResource,
   PageModel,
   SealImage,
   SignatureStamp,
@@ -17,6 +18,7 @@ import { preparePage } from '../../src/render/prepare';
 import { drawPage } from '../../src/render/page';
 import { isDeferredImageHandle } from '../../src/render/object';
 import { FakeRenderer } from './path/fake-renderer';
+import { RecordingRenderer } from '../../src/renderer/recording';
 
 /** 构造最小页面。 */
 function page(id = 'p1'): PageModel {
@@ -30,20 +32,21 @@ function page(id = 'p1'): PageModel {
   };
 }
 
-/** 构造空资源作用域。 */
-function scope(): PageResourceScope {
+/** 构造资源作用域；默认无图片。 */
+function scope(input: { images?: ImageResource[] } = {}): PageResourceScope {
   const empty = new Map();
+  const images = new Map((input.images ?? []).map((image) => [image.id, image]));
   return {
     pageId: 'p1',
     templateIds: [],
     fonts: empty,
-    images: empty,
+    images,
     drawParams: empty,
     compositeGraphicUnits: empty,
     patterns: empty,
     colorSpaces: empty,
     getFont: () => undefined,
-    getImage: () => undefined,
+    getImage: (id: string) => images.get(id),
     getDrawParam: () => undefined,
     getComposite: () => undefined,
     getPattern: () => undefined,
@@ -132,8 +135,9 @@ describe('签章渲染', () => {
       ]);
       const draw = block.displayList.commands.find((command) => command.op === 'drawImage');
       expect(draw && draw.op === 'drawImage' ? draw.transform : null).toEqual([40, 0, 0, 40, 0, 0]);
-      const imageCommand = draw as { image: { width: number; height: number } };
+      const imageCommand = draw as { image: { width: number; height: number }; blendMode?: string };
       expect(imageCommand.image).toMatchObject({ width: 2, height: 2 });
+      expect(imageCommand.blendMode).toBe('multiply');
       expect(isDeferredImageHandle(imageCommand.image as never)).toBe(true);
     }
   });
@@ -155,6 +159,32 @@ describe('签章渲染', () => {
       expect.objectContaining({ width: 2, height: 2 }),
       [40, 0, 0, 40, 0, 0],
     ]);
+  });
+
+  it('RecordingRenderer：签章 drawImage 带 multiply，普通图片保持默认', async () => {
+    const imageResource: ImageResource = { id: 'img1', mediaFile: 'a.png', format: 'png' };
+    const pageImage: ImageObject = {
+      kind: 'image',
+      id: 'page-image',
+      boundary: { x: 10, y: 10, w: 20, h: 20 },
+      ctm: [20, 0, 0, 20, 0, 0],
+      alpha: 255,
+      visible: true,
+      resourceId: 'img1',
+    };
+    const model = page();
+    model.layers = [{ type: 'Body', children: [pageImage] }];
+    const bundle = await preparePage({
+      page: model,
+      resources: scope({ images: [imageResource] }),
+      loader: loader({ stamps: [H_STAMPS[0]!] }),
+    });
+    const renderer = new RecordingRenderer();
+    drawPage(bundle, renderer, {} as never, { width: 794, height: 1123, dpi: 96 });
+    const draws = renderer.calls.filter((call) => call.op === 'drawImage');
+    expect(draws).toHaveLength(2);
+    expect('blendMode' in draws[0]!).toBe(false);
+    expect(draws[1]).toMatchObject({ blendMode: 'multiply' });
   });
 
   it('无 Clip 时只绘制完整印章，不生成裁剪命令', async () => {
