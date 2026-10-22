@@ -722,7 +722,9 @@ export function layoutText(
         deltaY: stepY,
       });
       penX += dirX * stepX;
-      penY += dirY * stepY;
+      // 横排文字的 DeltaY 常被用于软换行（本行结束后下移），即使步进方向是 +X
+      // 也必须消费；竖排则由 dirY 决定正负。缺失 DeltaY 时 stepY 为 0，不会误推进。
+      penY += dirY === 0 ? stepY : dirY * stepY;
       deltaIndex += deltaCount;
     }
   }

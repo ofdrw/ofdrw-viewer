@@ -170,13 +170,14 @@ describe('layoutText DeltaX', () => {
     expect(warnings.some((warning) => warning.includes('DeltaY=3'))).toBe(true);
   });
 
-  it('横向文字忽略 DeltaY 对 pen 的影响', () => {
+  it('横向文字的 DeltaY 作为软换行偏移消费', () => {
     const layout = layoutText(
-      makeTextObject({ codes: [makeTextCode({ text: 'AB', deltaX: [5, 5], deltaY: [999, 999] })] }),
+      makeTextObject({ codes: [makeTextCode({ text: 'AB', deltaX: [5, 5], deltaY: [3, 0] })] }),
       faces,
     );
     expect(layout.endX).toBe(10);
-    expect(layout.endY).toBe(0);
+    expect(layout.endY).toBe(3);
+    expect(layout.units.map((unit) => unit.placements[0].y)).toEqual([0, 3]);
   });
 });
 
