@@ -5,16 +5,24 @@
 import { describe, expect, it } from 'vitest';
 import type {
   Annotation,
+  FontResource,
   ImageResource,
   PageModel,
   Pattern,
   PageObject,
 } from '../../src/model/types';
+import type { FontFaceSet } from '../../src/font/types';
 import type { PageResourceScope } from '../../src/resource/types';
 import type { PreparePageLoader } from '../../src/render/prepare';
 import { preparePage } from '../../src/render/prepare';
 import { drawPage } from '../../src/render/page';
 import { FakeRenderer } from './path/fake-renderer';
+import {
+  createFakeFace,
+  createFakeFaceSet,
+  makeTextCode,
+  makeTextObject,
+} from '../text-layout/fake-font';
 
 /** 构造最小页面。 */
 function page(layers: PageModel['layers'], templates: PageModel['templates'] = []): PageModel {
@@ -44,20 +52,27 @@ function path(id: string, x: number, y = 0, w = 10, h = 10): PageObject {
 }
 
 /** 构造空资源作用域。 */
-function scope(input: { images?: ImageResource[]; patterns?: [string, Pattern][] } = {}): PageResourceScope {
+function scope(
+  input: {
+    images?: ImageResource[];
+    patterns?: [string, Pattern][];
+    fonts?: FontResource[];
+  } = {},
+): PageResourceScope {
   const empty = new Map();
   const images = new Map((input.images ?? []).map((item) => [item.id, item]));
+  const fonts = new Map((input.fonts ?? []).map((item) => [item.id, item]));
   const patterns = new Map(input.patterns ?? []);
   return {
     pageId: 'p1',
     templateIds: [],
-    fonts: empty,
+    fonts,
     images,
     drawParams: empty,
     compositeGraphicUnits: empty,
     patterns,
     colorSpaces: empty,
-    getFont: () => undefined,
+    getFont: (id: string) => fonts.get(id),
     getImage: (id: string) => images.get(id),
     getDrawParam: (_id: string) => undefined,
     getComposite: () => undefined,
@@ -69,10 +84,11 @@ function scope(input: { images?: ImageResource[]; patterns?: [string, Pattern][]
 function loader(input: {
   templates?: PageModel[];
   annotations?: Annotation[];
+  fontFaces?: ReadonlyMap<string, FontFaceSet>;
 } = {}): PreparePageLoader {
   return {
     async loadFontFaces() {
-      return new Map();
+      return input.fontFaces ?? new Map();
     },
     async decodeImage() {
       return {
@@ -414,6 +430,109 @@ describe('drawPage', () => {
     const alphas = renderer.callsOf('multiplyAlpha').map((call) => call.args[0] as number);
     expect(alphas).toContain(1);
     expect(alphas).not.toContain(128 / 255);
+  });
+
+  it('负宽 Boundary 归一化后的右对齐文本按右边界锚定（SignScaleError 8 列）', async () => {
+    const face = createFakeFace({
+      key: 'negative-boundary-simsun',
+      family: '宋体',
+      unitsPerEm: 1000,
+      glyphs: [{ gid: 1, advanceWidth: 1000, codePoints: [0x31] }],
+    });
+    const font: FontResource = {
+      id: '52',
+      fontName: '宋体',
+      familyName: '宋体',
+      charset: 'unicode',
+      serif: true,
+      bold: false,
+      italic: false,
+      fixedSize: false,
+    };
+    // SignScaleError 表体 8 个 TextObject：Boundary="right y -w h"，TextCode X=-w。
+    const columns = [
+      { id: '116', right: 90, width: 3 },
+      { id: '117', right: 112.5, width: 15 },
+      { id: '118', right: 134.6, width: 15 },
+      { id: '119', right: 162.5, width: 6 },
+      { id: '120', right: 175, width: 9 },
+      { id: '121', right: 203.5, width: 6 },
+      { id: '179', right: 162.5, width: 6 },
+      { id: '180', right: 203.5, width: 6 },
+    ];
+    const texts = columns.map((column) =>
+      makeTextObject({
+        id: column.id,
+        font: '52',
+        size: 3,
+        boundary: { x: column.right, y: 58, w: -column.width, h: 5 },
+        codes: [
+          makeTextCode({
+            text: '1'.repeat(Math.ceil(column.width / 3)),
+            x: -column.width,
+            y: 3,
+            deltaX: Array.from({ length: Math.ceil(column.width / 3) }, () => 3),
+          }),
+        ],
+      }),
+    );
+    const model = page([{ type: 'Body', children: texts }]);
+    const bundle = await preparePage({
+      page: model,
+      resources: scope({ fonts: [font] }),
+      loader: loader({ fontFaces: new Map([['52', createFakeFaceSet(face)]]) }),
+    });
+    const renderer = new FakeRenderer();
+    const warnings: string[] = [];
+    drawPage(bundle, renderer, {} as never, { width: 794, height: 530, dpi: 96 }, {
+      onWarning: (warning) => warnings.push(warning.code),
+    });
+
+    // 8 个负宽 Boundary 均告警并完成绘制；对象原点在右边界，裁剪区为 [-w,0]。
+    expect(warnings.filter((code) => code === 'W_NEGATIVE_BOUNDARY')).toHaveLength(8);
+    expect(translatedXs(renderer)).toEqual(columns.map((column) => column.right));
+    const clipStarts = renderer
+      .callsOf('rect')
+      .map((call) => call.args[0] as number)
+      .filter((x) => x < 0);
+    expect(clipStarts).toEqual(columns.map((column) => -column.width));
+  });
+
+  it('普通负 TextCode X 不触发负宽 Boundary 右锚定兼容', async () => {
+    const face = createFakeFace({
+      key: 'normal-negative-text-x',
+      unitsPerEm: 1000,
+      glyphs: [{ gid: 1, advanceWidth: 1000, codePoints: [0x41] }],
+    });
+    const font: FontResource = {
+      id: '1',
+      fontName: 'Fake Sans',
+      charset: 'unicode',
+      serif: false,
+      bold: false,
+      italic: false,
+      fixedSize: false,
+    };
+    const text = makeTextObject({
+      id: 'normal',
+      font: '1',
+      size: 3,
+      boundary: { x: 10, y: 5, w: 10, h: 5 },
+      codes: [makeTextCode({ text: 'A', x: -2, y: 3 })],
+    });
+    const model = page([{ type: 'Body', children: [text] }]);
+    const bundle = await preparePage({
+      page: model,
+      resources: scope({ fonts: [font] }),
+      loader: loader({ fontFaces: new Map([['1', createFakeFaceSet(face)]]) }),
+    });
+    const renderer = new FakeRenderer();
+    drawPage(bundle, renderer, {} as never, { width: 794, height: 530, dpi: 96 });
+
+    expect(translatedXs(renderer)).toEqual([10]);
+    expect(
+      renderer.callsOf('rect').some((call) => call.args[0] === 0 && call.args[2] === 10),
+    ).toBe(true);
   });
 
   it('零 Boundary 跳过、负 Boundary 归一化并 warning、异常后仍 restore', async () => {

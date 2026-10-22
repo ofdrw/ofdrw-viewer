@@ -365,6 +365,37 @@ function imageClipsUseInverseCtm(object: ImageObject): boolean {
 }
 
 /**
+ * 兼容负宽 Boundary 归一化后的右对齐文本。
+ *
+ * GB/T 33190 要求 ST_Box 宽高大于 0；部分生产工具用
+ * `Boundary="right y -w h"` + `TextCode X="-w"` 表示右对齐。模型层会把
+ * 负宽归一化为左上角（x+w），此时对象空间原点应仍在右边界、裁剪区覆盖
+ * [-w,0]，否则整列字形会落在裁剪区外。
+ *
+ * @param object 待绘制对象。
+ * @param boundary 已归一化的对象外接矩形。
+ * @returns 需要右边界锚定时的原点与裁剪起点；否则 undefined。
+ */
+function negativeBoundaryTextAnchor(
+  object: PageObject,
+  boundary: Box,
+): { originX: number; clipX: number } | undefined {
+  if (object.kind !== 'text' || !(boundary.w > 0)) return undefined;
+  const codes = object.codes;
+  if (codes.length === 0) return undefined;
+  let minX = 0;
+  let hasPositiveX = false;
+  for (const code of codes) {
+    const x = code.x ?? 0;
+    minX = Math.min(minX, x);
+    if (x > 0) hasPositiveX = true;
+  }
+  if (hasPositiveX || !(minX < 0)) return undefined;
+  if (Math.abs(minX + boundary.w) > 1e-6) return undefined;
+  return { originX: boundary.x + boundary.w, clipX: -boundary.w };
+}
+
+/**
  * 绘制单个对象/块。
  *
  * @param context 绘制上下文。
@@ -395,8 +426,10 @@ export function drawObject(
     );
   }
 
+  const textAnchor = negativeBoundaryTextAnchor(object, boundary);
+  const originX = textAnchor?.originX ?? boundary.x;
   const objectMatrix = multiplyMatrix(
-    multiplyMatrix(context.deviceMatrix, translateMatrix(IDENTITY_MATRIX, boundary.x, boundary.y)),
+    multiplyMatrix(context.deviceMatrix, translateMatrix(IDENTITY_MATRIX, originX, boundary.y)),
     object.ctm ?? IDENTITY_MATRIX,
   );
   const { renderer } = context;
@@ -419,9 +452,9 @@ export function drawObject(
   };
   renderer.save();
   try {
-    renderer.translate(boundary.x, boundary.y);
+    renderer.translate(originX, boundary.y);
     renderer.beginPath();
-    renderer.rect(0, 0, boundary.w, boundary.h);
+    renderer.rect(textAnchor?.clipX ?? 0, 0, boundary.w, boundary.h);
     renderer.clip('nonzero');
     if (!clipsAfterCtm) applyObjectClips();
     if (object.ctm) renderer.transform(object.ctm);
