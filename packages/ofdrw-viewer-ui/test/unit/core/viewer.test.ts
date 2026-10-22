@@ -91,6 +91,56 @@ function pageTop(viewer: OFDViewer, pageNumber: number): number {
   return Number.parseFloat(element.style.top);
 }
 
+/**
+ * 读取滚动内容坐标 `absoluteY` 所在页与页内比例。
+ *
+ * @param viewer 阅读器实例。
+ * @param absoluteY 相对滚动内容顶部的 y 坐标，单位 px。
+ * @returns 页码/页内比例；落在页间空隙时返回 null。
+ */
+function pagePositionAt(
+  viewer: OFDViewer,
+  absoluteY: number,
+): { pageNumber: number; ratio: number } | null {
+  for (const pageView of viewer.getPageViews()) {
+    const top = Number.parseFloat(pageView.element.style.top);
+    const height = Number.parseFloat(pageView.element.style.height);
+    if (absoluteY >= top && absoluteY < top + height) {
+      return { pageNumber: pageView.pageNumber, ratio: (absoluteY - top) / height };
+    }
+  }
+  return null;
+}
+
+/**
+ * 派发合成触摸指针事件。
+ *
+ * @param target 事件目标。
+ * @param type 事件类型。
+ * @param pointerId 触点 id。
+ * @param clientX 视口 x 坐标，单位 px。
+ * @param clientY 视口 y 坐标，单位 px。
+ * @returns 派发的事件，可检查 defaultPrevented。
+ */
+function dispatchTouchPointer(
+  target: HTMLElement,
+  type: string,
+  pointerId: number,
+  clientX: number,
+  clientY: number,
+): MouseEvent {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    clientX,
+    clientY,
+  });
+  Object.defineProperty(event, 'pointerId', { value: pointerId });
+  Object.defineProperty(event, 'pointerType', { value: 'touch' });
+  target.dispatchEvent(event);
+  return event;
+}
+
 let contextMock: { clearRect: ReturnType<typeof vi.fn>; fillRect: ReturnType<typeof vi.fn> };
 
 beforeEach(() => {
@@ -368,6 +418,184 @@ describe('OFDViewer 核心', () => {
     viewer.setRotation(90);
     await vi.waitFor(() => expect(viewer.getPageNumber()).toBe(5));
     expect(viewer.getPageView(5)?.element.dataset.current).toBe('true');
+    viewer.destroy();
+  });
+
+  it('Ctrl+滚轮以指针为锚点缩放并阻止浏览器默认缩放', async () => {
+    const viewer = new OFDViewer({
+      container: document.body,
+      source: new ArrayBuffer(8),
+      initialScale: 1,
+    });
+    await viewer.ready;
+    const main = viewer.getElements().main;
+    vi.spyOn(main, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 50,
+      top: 50,
+      left: 0,
+      right: 800,
+      bottom: 650,
+      width: 800,
+      height: 600,
+      toJSON: () => ({}),
+    } as DOMRect);
+    main.scrollTop = 200;
+    main.dispatchEvent(new Event('scroll'));
+    await vi.waitFor(() => expect(viewer.getState().view.scrollTop).toBe(200));
+
+    const before = pagePositionAt(viewer, 200 + 200);
+    expect(before).not.toBeNull();
+    const wheel = new WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      deltaY: -120,
+      clientX: 300,
+      clientY: 250,
+    });
+    expect(main.dispatchEvent(wheel)).toBe(false);
+    await vi.waitFor(() => expect(viewer.getScale()).toBeCloseTo(1.1, 5));
+    await vi.waitFor(() => expect(viewer.getState().view.scrollTop).toBeGreaterThan(200));
+    const after = pagePositionAt(viewer, viewer.getState().view.scrollTop + 200);
+    expect(after?.pageNumber).toBe(before?.pageNumber);
+    expect(Math.abs((after?.ratio ?? 0) - (before?.ratio ?? 0))).toBeLessThan(0.002);
+
+    // 普通滚轮不拦截、不缩放。
+    const plain = new WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: false,
+      ctrlKey: false,
+      deltaY: -120,
+      clientX: 300,
+      clientY: 250,
+    });
+    expect(main.dispatchEvent(plain)).toBe(true);
+    expect(viewer.getScale()).toBeCloseTo(1.1, 5);
+    viewer.destroy();
+
+    const disabled = new OFDViewer({
+      container: document.body,
+      source: new ArrayBuffer(8),
+      initialScale: 1,
+      features: { zoom: false },
+    });
+    await disabled.ready;
+    const disabledMain = disabled.getElements().main;
+    const blocked = new WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      deltaY: -120,
+    });
+    expect(disabledMain.dispatchEvent(blocked)).toBe(true);
+    expect(disabled.getScale()).toBe(1);
+    const dblclick = new MouseEvent('dblclick', { bubbles: true, cancelable: true });
+    disabledMain.dispatchEvent(dblclick);
+    expect(dblclick.defaultPrevented).toBe(false);
+    expect(disabled.getScale()).toBe(1);
+    disabled.destroy();
+  });
+
+  it('触摸双指捏合以中点为锚点并在结束后释放 pointer capture', async () => {
+    const viewer = new OFDViewer({
+      container: document.body,
+      source: new ArrayBuffer(8),
+      initialScale: 1,
+    });
+    await viewer.ready;
+    const main = viewer.getElements().main;
+    vi.spyOn(main, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 800,
+      bottom: 800,
+      width: 800,
+      height: 800,
+      toJSON: () => ({}),
+    } as DOMRect);
+    const released: number[] = [];
+    Object.assign(main, {
+      setPointerCapture: vi.fn(),
+      releasePointerCapture: vi.fn((pointerId: number) => released.push(pointerId)),
+      hasPointerCapture: vi.fn(() => true),
+    });
+    main.scrollTop = 100;
+    main.dispatchEvent(new Event('scroll'));
+    await vi.waitFor(() => expect(viewer.getState().view.scrollTop).toBe(100));
+    const before = pagePositionAt(viewer, 100 + 400);
+
+    expect(dispatchTouchPointer(main, 'pointerdown', 2, 400, 400).defaultPrevented).toBe(false);
+    expect(dispatchTouchPointer(main, 'pointerdown', 1, 300, 400).defaultPrevented).toBe(true);
+    const move = dispatchTouchPointer(main, 'pointermove', 1, 600, 400);
+    expect(move.defaultPrevented).toBe(true);
+    await vi.waitFor(() => expect(viewer.getScale()).toBeCloseTo(2, 5));
+    await vi.waitFor(() => expect(viewer.getState().view.scrollTop).not.toBe(100));
+    const after = pagePositionAt(viewer, viewer.getState().view.scrollTop + 400);
+    expect(after?.pageNumber).toBe(before?.pageNumber);
+    expect(Math.abs((after?.ratio ?? 0) - (before?.ratio ?? 0))).toBeLessThan(0.003);
+
+    dispatchTouchPointer(main, 'pointerup', 2, 400, 400);
+    dispatchTouchPointer(main, 'pointerup', 1, 600, 400);
+    expect([...released].sort((a, b) => a - b)).toEqual([1, 2]);
+    // 剩余单指移动不再被捏合逻辑拦截。
+    const single = dispatchTouchPointer(main, 'pointermove', 1, 520, 400);
+    expect(single.defaultPrevented).toBe(false);
+    expect(viewer.getScale()).toBeCloseTo(2, 5);
+    viewer.destroy();
+  });
+
+  it('双击在适合宽度与 100% 之间切换并清除文本选区', async () => {
+    const viewer = new OFDViewer({
+      container: document.body,
+      source: new ArrayBuffer(8),
+      initialScale: 1,
+    });
+    await viewer.ready;
+    const main = viewer.getElements().main;
+    vi.spyOn(main, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 800,
+      bottom: 800,
+      width: 800,
+      height: 800,
+      toJSON: () => ({}),
+    } as DOMRect);
+    const textLayer = viewer.getPageView(1)!.textLayer;
+    textLayer.textContent = 'hello';
+    const selection = window.getSelection()!;
+    const range = document.createRange();
+    range.selectNodeContents(textLayer);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    expect(selection.isCollapsed).toBe(false);
+
+    const first = new MouseEvent('dblclick', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 300,
+      clientY: 300,
+    });
+    textLayer.dispatchEvent(first);
+    expect(first.defaultPrevented).toBe(true);
+    await vi.waitFor(() => expect(viewer.getState().view.zoomMode).toBe('auto'));
+    expect(viewer.getScale()).toBeGreaterThan(1);
+    expect(selection.isCollapsed).toBe(true);
+
+    const second = new MouseEvent('dblclick', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 300,
+      clientY: 300,
+    });
+    main.dispatchEvent(second);
+    await vi.waitFor(() => expect(viewer.getState().view.zoomMode).toBe('page-actual'));
+    expect(viewer.getScale()).toBeCloseTo(1, 5);
     viewer.destroy();
   });
 });

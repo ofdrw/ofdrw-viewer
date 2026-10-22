@@ -255,6 +255,19 @@ export class OFDViewer implements UIShellHost {
   private scrollListenerBound = false;
   /** 主区域滚动回调；只做 rAF 合并，实际更新在 `handleScroll` 中完成。 */
   private readonly onScroll = (): void => this.scheduleScrollUpdate();
+  /** 触摸屏当前按下的触点；key 为 pointerId，坐标单位 px。 */
+  private readonly touchPoints = new Map<number, { x: number; y: number }>();
+  /** 捏合开始时的两指距离，单位 px；0 表示未开始。 */
+  private pinchStartDistance = 0;
+  /** 捏合开始时的缩放倍率。 */
+  private pinchStartScale = 1;
+  /** 已执行 pointer capture 的触点，用于手势结束释放。 */
+  private readonly capturedPointers = new Set<number>();
+  private readonly onWheel = (event: WheelEvent): void => this.handleWheel(event);
+  private readonly onPointerDown = (event: PointerEvent): void => this.handlePointerDown(event);
+  private readonly onPointerMove = (event: PointerEvent): void => this.handlePointerMove(event);
+  private readonly onPointerUp = (event: PointerEvent): void => this.handlePointerUp(event);
+  private readonly onDoubleClick = (event: MouseEvent): void => this.handleDoubleClick(event);
   private readonly onWindowResize = (): void => this.scheduleViewportUpdate();
   private readonly onFullscreenChange = (): void => {
     const value = !!this.ownerDocument.fullscreenElement;
@@ -611,6 +624,7 @@ export class OFDViewer implements UIShellHost {
     this.keyboard.destroy();
     this.history?.destroy();
     this.unbindScrollListener();
+    this.unbindGestureListeners();
     this.resizeObserver?.disconnect();
     window.removeEventListener('resize', this.onWindowResize);
     this.ownerDocument.removeEventListener('fullscreenchange', this.onFullscreenChange);
@@ -1203,8 +1217,21 @@ export class OFDViewer implements UIShellHost {
     this.elements.main.scrollTop = toIntegerScrollTop(value);
   }
 
-  /** 应用缩放并保持滚动锚点。 */
-  private applyScale(nextScale: number, zoomMode: ZoomMode): void {
+  /**
+   * 应用缩放并保持滚动锚点。
+   *
+   * 传入指针坐标时按指针下的页面坐标恢复滚动位置（滚轮/捏合/双击）；
+   * 否则沿用页顶锚点（工具栏/API）。
+   *
+   * @param nextScale 目标倍率。
+   * @param zoomMode 缩放模式。
+   * @param origin 指针视口坐标，单位 px；省略时锚定当前滚动位置。
+   */
+  private applyScale(
+    nextScale: number,
+    zoomMode: ZoomMode,
+    origin?: { readonly clientX: number; readonly clientY: number },
+  ): void {
     if (Math.abs(nextScale - this.state.view.scale) < 0.0001) {
       if (zoomMode !== this.state.view.zoomMode) {
         this.patchView({ zoomMode });
@@ -1213,15 +1240,35 @@ export class OFDViewer implements UIShellHost {
       return;
     }
     const previous = this.state.view.scale;
-    const anchor = this.captureAnchor();
+    const pointerOffset = origin ? this.pointerOffsetY(origin.clientY) : 0;
+    const anchor = origin
+      ? this.layout.getAnchor(this.mainScrollTop + pointerOffset)
+      : this.captureAnchor();
     this.layout.setScale(nextScale);
     this.patchView({ scale: nextScale, zoomMode });
-    this.reflow(anchor);
+    if (origin) {
+      this.reflow();
+      this.mainScrollTop = this.layout.getOffsetForAnchor(anchor) - pointerOffset;
+    } else {
+      this.reflow(anchor);
+    }
     this.emit('scalechanging', { scale: nextScale, zoomMode, previous });
     this.cancelAllPageTasks();
     this.renderVisible(true);
     this.commit();
     this.syncHash();
+  }
+
+  /**
+   * 指针相对主区域内容顶部的偏移。
+   *
+   * @param clientY 指针在视口中的 y 坐标，单位 px。
+   * @returns 相对主区域可视顶部的偏移，单位 px。
+   */
+  private pointerOffsetY(clientY: number): number {
+    const rect = this.elements.main.getBoundingClientRect();
+    const height = rect.height > 0 ? rect.height : this.measureViewport().height;
+    return Math.min(Math.max(0, clientY - rect.top), height);
   }
 
   /** 捕获当前滚动锚点。 */
@@ -1485,6 +1532,181 @@ export class OFDViewer implements UIShellHost {
     }
     if (typeof window !== 'undefined') window.addEventListener('resize', this.onWindowResize);
     this.bindScrollListener();
+    this.bindGestureListeners();
+  }
+
+  /**
+   * 绑定滚轮/触摸捏合/双击缩放手势。
+   *
+   * `touch-action: pan-x pan-y` 关闭浏览器自身的捏合与双击缩放，同时保留单指
+   * 平移；滚轮监听必须非 passive 才能在 Ctrl/Cmd+滚轮时 `preventDefault`。
+   */
+  private bindGestureListeners(): void {
+    const main = this.elements.main;
+    main.style.touchAction = 'pan-x pan-y';
+    main.addEventListener('wheel', this.onWheel, { passive: false });
+    main.addEventListener('pointerdown', this.onPointerDown);
+    main.addEventListener('pointermove', this.onPointerMove);
+    main.addEventListener('pointerup', this.onPointerUp);
+    main.addEventListener('pointercancel', this.onPointerUp);
+    main.addEventListener('dblclick', this.onDoubleClick);
+  }
+
+  /** 解绑手势监听并释放残留的 pointer capture。 */
+  private unbindGestureListeners(): void {
+    const main = this.elements.main;
+    this.releaseTouchPointers();
+    this.touchPoints.clear();
+    main.removeEventListener('wheel', this.onWheel);
+    main.removeEventListener('pointerdown', this.onPointerDown);
+    main.removeEventListener('pointermove', this.onPointerMove);
+    main.removeEventListener('pointerup', this.onPointerUp);
+    main.removeEventListener('pointercancel', this.onPointerUp);
+    main.removeEventListener('dblclick', this.onDoubleClick);
+  }
+
+  /**
+   * Ctrl/Cmd+滚轮缩放；触控板双指捏合通常也以 `ctrlKey=true` 的 wheel 到达。
+   *
+   * 只有 zoom 功能可用时才拦截浏览器默认缩放；步进 1.1/0.9，以指针为锚点。
+   *
+   * @param event 滚轮事件；clientX/clientY 单位 px。
+   */
+  private handleWheel(event: WheelEvent): void {
+    if (!(event.ctrlKey || event.metaKey)) return;
+    if (!this.featureGate.isEnabled('zoom')) return;
+    event.preventDefault();
+    if (Math.abs(event.deltaY) < 1e-6) return;
+    const factor = event.deltaY < 0 ? 1.1 : 0.9;
+    const next = clampScale(this.state.view.scale * factor);
+    this.applyScale(next, this.state.view.zoomMode, {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
+  }
+
+  /**
+   * 记录触摸触点；第二个触点按下时开始捏合。
+   *
+   * @param event 指针事件；坐标单位 px。
+   */
+  private handlePointerDown(event: PointerEvent): void {
+    if (event.pointerType !== 'touch') return;
+    this.touchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (this.touchPoints.size > 2) {
+      this.pinchStartDistance = 0;
+      this.releaseTouchPointers();
+      return;
+    }
+    if (this.touchPoints.size !== 2 || !this.featureGate.isEnabled('zoom')) return;
+    const points = [...this.touchPoints.values()];
+    const first = points[0]!;
+    const second = points[1]!;
+    this.pinchStartDistance = Math.max(
+      1,
+      Math.hypot(first.x - second.x, first.y - second.y),
+    );
+    this.pinchStartScale = this.state.view.scale;
+    this.captureTouchPointers();
+    event.preventDefault();
+  }
+
+  /**
+   * 双指捏合缩放；以两指中点对应的页面坐标为锚点。
+   *
+   * @param event 指针事件；坐标单位 px。
+   */
+  private handlePointerMove(event: PointerEvent): void {
+    if (event.pointerType !== 'touch' || !this.touchPoints.has(event.pointerId)) return;
+    this.touchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (this.pinchStartDistance <= 0 || this.touchPoints.size !== 2) return;
+    event.preventDefault();
+    const points = [...this.touchPoints.values()];
+    const first = points[0]!;
+    const second = points[1]!;
+    const distance = Math.hypot(first.x - second.x, first.y - second.y);
+    const next = clampScale(this.pinchStartScale * (distance / this.pinchStartDistance));
+    this.applyScale(next, this.state.view.zoomMode, {
+      clientX: (first.x + second.x) / 2,
+      clientY: (first.y + second.y) / 2,
+    });
+  }
+
+  /**
+   * 结束触点并释放 pointer capture；剩余单指不影响普通滚动。
+   *
+   * @param event 指针事件。
+   */
+  private handlePointerUp(event: PointerEvent): void {
+    if (!this.touchPoints.has(event.pointerId)) return;
+    this.touchPoints.delete(event.pointerId);
+    if (this.touchPoints.size < 2) {
+      this.pinchStartDistance = 0;
+      this.releaseTouchPointers();
+    }
+  }
+
+  /** 对两个触摸触点执行 pointer capture；合成事件无活动指针时忽略。 */
+  private captureTouchPointers(): void {
+    const main = this.elements.main;
+    if (typeof main.setPointerCapture !== 'function') return;
+    for (const pointerId of this.touchPoints.keys()) {
+      try {
+        main.setPointerCapture(pointerId);
+        this.capturedPointers.add(pointerId);
+      } catch {
+        // 合成事件没有对应的活动指针，忽略即可。
+      }
+    }
+  }
+
+  /** 释放全部触摸 pointer capture。 */
+  private releaseTouchPointers(): void {
+    const main = this.elements.main;
+    for (const pointerId of this.capturedPointers) {
+      try {
+        if (typeof main.hasPointerCapture !== 'function' || main.hasPointerCapture(pointerId)) {
+          main.releasePointerCapture(pointerId);
+        }
+      } catch {
+        // 指针已失效或从未捕获。
+      }
+    }
+    this.capturedPointers.clear();
+  }
+
+  /**
+   * 双击在适合宽度与 100% 之间切换；以指针为锚点并清除双击文本选区。
+   *
+   * @param event 双击事件；clientX/clientY 单位 px。
+   */
+  private handleDoubleClick(event: MouseEvent): void {
+    if (!this.featureGate.isEnabled('zoom')) return;
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest('a,button,input,select,textarea,[contenteditable="true"]')
+    ) {
+      return;
+    }
+    event.preventDefault();
+    const selection = this.ownerDocument.getSelection?.();
+    if (selection && !selection.isCollapsed) {
+      const anchor = selection.anchorNode;
+      if (anchor && (anchor === this.elements.main || this.elements.main.contains(anchor))) {
+        selection.removeAllRanges();
+      }
+    }
+    const mode: ZoomMode = this.state.view.zoomMode === 'auto' ? 'page-actual' : 'auto';
+    const next =
+      mode === 'page-actual'
+        ? 1
+        : this.layout.scaleForMode(
+            'auto',
+            this.measureViewport(),
+            this.toIndex(this.state.view.pageNumber),
+          );
+    this.applyScale(next, mode, { clientX: event.clientX, clientY: event.clientY });
   }
 
   /**

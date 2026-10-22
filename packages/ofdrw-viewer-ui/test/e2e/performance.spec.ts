@@ -1,12 +1,27 @@
 /**
- * 1000 页性能：打开、首屏、跳页、缩放、查找与缩略图窗口化。
+ * 1000 页性能指标记录（P1/延期，非 MVP 门禁）。
+ *
+ * 只记录实测值与功能可用性；未达设计 §12.6 目标时通过 Playwright annotation 与
+ * console 显式标注，不使用 30s/60s 之类的注水阈值冒充达标。
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { expect, expectNoPageErrors, test } from './fixtures';
 import { FIXTURES, dismissFindbar, openViewer, viewState } from './support';
 
-test('1000 页打开/跳页/缩放/查找/缩略图性能', async ({ page, issues }) => {
+/** 设计 §12.6 的 P1 目标，单位 ms。 */
+const TARGETS = {
+  openMs: 2_000,
+  jumpMs: 500,
+  zoomMs: 500,
+  findMs: 5_000,
+} as const;
+
+test('1000 页打开/跳页/缩放/查找/缩略图指标记录', async ({ page, issues }) => {
   test.setTimeout(240_000);
+  test.info().annotations.push({
+    type: 'performance-status',
+    description: 'F1 性能目标为 P1/延期（非 MVP 门禁）；本次只记录指标，未达目标将显式标注。',
+  });
   await openViewer(page, FIXTURES.thousand, { waitForRender: false });
   await page.waitForFunction(() => window.__events?.some((event) => event.type === 'pagerendered'), null, {
     timeout: 120_000,
@@ -30,7 +45,8 @@ test('1000 页打开/跳页/缩放/查找/缩略图性能', async ({ page, issue
   expect(openMetrics.pageShells).toBe(1000);
   expect(openMetrics.canvases).toBeGreaterThan(0);
   expect(openMetrics.canvases).toBeLessThanOrEqual(8);
-  expect(openMetrics.openMs).toBeLessThan(30_000);
+  expect(Number.isFinite(openMetrics.openMs)).toBe(true);
+  expect(openMetrics.openMs).toBeGreaterThan(0);
 
   // 跳页 500：等待状态与渲染事件。
   const jumpMs = await page.evaluate(async () => {
@@ -73,7 +89,6 @@ test('1000 页打开/跳页/缩放/查找/缩略图性能', async ({ page, issue
     return { ms: performance.now() - start, total: state.total, current: state.current };
   });
   expect(find.total).toBeGreaterThan(0);
-  expect(find.ms).toBeLessThan(60_000);
 
   // 1000 页缩略图：只渲染窗口内 canvas。
   await page.evaluate(() => window.__viewer!.openSidebar('thumbnails'));
@@ -89,6 +104,7 @@ test('1000 页打开/跳页/缩放/查找/缩略图性能', async ({ page, issue
 
   const metrics = {
     fixture: 'thousand.ofd',
+    fixtureSizeMb: 0.8,
     pageCount: openMetrics.pageCount,
     pageShells: openMetrics.pageShells,
     openMs: Math.round(openMetrics.openMs),
@@ -103,8 +119,31 @@ test('1000 页打开/跳页/缩放/查找/缩略图性能', async ({ page, issue
     heapBefore: openMetrics.heap,
     heapAfter: thumbnails.heap,
     viewport: (await viewState(page)).viewport,
+    targets: TARGETS,
+    targetMet: {
+      openMs: openMetrics.openMs <= TARGETS.openMs,
+      jumpTo500Ms: jumpMs <= TARGETS.jumpMs,
+      zoomMs: zoomMs <= TARGETS.zoomMs,
+      findMs: find.ms <= TARGETS.findMs,
+    },
+    deferred: true,
+    note: 'F1 性能目标按用户决定延期（P1，非 MVP 门禁）；仅在目标信创机型与 50–200MB 夹具可用后重新评估。',
     timestamp: new Date().toISOString(),
   };
+  const misses = [
+    !metrics.targetMet.openMs &&
+      `打开 ${metrics.openMs}ms 未达 ≤${TARGETS.openMs}ms（P1/延期，非 MVP 门禁）`,
+    !metrics.targetMet.jumpTo500Ms &&
+      `跳页 ${metrics.jumpTo500Ms}ms 未达 ≤${TARGETS.jumpMs}ms（P1/延期，非 MVP 门禁）`,
+    !metrics.targetMet.zoomMs &&
+      `缩放 ${metrics.zoomMs}ms 未达 ≤${TARGETS.zoomMs}ms（P1/延期，非 MVP 门禁）`,
+    !metrics.targetMet.findMs &&
+      `全篇查找 ${metrics.findMs}ms 未达 ≤${TARGETS.findMs}ms（P1/延期，非 MVP 门禁）`,
+  ].filter((value): value is string => typeof value === 'string');
+  for (const miss of misses) {
+    test.info().annotations.push({ type: 'performance-target-miss', description: miss });
+    console.warn('[performance]', miss);
+  }
   mkdirSync('test/acceptance/artifacts', { recursive: true });
   writeFileSync('test/acceptance/artifacts/performance.json', `${JSON.stringify(metrics, null, 2)}\n`);
   console.log('PERFORMANCE', JSON.stringify(metrics));
