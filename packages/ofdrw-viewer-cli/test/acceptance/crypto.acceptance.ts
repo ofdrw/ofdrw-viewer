@@ -98,7 +98,46 @@ describe('密码 CLI 验收：info 仅查询', () => {
     expect(payload.ofdVersion).toBe('1.0');
   });
 
-  it('加密包无需凭据也退出 0，文本展示层数与用户', async () => {
+  it('明文包 JSON 携带文档元数据/页尺寸，文本输出元数据摘要', async () => {
+    const cwd = await createTempDir();
+    const result = await runCli(['info', fixture('plain.ofd'), '--json'], { cwd });
+
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe('');
+    const payload = JSON.parse(result.stdout) as {
+      document?: {
+        version: string;
+        pageCount: number;
+        pageSizes: Array<{ widthMm: number; heightMm: number }>;
+        creationDate?: string;
+        creator?: string;
+        creatorVersion?: string;
+      };
+      ofdVersion?: string;
+    };
+    expect(payload.document).toMatchObject({
+      version: '1.0',
+      pageCount: 2,
+      pageSizes: [
+        { widthMm: 210, heightMm: 297 },
+        { widthMm: 210, heightMm: 297 },
+      ],
+      creationDate: '2021-06-02',
+      creator: 'OFD R&W',
+      creatorVersion: '1.9.8',
+    });
+    expect(payload.document).not.toHaveProperty('title');
+    expect(payload.ofdVersion).toBe(payload.document?.version);
+
+    const text = await runCli(['info', fixture('plain.ofd')], { cwd });
+    expect(text.code).toBe(0);
+    expect(text.stdout).toContain('标题: 无');
+    expect(text.stdout).toContain('页数: 2');
+    expect(text.stdout).toContain('页面尺寸: 第 1 页 210×297 mm');
+    expect(text.stdout).toContain('创建工具: OFD R&W（1.9.8）');
+  });
+
+  it('加密包无需凭据也退出 0，文本展示层数与用户并提示元数据不可用', async () => {
     const cwd = await createTempDir();
     const result = await runCli(['info', fixture('password-encrypted.ofd')], { cwd });
 
@@ -106,6 +145,7 @@ describe('密码 CLI 验收：info 仅查询', () => {
     expect(result.stdout).toContain('加密: 是（1 层）');
     expect(result.stdout).toContain(`用户: ${CRYPTO_PASSWORD_USER} (password)`);
     expect(result.stdout).toContain('完整性: 无');
+    expect(result.stdout).toContain('元数据不可用（加密文档，需凭据）');
     expect(result.stdout).not.toContain('EncryptedWK');
     expect(result.stderr).toBe('');
   });

@@ -11,6 +11,7 @@ engine 只提供平台无关的页面渲染与文本内容 API，不负责读文
 ```text
 OFD 文件
   ├─ crypto.inspect()        → 加密层/用户/签名/完整性摘要（info）
+  ├─ engine.getMetadata()/getPageInfos() → 明文文档属性/页数/页尺寸（info）
   ├─ crypto.openDecryptingContainer() → 内存明文容器（加密转图片/verify）
   ├─ crypto.verifyOfd()      → 完整性+签名+链+印章+时间戳解析（verify）
   ├─ page.getTextContent()   → 文字 + 位置（px）
@@ -39,7 +40,7 @@ OFD 文件
 - 人读日志；错误与 warning 直接打印到控制台；
 - SIGINT 取消与临时文件清理；
 - Node SEA 自包含可执行文件，多平台构建与发布；
-- `info` 查询加密层/用户/签名/完整性摘要，不解密、不验签；
+- `info` 查询加密层/用户/签名/完整性摘要，明文文档再查元数据/页数/页尺寸，不解密、不验签；
 - `verify` 一次性完成防夹带完整性、全部签名、证书链、印章与时间戳解析；
 - 加密文档转图片：`--password` 或 `--key`（PEM/DER/PKCS#8），可选 `--key-passphrase`/`--user`；
 - `--root`（PEM/DER/CER，可重复，CLI 入口经 `certificatesToDer` 转为 DER）与 `--sm2-user-id`；
@@ -84,7 +85,7 @@ CLI 只能从 `@ofdrw/ofdrw-viewer-engine` 与 `@ofdrw/ofdrw-viewer-crypto` 包�
 
 - 图片链路使用 `OFDDocument.open`、`OFDPage.getViewport` 与 `OFDPage.exportImage`；
 - 文本链路使用 `OFDPage.getTextContent`（v1.1 增量，设计见 [`docs/text-content-api.md`](./text-content-api.md)），固定 `includeChars=false`；
-- 截至本设计定稿，图片/文本链路与 crypto `info`/`verify`/加密转图片均已落地并通过 CLI 单测、e2e 与 5 文件 81 例黑盒验收（含 SEA）；本机 Linux x64 + Node 26.10 验证。
+- 截至本设计定稿，图片/文本链路与 crypto `info`/`verify`/加密转图片均已落地并通过 CLI 单测、e2e 与 5 文件 82 例黑盒验收（含 SEA）；本机 Linux x64 + Node 26.10 验证。
 - CLI 复用 crypto 的口令/私钥解析、解密、验签与链校验，不重复实现密码学逻辑；crypto 不依赖 CLI/UI/engine。
 
 `--text` 时文本 API 不可用的行为：`OFDDocument.open` 成功后检测 `typeof page.getTextContent === 'function'`；不存在则打印 `CLI_TEXT_UNSUPPORTED` 并退出 2，不静默只导出图片。
@@ -122,7 +123,7 @@ packages/ofdrw-viewer-cli/
     bin.ts                  # shebang + main()
     cli.ts                  # parseArgs、子命令分派、帮助、参数校验、退出码
     convert.ts              # 打开文档（可注入解密容器）、逐页导出、汇总
-    info.ts                 # info 子命令：inspect + 文本/JSON 输出
+    info.ts                 # info 子命令：crypto inspect + engine 明文元数据/文本/JSON 输出
     verify.ts               # verify 子命令：verifyOfd + 文本/JSON 输出
     credentials.ts          # 口令/私钥/根证书读取，组装 crypto 公共类型
     crypto-output.ts        # crypto warning → stderr，统一净化
@@ -670,7 +671,7 @@ description: Convert OFD documents into per-page PNG/JPEG/WebP images with the o
 - 终端安全：Logger.error/warn/pageError、crypto warning message/path、info/verify 文本对换行/ESC/C1/U+2028 的清理，JSON 原值保留；
 - 加密转换：口令/私钥、缺/错凭据、页范围/格式/文本参数。
 
-`test/e2e/cli.test.ts` 以真实 `dist/bin.js` 子进程覆盖图片与文本主路径；`test/verification` 独立覆盖 CLI 契约；`test:acceptance` 额外执行 5 文件 81 例黑盒验收（含 SEA）。
+`test/e2e/cli.test.ts` 以真实 `dist/bin.js` 子进程覆盖图片与文本主路径；`test/verification` 独立覆盖 CLI 契约；`test:acceptance` 额外执行 5 文件 82 例黑盒验收（含 SEA）。
 
 ### 11.2 图片黑盒验收（CLI 42 例中的图片/参数/退出码部分）
 
@@ -798,7 +799,7 @@ ofdrw-viewer-cli verify <input.ofd> [加密凭据选项] [--root <file>]... [--s
 | 命令 | 用途 | 是否解密 | 是否验签 |
 | --- | --- | --- | --- |
 | 转图片（无子命令） | 页面图片；`--text` 时空间文本 | 提供凭据时解密 | 否 |
-| `info` | 包结构/加密层/用户/签名/完整性摘要 | 否 | 否 |
+| `info` | 包结构/加密层/用户/签名/完整性摘要 + 明文文档元数据/页尺寸 | 否 | 否 |
 | `verify` | 防夹带完整性 + 全部签名 + 证书链 + 印章 + 时间戳解析 | 加密输入时内部解密 | 是 |
 
 - 子命令只认第一个位置参数**严格等于** `info` 或 `verify`；文件名恰好为 `info`/`verify`/`decrypt` 时用 `./info`、`./verify`、`./decrypt` 前缀规避。
@@ -807,19 +808,29 @@ ofdrw-viewer-cli verify <input.ofd> [加密凭据选项] [--root <file>]... [--s
 
 ### 14.2 `info`（只查询）
 
-语义：读取包结构、加密层、用户、签名条目与完整性存在性；**不调用** `openDecryptingContainer`/`verifyOfd`，不读取私钥、不输出 `EncryptedWK`。
+语义：先读取包结构、加密层、用户、签名条目与完整性存在性；明文包再用 engine 只读打开同一字节源，读取文档属性与页尺寸。**不调用** `openDecryptingContainer`/`verifyOfd`，不读取私钥、不渲染页面、不输出 `EncryptedWK`。加密包无凭据时不自动解密，`document` 省略。
 
-文本示例：
+文本示例（明文）：
 
 ```text
 文件: /abs/input.ofd
-大小: 17210 B
-OFD 版本: 未知
-加密: 是（1 层）
-用户: fixture-password-user (password)
+大小: 5226 B
+OFD 版本: 1.0
+加密: 否
+用户: 无
 签名: 0
 完整性: 无
+标题: 无
+作者: 无
+主题: 无
+创建时间: 2021-06-02
+修改时间: 无
+创建工具: OFD R&W（1.9.8）
+页数: 2
+页面尺寸: 第 1 页 210×297 mm；第 2 页 210×297 mm
 ```
+
+加密无凭据时在原摘要后追加一行：`元数据不可用（加密文档，需凭据）`。页面尺寸文本最多展示前 5 页，更多页时追加“共 N 页，完整尺寸见 --json”；JSON 始终保留全部页尺寸。
 
 `info --json` 固定结构（对应 `CliInfoJson`）：
 
@@ -828,21 +839,71 @@ interface CliInfoJson {
   readonly command: 'info';
   readonly input: string;            // 绝对路径
   readonly packageSize: number;      // byte
-  readonly ofdVersion?: string;      // 不可读时省略；文本显示“未知”
+  readonly ofdVersion?: string;      // 明文优先取 document.version；均不可读时省略
   readonly encrypted: boolean;
   readonly layers: readonly EncryptionLayerInfo[];
   readonly users: readonly EncryptionUserInfo[];
   readonly signatureCount: number;
   readonly integrityPresent: boolean;
+  readonly document?: CliDocumentInfo; // 加密无凭据时省略
   readonly warnings: readonly CryptoWarning[];
+}
+
+interface CliDocumentInfo {
+  readonly version: string;          // 与顶层 ofdVersion 同源
+  readonly pageCount: number;        // 页数
+  readonly pageSizes: readonly { widthMm: number; heightMm: number }[]; // 每页尺寸，mm
+  readonly title?: string;           // DocInfo/Title
+  readonly author?: string;
+  readonly subject?: string;
+  readonly abstract?: string;
+  readonly creationDate?: string;    // 原文
+  readonly modDate?: string;         // 原文
+  readonly creator?: string;
+  readonly creatorVersion?: string;
+  readonly keywords?: readonly string[];
+  readonly docId?: string;
+  readonly customData?: Readonly<Record<string, string>>;
+}
+```
+
+JSON 示例（节选，明文 `plain.ofd`）：
+
+```json
+{
+  "command": "info",
+  "input": "/abs/input.ofd",
+  "packageSize": 5226,
+  "ofdVersion": "1.0",
+  "encrypted": false,
+  "layers": [],
+  "users": [],
+  "signatureCount": 0,
+  "integrityPresent": false,
+  "document": {
+    "version": "1.0",
+    "pageCount": 2,
+    "pageSizes": [
+      { "widthMm": 210, "heightMm": 297 },
+      { "widthMm": 210, "heightMm": 297 }
+    ],
+    "creationDate": "2021-06-02",
+    "creator": "OFD R&W",
+    "creatorVersion": "1.9.8",
+    "docId": "4228962e12c247e2984e79d8334ed10e"
+  },
+  "warnings": []
 }
 ```
 
 - `layers[]` 从外到内，含 `layer/id/encryptDate?/encryptScope?/decryptSeedPath/entriesMapPath/users[]`；`users[]` 为全层按键去重后的视图，`method` 为 `password`/`certificate`/`unknown`。
-- 加密包也退出 0，无需口令；明文包 `encrypted=false`、`layers/users=[]`。
-- 输入以 `NodeFileByteSource` 构造 `{ kind:'byte-source', source }` 交给 `inspect`；`inspect` 关闭内部容器但不关闭字节源，CLI 在命令结束时关闭。
-- 包无法读取/结构非法 → 退出 2；`info` 不因未配置根或未验签失败。
-- warning 逐条写 stderr，payload 输出后调用 `flushWarningSummary()`；JSON stdout 不受影响。
+- 加密包也退出 0，无需口令；明文包 `encrypted=false`、`layers/users=[]`。加密包无凭据时 `document` 整体省略，但 `layers/users/signatureCount/integrityPresent` 仍按 `inspect` 输出。
+- 输入以 `NodeFileByteSource` 构造 `{ kind:'byte-source', source }` 交给 `inspect`；`inspect` 关闭内部容器但不关闭字节源。明文包随后用同一字节源以 `{ kind:'custom', source }` 调 `OFDDocument.open`，只执行 `getMetadata()`/`getPageInfos()`，在 `finally` 关闭 document，再由 CLI 关闭字节源；`document` 关闭失败只产生 warning，不改变退出码。
+- 顶层 `ofdVersion` 统一口径：有 `document` 时取 `document.version`，否则取 `inspect.ofdVersion`，避免 crypto/engine 两套版本字段冲突；`document.version` 与之相同。
+- 字段缺失时省略，不输出 `null`；文本对缺失的标题/作者/主题/创建时间/修改时间/创建工具显示 `无`。
+- `document` 的 `pageSizes` 按页序，单位 mm；JSON 不截断，文本只做摘要。
+- 包无法读取/结构非法 → 退出 2；`info` 不因未配置根或未验签失败。engine 打开/读取失败按文档级失败映射，不静默吞掉。
+- `inspect` 与 engine 的 warning 都逐条写 stderr（engine warning 可带页号），payload 输出后调用 `flushWarningSummary()`；JSON stdout 不受影响。
 
 ### 14.3 `verify`（一次性完整性 + 签名）
 
@@ -939,11 +1000,11 @@ ofdrw-viewer-cli encrypted.ofd -o out --key encrypt.key.pem --key-passphrase '**
 | 能力 | 实现 | 测试 |
 | --- | --- | --- |
 | 子命令/参数/退出码 | `src/cli.ts` | `test/unit/cli.test.ts`、`test/unit/crypto-cli.test.ts` |
-| info 文本/JSON | `src/info.ts` | `test/unit/crypto-cli.test.ts`、`test/verification/cli-info-verify.test.ts` |
+| info 文本/JSON/明文元数据 | `src/info.ts` | `test/unit/info-document.test.ts`、`test/unit/crypto-cli.test.ts`、`test/verification/cli-info-verify.test.ts`、`test/acceptance/crypto.acceptance.ts` |
 | verify 文本/JSON | `src/verify.ts` | 同上 + `test/acceptance/crypto.acceptance.ts` |
 | 凭据/根证书读取 | `src/credentials.ts` | `test/unit/crypto-cli.test.ts` |
 | warning 呈现/净化 | `src/crypto-output.ts`、`src/log.ts`、`src/safe-text.ts` | `test/unit/stderr-safety.test.ts` |
 | 加密转图片 | `src/convert.ts` | `test/verification/cli-convert.test.ts`、acceptance |
 | 黑盒/SEA | `dist/bin.js`、`dist/sea/...` | `test/acceptance/*.acceptance.ts` |
 
-验证命令：`pnpm -C packages/ofdrw-viewer-cli typecheck`、`test`、`build`、`test:acceptance`；acceptance 覆盖 5 文件 81 例（含 SEA）。
+验证命令：`pnpm -C packages/ofdrw-viewer-cli typecheck`、`test`、`build`、`test:acceptance`；acceptance 覆盖 5 文件 82 例（含 SEA）。

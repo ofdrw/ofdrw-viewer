@@ -10,7 +10,7 @@
 - **转图片**：把 OFD 逐页导出为 PNG（默认）、JPEG 或 WebP；
 - **空间文本**：加 `--text` 时每页额外导出带像素坐标的 JSON；
 - **加密文档**：用口令或 SM2 私钥解密后导出，明文不落盘；
-- **`info` 查询**：只读查看包大小、加密层、用户、签名与完整性，不解密、不验签；
+- **`info` 查询**：只读查看包大小、加密层、用户、签名、完整性与明文文档元数据/页尺寸，不解密、不验签；
 - **`verify` 验签**：一次性校验防夹带完整性、全部签名、证书链印章与时间戳（时间戳只解析展示，不验证）。
 
 > `verify` 不会修改文档，也不提供独立 `decrypt` 子命令；加密文档请直接用凭据执行转图片。
@@ -54,7 +54,38 @@ ofdrw-viewer-cli info input.ofd
 ofdrw-viewer-cli info input.ofd --json
 ```
 
-`info` 只调用 crypto 的 `inspect`，不解密、不验签；加密文档不需要口令也能查询，成功退出 `0`。文本输出包含文件、大小、OFD 版本、加密层数、用户、签名数与完整性状态；`--json` 输出固定字段，便于脚本读取。CLI 用 `NodeFileByteSource` 随机读输入，以 `byte-source` 传给 `inspect`，不整包 `readFile`。`info` 只接受 `--json`，带凭据/`--root` 等参数会报用法错误。
+`info` 先调用 crypto 的 `inspect` 查看包大小、加密层、用户、签名与完整性，不解密、不验签；加密文档不需要口令也能查询，成功退出 `0`。对明文文档，`info` 再用 engine 只读打开同一个 `NodeFileByteSource`，读取 `getMetadata()` 与 `getPageInfos()`，补充 OFD 版本、页数、每页宽高（mm）和 DocInfo 元数据（标题、作者、主题、摘要、创建/修改时间、创建工具/版本、关键字、DocID、自定义字段）。不渲染页面、不读取正文、不验签；文档关闭后再关闭字节源。
+
+文本输出在原摘要后增加标题、作者、主题、创建时间、修改时间、创建工具、页数与页面尺寸；页面超过 5 页时只展示前 5 页，完整页尺寸保留在 `--json`。加密文档无凭据时不输出 `document`，并明确提示 `元数据不可用（加密文档，需凭据）`。`--json` 保留原字段并新增可选 `document`，便于脚本读取。CLI 不整包 `readFile`；`info` 只接受 `--json`，带凭据/`--root` 等参数会报用法错误。
+
+`--json` 示例（节选）：
+
+```json
+{
+  "command": "info",
+  "input": "/abs/input.ofd",
+  "packageSize": 5226,
+  "ofdVersion": "1.0",
+  "encrypted": false,
+  "layers": [],
+  "users": [],
+  "signatureCount": 0,
+  "integrityPresent": false,
+  "document": {
+    "version": "1.0",
+    "pageCount": 2,
+    "pageSizes": [
+      { "widthMm": 210, "heightMm": 297 },
+      { "widthMm": 210, "heightMm": 297 }
+    ],
+    "creationDate": "2021-06-02",
+    "creator": "OFD R&W",
+    "creatorVersion": "1.9.8",
+    "docId": "4228962e12c247e2984e79d8334ed10e"
+  },
+  "warnings": []
+}
+```
 
 ### 验证签名与完整性
 
@@ -97,11 +128,13 @@ CLI 用 `NodeFileByteSource` 随机读输入，并把 `{ kind: 'byte-source', so
 
 CLI 的 OFD 文件输入统一走 `NodeFileByteSource`（`fs.promises.open` + 位置读取），以
 `{ kind: 'byte-source', source }` 传给 crypto 的 `inspect`/`openDecryptingContainer`/
-`verifyOfd`；`info`、`verify` 和加密转图片都不会对输入 OFD 调用 `readFile` 整包。
-字节源由 CLI 拥有，在成功、失败、取消或 SIGINT 后关闭；crypto 只读，不关闭调用方
-字节源。取消通过 `AbortSignal` 传入 crypto，命中后按用户中断退出 `130`。crypto 先按
-字节源的 `size` 检查 `maxSourceBytes`（默认 256 MiB），不读取内容；超限按文档级失败
-退出 `2`。私钥、根证书、字体等非 OFD 小文件仍可按原方式读取。
+`verifyOfd`；明文 `info` 还用同一字节源以 `{ kind: 'custom', source }` 交给 engine
+读取元数据。`info`、`verify` 和加密转图片都不会对输入 OFD 调用 `readFile` 整包。
+字节源由 CLI 拥有，在成功、失败、取消或 SIGINT 后关闭；engine 关闭文档后 CLI 再
+释放字节源，crypto 只读、不关闭调用方字节源。取消通过 `AbortSignal` 传入 crypto
+与 engine，命中后按用户中断退出 `130`。crypto 先按字节源的 `size` 检查
+`maxSourceBytes`（默认 256 MiB），不读取内容；超限按文档级失败退出 `2`。私钥、
+根证书、字体等非 OFD 小文件仍可按原方式读取。
 
 ### 文件名恰好为 `info` 或 `verify`
 
@@ -110,7 +143,7 @@ CLI 的 OFD 文件输入统一走 `NodeFileByteSource`（`fs.promises.open` + �
 ## 📊 JSON 与文本输出
 
 - `info`/`verify` 的文本输出面向人阅读；`--json` 输出固定结构，写 stdout，可被脚本解析。
-- `info --json`：`command`、`input`、`packageSize`、`ofdVersion`、`encrypted`、`layers`、`users`、`signatureCount`、`integrityPresent`、`warnings`。
+- `info --json`：`command`、`input`、`packageSize`、`ofdVersion`、`encrypted`、`layers`、`users`、`signatureCount`、`integrityPresent`、`warnings`；明文文档另有 `document`（`version`、`pageCount`、`pageSizes[].widthMm/heightMm`、`title`、`author`、`subject`、`abstract`、`creationDate`、`modDate`、`creator`、`creatorVersion`、`keywords`、`docId`、`customData`，缺失字段省略）。`document.version` 与顶层 `ofdVersion` 同源；加密无凭据时省略 `document`。
 - `verify --json`：`command`、`input`、`report`；`report` 包含 `overall`、`package`、`integrity`、`signatures`、`rootsConfigured`、`warnings` 等字段。
 - JSON 保留文档中的原始值；文本/错误/warning 会移除 ANSI 控制序列，并把换行、C0/C1 控制字符和 U+2028/U+2029 替换为空格，防止恶意 OFD 伪造终端输出行；未知异常的堆栈按原样输出。
 - warning 逐条写 stderr，结束时按 warning 码输出“警告汇总”；正常摘要写 stdout。

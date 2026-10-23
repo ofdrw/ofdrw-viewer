@@ -101,9 +101,10 @@ describe('stderr 控制字符清理', () => {
   });
 
   it('info 的 warning 净化后输出汇总，JSON stdout 保留原始值', async () => {
-    const dir = await createTempDir();
-    const input = join(dir, 'input.ofd');
-    await writeFile(input, 'not a real package');
+    // inspect 被替身控制；输入必须是真实明文包，info 还会用 engine 读元数据。
+    const input = fileURLToPath(
+      new URL('../../../ofdrw-viewer-crypto/test/fixtures/crypto/plain.ofd', import.meta.url),
+    );
     inspectMock.mockResolvedValue({
       encrypted: false,
       packageSize: 1,
