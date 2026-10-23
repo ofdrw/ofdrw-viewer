@@ -67,6 +67,16 @@ ofdrw-viewer 提供了系列智能体协作指南（SKILL），若你是智能�
 - 🎨 [**ofdrw-viewer-engine** · SKILL](packages/ofdrw-viewer-engine/skills/SKILL.md) — 将 OFD 页面渲染到 Canvas，支持缩略图、图片导出、带坐标的文字层与文档信息读取，适用于浏览器、Node.js、小程序等环境。
 - 📖 [**ofdrw-viewer-ui** · SKILL](packages/ofdrw-viewer-ui/skills/SKILL.md) — 在网页中嵌入完整的 OFD 阅读器，具备滚动缩放、缩略图与大纲、文本搜索、打印导出、加密文档打开与签章验证等能力。
 
+## 🛠️ OFD 生成与编辑
+
+若您需要生成、编辑 OFD，请使用 [https://github.com/ofdrw/ofdrw](https://github.com/ofdrw/ofdrw)。
+
+## ⚖️ 免责声明 / Disclaimer
+
+使用本项目前请阅读：[免责声明（中英双语）](DISCLAIMER.md)。
+
+Please read before using this project: [Disclaimer (Chinese & English)](DISCLAIMER.md).
+
 ## 📄 许可证
 
 本项目采用 [MIT License](LICENSE) 开源。
