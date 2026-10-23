@@ -1,0 +1,76 @@
+name: CI
+
+# 日常校验：push 到 main 或提 PR 时执行，不发布任何产物。
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '26.10.0'
+  PNPM_VERSION: '11.24.0'
+
+# 同一分支的新提交取消旧任务，节省 runner。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: 类型检查、单测与构建
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查
+        run: pnpm -r --if-present run typecheck
+
+      # golden/e2e/acceptance/performance 依赖参考图、系统字体与独占 CPU，
+      # 在共享 runner 上容易抖动，留给本地或专用环境执行。
+      - name: engine 单元测试
+        run: |
+          pnpm -C packages/ofdrw-viewer-engine exec vitest run \
+            --exclude 'packages/ofdrw-viewer-engine/test/golden/**' \
+            --exclude 'packages/ofdrw-viewer-engine/test/e2e/**' \
+            --exclude 'packages/ofdrw-viewer-engine/test/acceptance/**' \
+            --exclude 'packages/ofdrw-viewer-engine/test/performance/**'
+
+      - name: crypto 单元测试
+        run: pnpm -C packages/ofdrw-viewer-crypto test
+
+      - name: ui 单元与集成测试
+        run: pnpm -C packages/ofdrw-viewer-ui test
+
+      - name: cli 单元与端到端测试
+        run: pnpm -C packages/ofdrw-viewer-cli test
+
+      - name: 构建全部包
+        run: pnpm build
+
+      # 演示站部署在 GitHub Pages 根路径以外时由 pages.yml 注入 BASE_PATH，
+      # 这里用根路径验证站点可构建。
+      - name: 构建演示站
+        env:
+          BASE_PATH: /
+        run: pnpm --filter @ofdrw/ofdrw-viewer-ui build:site

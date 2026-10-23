@@ -1,0 +1,91 @@
+name: 在线演示
+
+# main 分支变更后构建演示站并部署到 GitHub Pages；也可在 Actions 页面手动触发。
+# 前置条件：仓库 Settings → Pages → Source 选择 “GitHub Actions”。
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+env:
+  NODE_VERSION: '26.10.0'
+  PNPM_VERSION: '11.24.0'
+
+# 同一时间只允许一个 Pages 部署，避免旧产物覆盖新产物。
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: 构建演示站
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      # 演示站直接引用 UI 源码，而 UI 源码依赖 engine/crypto 的 dist，必须按拓扑顺序构建。
+      - name: 构建依赖包
+        run: |
+          pnpm --filter @ofdrw/ofdrw-viewer-engine build
+          pnpm --filter @ofdrw/ofdrw-viewer-crypto build
+          pnpm --filter @ofdrw/ofdrw-viewer-ui build
+
+      # 项目站点部署在 /<repo>/ 子路径；<owner>.github.io 仓库部署在根路径。
+      - name: 计算站点路径
+        id: base
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REPOSITORY" == *.github.io ]]; then
+            echo "base=/" >> "$GITHUB_OUTPUT"
+          else
+            echo "base=/${GITHUB_REPOSITORY#*/}/" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+
+      - name: 构建演示站
+        env:
+          BASE_PATH: ${{ steps.base.outputs.base }}
+        run: pnpm --filter @ofdrw/ofdrw-viewer-ui build:site
+
+      - name: 配置 Pages
+        uses: actions/configure-pages@v5
+
+      - name: 上传站点产物
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: packages/ofdrw-viewer-ui/site-dist
+
+  deploy:
+    name: 部署到 GitHub Pages
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 部署
+        id: deployment
+        uses: actions/deploy-pages@v4

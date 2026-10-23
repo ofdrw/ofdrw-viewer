@@ -1,0 +1,379 @@
+name: 发布
+
+# 推送 v* 标签触发完整发布；也可以在 Actions 页面手动指定已存在的 tag 重跑。
+# 手动触发时 publish=false 只构建、不发布，便于先验证产物。
+#
+# 发布步骤：
+#   1. 四个包的 package.json 统一改成目标版本并提交到 main；
+#   2. 打标签并推送，如 git tag v0.1.0 && git push origin v0.1.0；
+#   3. 发布说明由 CI 根据提交历史生成，之后可在 Release 页面继续编辑。
+#
+# 需要配置的 Secret：NPM_TOKEN（对 @ofdrw scope 有发布权限）。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 要发布的标签（如 v0.1.0），必须是已存在的 tag
+        required: true
+        type: string
+      publish:
+        description: 是否真正发布（npm + GitHub Release）；关闭时仅构建
+        required: true
+        type: boolean
+        default: false
+
+# 仅创建 Release 需要写权限；本流程不推送代码。
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: '26.10.0'
+  PNPM_VERSION: '11.24.0'
+  # push 标签时取标签名；手动触发时取输入值。
+  RELEASE_TAG: ${{ inputs.ref || github.ref_name }}
+
+# 同一标签的发布串行执行，避免重复创建 Release 或重复推送 npm。
+concurrency:
+  group: release-${{ inputs.ref || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: 校验版本与类型
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: 校验标签与四个包版本一致
+        id: check
+        env:
+          TAG: ${{ env.RELEASE_TAG }}
+        run: node .github/scripts/check-release-version.mjs "$TAG"
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查
+        run: pnpm -r --if-present run typecheck
+
+  publish-npm:
+    name: 发布 npm 包
+    needs: verify
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      # 按依赖拓扑构建：crypto 依赖 engine 的 CDN 产物，ui/cli 依赖前两者的类型声明。
+      - name: 构建四个包
+        run: |
+          pnpm --filter @ofdrw/ofdrw-viewer-engine build
+          pnpm --filter @ofdrw/ofdrw-viewer-crypto build
+          pnpm --filter @ofdrw/ofdrw-viewer-ui build
+          pnpm --filter @ofdrw/ofdrw-viewer-cli build
+
+      # 已发布过的版本直接跳过，保证 workflow 重跑幂等；正式版发 latest，预发布发 next。
+      - name: 发布到 npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo '::error::缺少 NPM_TOKEN secret，无法发布 npm 包'
+            exit 1
+          fi
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > "$HOME/.npmrc"
+
+          if [[ "$VERSION" == *-* ]]; then
+            dist_tag=next
+          else
+            dist_tag=latest
+          fi
+
+          for pkg in \
+            @ofdrw/ofdrw-viewer-engine \
+            @ofdrw/ofdrw-viewer-crypto \
+            @ofdrw/ofdrw-viewer-ui \
+            @ofdrw/ofdrw-viewer-cli
+          do
+            if npm view "$pkg@$VERSION" version >/dev/null 2>&1; then
+              echo "跳过 $pkg@$VERSION：该版本已存在于 npm"
+              continue
+            fi
+            echo "发布 $pkg@$VERSION（dist-tag：$dist_tag）"
+            pnpm --filter "$pkg" publish --access public --no-git-checks --tag "$dist_tag"
+          done
+
+          rm -f "$HOME/.npmrc"
+
+  build-cli:
+    name: 构建 CLI ${{ matrix.target }}
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: linux-x64-gnu
+            archive: tar.gz
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64-gnu
+            archive: tar.gz
+          - runner: macos-13
+            target: darwin-x64
+            archive: tar.gz
+          - runner: macos-14
+            target: darwin-arm64
+            archive: tar.gz
+          - runner: windows-2022
+            target: win32-x64
+            archive: zip
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 构建 engine 与普通 CLI
+        run: |
+          pnpm -C packages/ofdrw-viewer-engine build
+          pnpm -C packages/ofdrw-viewer-cli build
+
+      - name: 类型检查与单元测试
+        run: |
+          pnpm -C packages/ofdrw-viewer-cli typecheck
+          pnpm -C packages/ofdrw-viewer-cli test
+
+      - name: 构建 SEA 可执行文件
+        run: pnpm -C packages/ofdrw-viewer-cli build:sea -- --target ${{ matrix.target }}
+
+      - name: 冒烟测试（Unix）
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin=packages/ofdrw-viewer-cli/dist/sea/ofdrw-viewer-cli
+          "$bin" --version
+          "$bin" --help
+
+          smoke="$RUNNER_TEMP/sea-smoke"
+          tmp="$RUNNER_TEMP/sea-tmp"
+          rm -rf "$smoke" "$tmp"
+          mkdir -p "$smoke" "$tmp"
+
+          # 去掉 PATH 中的 Node，确认产物自包含。
+          env -i PATH=/usr/bin:/bin TMPDIR="$tmp" \
+            "$bin" ofd_pdf_match/helloworld.ofd -o "$smoke"
+          test -s "$smoke/helloworld-p001.png"
+
+          env -i PATH=/usr/bin:/bin TMPDIR="$tmp" \
+            "$bin" ofd_pdf_match/dense-text-perf.ofd -o "$smoke" --text --pages 1
+          test -s "$smoke/dense-text-perf-p001.json"
+          grep -q '"text"' "$smoke/dense-text-perf-p001.json"
+
+      - name: 冒烟测试（Windows）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bin = 'packages/ofdrw-viewer-cli/dist/sea/ofdrw-viewer-cli.exe'
+          & $bin --version
+          & $bin --help
+
+          $smoke = Join-Path $env:RUNNER_TEMP 'sea-smoke'
+          $tmp = Join-Path $env:RUNNER_TEMP 'sea-tmp'
+          Remove-Item -Recurse -Force $smoke, $tmp -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $smoke, $tmp | Out-Null
+
+          $originalPath = $env:PATH
+          $originalTemp = $env:TEMP
+          $originalTmp = $env:TMP
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $env:TEMP = $tmp
+          $env:TMP = $tmp
+          try {
+            & $bin ofd_pdf_match/helloworld.ofd -o $smoke
+            & $bin ofd_pdf_match/dense-text-perf.ofd -o $smoke --text --pages 1
+          } finally {
+            $env:PATH = $originalPath
+            $env:TEMP = $originalTemp
+            $env:TMP = $originalTmp
+          }
+
+          if (-not (Test-Path (Join-Path $smoke 'helloworld-p001.png'))) {
+            throw 'SEA 图片冒烟未生成 PNG'
+          }
+          $textJson = Join-Path $smoke 'dense-text-perf-p001.json'
+          if (-not (Test-Path $textJson)) {
+            throw 'SEA 文本冒烟未生成 JSON'
+          }
+          if (-not (Select-String -Path $textJson -Pattern '"text"' -Quiet)) {
+            throw 'SEA 文本 JSON 不包含 text 字段'
+          }
+
+      - name: 打包发布产物
+        run: pnpm -C packages/ofdrw-viewer-cli package:sea -- --target ${{ matrix.target }}
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target }}
+          path: |
+            packages/ofdrw-viewer-cli/dist/release/*.${{ matrix.archive }}
+            packages/ofdrw-viewer-cli/dist/release/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  cdn:
+    name: 打包 CDN 产物
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      # crypto 的 CDN 构建会读取 engine 的 IIFE 产物，必须先构建 engine。
+      - name: 构建 engine 与 crypto
+        run: |
+          pnpm --filter @ofdrw/ofdrw-viewer-engine build
+          pnpm --filter @ofdrw/ofdrw-viewer-crypto build
+
+      - name: 打包 CDN 压缩包
+        run: node .github/scripts/package-cdn-assets.mjs
+
+      - name: 上传 CDN 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdn
+          path: release-assets/cdn-*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: 创建 GitHub Release
+    needs: [verify, publish-npm, build-cli, cdn]
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: 下载全部构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: 生成发布说明
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: node .github/scripts/generate-release-notes.mjs "$RELEASE_TAG" "$VERSION" release-notes.md
+
+      - name: 生成 SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          shopt -s nullglob
+          files=(*.tar.gz *.zip)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo '::error::没有找到任何发布产物'
+            exit 1
+          fi
+          sha256sum "${files[@]}" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
+          body_path: release-notes.md
+          prerelease: ${{ contains(needs.verify.outputs.version, '-') }}
+          files: |
+            release-assets/*.tar.gz
+            release-assets/*.zip
+            release-assets/SHA256SUMS
+          fail_on_unmatched_files: true

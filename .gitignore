@@ -13,6 +13,12 @@ coverage/
 **/test/.artifacts/
 **/test/.fixtures/
 examples/*/dist/
+# 在线演示站构建产物（由 CI 构建并部署到 GitHub Pages）
+packages/ofdrw-viewer-ui/site-dist/
+
+# 发布工作流在本地运行时生成的中间产物
+release-assets/
+release-notes.md
 
 # 本地参考源码与素材，不纳入版本管理
 references/
@@ -30,6 +36,7 @@ ofd-render-showcase
 # 仅忽略仓库根目录的 test/（不影响 packages/*/test/）
 /test/
 
+.tmp*
 .pki
 .config
 .local
