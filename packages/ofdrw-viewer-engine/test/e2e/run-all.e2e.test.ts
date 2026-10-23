@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
 import { REPO_ROOT, resolveArtifactsDir } from '../golden/lib/artifacts';
 import { compareImages } from '../golden/lib/compare';
 import { renderOfdSample } from '../golden/lib/engine';
-import { decodePng } from '../golden/lib/image';
+import { decodePng, computeBBox, computeContentMask } from '../golden/lib/image';
 import { isPdftoppmAvailable, renderPdfPageToPng } from '../golden/lib/pdf';
 import { computeSummary, sampleOutcome, writeReport } from '../golden/lib/report';
 import {
@@ -26,6 +26,7 @@ import {
 } from '../golden/lib/samples';
 import { DEFAULT_TOLERANCE } from '../golden/lib/types';
 import type {
+  BBoxPx,
   CompareResult,
   GoldenReport,
   PageComparisonRecord,
@@ -193,12 +194,31 @@ describeIf('真实样本回归（55 对 + manual + dense-text-perf）', () => {
 
           if (entry.pdf && pdftoppmReady) {
             const referenceAbs = join(pagesDir, `${key}-ref.png`);
+            let engineBBox: BBoxPx | undefined;
+            if (entry.referenceOverride?.page === rendered.page) {
+              // override 页按引擎实际内容 bbox 对齐权威图，避免非 96 DPI 下声明 bbox 的线性缩放误差。
+              const engineImage = decodePng(rendered.png);
+              const contentMask = computeContentMask(
+                engineImage,
+                tolerance.minAlpha,
+                tolerance.backgroundDistance,
+              );
+              const minComponent = Math.max(
+                4,
+                Math.round(engineImage.width * engineImage.height * 0.00001),
+              );
+              engineBBox =
+                computeBBox(contentMask, engineImage.width, engineImage.height, minComponent) ??
+                undefined;
+            }
             try {
               const reference = renderPdfPageToPng(
                 join(REPO_ROOT, entry.pdf),
                 rendered.page,
                 referenceAbs,
                 dpi,
+                { width: rendered.width, height: rendered.height },
+                engineBBox,
               );
               record.referenceMs = reference.ms;
               record.referencePng = `pages/${key}-ref.png`;

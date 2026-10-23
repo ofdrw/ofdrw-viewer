@@ -118,6 +118,40 @@ describe('图像比较容差', () => {
       }
     }
     expect(redPixels).toBeGreaterThan(0);
+    // 非差异区必须是淡出的原图，而不是整张全红（回归 pixelmatch alpha 恒 255 的缺陷）。
+    const farOffset = (5 * diff.width + 5) * 4;
+    expect(diff.data[farOffset]).toBeGreaterThan(240);
+    expect(diff.data[farOffset + 1]).toBeGreaterThan(240);
+    expect(diff.data[farOffset + 2]).toBeGreaterThan(240);
+    // 差异页级比例与 3×3 区域加权比例一致（容差 0.01）。
+    const regionPixels = Math.ceil(diff.width / 3) * Math.ceil(diff.height / 3);
+    const weighted =
+      result.metrics.regions.reduce((sum, region) => sum + region.pixelDiffRatio, 0) /
+      result.metrics.regions.length;
+    expect(result.metrics.regions.every((region) => region.pixelDiffRatio < 1)).toBe(true);
+    expect(Math.abs(weighted - result.metrics.pixelDiffRatio)).toBeLessThan(0.01);
+    expect(regionPixels).toBeGreaterThan(0);
+  });
+
+  it('暴露颜色 95 分位/分块/墨迹/内容差异辅助指标', () => {
+    const expected = imageWithRect(120, 80, { x: 10, y: 10, width: 40, height: 30 }, RED);
+    const actual = imageWithRect(120, 80, { x: 10, y: 10, width: 40, height: 30 }, GREEN);
+    const result = compareImages(actual, expected);
+    expect(result.metrics.colorP95DE).toBeGreaterThan(0);
+    expect(result.metrics.colorP95DEAll).toBeGreaterThan(0);
+    expect(result.metrics.blockColorP95DE).toBeGreaterThan(0);
+    expect(result.metrics.contentDiffRatio).toBeGreaterThan(0);
+    // 墨迹差异用位移矩形验证（颜色变化不改变墨迹掩码）。
+    const shifted = compareImages(
+      imageWithRect(120, 80, { x: 20, y: 10, width: 40, height: 30 }, RED),
+      expected,
+    );
+    expect(shifted.metrics.inkDiffRatio).toBeGreaterThan(0);
+    const identical = compareImages(expected, expected);
+    expect(identical.metrics.colorP95DEAll).toBe(0);
+    expect(identical.metrics.blockColorP95DE).toBe(0);
+    expect(identical.metrics.inkDiffRatio).toBe(0);
+    expect(identical.metrics.contentDiffRatio).toBe(0);
   });
 });
 

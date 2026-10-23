@@ -30,4 +30,18 @@ describe('黄金图 harness 补充字体懒加载', () => {
       rmSync(directory, { recursive: true, force: true });
     }
   });
+
+  it('宿主无字体文件时安全降级为空列表', () => {
+    const previous = process.env[FONT_PATH_ENV];
+    process.env[FONT_PATH_ENV] = join(tmpdir(), 'ofd-not-exist-font.ttf');
+    clearSystemSupplementaryFontCache();
+    try {
+      expect(loadSystemSupplementaryFonts()).toEqual([]);
+      expect(systemSupplementaryFontDescription()).toEqual([]);
+    } finally {
+      clearSystemSupplementaryFontCache();
+      if (previous === undefined) delete process.env[FONT_PATH_ENV];
+      else process.env[FONT_PATH_ENV] = previous;
+    }
+  });
 });

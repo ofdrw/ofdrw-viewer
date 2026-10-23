@@ -11,7 +11,6 @@
  * 坐标与单位：像素为 device px（与 DPI 对应）；毫米换算使用 `px × 25.4 / dpi`。
  */
 
-import pixelmatch from 'pixelmatch';
 import { deltaE2000, rgbToLab } from './color';
 import {
   computeBBox,
@@ -120,13 +119,22 @@ export function compareImages(
     layoutDeltaMm = null;
   }
 
-  const diffData = new Uint8Array(width * height * 4);
-  const pixelDiffCount = pixelmatch(actualFlat.data, expectedFlat.data, diffData, width, height, {
-    threshold: tolerance.pixelmatchThreshold,
-    includeAA: false,
-    alpha: 0.5,
-    ignoreMask,
-  });
+  const diffMask = new Uint8Array(width * height);
+  const diffThreshold = Math.max(1, Math.round(tolerance.pixelmatchThreshold * 255));
+  let pixelDiffCount = 0;
+  for (let i = 0; i < diffMask.length; i += 1) {
+    if (ignoreMask[i] !== 0) continue;
+    const offset = i * 4;
+    const delta = Math.max(
+      Math.abs(actualFlat.data[offset]! - expectedFlat.data[offset]!),
+      Math.abs(actualFlat.data[offset + 1]! - expectedFlat.data[offset + 1]!),
+      Math.abs(actualFlat.data[offset + 2]! - expectedFlat.data[offset + 2]!),
+    );
+    if (delta > diffThreshold) {
+      diffMask[i] = 1;
+      pixelDiffCount += 1;
+    }
+  }
   const pixelDiffRatio = pixelDiffCount / (width * height);
 
   const ssim = globalSsim(grayA, grayE);
@@ -137,7 +145,14 @@ export function compareImages(
   const edgeDensity = contentCount > 0 ? countMask(ignoreMask) / contentCount : 0;
   const isTextLike = edgeDensity >= tolerance.textEdgeDensity && ssim >= tolerance.textSsimMin;
 
-  const colorStats = sampleColorDifferences(actualFlat, expectedFlat, contentMaskA, contentMaskE, ignoreMask);
+  const colorStats = sampleColorDifferences(
+    actualFlat,
+    expectedFlat,
+    contentMaskA,
+    contentMaskE,
+    ignoreMask,
+    tolerance.regionGrid,
+  );
   // 主色统计排除抗锯齿边缘，避免第 5 名灰阶随 AA 抖动导致误判。
   const flatMaskA = maskWithoutEdges(contentMaskA, edgeMaskA);
   const flatMaskE = maskWithoutEdges(contentMaskE, edgeMaskE);
@@ -170,9 +185,16 @@ export function compareImages(
     width,
     height,
     tolerance.regionGrid,
-    diffData,
+    diffMask,
     contentMaskA,
     contentMaskE,
+  );
+  const inkDiffRatio = computeInkDiffRatio(
+    actualFlat,
+    expectedFlat,
+    contentMaskA,
+    contentMaskE,
+    tolerance.inkMaxLuminance,
   );
 
   const sizeDeltaPx = {
@@ -235,6 +257,10 @@ export function compareImages(
     keyColorMaxDE,
     keyColorCoverageDelta,
     colorP95DE: colorStats.p95,
+    colorP95DEAll: colorStats.p95All,
+    blockColorP95DE: colorStats.blockP95,
+    inkDiffRatio,
+    contentDiffRatio: colorStats.contentDiffRatio,
     colorSampleCount: colorStats.count,
     ssim,
     pixelDiffRatio,
@@ -244,7 +270,7 @@ export function compareImages(
 
   const result: CompareResult = { status, ok: status === 'pass', reasons, metrics };
   if (options.computeDiff !== false) {
-    result.diffPng = encodePng(buildDiffOverlay(actualFlat, diffData, width, height));
+    result.diffPng = encodePng(buildDiffOverlay(actualFlat, diffMask, width, height));
   }
   return result;
 }
@@ -265,19 +291,36 @@ export function comparePngBuffers(
   return compareImages(decodePng(actualPng), decodePng(expectedPng), options);
 }
 
-/** 颜色采样与 ΔE 统计。 */
+/** 颜色采样与 ΔE 统计（含包含 AA 边缘的全局/分块指标）。 */
+interface ColorSampleStats {
+  /** 排除 AA 边缘后的样本数。 */
+  count: number;
+  /** 排除 AA 边缘后的 ΔE2000 95 分位。 */
+  p95: number;
+  /** 包含 AA 边缘的全部共同内容样本 ΔE2000 95 分位。 */
+  p95All: number;
+  /** 分块内 ΔE2000 95 分位的最大值（3×3 网格）。 */
+  blockP95: number;
+  /** 共同内容样本中 ΔE2000 > 10 的比例。 */
+  contentDiffRatio: number;
+}
+
 function sampleColorDifferences(
   actual: ImageLike,
   expected: ImageLike,
   contentMaskA: Uint8Array,
   contentMaskE: Uint8Array,
   ignoreMask: Uint8Array,
-): { count: number; p95: number } {
+  grid: number,
+): ColorSampleStats {
   const totalPixels = actual.width * actual.height;
   const stride = Math.max(1, Math.round(Math.sqrt(totalPixels / 50_000)));
   const values: number[] = [];
+  const allValues: number[] = [];
+  const gridSize = Math.max(1, Math.floor(grid));
+  const blockValues: number[][] = Array.from({ length: gridSize * gridSize }, () => []);
+  let contentDiffCount = 0;
   for (let i = 0; i < totalPixels; i += stride) {
-    if (ignoreMask[i] !== 0) continue;
     if (contentMaskA[i] === 0 || contentMaskE[i] === 0) continue;
     const offset = i * 4;
     if (actual.data[offset + 3]! < 200 || expected.data[offset + 3]! < 200) continue;
@@ -291,9 +334,51 @@ function sampleColorDifferences(
       g: expected.data[offset + 1]!,
       b: expected.data[offset + 2]!,
     });
-    values.push(deltaE2000(labA, labE));
+    const de = deltaE2000(labA, labE);
+    allValues.push(de);
+    if (de > 10) contentDiffCount += 1;
+    if (ignoreMask[i] === 0) values.push(de);
+    // 块级差分：统计每个网格内 ΔE2000 的 95 分位，取最大值；整图 p95 会被大片白底稀释。
+    const x = i % actual.width;
+    const y = Math.floor(i / actual.width);
+    const row = Math.min(gridSize - 1, Math.floor((y * gridSize) / actual.height));
+    const col = Math.min(gridSize - 1, Math.floor((x * gridSize) / actual.width));
+    blockValues[row * gridSize + col]!.push(de);
   }
-  return { count: values.length, p95: percentile95(values) };
+  const blockP95Values = blockValues
+    .filter((values) => values.length > 0)
+    .map((values) => percentile95(values));
+  return {
+    count: values.length,
+    p95: percentile95(values),
+    p95All: percentile95(allValues),
+    blockP95: blockP95Values.length > 0 ? Math.max(...blockP95Values) : 0,
+    contentDiffRatio: allValues.length > 0 ? contentDiffCount / allValues.length : 0,
+  };
+}
+
+/** 墨迹掩码异或并集比：亮度 ≤ 阈值且为共同内容的像素。 */
+function computeInkDiffRatio(
+  actual: ImageLike,
+  expected: ImageLike,
+  contentMaskA: Uint8Array,
+  contentMaskE: Uint8Array,
+  inkMaxLuminance: number,
+): number {
+  let union = 0;
+  let xor = 0;
+  for (let i = 0; i < contentMaskA.length; i += 1) {
+    const offset = i * 4;
+    const lumA =
+      0.299 * actual.data[offset]! + 0.587 * actual.data[offset + 1]! + 0.114 * actual.data[offset + 2]!;
+    const lumE =
+      0.299 * expected.data[offset]! + 0.587 * expected.data[offset + 1]! + 0.114 * expected.data[offset + 2]!;
+    const inkA = contentMaskA[i] !== 0 && lumA <= inkMaxLuminance ? 1 : 0;
+    const inkE = contentMaskE[i] !== 0 && lumE <= inkMaxLuminance ? 1 : 0;
+    union += inkA | inkE;
+    xor += inkA ^ inkE;
+  }
+  return union > 0 ? xor / union : 0;
 }
 
 /** 3×3（可配置）区域差异。 */
@@ -301,7 +386,7 @@ function computeRegionMetrics(
   width: number,
   height: number,
   grid: number,
-  diffData: Uint8Array,
+  diffMask: Uint8Array,
   contentMaskA: Uint8Array,
   contentMaskE: Uint8Array,
 ): RegionMetric[] {
@@ -320,7 +405,7 @@ function computeRegionMetrics(
       for (let y = y0; y < y1; y += 1) {
         for (let x = x0; x < x1; x += 1) {
           const i = y * width + x;
-          if (diffData[i * 4 + 3]! > 0) diffPixels += 1;
+          if (diffMask[i] !== 0) diffPixels += 1;
           contentA += contentMaskA[i]!;
           contentE += contentMaskE[i]!;
         }
@@ -366,11 +451,11 @@ function maskByLuminance(image: ImageLike, mask: Uint8Array, maxLuminance: numbe
 }
 
 /** 构造 diff 叠加图：非差异区淡出，差异区标红。 */
-function buildDiffOverlay(actual: ImageLike, diffData: Uint8Array, width: number, height: number): ImageLike {
+function buildDiffOverlay(actual: ImageLike, diffMask: Uint8Array, width: number, height: number): ImageLike {
   const out = new Uint8Array(width * height * 4);
   for (let i = 0; i < width * height; i += 1) {
     const offset = i * 4;
-    const isDiff = diffData[offset + 3]! > 0;
+    const isDiff = diffMask[i] !== 0;
     if (isDiff) {
       out[offset] = 255;
       out[offset + 1] = 0;

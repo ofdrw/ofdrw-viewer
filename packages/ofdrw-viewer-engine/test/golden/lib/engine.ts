@@ -24,6 +24,7 @@ import type {
   OFDWarning,
 } from '@ofdrw/ofdrw-viewer-engine';
 import { nodeImageDecoders } from '../../helpers/node-image-decoder';
+import { hostFontMismatchWarnings, inspectHostFontCoverage } from './host-font-coverage';
 import { loadSystemSupplementaryFonts } from './system-fonts';
 import type { PortableWarning } from './types';
 
@@ -159,6 +160,16 @@ export async function renderOfdSample(
       // Node 测试环境没有系统字体回退；注入主机 CJK 字体，避免把缺字体误判为文字渲染缺陷。
       ...(supplementaryFonts.length > 0 ? { supplementaryFonts } : {}),
     });
+    const suppliedFamilies = supplementaryFonts
+      .map((font) => font.family ?? '')
+      .filter((family) => family.length > 0);
+    const hostCoverage = inspectHostFontCoverage(ofdPath, suppliedFamilies);
+    for (const diagnostic of hostFontMismatchWarnings(hostCoverage)) {
+      const key = `${diagnostic.code}\u0000${diagnostic.message}`;
+      if (seenWarnings.has(key)) continue;
+      seenWarnings.add(key);
+      warnings.push({ code: diagnostic.code, message: diagnostic.message });
+    }
     const openMs = performance.now() - start;
     const pageCount = doc.pageCount;
     const pageNumbers =
@@ -235,7 +246,9 @@ export async function renderOfdSample(
       pages,
       failures,
       warnings,
-      fontMissingCount: warnings.filter((warning) => warning.code === 'W_FONT_MISSING').length,
+      fontMissingCount:
+        warnings.filter((warning) => warning.code === 'W_FONT_MISSING').length +
+        hostCoverage.missing.length,
       openMs,
       totalMs: performance.now() - start,
       error: null,

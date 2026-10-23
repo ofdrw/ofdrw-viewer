@@ -254,6 +254,11 @@ function renderPageRow(sample: SampleReport, pageIndex: number): string {
     <td>${page.width ?? '-'}×${page.height ?? '-'}</td>
     <td>${metrics ? fmt(metrics.layoutDeltaMm) : '-'}</td>
     <td>${metrics ? fmt(metrics.keyColorMaxDE, 2) : '-'}</td>
+    <td>${metrics ? fmt(metrics.colorP95DE, 2) : '-'}</td>
+    <td>${metrics ? fmt(metrics.colorP95DEAll, 2) : '-'}</td>
+    <td>${metrics ? fmt(metrics.blockColorP95DE, 2) : '-'}</td>
+    <td>${metrics ? (metrics.inkDiffRatio * 100).toFixed(2) + '%' : '-'}</td>
+    <td>${metrics ? (metrics.contentDiffRatio * 100).toFixed(2) + '%' : '-'}</td>
     <td>${metrics ? fmt(metrics.ssim, 4) : '-'}</td>
     <td>${metrics ? (metrics.pixelDiffRatio * 100).toFixed(3) + '%' : '-'}</td>
     <td>${links.join(' · ') || '-'}</td>
@@ -297,7 +302,7 @@ function renderSample(sample: SampleReport): string {
     ${
       sample.pages.length > 0
         ? `<table class="pages"><thead><tr>
-            <th>page</th><th>status</th><th>px</th><th>bbox Δmm</th><th>key ΔE</th><th>SSIM</th><th>pixel diff</th><th>images</th><th>warn</th><th>error</th>
+            <th>page</th><th>status</th><th>px</th><th>bbox Δmm</th><th>key ΔE</th><th>color p95</th><th>p95(all)</th><th>block p95</th><th>ink diff</th><th>content diff</th><th>SSIM</th><th>pixel diff</th><th>images</th><th>warn</th><th>error</th>
           </tr></thead><tbody>${sample.pages.map((_, index) => renderPageRow(sample, index)).join('')}</tbody></table>`
         : '<p class="notes">无页面结果（未渲染/已跳过）。</p>'
     }

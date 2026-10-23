@@ -44,6 +44,8 @@ export interface Tolerance {
   textSsimMin: number;
   /** 文字页只统计暗墨主色的最大亮度（0..255）；默认 100。 */
   textInkMaxLuminance: number;
+  /** 墨迹掩码亮度上限（0..255）；默认 200，用于 inkDiffRatio。 */
+  inkMaxLuminance: number;
   /** 文字页允许的主色占比差；默认 0.9（字形抗锯齿/字重差异）。 */
   textCoverageDelta: number;
   /** 文字页暗墨主色最大 ΔE2000；默认 6。 */
@@ -66,6 +68,7 @@ export const DEFAULT_TOLERANCE: Readonly<Tolerance> = Object.freeze({
   textEdgeDensity: 1.2,
   textSsimMin: 0.6,
   textInkMaxLuminance: 100,
+  inkMaxLuminance: 200,
   textCoverageDelta: 0.9,
   textColorDeltaE: 6,
   textLayoutMm: 2,
@@ -121,6 +124,14 @@ export interface CompareMetrics {
   keyColorCoverageDelta: number;
   /** 颜色样本 ΔE2000 的 95 分位（辅助指标）。 */
   colorP95DE: number;
+  /** 全部共同内容像素（不排除抗锯齿边缘）的 ΔE2000 95 分位；用于捕获渐变/整体着色差异。 */
+  colorP95DEAll: number;
+  /** 分块内 ΔE2000 95 分位的最大值（3×3 网格）；用于捕获局部渐变/着色差异。 */
+  blockColorP95DE: number;
+  /** 墨迹掩码（亮度 ≤ inkMaxLuminance）异或并集比，0..1；墨迹形状/覆盖差异。 */
+  inkDiffRatio: number;
+  /** 共同内容像素中 ΔE2000 > 10 的比例，0..1；用于解释低 SSIM 的内容差异。 */
+  contentDiffRatio: number;
   /** 参与颜色统计的样本数。 */
   colorSampleCount: number;
   /** 结构相似度（灰度、全局近似，辅助指标）。 */

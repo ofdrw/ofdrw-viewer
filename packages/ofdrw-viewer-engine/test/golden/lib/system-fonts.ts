@@ -106,6 +106,52 @@ const FONT_CANDIDATE_GROUPS: ReadonlyArray<
       ],
     },
   ],
+  [
+    {
+      // 楷体：SignScaleError/v4signed 等样本的 FontName=楷体，必须注入真实 family；
+      // 否则引擎静默回退 Noto Sans，SSIM 低值会被误判为引擎字形缺陷。
+      family: 'KaiTi',
+      paths: [
+        '/mnt/c/Windows/Fonts/simkai.ttf',
+        'C:\\Windows\\Fonts\\simkai.ttf',
+        join(homedir(), '.local/share/fonts/simkai.ttf'),
+        '/usr/share/fonts/truetype/arphic/ukai.ttc',
+      ],
+    },
+  ],
+  [
+    {
+      // 华文楷体（STKaiti）作为 KaiTi 不可用时的第二候选；family 用于匹配 FontName=STKaiti。
+      family: 'STKaiti',
+      paths: [
+        '/mnt/c/Windows/Fonts/STKAITI.TTF',
+        'C:\\Windows\\Fonts\\STKAITI.TTF',
+        join(homedir(), '.local/share/fonts/STKAITI.TTF'),
+      ],
+    },
+  ],
+  [
+    {
+      family: 'Tahoma',
+      paths: [
+        '/mnt/c/Windows/Fonts/tahoma.ttf',
+        'C:\\Windows\\Fonts\\tahoma.ttf',
+        join(homedir(), '.local/share/fonts/tahoma.ttf'),
+      ],
+    },
+  ],
+  [
+    {
+      // Courier/Courier New：v4signed 等样本的等宽字体，避免回退到 Noto Sans Mono 后字宽失真。
+      family: 'Courier New',
+      paths: [
+        '/mnt/c/Windows/Fonts/cour.ttf',
+        'C:\\Windows\\Fonts\\cour.ttf',
+        join(homedir(), '.local/share/fonts/cour.ttf'),
+        '/usr/share/fonts/truetype/msttcorefonts/Courier_New.ttf',
+      ],
+    },
+  ],
 ];
 
 /** 可覆盖的补充字体文件路径环境变量。 */
@@ -180,6 +226,17 @@ export function systemSupplementaryFontDescription(): string[] {
   if (cachedDescription) return [...cachedDescription];
   loadSystemSupplementaryFonts();
   return [...(cachedDescription ?? [])];
+}
+
+/**
+ * 返回本次发现到的字体族名（用于宿主字体覆盖诊断）。
+ *
+ * @returns 注入的 family 名列表；未发现字体时为空数组。
+ */
+export function systemSupplementaryFontFamilies(): string[] {
+  return loadSystemSupplementaryFonts()
+    .map((font) => font.family ?? '')
+    .filter((family) => family.length > 0);
 }
 
 /** 清空发现缓存；仅测试隔离使用。 */

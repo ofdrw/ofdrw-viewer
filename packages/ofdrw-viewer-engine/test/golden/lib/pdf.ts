@@ -106,19 +106,48 @@ function findReferenceOverride(pdfPath: string, page: number): ReferenceOverride
 /**
  * 将人工权威图等比缩放并写入参考 PNG。
  *
+ * 清单中的 width/height 按 96 DPI 记录；实际输出 DPI 变化时同步等比缩放，
+ * 避免 150 DPI 下出现只由参考覆盖图尺寸引起的 size-mismatch。
+ *
  * @param override 参考覆盖配置。
  * @param outPngPath 输出 PNG 绝对路径。
+ * @param dpi 输出 DPI，默认 96。
+ * @param targetSize 引擎实际输出尺寸（像素）；声明时优先使用，保证 override 页尺寸严格一致。
+ * @param targetContentBBoxPx 引擎实际内容 bbox（像素）；声明时按该 bbox 对齐权威图内容。
  * @returns 输出路径与耗时（ms）。
  */
-function renderReferenceOverride(override: ReferenceOverride, outPngPath: string): { path: string; ms: number } {
+function renderReferenceOverride(
+  override: ReferenceOverride,
+  outPngPath: string,
+  dpi = 96,
+  targetSize?: { width: number; height: number },
+  targetContentBBoxPx?: { x: number; y: number; width: number; height: number },
+): { path: string; ms: number } {
   const sourcePath = isAbsolute(override.path) ? override.path : join(REPO_ROOT, override.path);
   if (!existsSync(sourcePath)) throw new Error(`参考覆盖图不存在：${sourcePath}`);
   mkdirSync(dirname(outPngPath), { recursive: true });
   const start = performance.now();
   const source = decodePng(new Uint8Array(readFileSync(sourcePath)));
-  const normalized = override.targetContentBBoxPx
-    ? alignContentToBBox(source, override.width, override.height, override.targetContentBBoxPx)
-    : resizeImageContain(source, override.width, override.height);
+  // 96 DPI 时清单 width/height 已是引擎尺寸；其它 DPI 或引擎声明 targetSize 时按物理尺寸等比缩放。
+  const width = targetSize?.width ?? Math.max(1, Math.round(override.width * (dpi / 96)));
+  const height = targetSize?.height ?? Math.max(1, Math.round(override.height * (dpi / 96)));
+  const scaleX = width / override.width;
+  const scaleY = height / override.height;
+  // 非 96 DPI 时引擎内容 bbox 与 96 DPI 声明不一定线性等比（字体/换行亚像素差异），
+  // 优先使用引擎实际内容 bbox 对齐，保持“权威内容区对齐引擎内容区”的 override 语义。
+  const targetBBox =
+    targetContentBBoxPx ??
+    (override.targetContentBBoxPx
+      ? {
+          x: Math.round(override.targetContentBBoxPx.x * scaleX),
+          y: Math.round(override.targetContentBBoxPx.y * scaleY),
+          width: Math.max(1, Math.round(override.targetContentBBoxPx.width * scaleX)),
+          height: Math.max(1, Math.round(override.targetContentBBoxPx.height * scaleY)),
+        }
+      : undefined);
+  const normalized = targetBBox
+    ? alignContentToBBox(source, width, height, targetBBox)
+    : resizeImageContain(source, width, height);
   writeFileSync(outPngPath, encodePng(normalized));
   return { path: outPngPath, ms: performance.now() - start };
 }
@@ -133,6 +162,8 @@ function renderReferenceOverride(override: ReferenceOverride, outPngPath: string
  * @param page 页号（1 起）。
  * @param outPngPath 输出 PNG 绝对路径。
  * @param dpi 输出 DPI，默认 96。
+ * @param targetSize 引擎实际输出尺寸（像素）；仅供 referenceOverride 对齐使用。
+ * @param targetContentBBoxPx 引擎实际内容 bbox（像素）；仅供 referenceOverride 对齐使用。
  * @returns 输出路径与耗时（ms）。
  */
 export function renderPdfPageToPng(
@@ -140,9 +171,11 @@ export function renderPdfPageToPng(
   page: number,
   outPngPath: string,
   dpi = 96,
+  targetSize?: { width: number; height: number },
+  targetContentBBoxPx?: { x: number; y: number; width: number; height: number },
 ): { path: string; ms: number } {
   const override = findReferenceOverride(pdfPath, page);
-  if (override) return renderReferenceOverride(override, outPngPath);
+  if (override) return renderReferenceOverride(override, outPngPath, dpi, targetSize, targetContentBBoxPx);
   if (!isPdftoppmAvailable()) throw new Error('pdftoppm 不可用，无法渲染 PDF 参考图');
   if (!existsSync(pdfPath)) throw new Error(`PDF 不存在：${pdfPath}`);
   mkdirSync(dirname(outPngPath), { recursive: true });
