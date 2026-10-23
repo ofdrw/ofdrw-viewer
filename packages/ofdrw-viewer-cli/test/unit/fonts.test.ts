@@ -19,10 +19,10 @@ import {
   MAX_SYSTEM_FONT_BYTES,
   MAX_SYSTEM_FONTS,
   clearSystemFontCache,
-  createNodeFontInputLoader,
   discoverSystemFonts,
   isCjkFontFileName,
   isFontFileName,
+  loadFontInputs,
   loadSupplementaryFonts,
   loadSystemFonts,
   mergeFontFiles,
@@ -76,18 +76,48 @@ describe('isFontFileName', () => {
   });
 });
 
-describe('createNodeFontInputLoader', () => {
-  it('读取 path/filePath 来源的字体字节', async () => {
-    const loader = createNodeFontInputLoader();
-    const expected = await readFile(FIXTURE_FONT);
-    await expect(loader({ path: FIXTURE_FONT })).resolves.toEqual(new Uint8Array(expected));
-    await expect(loader({ filePath: FIXTURE_FONT })).resolves.toEqual(new Uint8Array(expected));
+describe('loadFontInputs', () => {
+  it('按列表顺序读取字体字节并返回 data', async () => {
+    const root = await createTempDir();
+    const first = join(root, 'a.ttf');
+    const second = join(root, 'b.otf');
+    await createFontFixture(first);
+    await createFontFixture(second);
+    const capture = createStreamCapture();
+    const logger = new Logger({ stderr: capture.stderr });
+
+    const inputs = await loadFontInputs([{ path: first }, { path: second }], logger);
+
+    expect(inputs).toHaveLength(2);
+    expect(inputs[0]?.data).toEqual(new Uint8Array(await readFile(first)));
+    expect(inputs[1]?.data).toEqual(new Uint8Array(await readFile(second)));
+    expect(capture.stderrText()).toBe('');
   });
 
-  it('不支持来源返回 null，读取失败向上抛出由字体层 warning', async () => {
-    const loader = createNodeFontInputLoader();
-    await expect(loader({ data: new Uint8Array([1]) })).resolves.toBeNull();
-    await expect(loader({ path: join(tmpdir(), 'ofdrw-missing-font.ttf') })).rejects.toThrow();
+  it('读取失败的文件跳过并发出 W_FONT_MISSING，其余照常返回', async () => {
+    const root = await createTempDir();
+    const available = join(root, 'a.ttf');
+    await createFontFixture(available);
+    const capture = createStreamCapture();
+    const logger = new Logger({ stderr: capture.stderr });
+
+    const inputs = await loadFontInputs(
+      [{ path: join(root, 'missing.ttf') }, { path: available }],
+      logger,
+    );
+
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]?.data).toEqual(new Uint8Array(await readFile(available)));
+    expect(capture.stderrText()).toContain('警告 [W_FONT_MISSING]');
+    expect(logger.warningCounts().get('W_FONT_MISSING')).toBe(1);
+  });
+
+  it('空列表返回空数组且不产生 warning', async () => {
+    const capture = createStreamCapture();
+    const logger = new Logger({ stderr: capture.stderr });
+
+    await expect(loadFontInputs([], logger)).resolves.toEqual([]);
+    expect(capture.stderrText()).toBe('');
   });
 });
 

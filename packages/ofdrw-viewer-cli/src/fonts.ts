@@ -2,7 +2,7 @@
  * 字体来源：`--font-dir` 目录扫描与系统字体自动发现。
  *
  * 两者都只读文件系统、收集 `.ttf/.otf/.ttc/.otc`（扩展名大小写不敏感），
- * 并以 realpath 去重；结果直接用于 engine 的 `supplementaryFonts`。
+ * 并以 realpath 去重；字节由 CLI 读取后以 `supplementaryFonts` 交给 engine。
  */
 
 import type { Dirent } from 'node:fs';
@@ -76,7 +76,7 @@ const LATIN_FONT_KEYWORDS = [
   'cantarell',
 ] as const;
 
-/** engine `supplementaryFonts` 接收的字体文件项。 */
+/** CLI 字体扫描得到的字体文件项。 */
 export interface FontFile {
   /** 字体文件的 realpath。 */
   readonly path: string;
@@ -116,29 +116,31 @@ export function isFontFileName(fileName: string): boolean {
 }
 
 /**
- * 创建 Node 字体来源加载器，供 engine `OFDOpenOptions.loadInput` 使用。
+ * 读取全部字体文件字节，供 engine `supplementaryFonts` 使用。
  *
- * `path`/`filePath` 读取本地文件；`url` 使用 fetch。engine 的 Web 默认 loader
- * 不变，CLI 仅在自身进程注入本实现。
+ * CLI 自己读取字体，engine 不再接受路径或自行访问文件系统。单个文件读取失败
+ * 时按旧 `loadInput` 的行为发出 `W_FONT_MISSING` 并跳过，其余字体照常注入。
  *
- * @returns 字体来源加载器；不支持的来源返回 null。
+ * @param fontFiles 字体文件列表（已按用户字体在前、系统字体在后排序并去重）
+ * @param logger 日志器
+ * @returns 字体字节列表，顺序与 `fontFiles` 一致
  */
-export function createNodeFontInputLoader(): (
-  input: FontInput,
-) => Promise<Uint8Array | null> {
-  return async (input: FontInput): Promise<Uint8Array | null> => {
-    if ('url' in input) {
-      if (typeof globalThis.fetch !== 'function') {
-        throw new Error('当前 Node 环境没有 fetch，无法加载字体 URL');
-      }
-      const response = await globalThis.fetch(input.url);
-      if (!response.ok) throw new Error(`字体 URL 加载失败：HTTP ${response.status}`);
-      return new Uint8Array(await response.arrayBuffer());
+export async function loadFontInputs(
+  fontFiles: readonly FontFile[],
+  logger: Logger,
+): Promise<FontInput[]> {
+  const inputs: FontInput[] = [];
+  for (const font of fontFiles) {
+    try {
+      inputs.push({ data: new Uint8Array(await readFile(font.path)) });
+    } catch (error) {
+      logger.warn(
+        'W_FONT_MISSING',
+        `字体字节读取失败：${font.path}（${errorMessage(error)}）`,
+      );
     }
-    const filePath = 'path' in input ? input.path : 'filePath' in input ? input.filePath : undefined;
-    if (filePath === undefined) return null;
-    return new Uint8Array(await readFile(filePath));
-  };
+  }
+  return inputs;
 }
 
 /**

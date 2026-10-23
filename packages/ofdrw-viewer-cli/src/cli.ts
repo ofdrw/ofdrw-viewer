@@ -680,7 +680,7 @@ export async function validateInputFile(inputPath: string): Promise<void> {
  *
  * @param options 转图片参数
  * @param logger 日志器
- * @returns 注入 engine `supplementaryFonts` 的字体列表
+ * @returns 传给 engine `supplementaryFonts` 的字体文件列表
  */
 async function collectFontFiles(
   options: CliOptions,

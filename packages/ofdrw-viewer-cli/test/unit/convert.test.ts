@@ -24,6 +24,9 @@ const SAMPLE_INPUT = fileURLToPath(
   new URL('../../../../ofd_pdf_match/helloworld.ofd', import.meta.url),
 );
 
+/** 仓库自带的最小 TTF，供 loadFontInputs 读取真实字体字节。 */
+const FIXTURE_FONT = fileURLToPath(new URL('../fixtures/minimal.ttf', import.meta.url));
+
 const tempDirs: string[] = [];
 
 /** 创建并登记临时目录，测试结束后统一清理。 */
@@ -105,7 +108,7 @@ function createOptions(outDir: string, overrides: Partial<ConvertOptions> = {}):
     format: 'png',
     dpi: 96,
     pageNumbers: undefined,
-    fontFiles: [{ path: '/fonts/a.ttf' }],
+    fontFiles: [{ path: FIXTURE_FONT }],
     text: false,
     ...overrides,
   };
@@ -165,8 +168,11 @@ describe('convertDocument 图片链路', () => {
     });
     const openOptions = openCalls[0];
     expect(openOptions?.source).toMatchObject({ kind: 'custom' });
-    expect(openOptions?.supplementaryFonts).toEqual([{ path: '/fonts/a.ttf' }]);
-    expect(typeof openOptions?.loadInput).toBe('function');
+    // 字体字节由 CLI 读取后以 data 注入，engine 不再接收 path/loadInput。
+    expect(openOptions?.fontProvider).toBeUndefined();
+    expect(openOptions?.supplementaryFonts).toHaveLength(1);
+    expect(openOptions?.supplementaryFonts?.[0]?.data).toBeInstanceOf(Uint8Array);
+    expect(openOptions?.supplementaryFonts?.[0]?.data.byteLength).toBeGreaterThan(0);
     expect(openOptions?.imageDecoders?.map((decoder) => decoder.format)).toEqual([
       'png',
       'jpeg',
@@ -174,6 +180,24 @@ describe('convertDocument 图片链路', () => {
     ]);
     expect(typeof openOptions?.createCanvas).toBe('function');
     expect(typeof openOptions?.encodeImage).toBe('function');
+  });
+
+  it('没有字体文件时不注入 supplementaryFonts', async () => {
+    const outDir = await createTempDir();
+    const logger = new Logger({ stderr: createStreamCapture().stderr });
+    const openCalls: OFDOpenOptions[] = [];
+    const document = createFakeDocument(1, [{}]);
+
+    await convertDocument(createOptions(outDir, { fontFiles: [] }), {
+      logger,
+      openDocument: createOpenMock(async (options) => {
+        openCalls.push(options);
+        return document;
+      }),
+    });
+
+    expect(openCalls[0]?.fontProvider).toBeUndefined();
+    expect(openCalls[0]?.supplementaryFonts).toBeUndefined();
   });
 
   it('单页失败后继续后续页，并输出 1 起页号', async () => {

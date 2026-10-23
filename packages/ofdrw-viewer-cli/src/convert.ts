@@ -3,7 +3,7 @@
  *
  * 使用 engine 公共 API：
  * - `OFDDocument.open` 负责解包、页面与资源；CLI 注入 Node Canvas、编码器、
- *   图片解码插件与补充字体；
+ *   图片解码插件与已读好的字体字节；
  * - `OFDPage.exportImage` 负责整页渲染与编码；
  * - `OFDPage.getTextContent` 返回 px 坐标文本项，CLI 扁平化为 JSON。
  *
@@ -31,7 +31,7 @@ import { closeCryptoByteSource, openCryptoSource } from './credentials.js';
 import { reportCryptoWarnings } from './crypto-output.js';
 import { CliError, EXIT_CODES, errorMessage, isCliError } from './errors.js';
 import type { FontFile } from './fonts.js';
-import { createNodeFontInputLoader } from './fonts.js';
+import { loadFontInputs } from './fonts.js';
 import { nodeImageDecoders } from './image-decoder.js';
 import type { Logger } from './log.js';
 import { buildImagePath, buildTextJsonPath, writeFileAtomic } from './output.js';
@@ -55,7 +55,7 @@ export interface ConvertOptions {
   readonly dpi: number;
   /** 选中的页号；`undefined` 表示全部页。 */
   readonly pageNumbers: readonly number[] | undefined;
-  /** 补充字体文件列表。 */
+  /** 补充字体文件列表；转换开始时读取字节注入 engine。 */
   readonly fontFiles: readonly FontFile[];
   /** 是否额外导出空间文本 JSON。 */
   readonly text: boolean;
@@ -128,6 +128,8 @@ export async function convertDocument(
 
   try {
     const openDocument = runtime.openDocument ?? OFDDocument.open;
+    // CLI 自己读取字体字节；engine 只接受已读好的 data，不再读取路径或 URL。
+    const supplementaryFonts = await loadFontInputs(options.fontFiles, logger);
     const commonOptions = {
       createCanvas: createCanvasLike,
       encodeImage: async (
@@ -136,10 +138,7 @@ export async function convertDocument(
         quality: number,
       ) => encodeCanvasImage(canvas, format, quality),
       imageDecoders: [...nodeImageDecoders],
-      supplementaryFonts: options.fontFiles.map((font) => ({ path: font.path })),
-      // engine 默认 loader 只服务 Web（url/data）；CLI 注入 Node 文件读取，
-      // 让 --font-dir 扫描到的 path 来源真正加载为字体字节。
-      loadInput: createNodeFontInputLoader(),
+      ...(supplementaryFonts.length === 0 ? {} : { supplementaryFonts }),
       onWarning: (warning: OFDWarning) => {
         const pageNumber =
           warning.pageIndex === undefined ? undefined : warning.pageIndex + 1;
