@@ -102,7 +102,7 @@ export interface FontFaceCreateOptions {
    */
   authoritative?: boolean;
   /**
-   * 字体字节是否为替代字体（例如 supplementaryFonts）。
+   * 字体字节是否为替代字体（例如 defaultFonts/supplementaryFonts）。
    *
    * true 时显式 gid 一律不可用；优先于名称匹配推断。
    */

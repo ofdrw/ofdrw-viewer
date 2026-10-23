@@ -1,4 +1,4 @@
-# OFDRW-Viewer 可视化
+# OFDRW-Viewer
 
 [![在线体验](https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E4%BD%93%E9%AA%8C-GitHub%20Pages-2563eb)](https://ofdrw.github.io/ofdrw-viewer/) [![engine](https://img.shields.io/npm/v/@ofdrw/ofdrw-viewer-engine?label=engine)](https://www.npmjs.com/package/@ofdrw/ofdrw-viewer-engine) [![crypto](https://img.shields.io/npm/v/@ofdrw/ofdrw-viewer-crypto?label=crypto)](https://www.npmjs.com/package/@ofdrw/ofdrw-viewer-crypto) [![cli](https://img.shields.io/npm/v/@ofdrw/ofdrw-viewer-cli?label=cli)](https://www.npmjs.com/package/@ofdrw/ofdrw-viewer-cli) [![release](https://img.shields.io/github/v/release/ofdrw/ofdrw-viewer?label=release)](https://github.com/ofdrw/ofdrw-viewer/releases) [![license](https://img.shields.io/github/license/ofdrw/ofdrw-viewer?label=license)](LICENSE) [![node](https://img.shields.io/badge/node-%3E%3D22-339933)](https://nodejs.org/)
 
@@ -57,6 +57,15 @@ await doc.close();
 [**ofdrw/ofdrw-viewer-crypto**](packages/ofdrw-viewer-crypto/README.md) **OFD 密码能力包**，检测/解密加密文档，解析电子印章与时间戳，提供 SM2/SM3/SM4 签名验证、证书链/信任根校验与防夹带完整性检查；
 
 [👉 *进入了解 ofdrw-viewer-crypto*🔗](packages/ofdrw-viewer-crypto/README.md)
+
+## 🤖 智能体集成
+
+ofdrw-viewer 提供了系列智能体协作指南（SKILL），若你是智能体，请按照以下指南完成接入与调用：
+
+- 🤖 [**ofdrw-viewer-cli** · SKILL](packages/ofdrw-viewer-cli/skills/SKILL.md) — 在终端把 OFD 逐页转换为 PNG/JPEG/WebP 图片，可同时导出带坐标的文字，也能查询文档结构与加密信息、验证签名和完整性。
+- 🔐 [**ofdrw-viewer-crypto** · SKILL](packages/ofdrw-viewer-crypto/skills/SKILL.md) — 检测并解密加密 OFD，解析电子印章与时间戳，校验签名、证书链以及文档是否被夹带篡改。
+- 🎨 [**ofdrw-viewer-engine** · SKILL](packages/ofdrw-viewer-engine/skills/SKILL.md) — 将 OFD 页面渲染到 Canvas，支持缩略图、图片导出、带坐标的文字层与文档信息读取，适用于浏览器、Node.js、小程序等环境。
+- 📖 [**ofdrw-viewer-ui** · SKILL](packages/ofdrw-viewer-ui/skills/SKILL.md) — 在网页中嵌入完整的 OFD 阅读器，具备滚动缩放、缩略图与大纲、文本搜索、打印导出、加密文档打开与签章验证等能力。
 
 ## 📄 许可证
 
