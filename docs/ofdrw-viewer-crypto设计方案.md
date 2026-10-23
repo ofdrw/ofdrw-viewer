@@ -139,7 +139,7 @@ packages/ofdrw-viewer-crypto/
 - 不依赖 Node WebCrypto 之外的宿主 API；PBES2 私钥解密使用 `globalThis.crypto.subtle`（Node 22/浏览器均可用），不可用时抛 `CRYPTO_PRIVATE_KEY_UNSUPPORTED_ENCRYPTION`。
 - 浏览器 bundle 必须能用 esbuild 打成 IIFE，并在 Chromium 验证：SM2 解密、SM3 摘要、SM4-CBC、口令 KDF、SESv4/v5 验签、时间戳解析。
 - Node 22 必须在无 `--experimental-*` 条件下运行全部单测/集成测试；Node 26 作为兼容复跑，不作为主门禁。
-- `CryptoSource` 的 `blob`/`url` 依赖标准 `Blob`/`fetch`；Node 22 提供这两个全局。Node 文件由 CLI 读成 `{ kind: 'arraybuffer', data }`，crypto 不 import `node:fs`。
+- `CryptoSource` 的 `byte-source` 接收 engine 公共 `ByteSource`：Node/CLI 用 `NodeFileByteSource` 基于 `fs.promises.open` 随机读取，不把整包读入内存；crypto 不 import `node:*`，也不关闭调用方字节源。浏览器优先 `blob`/`arraybuffer`，远程地址走 `url`；`blob`/`url` 依赖标准 `Blob`/`fetch`，Node 22 均提供。
 
 ## 2. Engine 虚拟容器（冻结）
 
@@ -322,11 +322,51 @@ export function openZipVirtualContainer(
 ### 3.1 源、凭据、私钥、证书与限制
 
 ```ts
-/** crypto 支持的输入；Node 文件由 CLI 读成 arraybuffer，浏览器 File/Blob 走 blob。 */
+import type { ByteSource } from '@ofdrw/ofdrw-viewer-engine';
+
+/**
+ * crypto 支持的输入。
+ *
+ * Node/CLI 优先 `byte-source`：宿主提供随机访问字节源，crypto 按需读取 ZIP
+ * 条目，不整包读入内存；`arraybuffer`/`blob`/`url` 保持兼容。
+ */
 export type CryptoSource =
-  | { readonly kind: 'arraybuffer'; readonly data: ArrayBuffer | Uint8Array }
-  | { readonly kind: 'blob'; readonly blob: Blob }
-  | { readonly kind: 'url'; readonly url: string; readonly headers?: Record<string, string> };
+  | {
+      /** 内存字节；视图归调用方所有。 */
+      readonly kind: 'arraybuffer';
+      readonly data: ArrayBuffer | Uint8Array;
+    }
+  | {
+      /** 浏览器 Blob/File；engine 按区间读取。 */
+      readonly kind: 'blob';
+      readonly blob: Blob;
+    }
+  | {
+      /** 远程地址；`fetch` 流式读取整包，受 `maxSourceBytes` 限制。 */
+      readonly kind: 'url';
+      readonly url: string;
+      readonly headers?: Record<string, string>;
+    }
+  | {
+      /**
+       * 宿主提供的随机访问源，必须实现 engine 公共 `ByteSource`。
+       *
+       * 调用方拥有并负责关闭（若实现有 close）；crypto 只读，不关闭它。
+       */
+      readonly kind: 'byte-source';
+      readonly source: ByteSource;
+    };
+
+`ByteSource` 来自 `@ofdrw/ofdrw-viewer-engine` 公共导出，只要求 `size`（非负安全整数，单位 byte）与 `read(offset, length)`；crypto 不要求也不转发 `close`。
+
+`byte-source` 语义：
+
+- 宿主提供、调用方拥有：crypto 通过隔离视图读取，绝不对调用方字节源调用 `close`；CLI 在成功、失败、取消/SIGINT 后自行关闭 `NodeFileByteSource`。
+- 按需读取：crypto 先按 `source.size` 做 `maxSourceBytes` 预检（不读取内容），再经 `openZipVirtualContainer({ kind:'custom' })` 读取 ZIP 中央目录和实际需要的条目，不整包 `readFile`。
+- 所有权：`inspect`/`verifyOfd` 关闭内部打开的容器；`openDecryptingContainer` 对明文包返回 **source-backed** 容器，所有权转移给调用方；对加密包最终返回内存容器，并在返回前关闭内部源容器。
+- 取消：`CryptoOptions.signal` 传到每次 `ByteSource.read`，取消抛 `CRYPTO_ABORTED`；字节源结构非法或 `read()` 返回非 `Uint8Array` 抛 `CRYPTO_SOURCE_UNSUPPORTED`，底层读取异常/包结构损坏按 `CRYPTO_INVALID_PACKAGE`，`size` 超限抛 `CRYPTO_LIMIT_EXCEEDED`。
+- 浏览器不使用该分支：`arraybuffer`、`blob`、`url` 保持兼容；`url` 仍由 crypto 流式读取整包（受 `maxSourceBytes` 限制），不是随机访问。
+- `byte-source` 不等于 engine `OFDSource.kind='node-file'`；crypto 不 import `node:fs`，Node 文件适配由宿主/CLI 完成。
 
 /** SM2 私钥输入；pem/der 二选一。 */
 export interface Sm2PrivateKeyInput {
@@ -490,6 +530,7 @@ export function inspect(
 - `ofdVersion` 从明文 `OFD.xml` 或解密前可读的 `OFD.xml` 读取；不可读则省略，不报错。
 - `signatures` 从 `Signatures.xml` 只读摘要，不解析 `SignedValue.dat`；`integrityPresent` 以同时存在 `OFDEntries.xml` 与 `signedvalue.dat` 为准。
 - 所有结构解析失败抛 `CryptoError`（码见 3.7）；不得返回半真半假的数据。
+- 所有来源统一经 `openCryptoContainer`；`byte-source` 按需读取，`inspect` 在返回前关闭内部容器，但不关闭调用方字节源。
 
 ### 3.3 解密容器工厂：`openDecryptingContainer`
 
@@ -913,11 +954,13 @@ export interface CryptoWarning {
 
 ```text
 CryptoSource
-  → readAllBytes（大小上限 maxSourceBytes）
-  → 解析 ZIP 为内存条目表（fflate，保留原始路径/字节）
+  → openCryptoContainer
+       ├─ arraybuffer / blob / byte-source
+       │    → openZipVirtualContainer（按需读取中央目录与条目）
+       └─ url → fetch 流式读取整包（maxSourceBytes）
   → 读取 Encryptions.xml
-       ├─ 不存在：PlainContainer（明文透传）→ 返回
-       └─ 存在：循环每一层
+       ├─ 不存在：source-backed 明文容器（encrypted=false）→ 返回
+       └─ 存在：LazyEntryStore 按需读取 decryptseed/entriesmap/待解条目
             → DecryptSeedLoc（默认 /decryptseed.dat）→ UserInfo 列表
             → 凭据匹配（UserName + UserCert 类型）
             → 恢复 FEK/IV（口令 KDF 或 SM2 私钥）
@@ -925,10 +968,11 @@ CryptoSource
             → 每项 SM4-CBC/PKCS#7 解密并映射为明文路径
             → 删除加密元数据，得到本层明文条目
             → 若仍有 Encryptions.xml：进入下一层
-  → DecryptedContainer（encrypted=false）
+  → MemoryVirtualContainer（encrypted=false；加密包）
 ```
 
-- 全程在内存中完成，不使用临时目录/临时文件；关闭容器时把条目字节引用置空，允许 GC。
+- 加密解密在内存中完成，不使用临时目录/临时文件；`source-backed` 明文容器不复制包体，关闭时只释放内部 ZIP 容器。
+- `arraybuffer`/`blob`/`byte-source` 只读取 ZIP 所需的中央目录与条目；`url` 为兼容既有语义整包流式读取。任何来源都不写临时明文文件。
 - ZIP 路径必须使用严格规范化：`\`→`/`、去前导 `/`、拒绝 `..`、拒绝空段、拒绝大小写碰撞（同一包内路径视为大小写敏感，但警告重复 key）。
 - 不信任 `entriesmap.dat` 自报的路径；解密前校验映射路径是否穿越、是否重复、是否覆盖元数据。
 - 任何一步失败都不返回部分明文容器，避免 UI 展示半解密文档。
@@ -1042,8 +1086,9 @@ SM2Cipher ::= SEQUENCE {
 
 ### 4.9 明文透传、`packageSize` 与元数据隔离
 
-- 无 `Encryptions.xml`：直接构造 `PlainContainer`，逐条复制原始文件；`plaintext=true`、`layers=[]`、`encrypted=false`。
-- `packageSize` 始终等于原始 `CryptoSource` 字节数；解密后不得变成解压总量。
+- 无 `Encryptions.xml`：直接返回 **source-backed** 的原始 ZIP 容器（`encrypted=false`、`read()` 为明文），不逐条复制、不整包读取；`plaintext=true`、`layers=[]`；容器所有权转移给调用方，调用方负责 `close()`。
+- 加密包：逐层解密后构造 `MemoryVirtualContainer`，删除加密元数据，`plaintext=false`；内部源容器在返回前关闭，不泄漏文件句柄。
+- `packageSize` 始终等于原始 `CryptoSource` 字节数；source-backed 与内存容器都不改变该值，解密后不得变成解压总量。
 - 输出容器的 `list()` 不包含：`Encryptions.xml`、`decryptseed.dat`、`entriesmap.dat`、任何加密 `.dat`；`stat/has` 对这些路径返回 false。
 - 输出容器 `encrypted=false`；`OFDDocument.open({ container })` 可直接读取 `OFD.xml` 并渲染。
 - 若解密后仍缺 `OFD.xml`/`Document.xml`，由 engine 报 `OFD_INVALID_PACKAGE`；crypto 不伪造 OFD 结构。

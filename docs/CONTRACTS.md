@@ -807,6 +807,7 @@ export function openZipVirtualContainer(
 - `VirtualReadOptions.signal` 透传取消；engine 高层读取合并宿主 signal，单个等待方取消只影响本次等待，不得中止其他调用方的共享加载；`close()` 中止全部。`close()` 幂等；关闭后 `read/list` 抛 `OFD_CLOSED`。
 - `encrypted` 仅表示容器内存在 `Encryptions.xml`（未解密 OFD 加密元数据）；crypto 解密容器固定 `false`。
 - 默认 ZIP 容器由 `openZipVirtualContainer` 构造（包装 `ByteSource`/`ZipReader`，保留资源限制/CRC/warning）；`encrypted=true` 的容器 `OFDDocument.open` 在解析 XML 前抛 `OFD_ENCRYPTED`；明文包 `encrypted=false` 可直接注入。
+- `openZipVirtualContainer` 拥有传入的 `ByteSource`，`close()` 会调用其 `close`（如有）；crypto 的 `byte-source` 使用不转发 `close` 的隔离视图，因此调用方原始字节源不会被 engine 关闭，仍由调用方释放。
 
 ### 13.4 注入、所有权与生命周期（冻结）
 
@@ -850,7 +851,12 @@ static open(options: OFDOpenOptions | OFDOpenFromContainerOptions): Promise<OFDD
 export type CryptoSource =
   | { readonly kind: 'arraybuffer'; readonly data: ArrayBuffer | Uint8Array }
   | { readonly kind: 'blob'; readonly blob: Blob }
-  | { readonly kind: 'url'; readonly url: string; readonly headers?: Record<string, string> };
+  | { readonly kind: 'url'; readonly url: string; readonly headers?: Record<string, string> }
+  | {
+      /** 宿主提供的 engine `ByteSource`；调用方拥有，crypto 不 close。 */
+      readonly kind: 'byte-source';
+      readonly source: ByteSource;
+    };
 
 export type CryptoCredential = PasswordCredential | PrivateKeyCredential;
 
@@ -878,12 +884,20 @@ export function parseTimestamp(
 ): TimestampParseResult;
 ```
 
-关键类型名冻结：`CryptoOptions`、`CryptoLimits`、`DEFAULT_CRYPTO_LIMITS`、`CryptoSource`、`CryptoCredential`、`Sm2PrivateKeyInput`、`CertificateInput`、`OfdInspection`、`DecryptingContainerResult`、`VerificationReport`、`VerificationStatus`、`ChainStatus`、`TimestampStatus`、`SignatureVerification`、`IntegrityVerification`、`CertificateChainVerification`、`SealVerification`、`ParsedSeal`、`SealPictureInfo`、`ParsedSignedValue`、`TimestampParseResult`、`CertificateSummary`、`X509Certificate`、`CryptoWarning`。
+关键类型名冻结：`CryptoOptions`、`CryptoLimits`、`DEFAULT_CRYPTO_LIMITS`、`CryptoSource`、`ByteSource`、`CryptoCredential`、`Sm2PrivateKeyInput`、`CertificateInput`、`OfdInspection`、`DecryptingContainerResult`、`VerificationReport`、`VerificationStatus`、`ChainStatus`、`TimestampStatus`、`SignatureVerification`、`IntegrityVerification`、`CertificateChainVerification`、`SealVerification`、`ParsedSeal`、`SealPictureInfo`、`ParsedSignedValue`、`TimestampParseResult`、`CertificateSummary`、`X509Certificate`、`CryptoWarning`。
+
+`byte-source` 约束：
+
+- `source` 必须实现 engine 公共 `ByteSource`（`size` 为非负安全整数，单位 byte；`read(offset,length)` 返回 `Uint8Array`），由宿主拥有；crypto 只通过隔离视图读取，**绝不调用调用方 `close`**。
+- crypto 先按 `source.size` 对 `maxSourceBytes` 预检，不读取内容；再经 engine `openZipVirtualContainer({ kind:'custom' })` 按需读取 ZIP 中央目录/条目，不整包 `readFile`。
+- `arraybuffer`/`blob`/`byte-source` 均为按需容器读；`url` 为兼容既有 fetch 语义由 crypto 流式读取整包。浏览器用 `arraybuffer`/`blob`/`url`，Node/CLI 优先 `byte-source`（CLI 使用 `NodeFileByteSource`，基于 `fs.promises.open` 随机读）。
+- 所有权：`inspect`/`verifyOfd` 关闭内部容器；`openDecryptingContainer` 明文包返回 source-backed 容器并转移给调用方，加密包返回内存容器并在返回前关闭内部源容器；调用方 ByteSource 始终由调用方关闭。
+- `CryptoOptions.signal` 透传到每次读取，取消抛 `CRYPTO_ABORTED`；字节源结构非法或 `read()` 返回非 `Uint8Array` 抛 `CRYPTO_SOURCE_UNSUPPORTED`，底层读取异常/包结构损坏按 `CRYPTO_INVALID_PACKAGE`，`size` 超限抛 `CRYPTO_LIMIT_EXCEEDED`。crypto 不 import `node:*`，`byte-source` 不等同于 engine `OFDSource.kind='node-file'`。
 
 入口语义：
 
 - `inspect` 只查询，不解密/不验证；加密包也返回层/用户。
-- `openDecryptingContainer` 明文包原样透传；加密包需要凭据；返回 `VirtualContainer` 且 `encrypted=false`、`packageSize` 保留原始大小。
+- `openDecryptingContainer` 明文包返回 source-backed 原始 ZIP 容器（不复制包体）；加密包需要凭据并返回内存容器；两者均 `encrypted=false`、`packageSize` 保留原始大小，容器所有权归调用方。
 - `verifyOfd` 的 `source`/`container` 二选一；`container.encrypted=true` 拒绝，要求先解密；加密 source 内部解密后验证。
 - `parseSeal` 返回 `ParsedSeal`：含 `picture?`、`timestamp`、`warnings`（图片损坏等用 `W_CRYPTO_SEAL_PICTURE_INVALID`）与 `byteLength`；`ParsedSeal.warnings` 不改变 `hasSignature`，解析成功不等于验签通过。`X509Certificate.subjectDer/issuerDer` 为链匹配保留原始 Name DER，不进入 `CertificateSummary`。
 - `parseTimestamp` 固定 `status='parsed-not-verified'`（或 `not-present`/`parse-error`），永不返回“已验证”。

@@ -97,7 +97,9 @@ CLI 的 OFD 文件输入统一走 `NodeFileByteSource`（`fs.promises.open` + �
 `{ kind: 'byte-source', source }` 传给 crypto 的 `inspect`/`openDecryptingContainer`/
 `verifyOfd`；`info`、`verify` 和加密转图片都不会对输入 OFD 调用 `readFile` 整包。
 字节源由 CLI 拥有，在成功、失败、取消或 SIGINT 后关闭；crypto 只读，不关闭调用方
-字节源。私钥、根证书、字体等非 OFD 小文件仍可按原方式读取。
+字节源。取消通过 `AbortSignal` 传入 crypto，命中后按用户中断退出 `130`。crypto 先按
+字节源的 `size` 检查 `maxSourceBytes`（默认 256 MiB），不读取内容；超限按文档级失败
+退出 `2`。私钥、根证书、字体等非 OFD 小文件仍可按原方式读取。
 
 ### 文件名恰好为 `info` 或 `verify`
 

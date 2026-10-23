@@ -101,7 +101,7 @@ CLI 只能从 `@ofdrw/ofdrw-viewer-engine` 与 `@ofdrw/ofdrw-viewer-crypto` 包�
 
 - 开发运行时 Node ≥ 22，ESM；
 - 只用 Node 内置模块：`node:fs/promises`、`node:path`、`node:os`、`node:util.parseArgs`、`node:process`；
-- 文件输入由 CLI 的 `NodeFileByteSource` 以 `OFDSource` 的 `custom` 形式提供，使用 `fs.promises.open` 随机读；
+- 文件输入由 CLI 的 `NodeFileByteSource` 使用 `fs.promises.open` 随机读；对 crypto 以 `{ kind: 'byte-source', source }` 传入，对 engine 以 `OFDSource` 的 `custom` 形式传入；两种路径都不对输入 OFD 整包 `readFile`；
 - 输出先写同目录临时文件，`fsync` 后 `rename`，失败清理临时文件；
 - Canvas、图片解码、字体目录直接使用 Node 侧实现；
 - 不引入 `jsdom`、browser polyfill、`Blob`/`fetch` 兼容层；
@@ -375,28 +375,37 @@ if (!textOk || !imageOk) pageFailed = true;
 ### 7.1 打开文档
 
 ```ts
-const source = await NodeFileByteSource.open(input);
+const fileSource = await NodeFileByteSource.open(input);
+const cryptoSource: CryptoSource = { kind: 'byte-source', source: fileSource };
 let container: VirtualContainer | undefined;
-if (hasCredentials) {
-  const opened = await openDecryptingContainer({ source, credentials });
-  container = opened.container;
-  reportCryptoWarnings(logger, opened.warnings);
+try {
+  if (hasCredentials) {
+    const opened = await openDecryptingContainer({ source: cryptoSource, credentials });
+    container = opened.container;
+    reportCryptoWarnings(logger, opened.warnings);
+  }
+  const doc = await OFDDocument.open({
+    ...(container === undefined
+      ? { source: { kind: 'custom', source: fileSource } }
+      : { container }),
+    createCanvas: createCanvasLike,
+    encodeImage: encodeCanvasImage,
+    imageDecoders: [...nodeImageDecoders],
+    supplementaryFonts: fontFiles.map((font) => ({ path: font.path })),
+    onWarning: printWarning,
+  });
+  // ...逐页导出...
+  await doc.close();
+} finally {
+  // crypto 不关闭调用方字节源；engine 直接 custom 路径也由 CLI 幂等兜底。
+  await fileSource.close().catch(() => undefined);
+  await container?.close().catch(() => undefined);
 }
-const doc = await OFDDocument.open({
-  ...(container === undefined
-    ? { source: { kind: 'custom', source } }
-    : { container }),
-  createCanvas: createCanvasLike,
-  encodeImage: encodeCanvasImage,
-  imageDecoders: [...nodeImageDecoders],
-  supplementaryFonts: fontFiles.map((font) => ({ path: font.path })),
-  onWarning: printWarning,
-});
 ```
 
 - 只使用公共 API；不读取 ZIP、不解析加密 XML；
-- 有凭据时先 `openDecryptingContainer`，把明文 `VirtualContainer` 注入 engine；容器由 CLI 关闭，明文不落盘；
-- 无凭据时保持原有 `source` 直开路径；加密包由 engine 抛 `OFD_ENCRYPTED`，CLI 映射为退出 4；
+- 有凭据时把 `{ kind: 'byte-source', source: fileSource }` 传给 `openDecryptingContainer`，再把明文 `VirtualContainer` 注入 engine；容器由 CLI 关闭，明文不落盘；
+- 无凭据时把同一 `NodeFileByteSource` 以 engine `custom` 形式直开；加密包由 engine 抛 `OFD_ENCRYPTED`，CLI 映射为退出 4；
 - `onWarning` 直接打印到 stderr，不改变退出码；
 - 打开失败时打印 `OFDError.code` 并退出 2；
 - `--text` 时打开后检测 `page.getTextContent` 是否存在；未加 `--text` 不检测。
@@ -488,7 +497,8 @@ Node 侧实现位于 `image-decoder.ts`：
 ### 7.6 取消与原子写
 
 - 固定串行；
-- SIGINT：CLI 主流程 AbortController 触发 `signal`，传给 `exportImage` 与 `getTextContent` 取消当前页；退出 130；
+- SIGINT：CLI 主流程 AbortController 触发 `signal`，传给 `exportImage`、`getTextContent` 与 crypto 的 `byte-source` 读取；取消当前页/解密/验证并退出 130；
+- `NodeFileByteSource` 在 `finally` 中关闭；无论成功、异常还是取消，都不把文件句柄留给 crypto（crypto 不关闭调用方字节源）；
 - 图片写同目录临时文件，完成后 `rename`；`--text` 时 JSON 同样原子写；失败/取消时删除临时文件；
 - 中断后已完成的页保留，未完成页不产生半成品文件；
 - 超大页面：渲染前用 `width × height` 与 engine 默认 `maxCanvasPixels`（64,000,000）比较，超限提示“降低 --dpi”并退出 2，不分配 canvas。
@@ -830,12 +840,13 @@ interface CliInfoJson {
 
 - `layers[]` 从外到内，含 `layer/id/encryptDate?/encryptScope?/decryptSeedPath/entriesMapPath/users[]`；`users[]` 为全层按键去重后的视图，`method` 为 `password`/`certificate`/`unknown`。
 - 加密包也退出 0，无需口令；明文包 `encrypted=false`、`layers/users=[]`。
+- 输入以 `NodeFileByteSource` 构造 `{ kind:'byte-source', source }` 交给 `inspect`；`inspect` 关闭内部容器但不关闭字节源，CLI 在命令结束时关闭。
 - 包无法读取/结构非法 → 退出 2；`info` 不因未配置根或未验签失败。
 - warning 逐条写 stderr，payload 输出后调用 `flushWarningSummary()`；JSON stdout 不受影响。
 
 ### 14.3 `verify`（一次性完整性 + 签名）
 
-语义：若输入加密，先用凭据在内存中解密（内部临时容器），再调用一次 `verifyOfd`，完成防夹带完整性、全部签名、证书链、印章与时间戳解析；时间戳只解析、不验证。
+语义：输入以 `{ kind:'byte-source', source: NodeFileByteSource }` 交给 `verifyOfd`；若输入加密，crypto 内部用凭据按需解密（内部临时容器）并关闭，再完成防夹带完整性、全部签名、证书链、印章与时间戳解析；时间戳只解析、不验证。CLI 只关闭调用方字节源，不关闭 crypto 内部容器。
 
 文本示例：
 
@@ -880,7 +891,8 @@ ofdrw-viewer-cli encrypted.ofd -o out --key encrypt.key.pem --key-passphrase '**
 ```
 
 - 凭据：`--password`（口令用户）或 `--key`（SM2 私钥，PEM/DER/PKCS#8）；可选用 `--user` 指定 `UserInfo@UserName`；`--key-passphrase` 仅用于加密 PKCS#8。
-- 流程：`openDecryptingContainer` → 明文 `VirtualContainer` → `OFDDocument.open({ container })` → 既有页面导出；容器由 CLI 关闭，明文不落盘。
+- 流程：`NodeFileByteSource` → `{ kind:'byte-source', source }` → `openDecryptingContainer` → 明文 `VirtualContainer` → `OFDDocument.open({ container })` → 既有页面导出；容器由 CLI 关闭，明文不落盘。
+- 字节源由 CLI 拥有，成功、异常、取消/SIGINT 后关闭；crypto 不关闭调用方字节源。明文包时 `openDecryptingContainer` 返回 source-backed 容器，仍由 CLI 关闭。
 - 未提供凭据/凭据错误：不进入渲染、不产出页面，退出 4。
 - 明文文档不加凭据时行为、输出命名、页码、DPI、`--text`、`--font-dir` 完全兼容旧版。
 - 转图片不接受 `--root`/`--sm2-user-id`/`--json`；需要验签请使用 `verify`。
@@ -913,7 +925,11 @@ ofdrw-viewer-cli encrypted.ofd -o out --key encrypt.key.pem --key-passphrase '**
 ### 14.7 安全与实现边界
 
 - CLI 只消费 crypto 公共 API，不重复实现 SM2/SM3/SM4、ASN.1、证书链或解密逻辑。
+- OFD 输入统一用 `NodeFileByteSource` 随机读，以 `byte-source` 交给 crypto，不对输入包调用 `readFile` 整包；私钥/根证书/字体等小文件可按原方式读取。
+- crypto 先按字节源 `size` 预检 `maxSourceBytes`（默认 256 MiB），不读取内容；超限按文档级失败退出 2。
+- 取消经 `AbortSignal` 传入每次字节读取，命中后退出 130；`verify` 的取消不产生半份报告。
 - 解密只在内存中发生，不写明文临时文件；`verify` 内部的临时容器不暴露给用户。
+- `NodeFileByteSource` 由 CLI 拥有并在成功/失败/取消/SIGINT 后关闭；crypto 不关闭调用方字节源；engine 直接使用 custom 源时由 CLI 幂等兜底关闭。
 - 不自动下载根证书/字体/二进制；根证书由用户通过 `--root` 提供。
 - 仅对可信 OFD 运行；超大页面/高 DPI 可能占用大量内存。
 - `--password`/`--key-passphrase` 可能进入 shell 历史或进程列表，帮助与文档明确提示，不在日志中打印。

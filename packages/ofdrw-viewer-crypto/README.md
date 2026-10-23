@@ -22,7 +22,7 @@
 npm install @ofdrw/ofdrw-viewer-crypto
 ```
 
-需要 Node.js >= 22；浏览器环境需要 ES2022、`fetch`/`Blob`（仅在对应输入类型下使用）和 `crypto.subtle`（仅解密加密 PKCS#8 私钥时需要）。
+需要 Node.js >= 22；浏览器环境需要 ES2022、`fetch`/`Blob`（仅在对应输入类型下使用）和 `crypto.subtle`（仅解密加密 PKCS#8 私钥时需要）。Node 文件优先使用 `byte-source` 随机读取，避免整包读入内存。
 
 ## ⚡ 快速开始
 
@@ -32,7 +32,7 @@ npm install @ofdrw/ofdrw-viewer-crypto
 import { inspect } from '@ofdrw/ofdrw-viewer-crypto';
 
 const inspection = await inspect(
-  { kind: 'blob', blob: file }, // 也可用 arraybuffer / url
+  { kind: 'blob', blob: file }, // 也可用 arraybuffer / url；Node 文件优先 byte-source
   { onWarning: (w) => console.warn(w.code, w.message) },
 );
 
@@ -87,6 +87,7 @@ try {
 import { verifyOfd } from '@ofdrw/ofdrw-viewer-crypto';
 
 const report = await verifyOfd({
+  // Node 文件可改用 { kind: 'byte-source', source }，避免整包读取
   source: { kind: 'arraybuffer', data: await file.arrayBuffer() },
   credentials,
   roots: [{ pem: rootCertPem }], // 可选；不配置时证书链为 unknown
@@ -125,12 +126,45 @@ console.log(timestamp.status, timestamp.genTime, timestamp.note);
 
 `parseSeal`/`parseSignedValue` 的解析成功**不代表验签通过**；时间戳的 `parsed-not-verified` 也不代表 TSA 可信。
 
+### 5. Node 文件与随机访问源
+
+Node/CLI 处理本地 OFD 时，优先把已有随机读取实现包成 `byte-source`，让 crypto 通过 engine 的 ZIP 容器按需读取条目，而不是 `readFile` 整包：
+
+```ts
+import type { ByteSource } from '@ofdrw/ofdrw-viewer-engine';
+import {
+  inspect,
+  type CryptoSource,
+} from '@ofdrw/ofdrw-viewer-crypto';
+
+// 宿主/CLI 提供：基于 fs.promises.open 的随机读实现（例如 CLI 内部的
+// NodeFileByteSource）；crypto 本身不 import node:*。
+const fileSource: ByteSource = await openRandomFileSource(path);
+const source: CryptoSource = { kind: 'byte-source', source: fileSource };
+
+try {
+  const inspection = await inspect(source);
+  console.log(inspection.encrypted, inspection.signatures.length);
+} finally {
+  await closeRandomFileSource(fileSource); // 调用方拥有并关闭 ByteSource
+}
+```
+
+`byte-source` 的所有权与读取语义：
+
+- `source` 必须是 engine 公共 `ByteSource`：`size` 为非负整数（单位 byte），`read(offset, length)` 返回 `Uint8Array`。crypto 通过隔离视图读取，**始终不调用调用方的 `close`**。
+- crypto 先按 `source.size` 检查 `maxSourceBytes`（不读取内容），再按 ZIP 中央目录与所需条目读取；不会为了 `inspect`/`verifyOfd` 整包读取。
+- `inspect`/`verifyOfd` 关闭自己打开的容器；`openDecryptingContainer` 对明文包返回 **source-backed** 容器（所有权转给调用方），对加密包返回内存容器并在返回前关闭内部源容器。调用方仍需在结束后关闭自己的字节源。
+- `signal` 会传递到每次读取，取消抛 `CRYPTO_ABORTED`；字节源结构非法或 `read()` 返回非 `Uint8Array` 抛 `CRYPTO_SOURCE_UNSUPPORTED`，底层读取异常/包结构损坏按 `CRYPTO_INVALID_PACKAGE`，`size` 超限抛 `CRYPTO_LIMIT_EXCEEDED`。
+- 浏览器继续使用 `arraybuffer`/`blob`/`url`；`url` 由 crypto 流式读取整包（受 `maxSourceBytes` 限制），不是随机访问。
+- `byte-source` 不是 engine 的 `OFDSource.kind='node-file'`；CLI 的 `NodeFileByteSource` 用 `fs.promises.open` 随机读，并由 CLI 在成功/失败/取消/SIGINT 后关闭。
+
 ### 支持的平台
 
 | 环境 | 支持情况 | 注意事项 |
 | --- | --- | --- |
 | 现代浏览器 | 支持 | 纯 JS、无 DOM 依赖；`blob`/`url` 走标准 `Blob`/`fetch`；加密 PKCS#8 需要 `crypto.subtle` |
-| Node.js >= 22 | 支持 | 不 import `node:*`；文件由调用方读取为 `arraybuffer`；URL 源依赖全局 `fetch` |
+| Node.js >= 22 | 支持 | 不 import `node:*`；文件优先用 `byte-source`（CLI 的 `NodeFileByteSource` 随机读）；`arraybuffer` 兼容；URL 源依赖全局 `fetch` |
 | Web Worker | 支持 | 与浏览器相同；不要传入 DOM 对象 |
 | 微信小程序 | 未作为验收目标 | 无标准 `Blob`/`fetch`/`WebCrypto` 时请使用 `arraybuffer`，并避免加密 PKCS#8；宿主需自行读取文件 |
 
@@ -300,12 +334,12 @@ warning 不中断流程，通过 `onWarning` 接收；同一 warning 由 `Warnin
 
 ## 🌐 浏览器与 Node.js 注意事项
 
-- **无 DOM/无 Node 运行时依赖**：源码不 import `node:*`/`fs`/`path`，可直接被浏览器 bundler 打包；Node 文件由调用方读取成 `arraybuffer`。
+- **无 DOM/无 Node 运行时依赖**：源码不 import `node:*`/`fs`/`path`，可直接被浏览器 bundler 打包；Node 文件优先由宿主/CLI 提供 `byte-source`，浏览器用 `blob`/`arraybuffer`。
 - **WebCrypto**：只有加密 PKCS#8（PBES2）需要 `globalThis.crypto.subtle`；不可用时抛 `CRYPTO_PRIVATE_KEY_UNSUPPORTED_ENCRYPTION`，不会静默尝试错误口令。
-- **Blob/URL**：`blob` 使用 `blob.arrayBuffer()`；`url` 使用 `fetch`，并在响应体读取过程中按 `maxSourceBytes` 流式累计，超限立即取消。没有 `Content-Length` 也不会先整包缓冲。
-- **取消**：所有长流程接受 `AbortSignal`；取消抛 `CRYPTO_ABORTED`。`openDecryptingContainer` 在取消/关闭竞态下不会返回未关闭的明文容器。
-- **内存**：解密会构造完整明文条目，默认 `maxSourceBytes` 为 256 MiB；大文件请在调整限制前评估内存；解密容器只在内存中，不落盘。
-- **Node `fetch`**：Node 22 提供全局 `fetch`/`Blob`；若宿主删除全局实现，请使用 `arraybuffer`。
+- **Blob/URL**：`blob` 通过 engine 的 `BlobSource` 按区间 `slice().arrayBuffer()`，不整包读取；`url` 使用 `fetch`，在响应体读取过程中按 `maxSourceBytes` 流式累计，超限立即取消。没有 `Content-Length` 也不会先整包缓冲。
+- **取消**：所有长流程接受 `AbortSignal`；`byte-source` 每次读取都会检查；取消抛 `CRYPTO_ABORTED`。`openDecryptingContainer` 在取消/关闭竞态下不会返回未关闭的明文容器。
+- **内存**：明文包的 `openDecryptingContainer` 返回 source-backed 容器，不复制包体；加密包会构造完整明文条目到内存；`byte-source` 的 `inspect`/`verify` 不整包读取。默认 `maxSourceBytes` 为 256 MiB，大文件请在调整限制前评估内存。
+- **Node `fetch`**：Node 22 提供全局 `fetch`/`Blob`；若宿主删除全局实现，请使用 `byte-source`/`arraybuffer`，不要依赖 `url`。
 - **小程序**：无标准 `Blob`/`fetch`/`WebCrypto`；未列入本包验收目标，建议只用 `arraybuffer` 且避免加密 PKCS#8。
 
 ## 🛡️ 安全边界
@@ -316,10 +350,23 @@ warning 不中断流程，通过 `onWarning` 接收；同一 warning 由 `Warnin
 - **不检查吊销**：`revocation: 'not-checked'`；不把“未发现吊销”表述为“证书有效”。
 - **验证范围**：只证明密码学结构/签名/引用/清单一致，不判断文档业务内容是否合规。
 - **敏感材料**：口令/私钥/PEM 仅作为调用栈局部变量；不写入报告、warning、错误消息、DOM/localStorage。解密流程中恢复 FEK 使用的私钥标量在用完后清零。
-- **容器所有权**：`openDecryptingContainer` 返回的容器由调用方 `close()`；`verifyOfd({ container })` 不关闭宿主容器，内部解密生成的容器由 `verifyOfd` 关闭。
+- **容器与字节源所有权**：`openDecryptingContainer` 返回的容器由调用方 `close()`；`verifyOfd({ container })` 不关闭宿主容器，内部解密生成的容器由 `verifyOfd` 关闭；`byte-source` 始终由调用方拥有和关闭，crypto 不关闭它。
 - **不做 DRM**：本包不是访问控制/DRM 方案；解密后的明文容器内容仍可被宿主读取。
 
 ## 📚 API 表
+
+### 输入来源
+
+| `CryptoSource.kind` | 读取方式 | 所有权 |
+| --- | --- | --- |
+| `byte-source` | 宿主 `ByteSource` 随机读；Node/CLI 首选 | 调用方拥有并关闭；crypto 只读、不 close |
+| `arraybuffer` | 内存字节 | 调用方提供视图 |
+| `blob` | engine `BlobSource` 按区间读 | 调用方提供 Blob/File |
+| `url` | `fetch` 流式读整包，受 `maxSourceBytes` | crypto 内部临时字节 |
+
+`inspect`/`verifyOfd` 关闭内部容器，但不会关闭调用方 `ByteSource`；`openDecryptingContainer` 的明文结果容器所有权转给调用方。
+
+### 函数
 
 | API | 返回 | 用途 |
 | --- | --- | --- |
@@ -345,8 +392,6 @@ warning 不中断流程，通过 `onWarning` 接收；同一 warning 由 `Warnin
 
 - [密码能力设计方案](../../docs/ofdrw-viewer-crypto设计方案.md)
 - [模块契约（CONTRACTS 第 13 章）](../../docs/CONTRACTS.md)
-- [密码能力总体设计方案](../../docs/ofdrw-viewer-crypto设计方案.md)
-- [跨模块契约](../../docs/CONTRACTS.md)
 - [密码学 PoC 验证报告](../../docs/密码学PoC验证报告.md)
 - [测试夹具说明](test/fixtures/crypto/README.md)
 - [Engine](../ofdrw-viewer-engine/README.md)
