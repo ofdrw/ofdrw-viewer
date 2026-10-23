@@ -53,10 +53,9 @@
 | `pnpm test:smoke` | 只跑 `test/smoke` |
 | `pnpm test:golden` | 只跑 `test/golden`（无测试时通过） |
 | `pnpm build` | 构建引擎 ESM+CJS+d.ts（及后续 examples） |
-| `pnpm demo:web` | 启动 `examples/web` 的 Vite dev server（T13） |
 
 - 引擎源码只能用 ES2022 + 严格 TS；`verbatimModuleSyntax`、`isolatedModules` 开启。类型导入必须 `import type`。
-- 不在共享工作区启动长期服务；`demo:web` 仅由验收/演示按需启动，用完关闭。
+- 不在共享工作区启动长期服务；演示/验收服务仅按需启动，用完关闭。
 
 ## 3. 模块职责与所有权
 
@@ -955,7 +954,7 @@ export function parseTimestamp(
 
 ### 13.8 测试、夹具与文档
 
-- 夹具固定 `packages/ofdrw-viewer-crypto/test/fixtures/crypto/`：12 case、20 证书/私钥、`manifest.json`/`manifest.sha256`；生成/校验脚本 `scripts/crypto-fixtures/`；`verify-fixtures.sh` 必须退出 0。
+- 夹具固定 `packages/ofdrw-viewer-crypto/test/fixtures/crypto/`：12 case、20 证书/私钥、`manifest.json`/`manifest.sha256`；SHA-256 以 `manifest.sha256` 校验为准（原生成/校验脚本随 `scripts/` 移除）。
 - 夹具全部为测试材料，README/manifest 标注 `testOnly`；生产密钥禁止入库；过期证书由测试内生成，不提交过期私钥。
 - engine 新增 VirtualContainer/所有权/OFD_ENCRYPTED/读取路径测试；既有 engine 测试必须全绿且默认行为不变。
 - UI Playwright 覆盖加密打开、错误重试、取消、验证面板、印章点击、根证书四态、无障碍；CLI acceptance 覆盖 JSON/退出码/无 decrypt。

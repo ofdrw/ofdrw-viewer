@@ -1,6 +1,6 @@
 # 密码能力测试夹具
 
-本目录是 `@ofdrw/ofdrw-viewer-crypto`、engine、UI、CLI 共用的**受保护 OFD 回归夹具**，由 [`scripts/crypto-fixtures/`](../../../../../scripts/crypto-fixtures/) 中的 Java 生成器使用 ofdrw 2.4.0 生成。
+本目录是 `@ofdrw/ofdrw-viewer-crypto`、engine、UI、CLI 共用的**受保护 OFD 回归夹具**，使用 ofdrw 2.4.0 生成后固化提交。
 
 > **安全声明：本目录下所有证书与私钥均为公开的测试材料，仅用于自动化测试、演示和格式验证；严禁用于生产、真实签章或任何需要保密性的场景。**
 >
@@ -84,34 +84,18 @@ crypto/
 
 `SESv4/SESv5` 的 `SignedValue.dat` 带 GM/T 0033 时间戳令牌；按项目设计**只解析、不验证 TSA 签名**。UI 应展示时间戳时间/TSA/策略/序列号，并标注“已解析，未验证”。
 
-## 5. 生成与校验
+## 5. 校验
 
-在仓库根目录执行：
+SHA-256 以 `manifest.sha256` 为准：
 
 ```bash
-# 1) 首次构建 ofdrw 到工作区本地仓库（只需一次；不要写 ~/.m2）
-cd references/ofdrw
-JAVA_HOME=/path/to/jdk-21 \
-mvn -B -Dmaven.repo.local=/home/kkk/project/ofdrw-view/.cache/m2 \
-  -DskipTests -Dmaven.test.skip=true -Dgpg.skip=true \
-  -Dmaven.javadoc.skip=true -Dsource.skip=true \
-  -pl ofdrw-sign,ofdrw-crypto -am install
-cd ../..
-
-# 2) 生成全部夹具（首次会自动生成 certs/）
-bash scripts/crypto-fixtures/generate-fixtures.sh
-
-# 3) 校验 manifest SHA-256 + ofdrw Java 侧语义
-bash scripts/crypto-fixtures/verify-fixtures.sh
+cd packages/ofdrw-viewer-crypto/test/fixtures/crypto
+sha256sum -c manifest.sha256
 ```
 
-`generate-fixtures.sh` 默认输出到本目录，也接受两个可选参数：夹具目录、基准 OFD 路径。
-
-### 重新生成会发生什么
-
-- 证书只在 `certs/` 缺失时生成；已有证书不会被覆盖，保证样例与已提交私钥对应。
-- 加密 FEK/IV、签章签名值、时间戳、`Encryptions.xml` 的加密时间均含随机/当前时间，因此**重新生成会改变 `.ofd` 字节和 SHA-256**；`manifest.json` / `manifest.sha256` 会同步重写。
-- 如果只是消费夹具（测试/UI/CLI），不需要重新生成；直接引用本目录文件即可。
+- 原生成/校验脚本已随 `scripts/` 目录移除；夹具字节已固化提交。
+- 加密 FEK/IV、签章签名值、时间戳、`Encryptions.xml` 的加密时间均含随机/当前时间，因此**重新生成会改变 `.ofd` 字节和 SHA-256**；`manifest.json` / `manifest.sha256` 需同步重写。
+- 如果只是消费夹具（测试/UI/CLI），直接引用本目录文件即可。
 
 ## 6. manifest 结构
 
@@ -149,15 +133,15 @@ bash scripts/crypto-fixtures/verify-fixtures.sh
 }
 ```
 
-`manifest.sha256` 覆盖 `cases` 与 `certs` 中的所有文件，不覆盖 `manifest.json`、`README.md` 和脚本自身。
+`manifest.sha256` 覆盖 `cases` 与 `certs` 中的所有文件，不覆盖 `manifest.json` 与 `README.md`。
 
 ## 7. 版本与许可
 
-- 生成器基于 ofdrw 2.4.0（Apache License 2.0），只在测试构建中使用。
+- 夹具基于 ofdrw 2.4.0（Apache License 2.0），只在测试构建中使用。
 - 夹具与测试证书随本仓库发布，遵循仓库根许可证（MIT）；测试证书/私钥不构成任何生产信任材料。
 - 基准 `plain.ofd` 来自 ofdrw 测试资源 `ofdrw-crypto/src/test/resources/hello.ofd`（Apache License 2.0）。
 
 ## 8. 相关文档
 
-- 生成/校验脚本：[`scripts/crypto-fixtures/README.md`](../../../../../scripts/crypto-fixtures/README.md)
-- R0 调研与 PoC：[`docs/密码学PoC验证报告.md`](../../../../../docs/密码学PoC验证报告.md)
+- 夹具校验：`sha256sum -c manifest.sha256`（见本目录）
+- 夹具设计：[`docs/ofdrw-viewer-crypto设计方案.md`](../../../../../docs/ofdrw-viewer-crypto设计方案.md)

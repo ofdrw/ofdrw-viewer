@@ -1,8 +1,7 @@
 /**
  * 回归样本清单（57 对：55 对基准样本 + 可选 manual + 可选 dense-text-perf）。
  *
- * 清单由 `scripts/golden/gen-samples.mjs` 生成；测试只读取与校验，
- * 业务原件不复制进仓库。
+ * 清单已固化提交；测试只读取与校验，业务原件不复制进仓库。
  */
 
 import { readFileSync } from 'node:fs';

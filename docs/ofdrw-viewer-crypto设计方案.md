@@ -1594,7 +1594,7 @@ ofdrw-viewer-cli encrypted.ofd -o out --user fixture-cert-user --key certs/encry
 
 ### 8.1 已提交夹具清单
 
-路径：`packages/ofdrw-viewer-crypto/test/fixtures/crypto/`；生成/校验脚本：`scripts/crypto-fixtures/`。
+路径：`packages/ofdrw-viewer-crypto/test/fixtures/crypto/`；SHA-256 以 `manifest.sha256` 校验为准。
 
 | case | 文件 | 大小（byte） | 预期 |
 |---|---|---:|---|
@@ -1617,25 +1617,15 @@ ofdrw-viewer-cli encrypted.ofd -o out --user fixture-cert-user --key certs/encry
 - 公开策略：全部为测试材料，README/manifest 标注 `testOnly`；禁止用于生产；私钥不设口令，任何拿到仓库的人可用。
 - manifest：`schemaVersion=1`、`cases` 12、`certs` 20、`manifest.sha256` 32 行；所有路径存在且 SHA-256 匹配；单文件 <5MB、总计 <20MB（当前 137,620B）。
 
-### 8.2 生成与校验
+### 8.2 校验
 
 ```bash
-# 首次把 ofdrw 2.4.0 安装到工作区本地仓库（不写 ~/.m2）
-cd references/ofdrw
-JAVA_HOME=/path/to/jdk-21 \
-mvn -B -Dmaven.repo.local=$PWD/../../.cache/m2 \
-  -DskipTests -Dmaven.test.skip=true -Dgpg.skip=true \
-  -Dmaven.javadoc.skip=true -Dsource.skip=true \
-  -pl ofdrw-sign,ofdrw-crypto -am install
-
-# 生成/重建（证书缺省时才生成；OFD 字节和哈希会随随机 FEK/时间戳变化）
-bash scripts/crypto-fixtures/generate-fixtures.sh
-
-# 校验（SHA-256 + ofdrw Java 语义；退出 0 为通过）
-bash scripts/crypto-fixtures/verify-fixtures.sh
+# 校验已提交夹具的 SHA-256
+(cd packages/ofdrw-viewer-crypto/test/fixtures/crypto && sha256sum -c manifest.sha256)
 ```
 
-- 生成器只用 ofdrw 2.4.0 公开 API；证书固定主题/有效期；重新生成会更新 manifest，测试不得硬编码随机哈希。
+- 原生成/校验脚本已随 `scripts/` 目录移除；夹具字节与 `manifest.sha256` 已固化提交。
+- 重新生成需使用 ofdrw 2.4.0 公开 API，并同步更新 manifest，测试不得硬编码随机哈希。
 - 过期/未生效证书不在二进制夹具中，由单元测试在内存中生成确定性证书覆盖；不提交过期私钥。
 - 双层加密/循环/超大包等极端输入由测试内合成 ZIP，不新增静态大文件。
 
@@ -1716,7 +1706,6 @@ bash scripts/crypto-fixtures/verify-fixtures.sh
 | `docs/验收计划.md` | 增加密码能力 acceptance、fixture/根证书/未知状态验收 |
 | `docs/验收报告.md`、`docs/回归报告.md` | QA 完成后记录实测证据；不由本设计虚构 |
 | `README.md`（根 README） | 模块链接/badge/快速开始 |
-| `scripts/check-docs.mjs` | 文档门禁：必备内容、相对链接、过期表述；随文档同步运行 |
 | `docs/CONTRACTS.md` | 见上；另更新变更记录 v2.0-r1 |
 
 文档冻结规则：本设计与 `CONTRACTS` 第 13 章先冻结；实现中新增公共字段/错误码必须由 architect 更新两处并通知，不得只改 README。

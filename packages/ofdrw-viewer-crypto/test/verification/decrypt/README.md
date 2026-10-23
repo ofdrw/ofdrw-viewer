@@ -40,7 +40,7 @@ pnpm -C packages/ofdrw-viewer-crypto exec vitest run \
 `plain.ofd`、`password-encrypted.ofd`、`cert-encrypted.ofd`、
 `combined-signed-integrity.ofd`、`combined-password-encrypted.ofd` 解密/读取
 ZIP，输出每个条目的路径、大小和 SHA-256；`java-expected.json` 是它的输出。
-运行时需要 JDK 21、`scripts/crypto-fixtures/pom.xml` 的 Maven classpath，以及
+运行时需要 JDK 21、ofdrw 2.4.0 的 Maven classpath，以及
 fixture 密码/证书私钥（见 `test/fixtures/crypto/README.md`）。基准生成后以静态
 JSON 提交，避免测试环境依赖 Java。
 

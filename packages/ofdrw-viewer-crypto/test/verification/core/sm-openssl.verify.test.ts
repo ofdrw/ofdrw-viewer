@@ -4,7 +4,7 @@
  * 期望值来源：
  * - GB/T 32905（SM3）与 GB/T 32907（SM4）标准向量；
  * - OpenSSL 3 的 `dgst -sm3` / `enc -sm4-cbc`（固定 key/IV，实时复算）；
- * - ofdrw 2.4.0 Java PoC 的 KDF 派生结果（`scripts/crypto-poc`，t1）。
+ * - ofdrw 2.4.0 Java PoC 的 KDF 派生结果（PoC 脚本已随 `scripts/` 移除）。
  */
 
 import { describe, expect, it } from 'vitest';

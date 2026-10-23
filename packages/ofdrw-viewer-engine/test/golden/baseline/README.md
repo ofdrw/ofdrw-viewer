@@ -19,12 +19,12 @@ baseline/
 
 ## 更新流程（禁止盲目更新）
 
-1. 运行 `node scripts/golden/run-all.mjs`，打开 `test/.artifacts/golden/<timestamp>/report.html`。
+1. 运行批量回归（`GOLDEN_RUN_ALL=1 pnpm -C packages/ofdrw-viewer-engine exec vitest run test/e2e/run-all.e2e.test.ts`），打开 `test/.artifacts/golden/<timestamp>/report.html`。
 2. 对每一页差异，人工对比 `*-engine.png`、`*-ref.png`、`*-diff.png`，确认差异属于“预期改进”而非回归。
 3. 在 PR/评审记录中写明：样本、页号、变更原因、审核人。
 4. 仅将审核通过的 PNG 复制到本目录对应位置；Commit message 使用
    `test(golden): approve baseline update <sample>/<page> (<reason>)`。
-5. 重新运行 `node scripts/golden/run-all.mjs`，确认基线比较全部通过。
+5. 重新运行同一批量回归命令，确认基线比较全部通过。
 
 ## 禁止事项
 

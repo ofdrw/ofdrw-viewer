@@ -4,7 +4,7 @@
 
 | 示例 | 说明 | 运行 |
 | --- | --- | --- |
-| [engine-h5](engine-h5/) | 纯静态页面，预置引擎 `ofdrw-viewer-engine.min.js`，无包管理 | `pnpm demo:h5` → <http://127.0.0.1:5180/examples/engine-h5/> |
+| [engine-h5](engine-h5/) | 纯静态页面，预置引擎 `ofdrw-viewer-engine.min.js`，无包管理 | 用任意静态服务器从仓库根启动，见 [engine-h5/README](engine-h5/README.md) |
 | [engine-node](engine-node/) | Node.js，逐页导出 PNG | `cd examples/engine-node && npm install && npm run dev` |
 | [viewer-ui-vue](viewer-ui-vue/) | Vue 3 + 完整阅读器 UI | `pnpm demo:vue` → <http://127.0.0.1:5181/> |
 | [viewer-ui-react](viewer-ui-react/) | React 19 + 完整阅读器 UI | `pnpm demo:react` → <http://127.0.0.1:5182/> |

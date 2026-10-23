@@ -11,7 +11,7 @@
 ## 前置条件
 
 - 完整 JDK 21（需要 `javac`；系统 `javac` 可能是 1.8，请显式使用 JDK 21 的路径）；
-- 工作区已有 ofdrw 2.4.0 的 Maven 仓：`.cache/m2`（由 `scripts/crypto-fixtures` 构建流程准备）；
+- 工作区已有 ofdrw 2.4.0 的 Maven 仓：`.cache/m2`（由 ofdrw 构建流程准备）；
 - Maven 3.8+。
 
 本仓库此前把 JDK 21 放在 `.cache/jdk21`，以下命令使用该路径；如不存在，可换成本机 JDK 21 的绝对路径。
@@ -27,7 +27,8 @@ OUT_DIR="$ROOT/.cache/t13"
 mkdir -p "$OUT_DIR/classes" "$OUT_DIR/java"
 
 # 1) 解析 ofdrw 2.4.0 依赖，生成 classpath
-mvn -q -f scripts/crypto-fixtures/pom.xml \
+#    原 pom 随 scripts/ 移除，需自备引用 ofdrw 2.4.0 的 Maven 工程
+mvn -q -f <your-ofdrw-pom.xml> \
   -Dmaven.repo.local="$ROOT/.cache/m2" \
   dependency:build-classpath \
   -Dmdep.outputFile="$OUT_DIR/cp.txt"

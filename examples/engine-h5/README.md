@@ -5,11 +5,11 @@
 
 ## 运行
 
-在仓库根目录启动零依赖静态服务器：
+在仓库根目录用任意静态服务器启动（站点根必须是仓库根），例如：
 
 ```bash
-node scripts/serve-examples.mjs
-# 或 pnpm demo:h5
+python3 -m http.server 5180
+# 或 npx serve .
 ```
 
 访问 <http://127.0.0.1:5180/examples/engine-h5/>。不要用 `file://` 打开，样例通过 `fetch` 读取。

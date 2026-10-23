@@ -3,8 +3,8 @@
  *
  * 向量来源：
  * - SM3/SM4 为 GB/T 32905 / GB/T 32907 标准示例；
- * - SM2 签名、SM2Cipher 密文与 KDF 派生由 Java BouncyCastle PoC 生成后固化，
- *   见 `scripts/crypto-poc/`。
+ * - SM2 签名、SM2Cipher 密文与 KDF 派生由 Java BouncyCastle PoC 生成后固化
+ *   （PoC 脚本已随 `scripts/` 移除）。
  */
 
 import { readFileSync } from 'node:fs';

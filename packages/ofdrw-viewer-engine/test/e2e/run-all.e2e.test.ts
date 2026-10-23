@@ -1,10 +1,10 @@
 /**
- * 57 条样本（55 对基准 + manual + dense-text-perf）的批量回归（由 `scripts/golden/run-all.mjs` 触发）。
+ * 57 条样本（55 对基准 + manual + dense-text-perf）的批量回归。
  *
  * 默认行为（未设置 `GOLDEN_RUN_ALL=1`）跳过，避免拖慢日常单测。
  * 运行方式：
- *   node scripts/golden/run-all.mjs
- *   node scripts/golden/run-all.mjs --require-engine   # T9/T11：引擎不可用或有差异即失败
+ *   GOLDEN_RUN_ALL=1 pnpm -C packages/ofdrw-viewer-engine exec vitest run test/e2e/run-all.e2e.test.ts
+ *   GOLDEN_RUN_ALL=1 GOLDEN_REQUIRE_ENGINE=1 <同上>   # T9/T11：引擎不可用或有差异即失败
  *
  * 阶段约定：T8 时引擎尚未实现，报告会记录 `engine-unavailable` 并正常退出；
  * 设置 `GOLDEN_REQUIRE_ENGINE=1` 后则要求所有样本可用且所有页通过。

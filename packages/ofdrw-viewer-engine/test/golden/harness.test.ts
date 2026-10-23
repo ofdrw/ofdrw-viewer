@@ -9,7 +9,7 @@
  * - 画布变大 10 px → size-mismatch；
  * - 缺失图元 → layout-mismatch。
  *
- * 输出 report.json / report.html / pages/*-diff.png，供 `scripts/golden/check-harness.mjs` 校验。
+ * 输出 report.json / report.html / pages/*-diff.png，用于人工或 CI 校验。
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
