@@ -306,6 +306,135 @@ test('showcase 第 9 页签章浮层：portal 定位不被第 10 页覆盖或 ma
   await expectNoPageErrors(page, issues);
 });
 
+test('印章图片 caption/fallback 在 light/dark/auto-dark 下对比度 ≥4.5', async ({
+  page,
+  issues,
+}) => {
+  const artifacts = resolve(
+    process.cwd(),
+    '../../test/.artifacts/ui-bugfix-20261023/t25',
+  );
+  mkdirSync(artifacts, { recursive: true });
+  await openViewer(page, SHOWCASE, { sidebar: 'signatures', waitForRender: false });
+  const summary = page.locator('.ofd-signature-summary-item').first();
+  await expect(summary).toBeVisible();
+  await summary.click();
+  const dialog = page.locator('.ofd-dialog');
+  await expect(dialog).toBeVisible();
+  const caption = dialog.locator('.ofd-seal-image__caption');
+  await expect(caption).toContainText('PNG');
+
+  // 用真实 seal-image 模块生成四类降级，避免只测试手写 CSS 类名。
+  await page.evaluate(async () => {
+    const modulePath: string = '/packages/ofdrw-viewer-ui/src/crypto/seal-image.ts';
+    const module = await import(/* @vite-ignore */ modulePath);
+    const host = document.querySelector('.ofd-viewer');
+    if (!host) throw new Error('找不到 .ofd-viewer');
+    const cases: Array<{ name: string; image: Record<string, unknown> }> = [
+      { name: 'no-data', image: { format: 'PNG', widthMm: 40, heightMm: 40 } },
+      {
+        name: 'vector',
+        image: { format: 'ofd', widthMm: 40, heightMm: 40, data: new Uint8Array([1, 2, 3]) },
+      },
+      {
+        name: 'unknown',
+        image: { format: 'tiff', widthMm: 40, heightMm: 40, data: new Uint8Array([1, 2, 3]) },
+      },
+      {
+        name: 'load-fail',
+        image: {
+          format: 'PNG',
+          widthMm: 40,
+          heightMm: 40,
+          data: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0, 0]),
+        },
+      },
+    ];
+    for (const item of cases) {
+      const handle = module.createSealImageElement(document, item.image, {
+        label: `t25-${item.name}`,
+      });
+      if (!handle) throw new Error(`未生成降级节点：${item.name}`);
+      handle.element.dataset.t25Fallback = item.name;
+      host.appendChild(handle.element);
+    }
+  });
+  await expect(
+    page.locator('[data-t25-fallback="load-fail"] .ofd-seal-image__fallback'),
+  ).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('[data-t25-fallback="no-data"]')).toContainText('数据缺失');
+  await expect(page.locator('[data-t25-fallback="vector"]')).toContainText('矢量（OFD）');
+  await expect(page.locator('[data-t25-fallback="unknown"]')).toContainText('tiff');
+
+  const results: Array<Record<string, unknown>> = [];
+  for (const theme of ['light', 'dark', 'auto-dark'] as const) {
+    await page.evaluate(
+      (value) => window.__viewer!.setTheme(value === 'auto-dark' ? 'auto' : value),
+      theme,
+    );
+    await page.emulateMedia({ colorScheme: theme === 'light' ? 'light' : 'dark' });
+    await expect(page.locator('.ofd-viewer')).toHaveAttribute(
+      'data-theme',
+      theme === 'auto-dark' ? 'auto' : theme,
+    );
+    await page.waitForTimeout(80);
+    const colors = await page.evaluate(() => {
+      const parse = (value: string): [number, number, number] => {
+        const match = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(value);
+        if (!match) throw new Error(`无法解析颜色：${value}`);
+        return [Number(match[1]), Number(match[2]), Number(match[3])];
+      };
+      const luminance = (color: [number, number, number]): number => {
+        const linear = color.map((channel) => {
+          const value = channel / 255;
+          return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
+      };
+      const contrast = (foreground: string, background: string): number => {
+        const a = luminance(parse(foreground));
+        const b = luminance(parse(background));
+        return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      };
+      const nodes = [
+        ...document.querySelectorAll<HTMLElement>(
+          '.ofd-dialog .ofd-seal-image__caption, [data-t25-fallback] .ofd-seal-image__fallback',
+        ),
+      ];
+      return nodes.map((node) => {
+        const figure = node.closest<HTMLElement>('.ofd-seal-image');
+        if (!figure) throw new Error('印章文字缺少 .ofd-seal-image 父节点');
+        const style = getComputedStyle(node);
+        const background = getComputedStyle(figure).backgroundColor;
+        return {
+          kind:
+            node.closest<HTMLElement>('[data-t25-fallback]')?.dataset.t25Fallback ?? 'caption',
+          color: style.color,
+          background,
+          contrast: contrast(style.color, background),
+          text: (node.textContent ?? '').trim(),
+        };
+      });
+    });
+    expect(colors, `${theme} 应有 caption + 4 类降级`).toHaveLength(5);
+    for (const item of colors) {
+      expect(item.color, `${theme} ${String(item.kind)} 颜色`).toBe('rgb(31, 35, 40)');
+      expect(item.background, `${theme} ${String(item.kind)} 背景`).toBe('rgb(255, 255, 255)');
+      expect(item.contrast, `${theme} ${String(item.kind)} 对比度`).toBeGreaterThanOrEqual(4.5);
+      results.push({ theme, ...item });
+    }
+    await page.screenshot({
+      path: resolve(artifacts, `seal-text-${theme}.png`),
+      fullPage: false,
+    });
+  }
+  writeFileSync(
+    resolve(artifacts, 'seal-text-contrast.json'),
+    JSON.stringify(results, null, 2),
+  );
+  await expectNoPageErrors(page, issues);
+});
+
 test('缺失 SignedValue.dat：保留签章列表并降级提示', async ({ page, issues }) => {
   await openViewer(page, FIXTURES.signatureMissing);
   await dismissFindbar(page);

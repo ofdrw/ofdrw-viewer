@@ -67,6 +67,34 @@ const STATUS_VARS = [
   '--ofd-text-secondary',
 ] as const;
 
+describe('印章图片文字 light/dark 对比度', () => {
+  it('白底印章框的 caption/fallback 固定深色且 ≥ 4.5:1', async () => {
+    const css = await readFile(stylePath, 'utf8');
+    const light = variables(blockFor(css, '.ofd-viewer'));
+    const dark = variables(blockFor(css, ".ofd-viewer[data-theme='dark']"));
+    const autoStart = css.indexOf("@media (prefers-color-scheme: dark)");
+    const auto = variables(css.slice(autoStart, css.indexOf('prefers-contrast: more', autoStart)));
+    for (const [theme, vars] of [
+      ['light', light],
+      ['dark', dark],
+      ['auto-dark', auto],
+    ] as const) {
+      const text = resolveValue('var(--ofd-seal-text)', vars);
+      const background = resolveValue('var(--ofd-seal-bg)', vars);
+      expect(text, `${theme} seal text`).toBe('#1f2328');
+      expect(background, `${theme} seal bg`).toBe('#ffffff');
+      expect(contrast(text, background), `${theme} seal text 对比度`).toBeGreaterThanOrEqual(4.5);
+    }
+    const ruleStart = css.indexOf('.ofd-seal-image__caption,');
+    const ruleEnd = css.indexOf('}', ruleStart);
+    const rule = css.slice(ruleStart, ruleEnd);
+    expect(rule).toContain('color: var(--ofd-seal-text)');
+    const fallbackStart = css.indexOf('.ofd-seal-image__fallback {');
+    const fallbackRule = css.slice(fallbackStart, css.indexOf('}', fallbackStart));
+    expect(fallbackRule).toContain('color: var(--ofd-seal-text)');
+  });
+});
+
 describe('验证状态 light/dark 对比度', () => {
   it('状态文字/徽标在工具栏/浮层背景上均 ≥ 4.5:1', async () => {
     const css = await readFile(stylePath, 'utf8');

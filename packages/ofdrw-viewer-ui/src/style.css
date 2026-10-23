@@ -47,6 +47,7 @@
   --ofd-surface: var(--ofd-toolbar-bg);
   --ofd-seal-bg: #ffffff;
   --ofd-seal-border: #d8dbe0;
+  --ofd-seal-text: #1f2328;
   --ofd-signature-hover-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 
   /* 外壳层级与浮层 */
@@ -147,6 +148,7 @@
   --ofd-surface: var(--ofd-toolbar-bg);
   --ofd-seal-bg: #ffffff;
   --ofd-seal-border: #d8dbe0;
+  --ofd-seal-text: #1f2328;
   --ofd-signature-hover-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
   --ofd-scrim: rgba(0, 0, 0, 0.55);
   --ofd-menu-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
@@ -189,6 +191,7 @@
     --ofd-surface: var(--ofd-toolbar-bg);
     --ofd-seal-bg: #ffffff;
     --ofd-seal-border: #d8dbe0;
+    --ofd-seal-text: #1f2328;
     --ofd-signature-hover-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
     --ofd-scrim: rgba(0, 0, 0, 0.55);
     --ofd-menu-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
@@ -2175,13 +2178,13 @@
 .ofd-seal-image__caption,
 .ofd-seal-image__fallback {
   margin: 0;
-  color: var(--ofd-text-secondary);
+  color: var(--ofd-seal-text);
   font-size: 12px;
 }
 
 .ofd-seal-image__fallback {
   max-width: 260px;
-  color: var(--ofd-text);
+  color: var(--ofd-seal-text);
 }
 
 .ofd-signature-popover__seal {
