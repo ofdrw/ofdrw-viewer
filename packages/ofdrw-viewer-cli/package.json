@@ -28,9 +28,6 @@
     "directory": "packages/ofdrw-viewer-cli"
   },
   "homepage": "https://github.com/ofdrw/ofdrw-viewer#readme",
-  "bugs": {
-    "url": "https://github.com/ofdrw/ofdrw-viewer/issues"
-  },
   "publishConfig": {
     "access": "public"
   },

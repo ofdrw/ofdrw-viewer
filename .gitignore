@@ -30,3 +30,6 @@ ofd-render-showcase
 
 # 仅忽略仓库根目录的 test/（不影响 packages/*/test/）
 /test/
+
+.pki
+.config

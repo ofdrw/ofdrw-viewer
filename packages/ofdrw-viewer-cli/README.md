@@ -16,7 +16,7 @@
 
 > `verify` 不会修改文档，也不提供独立 `decrypt` 子命令；加密文档请直接用凭据执行转图片。
 
-![ofdrw-viewer-cli 演示](demo/demo.gif)
+![ofdrw-viewer-cli 演示](docs/img/demo.gif)
 
 ## 📦 安装
 

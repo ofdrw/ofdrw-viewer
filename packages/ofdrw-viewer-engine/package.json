@@ -36,14 +36,12 @@
     "directory": "packages/ofdrw-viewer-engine"
   },
   "homepage": "https://github.com/ofdrw/ofdrw-viewer#readme",
-  "bugs": {
-    "url": "https://github.com/ofdrw/ofdrw-viewer/issues"
-  },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/build-cdn.mjs",
+    "build:cdn": "node scripts/build-cdn.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:golden": "vitest run test/golden --passWithNoTests",

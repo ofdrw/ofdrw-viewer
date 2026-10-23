@@ -37,14 +37,12 @@
     "directory": "packages/ofdrw-viewer-crypto"
   },
   "homepage": "https://github.com/ofdrw/ofdrw-viewer#readme",
-  "bugs": {
-    "url": "https://github.com/ofdrw/ofdrw-viewer/issues"
-  },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/build-cdn.mjs",
+    "build:cdn": "node scripts/build-cdn.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
