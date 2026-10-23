@@ -260,6 +260,7 @@ export function buildPrintCss(pages: readonly PreparedPrintPage[]): string {
     pageRules,
     '@media print {',
     '  html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }',
+    '  body > :not(.ofd-print-root) { display: none !important; }',
     '  .ofd-viewer { display: none !important; }',
     '  .ofd-print-root { display: block !important; }',
     '  .ofd-print-page { position: relative; overflow: hidden; margin: 0; padding: 0; background: #fff; break-after: page; page-break-after: always; }',

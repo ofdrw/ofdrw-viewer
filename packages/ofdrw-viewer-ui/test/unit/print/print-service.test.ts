@@ -91,6 +91,10 @@ describe('打印范围与 DOM', () => {
     expect(snapshot).toMatchObject({ pages: 4, images: 4, root: true, pdf: 0 });
     expect(snapshot.css).toContain('@page { size: 210mm 297mm; margin: 0; }');
     expect(snapshot.css).toContain('.ofd-viewer { display: none !important; }');
+    // 打印时隐藏 body 下除打印根以外的所有节点，避免应用外壳占位产生空白页。
+    expect(snapshot.css).toContain(
+      'body > :not(.ofd-print-root) { display: none !important; }',
+    );
     expect(document.querySelector('.ofd-print-root')).toBeNull();
     expect(printSpy).toHaveBeenCalledTimes(1);
     expect(host.events.filter((event) => event.event === 'printstart')).toHaveLength(1);
@@ -341,6 +345,9 @@ describe('打印样式工具', () => {
     );
     const css = buildPrintCss(mixed.pages);
     expect(css).toContain('@page ofd-size-0 { size: 210mm 297mm; margin: 0; }');
+    expect(css).toContain(
+      'body > :not(.ofd-print-root) { display: none !important; }',
+    );
     expect(css).toContain('@page ofd-size-1 { size: 105mm 148mm; margin: 0; }');
     mixed.cleanup();
   });

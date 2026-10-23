@@ -284,16 +284,21 @@ function parseCustomPageRange(text: string, pageCount: number): number[] | null 
   return pages.size > 0 ? [...pages].sort((a, b) => a - b) : null;
 }
 
+/** 页码范围默认值；打印默认全部页，导出默认当前页。 */
+type OutputRangeDefault = 'current' | 'all';
+
 /**
  * 创建打印/导出共用的页码范围控件。
  *
  * @param doc 对话框所属文档。
  * @param translator 翻译器。
+ * @param defaultRange 打开对话框时的默认范围；默认当前页。
  * @returns 字段元素与读取函数；读取失败时在字段内显示错误。
  */
 function createOutputRangeField(
   doc: Document,
   translator: Translator,
+  defaultRange: OutputRangeDefault = 'current',
 ): { readonly field: HTMLElement; read(pageCount: number): PageRange | null } {
   const id = `ofd-output-range-${++outputFieldSequence}`;
   const field = doc.createElement('div');
@@ -314,6 +319,7 @@ function createOutputRangeField(
     option.textContent = text;
     select.append(option);
   }
+  select.value = defaultRange;
   const custom = doc.createElement('input');
   custom.className = 'ofd-input';
   custom.type = 'text';
@@ -383,7 +389,8 @@ function openPrintDialog(viewer: UIShellHost, shell: UIShell): void {
   const form = doc.createElement('form');
   form.className = 'ofd-output-form';
   form.setAttribute('aria-label', translator.t('output.printTitle'));
-  const range = createOutputRangeField(doc, translator);
+  // 打印默认覆盖全部页；用户仍可切换当前页或自定义范围。
+  const range = createOutputRangeField(doc, translator, 'all');
 
   const dpi = doc.createElement('select');
   dpi.className = 'ofd-select';

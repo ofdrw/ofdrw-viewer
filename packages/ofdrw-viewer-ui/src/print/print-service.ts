@@ -62,7 +62,8 @@ export class PrintService {
   /**
    * 执行打印：准备逐页图片、调用 `window.print()`，结束后清理 DOM。
    *
-   * @param options 打印选项；默认打印当前页、自动 DPI、沿用当前旋转。
+   * @param options 打印选项；服务默认当前页，内置打印对话框默认全部页；
+   *   未传 DPI/旋转时按自动 DPI、沿用当前旋转。
    */
   async print(options: PrintRequestOptions = {}): Promise<void> {
     const scope = createAbortScope(options.signal);

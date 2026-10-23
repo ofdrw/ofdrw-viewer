@@ -2,8 +2,19 @@
  * E2E 宿主页：按查询参数创建真实阅读器，并把实例与事件序列暴露给测试。
  *
  * 这里只做测试编排，不复制阅读器逻辑；所有行为均走公共入口。
+ *
+ * dist 入口追加按页面加载唯一的查询串：Playwright 会复用已启动的 Vite 开发
+ * 服务器，而 `dist/**` 不在文件监听范围，固定 URL 会让服务器一直返回上一次
+ * 构建的模块图，导致 E2E 实际测试旧产物。
  */
-import { OFDViewer } from '../../dist/index.js';
+const distModuleUrl = new URL('../../dist/index.js', import.meta.url);
+distModuleUrl.searchParams.set('v', String(Math.trunc(performance.timeOrigin)));
+const { OFDViewer } = (await import(
+  /* @vite-ignore */ distModuleUrl.href
+)) as typeof import('../../dist/index.js');
+
+/** 阅读器实例类型；动态导入后需从构造器推导。 */
+type OFDViewerInstance = InstanceType<typeof OFDViewer>;
 
 interface HarnessEvent {
   readonly type: string;
@@ -25,7 +36,7 @@ interface EnginePageLike {
 }
 
 interface HarnessState {
-  readonly viewer: OFDViewer;
+  readonly viewer: OFDViewerInstance;
   readonly events: HarnessEvent[];
   readonly errors: string[];
   readonly consoleWarnings: string[];
@@ -46,7 +57,7 @@ declare global {
     __harness?: HarnessState;
     __events?: HarnessEvent[];
     __errors?: string[];
-    __viewer?: OFDViewer;
+    __viewer?: OFDViewerInstance;
   }
 }
 
