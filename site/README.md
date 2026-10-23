@@ -46,19 +46,6 @@ python3 -m http.server 8080 -d site-dist
 BASE_PATH=/ofdrw-viewer/ pnpm -C site build
 ```
 
-## 自动部署
-
-[`.github/workflows/pages.yml`](../.github/workflows/pages.yml) 在 `main` 分支推送后自动构建并部署，也可在 Actions 页面手动触发。
-
-首次部署前需要在仓库 **Settings → Pages → Build and deployment** 中把 **Source** 设为 **GitHub Actions**；否则 `deploy-pages` 步骤会因 Pages 未启用而失败。
-
-工作流根据仓库名自动计算 `BASE_PATH`：
-
-| 仓库类型 | 站点地址 | `BASE_PATH` |
-| --- | --- | --- |
-| 项目仓库 `ofdrw/ofdrw-viewer` | `https://ofdrw.github.io/ofdrw-viewer/` | `/ofdrw-viewer/` |
-| 用户/组织站点 `ofdrw/ofdrw.github.io` | `https://ofdrw.github.io/` | `/` |
-
 ## 目录结构
 
 ```
