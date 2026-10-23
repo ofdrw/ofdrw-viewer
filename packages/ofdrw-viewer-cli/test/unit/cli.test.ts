@@ -35,14 +35,17 @@ describe('parseCliArgs', () => {
     const parsed = parseCliArgs(['发票示例.ofd'], cwd);
     expect(parsed.help).toBe(false);
     expect(parsed.version).toBe(false);
-    expect(parsed.options).toMatchObject({
-      inputPath: resolve(cwd, '发票示例.ofd'),
-      outDir: resolve(cwd, '发票示例'),
-      format: 'png',
-      dpi: DEFAULT_DPI,
-      pageNumbers: undefined,
-      fontDir: undefined,
-      text: false,
+    expect(parsed.command).toMatchObject({
+      kind: 'convert',
+      options: {
+        inputPath: resolve(cwd, '发票示例.ofd'),
+        outDir: resolve(cwd, '发票示例'),
+        format: 'png',
+        dpi: DEFAULT_DPI,
+        pageNumbers: undefined,
+        fontDir: undefined,
+        text: false,
+      },
     });
   });
 
@@ -64,14 +67,17 @@ describe('parseCliArgs', () => {
       ],
       cwd,
     );
-    expect(parsed.options).toMatchObject({
-      inputPath: resolve(cwd, 'input.ofd'),
-      outDir: resolve(cwd, 'out'),
-      format: 'jpeg',
-      dpi: 300,
-      pageNumbers: [1, 2, 3, 5],
-      fontDir: resolve(cwd, 'fonts'),
-      text: true,
+    expect(parsed.command).toMatchObject({
+      kind: 'convert',
+      options: {
+        inputPath: resolve(cwd, 'input.ofd'),
+        outDir: resolve(cwd, 'out'),
+        format: 'jpeg',
+        dpi: 300,
+        pageNumbers: [1, 2, 3, 5],
+        fontDir: resolve(cwd, 'fonts'),
+        text: true,
+      },
     });
   });
 

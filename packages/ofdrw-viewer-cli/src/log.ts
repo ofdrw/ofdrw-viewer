@@ -3,7 +3,12 @@
  *
  * 正常信息写 stdout，错误与 warning 写 stderr；warning 在结束时按错误码汇总。
  * 输出流可注入，便于单元测试捕获内容。
+ *
+ * `error`/`warn`/`pageError` 面向 stderr 人类可读通道，消息在写入前
+ * 统一清理控制字符；`info` 用于 JSON/正常输出，必须保留原始值。
  */
+
+import { sanitizeDisplayText } from './safe-text.js';
 
 /** 最小可写流接口；`process.stdout` / `process.stderr` 均满足。 */
 export interface OutputStream {
@@ -37,7 +42,7 @@ export class Logger {
 
   /** 输出一条错误到 stderr，格式为 `错误[CODE]：message`。 */
   error(code: string, message: string): void {
-    this.#stderr.write(`错误[${code}]：${message}\n`);
+    this.#stderr.write(`错误[${code}]：${sanitizeDisplayText(message)}\n`);
   }
 
   /**
@@ -49,7 +54,7 @@ export class Logger {
    */
   warn(code: string, message: string, pageNumber?: number): void {
     const location = pageNumber === undefined ? '' : ` 第 ${pageNumber} 页`;
-    this.#stderr.write(`警告 [${code}]${location}：${message}\n`);
+    this.#stderr.write(`警告 [${code}]${location}：${sanitizeDisplayText(message)}\n`);
     this.#warningCounts.set(code, (this.#warningCounts.get(code) ?? 0) + 1);
   }
 
@@ -67,7 +72,9 @@ export class Logger {
    * @param message 面向用户的说明
    */
   pageError(pageNumber: number, totalPages: number, code: string, message: string): void {
-    this.#stderr.write(`页面 ${pageNumber}/${totalPages} 失败 [${code}]：${message}\n`);
+    this.#stderr.write(
+      `页面 ${pageNumber}/${totalPages} 失败 [${code}]：${sanitizeDisplayText(message)}\n`,
+    );
   }
 
   /** 返回 warning 码到出现次数的只读快照。 */

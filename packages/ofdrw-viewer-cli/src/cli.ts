@@ -1,8 +1,13 @@
 /**
- * CLI 参数解析、帮助/版本、运行时编排与退出码。
+ * CLI 参数解析、帮助/版本、子命令分派与退出码。
  *
- * 参数与路径校验通过后，把控制权交给 `convert.ts`；转换期间监听一次
- * SIGINT，通过 AbortSignal 取消当前页导出并以 130 退出。
+ * 三种入口：
+ * - 无子命令：`<input.ofd> [转图片选项] [加密凭据]`，保持既有转图片行为；
+ * - `info <input> [--json]`：只查询包结构，不解密、不验签；
+ * - `verify <input> [凭据] [--root]... [--sm2-user-id] [--json]`：
+ *   一次性完成防夹带完整性与全部签名验证。
+ *
+ * 转换/查询/验证期间监听一次 SIGINT，通过 AbortSignal 取消并以 130 退出。
  */
 
 import { stat } from 'node:fs/promises';
@@ -10,6 +15,8 @@ import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { convertDocument } from './convert.js';
+import { buildCryptoCredential } from './credentials.js';
+import type { CliCredentialOptions } from './credentials.js';
 import {
   CliError,
   EXIT_CODES,
@@ -19,6 +26,7 @@ import {
   toCliError,
 } from './errors.js';
 import { loadSupplementaryFonts } from './fonts.js';
+import { runInfo } from './info.js';
 import { Logger } from './log.js';
 import type { OutputStream } from './log.js';
 import {
@@ -28,6 +36,7 @@ import {
 } from './output.js';
 import type { ImageFormat } from './output.js';
 import { parsePageRanges } from './pages.js';
+import { runVerify } from './verify.js';
 
 export { parsePageRanges, resolvePageNumbers, validatePageNumbers } from './pages.js';
 
@@ -48,27 +57,49 @@ export const DEFAULT_DPI = 96;
 /** 超过该 DPI 时给出 warning，但仍继续执行。 */
 export const HIGH_DPI_WARNING_THRESHOLD = 1200;
 
-/** 一行用法提示。 */
+/** 一行用法提示（保持既有转图片用法兼容）。 */
 export const USAGE_LINE = `用法: ${CLI_NAME} <input.ofd> [options]`;
+
+/** 子命令用法提示。 */
+export const SUBCOMMAND_USAGE = `${CLI_NAME} info <input.ofd> [--json]
+${CLI_NAME} verify <input.ofd> [凭据选项] [--root <file>]... [--sm2-user-id <id>] [--json]`;
+
+/** 凭据选项说明，`verify` 与转图片共用。 */
+const CREDENTIAL_HELP = `      --user <name>       加密文档用户名（verify 与转图片）
+      --password <password>     口令（仅 password 用户）
+      --key <path>        SM2 私钥文件（PEM/DER/PKCS#8）
+      --key-passphrase <text>  加密 PKCS#8 私钥口令`;
 
 /** `--help` 的完整输出。 */
 export const HELP_TEXT = `${USAGE_LINE}
+       ${CLI_NAME} info <input.ofd> [--json]
+       ${CLI_NAME} verify <input.ofd> [凭据选项] [--root <file>]... [--sm2-user-id <id>] [--json]
+
+子命令:
+  info                    只查询包信息（不解密、不验签）
+  verify                  一次性验证防夹带完整性与全部签名
 
 参数:
-  <input>               本地 OFD 文件路径（必填）
-  -o, --out <dir>       输出目录；默认 ./<输入文件名>/
-  -f, --format <fmt>    图片格式：png | jpeg | webp（默认 png）
-  -d, --dpi <n>         输出 DPI，正整数（默认 96；超过 ${HIGH_DPI_WARNING_THRESHOLD} 给 warning）
-  -p, --pages <ranges>  页码范围，1 起闭区间，如 1-3,5（默认全部页）
-      --font-dir <dir>  补充字体目录；递归扫描 ttf/otf/ttc/otc
-      --text            每页额外导出空间文本 JSON（<stem>-p<NNN>.json）
-  -h, --help            显示本帮助
-  -V, --version         显示版本与平台
+  <input>                 本地 OFD 文件路径（必填）
+  -o, --out <dir>         输出目录；默认 ./<输入文件名>/
+  -f, --format <fmt>      图片格式：png | jpeg | webp（默认 png）
+  -d, --dpi <n>           输出 DPI，正整数（默认 96；超过 ${HIGH_DPI_WARNING_THRESHOLD} 给 warning）
+  -p, --pages <ranges>    页码范围，1 起闭区间，如 1-3,5（默认全部页）
+      --font-dir <dir>    补充字体目录；递归扫描 ttf/otf/ttc/otc
+      --text              每页额外导出空间文本 JSON（<stem>-p<NNN>.json）
+${CREDENTIAL_HELP}
+      --root <file>       信任根证书（PEM/DER/CER，可重复；仅 verify）
+      --sm2-user-id <id>  自定义 SM2 签名 userId（仅 verify）
+      --json              以 JSON 输出（仅 info/verify）
+  -h, --help              显示本帮助
+  -V, --version           显示版本与平台
 
 输出命名: <out>/<stem>-p<NNN>.<ext>（页号至少 3 位）
-退出码: 0 成功；1 用法错误；2 文档级失败；3 页级失败；130 用户中断`;
+退出码: 0 成功；1 用法错误；2 文档级失败；3 页级失败；4 加密/凭据失败；5 验证未通过；130 用户中断
+文件名: 输入文件名恰为 info/verify 时请写成 ./info 或 ./verify，避免被识别为子命令
+安全提示: --password/--key-passphrase 可能出现在 shell 历史与进程列表，请使用安全方式传递。`;
 
-/** 解析并归一化后的 CLI 参数；路径均为绝对路径。 */
+/** 解析并归一化后的转图片参数；路径均为绝对路径。 */
 export interface CliOptions {
   /** 输入 OFD 文件绝对路径。 */
   readonly inputPath: string;
@@ -84,7 +115,37 @@ export interface CliOptions {
   readonly fontDir: string | undefined;
   /** 是否额外导出空间文本 JSON。 */
   readonly text: boolean;
+  /** 加密凭据原始参数；未提供时为 `undefined`。 */
+  readonly credentials: CliCredentialOptions | undefined;
 }
+
+/** 解析并归一化后的 `info` 参数。 */
+export interface InfoCliOptions {
+  /** 输入 OFD 文件绝对路径。 */
+  readonly inputPath: string;
+  /** 是否输出 JSON。 */
+  readonly json: boolean;
+}
+
+/** 解析并归一化后的 `verify` 参数。 */
+export interface VerifyCliOptions {
+  /** 输入 OFD 文件绝对路径。 */
+  readonly inputPath: string;
+  /** 是否输出 JSON。 */
+  readonly json: boolean;
+  /** 加密凭据原始参数。 */
+  readonly credentials: CliCredentialOptions;
+  /** 信任根证书文件绝对路径。 */
+  readonly rootPaths: readonly string[];
+  /** 自定义 SM2 userId；省略时使用标准值。 */
+  readonly sm2UserId: string | undefined;
+}
+
+/** 解析后的命令。 */
+export type CliCommand =
+  | { readonly kind: 'convert'; readonly options: CliOptions }
+  | { readonly kind: 'info'; readonly options: InfoCliOptions }
+  | { readonly kind: 'verify'; readonly options: VerifyCliOptions };
 
 /** `parseCliArgs` 的结果。 */
 export interface ParsedCliArgs {
@@ -92,8 +153,8 @@ export interface ParsedCliArgs {
   readonly help: boolean;
   /** 是否请求版本。 */
   readonly version: boolean;
-  /** 转换参数；`help`/`version` 为 true 时不存在。 */
-  readonly options?: CliOptions;
+  /** 命令；`help`/`version` 为 true 时不存在。 */
+  readonly command?: CliCommand;
 }
 
 /** `main` 的可注入运行环境，供单元测试捕获输出与固定平台信息。 */
@@ -128,6 +189,44 @@ export interface ProgressReporter {
   onProgress?: (current: number, total: number) => void;
   /** 清理进度行。 */
   onProgressEnd?: () => void;
+}
+
+/** 一次命令执行的取消作用域。 */
+interface InterruptScope {
+  /** 传给转换/crypto 的取消信号。 */
+  readonly signal: AbortSignal;
+  /** 是否已收到 SIGINT（或注入信号已中止）。 */
+  interrupted(): boolean;
+  /** 移除 SIGINT 监听；重复调用安全。 */
+  dispose(): void;
+}
+
+/**
+ * 创建取消作用域。
+ *
+ * 提供 `runtime.signal` 时不注册 SIGINT，便于单元测试注入；否则注册一次
+ * `SIGINT` 并在首次触发时 abort。
+ *
+ * @param runtime CLI 运行环境
+ * @returns 取消作用域
+ */
+function createInterruptScope(runtime: CliRuntime): InterruptScope {
+  const controller = new AbortController();
+  const signal = runtime.signal ?? controller.signal;
+  const listen = runtime.signal === undefined;
+  let interrupted = false;
+  const handleSigint = (): void => {
+    interrupted = true;
+    controller.abort();
+  };
+  if (listen) process.once('SIGINT', handleSigint);
+  return {
+    signal,
+    interrupted: () => interrupted || runtime.signal?.aborted === true,
+    dispose: () => {
+      if (listen) process.off('SIGINT', handleSigint);
+    },
+  };
 }
 
 /**
@@ -172,15 +271,54 @@ function readPackageVersion(): string {
   }
 }
 
+/** `parseArgs` 的选项定义。 */
+const PARSE_OPTIONS = {
+  out: { type: 'string', short: 'o' },
+  format: { type: 'string', short: 'f' },
+  dpi: { type: 'string', short: 'd' },
+  pages: { type: 'string', short: 'p' },
+  'font-dir': { type: 'string' },
+  text: { type: 'boolean' },
+  user: { type: 'string' },
+  password: { type: 'string' },
+  key: { type: 'string' },
+  'key-passphrase': { type: 'string' },
+  root: { type: 'string', multiple: true },
+  'sm2-user-id': { type: 'string' },
+  json: { type: 'boolean' },
+  help: { type: 'boolean', short: 'h' },
+  version: { type: 'boolean', short: 'V' },
+} as const;
+
+/** `parseArgs` 返回值中本文件使用的字段。 */
+interface RawCliValues {
+  readonly out?: string;
+  readonly format?: string;
+  readonly dpi?: string;
+  readonly pages?: string;
+  readonly 'font-dir'?: string;
+  readonly text?: boolean;
+  readonly user?: string;
+  readonly password?: string;
+  readonly key?: string;
+  readonly 'key-passphrase'?: string;
+  readonly root?: readonly string[];
+  readonly 'sm2-user-id'?: string;
+  readonly json?: boolean;
+  readonly help?: boolean;
+  readonly version?: boolean;
+}
+
 /**
  * 解析命令行参数。
  *
  * `--help` / `--version` 优先于输入校验：即使缺少 `<input>` 也返回成功，
- * 由调用方打印对应信息。其余情况严格校验参数集合与取值。
+ * 由调用方打印对应信息。第一个位置参数严格等于 `info`/`verify`/`decrypt`
+ * 时进入子命令分支；文件名恰好为这些词时请写成 `./info`。
  *
  * @param argv 不含 node 与脚本路径的参数数组
  * @param cwd 相对路径基准目录，默认 `process.cwd()`
- * @throws {CliError} 未知参数、缺少输入、参数值非法时抛出（退出码 1）
+ * @throws {CliError} 未知参数、缺少输入、参数非法或子命令参数冲突时抛出（退出码 1）
  */
 export function parseCliArgs(
   argv: readonly string[],
@@ -192,37 +330,98 @@ export function parseCliArgs(
       args: [...argv],
       allowPositionals: true,
       strict: true,
-      options: {
-        out: { type: 'string', short: 'o' },
-        format: { type: 'string', short: 'f' },
-        dpi: { type: 'string', short: 'd' },
-        pages: { type: 'string', short: 'p' },
-        'font-dir': { type: 'string' },
-        text: { type: 'boolean' },
-        help: { type: 'boolean', short: 'h' },
-        version: { type: 'boolean', short: 'V' },
-      },
+      options: PARSE_OPTIONS,
     });
   } catch (error) {
     throw new CliError('CLI_USAGE', formatParseArgsError(error), EXIT_CODES.USAGE);
   }
 
-  const { values, positionals } = parsed;
+  const values = parsed.values as RawCliValues;
+  const positionals = parsed.positionals;
   if (values.help === true) return { help: true, version: false };
   if (values.version === true) return { help: false, version: true };
 
-  if (positionals.length === 0) {
-    throw new CliError('CLI_USAGE', '缺少输入文件', EXIT_CODES.USAGE);
-  }
-  if (positionals.length > 1) {
+  const first = positionals[0];
+  if (first === 'decrypt') {
     throw new CliError(
       'CLI_USAGE',
-      `一次只接受一个输入文件，收到 ${positionals.length} 个`,
+      '不提供 decrypt 子命令；请使用 verify 或带凭据的转图片命令',
       EXIT_CODES.USAGE,
     );
   }
+  const subcommand: 'info' | 'verify' | undefined =
+    first === 'info' || first === 'verify' ? first : undefined;
+  const inputs = subcommand === undefined ? positionals : positionals.slice(1);
 
-  const inputPath = resolve(cwd, positionals[0]);
+  if (inputs.length === 0) {
+    throw new CliError(
+      'CLI_USAGE',
+      subcommand === undefined ? '缺少输入文件' : `${subcommand} 缺少输入文件`,
+      EXIT_CODES.USAGE,
+    );
+  }
+  if (inputs.length > 1) {
+    throw new CliError(
+      'CLI_USAGE',
+      `一次只接受一个输入文件，收到 ${inputs.length} 个`,
+      EXIT_CODES.USAGE,
+    );
+  }
+  const inputPath = resolve(cwd, inputs[0]!);
+
+  if (subcommand === 'info') {
+    assertOptionsAbsent(values, 'info', [
+      ['out', '--out'],
+      ['format', '--format'],
+      ['dpi', '--dpi'],
+      ['pages', '--pages'],
+      ['font-dir', '--font-dir'],
+      ['text', '--text'],
+      ['user', '--user'],
+      ['password', '--password'],
+      ['key', '--key'],
+      ['key-passphrase', '--key-passphrase'],
+      ['root', '--root'],
+      ['sm2-user-id', '--sm2-user-id'],
+    ], 'info 只查询，不解密、不验证；如需凭据/验签请使用 verify');
+    return {
+      help: false,
+      version: false,
+      command: { kind: 'info', options: { inputPath, json: values.json === true } },
+    };
+  }
+
+  if (subcommand === 'verify') {
+    assertOptionsAbsent(values, 'verify', [
+      ['out', '--out'],
+      ['format', '--format'],
+      ['dpi', '--dpi'],
+      ['pages', '--pages'],
+      ['font-dir', '--font-dir'],
+      ['text', '--text'],
+    ], 'verify 不接受转图片参数；需要导出图片时请不要使用 verify 子命令');
+    return {
+      help: false,
+      version: false,
+      command: {
+        kind: 'verify',
+        options: {
+          inputPath,
+          json: values.json === true,
+          credentials: parseCredentialOptions(values, cwd),
+          rootPaths: parseRootPaths(values.root, cwd),
+          sm2UserId: parseSm2UserId(values['sm2-user-id']),
+        },
+      },
+    };
+  }
+
+  assertOptionsAbsent(values, 'convert', [
+    ['root', '--root'],
+    ['sm2-user-id', '--sm2-user-id'],
+    ['json', '--json'],
+  ], '转图片不接受该参数；验证请使用 verify 子命令');
+
   const outDir =
     values.out === undefined
       ? resolveDefaultOutputDir(inputPath, cwd)
@@ -235,20 +434,139 @@ export function parseCliArgs(
   return {
     help: false,
     version: false,
-    options: {
-      inputPath,
-      outDir,
-      format: parseImageFormat(values.format),
-      dpi: parseDpi(values.dpi),
-      pageNumbers: values.pages === undefined ? undefined : parsePageRanges(values.pages),
-      fontDir,
-      text: values.text === true,
+    command: {
+      kind: 'convert',
+      options: {
+        inputPath,
+        outDir,
+        format: parseImageFormat(values.format),
+        dpi: parseDpi(values.dpi),
+        pageNumbers: values.pages === undefined ? undefined : parsePageRanges(values.pages),
+        fontDir,
+        text: values.text === true,
+        credentials: parseCredentialOptions(values, cwd),
+      },
     },
   };
 }
 
 /**
+ * 生成凭据选项列表；`--password` 与 `--key` 互斥。
+ *
+ * @param values 原始参数
+ * @param cwd 相对路径基准目录
+ * @returns 凭据原始参数；未提供任何凭据字段时全部为 `undefined`
+ * @throws {CliError} 凭据组合非法或路径为空时抛出（退出码 1）
+ */
+function parseCredentialOptions(
+  values: RawCliValues,
+  cwd: string,
+): CliCredentialOptions {
+  const user = values.user;
+  if (user !== undefined && user.trim().length === 0) {
+    throw new CliError('CLI_USAGE', '--user 不能为空', EXIT_CODES.USAGE);
+  }
+  if (values.password !== undefined && values.key !== undefined) {
+    throw new CliError(
+      'CLI_CREDENTIALS_CONFLICT',
+      '--password 与 --key 不能同时使用',
+      EXIT_CODES.USAGE,
+    );
+  }
+  if (values['key-passphrase'] !== undefined && values.key === undefined) {
+    throw new CliError(
+      'CLI_CREDENTIALS_INCOMPLETE',
+      '--key-passphrase 需要与 --key 一起使用',
+      EXIT_CODES.USAGE,
+    );
+  }
+  if (
+    user !== undefined &&
+    values.password === undefined &&
+    values.key === undefined
+  ) {
+    throw new CliError(
+      'CLI_CREDENTIALS_INCOMPLETE',
+      '--user 需要与 --password 或 --key 一起使用',
+      EXIT_CODES.USAGE,
+    );
+  }
+  const keyPath =
+    values.key === undefined ? undefined : resolvePathOption(values.key, cwd, '--key');
+  return {
+    ...(user === undefined ? {} : { user }),
+    ...(values.password === undefined ? {} : { password: values.password }),
+    ...(keyPath === undefined ? {} : { keyPath }),
+    ...(values['key-passphrase'] === undefined
+      ? {}
+      : { keyPassphrase: values['key-passphrase'] }),
+  };
+}
+
+/**
+ * 解析可重复的 `--root` 路径并去重。
+ *
+ * @param raw 原始值
+ * @param cwd 相对路径基准目录
+ * @returns 绝对路径数组；未提供时为空数组
+ * @throws {CliError} 路径为空时抛出（退出码 1）
+ */
+function parseRootPaths(raw: readonly string[] | undefined, cwd: string): readonly string[] {
+  if (raw === undefined) return [];
+  const paths = raw.map((path) => resolvePathOption(path, cwd, '--root'));
+  return [...new Set(paths)];
+}
+
+/**
+ * 校验 `--sm2-user-id`。
+ *
+ * @param raw 原始值
+ * @returns 去除首尾空白后的 userId；未提供时为 `undefined`
+ * @throws {CliError} 值为空时抛出（退出码 1）
+ */
+function parseSm2UserId(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    throw new CliError('CLI_USAGE', '--sm2-user-id 不能为空', EXIT_CODES.USAGE);
+  }
+  return trimmed;
+}
+
+/**
+ * 拒绝当前子命令不支持的参数。
+ *
+ * 只列出参数名，不回显参数值，避免把口令/私钥写进错误信息。
+ *
+ * @param values 原始参数
+ * @param command 子命令名（仅用于提示）
+ * @param checks 参数键与展示名的列表
+ * @param reason 统一的提示语
+ * @throws {CliError} 任一参数出现时抛出（退出码 1）
+ */
+function assertOptionsAbsent(
+  values: RawCliValues,
+  command: string,
+  checks: readonly (readonly [keyof RawCliValues, string])[],
+  reason: string,
+): void {
+  const present: string[] = [];
+  for (const [key, flag] of checks) {
+    const value = values[key];
+    if (value !== undefined && value !== false) present.push(flag);
+  }
+  if (present.length === 0) return;
+  throw new CliError(
+    'CLI_USAGE',
+    `${command} 不接受参数 ${present.join('、')}；${reason}`,
+    EXIT_CODES.USAGE,
+  );
+}
+
+/**
  * 把 Node `parseArgs` 的英文错误映射为简体中文。
+ *
+ * 只提取参数名，不回显参数值（例如 `--password` 的值）。
  *
  * @param error `parseArgs` 抛出的错误；其他异常按通用参数错误处理
  * @returns 面向用户的中文错误信息
@@ -262,7 +580,8 @@ function formatParseArgsError(error: unknown): string {
     }
     case 'ERR_PARSE_ARGS_INVALID_OPTION_VALUE': {
       const option =
-        /Option '([^']+)'/.exec(message)?.[1]?.replace(/\s*<[^>]*>/g, '') ?? '参数';
+        /Option '([^']+)'/.exec(message)?.[1]?.replace(/\s*<[^>]*>/g, '').trim() ??
+        '参数';
       if (message.includes('argument missing')) return `缺少参数值：${option}`;
       if (message.includes('does not take an argument')) return `参数不接受值：${option}`;
       return `参数值无效：${option}`;
@@ -317,7 +636,7 @@ export async function validateInputFile(inputPath: string): Promise<void> {
 }
 
 /**
- * CLI 主流程：解析参数、校验路径、准备输出并调用图片转换。
+ * CLI 主流程：解析参数、分派子命令并计算退出码。
  *
  * @param argv 不含 node 与脚本路径的参数数组
  * @param runtime 可注入的运行环境（测试用）
@@ -347,46 +666,60 @@ export async function main(
       return EXIT_CODES.OK;
     }
 
-    const options = parsed.options;
-    if (options === undefined) {
-      throw new CliError('CLI_UNEXPECTED', '参数解析结果缺少选项', EXIT_CODES.DOCUMENT);
-    }
-    if (options.dpi > HIGH_DPI_WARNING_THRESHOLD) {
-      logger.warn(
-        'W_DPI_HIGH',
-        `--dpi ${options.dpi} 超过建议上限 ${HIGH_DPI_WARNING_THRESHOLD}，可能占用大量内存`,
-      );
+    const command = parsed.command;
+    if (command === undefined) {
+      throw new CliError('CLI_UNEXPECTED', '参数解析结果缺少命令', EXIT_CODES.DOCUMENT);
     }
 
-    await validateInputFile(options.inputPath);
-    const fontFiles =
-      options.fontDir === undefined
-        ? []
-        : await loadSupplementaryFonts(options.fontDir, logger);
-    await prepareOutputDirectory(options.outDir);
-
-    // SIGINT 只触发一次取消，由 convert 内的 AbortSignal 通知当前页导出。
-    const controller = new AbortController();
-    const signal = runtime.signal ?? controller.signal;
-    let interruptedBySignal = false;
-    const handleSigint = (): void => {
-      interruptedBySignal = true;
-      controller.abort();
-    };
-    const listenForSigint = runtime.signal === undefined;
-    if (listenForSigint) process.once('SIGINT', handleSigint);
-
+    const interrupt = createInterruptScope(runtime);
     try {
+      await validateInputFile(command.options.inputPath);
+
+      if (command.kind === 'info') {
+        const code = await runInfo(command.options, {
+          logger,
+          signal: interrupt.signal,
+        });
+        return interrupt.interrupted() ? EXIT_CODES.INTERRUPTED : code;
+      }
+
+      if (command.kind === 'verify') {
+        const code = await runVerify(command.options, {
+          logger,
+          signal: interrupt.signal,
+        });
+        return interrupt.interrupted() ? EXIT_CODES.INTERRUPTED : code;
+      }
+
+      const options = command.options;
+      if (options.dpi > HIGH_DPI_WARNING_THRESHOLD) {
+        logger.warn(
+          'W_DPI_HIGH',
+          `--dpi ${options.dpi} 超过建议上限 ${HIGH_DPI_WARNING_THRESHOLD}，可能占用大量内存`,
+        );
+      }
+      const fontFiles =
+        options.fontDir === undefined
+          ? []
+          : await loadSupplementaryFonts(options.fontDir, logger);
+      await prepareOutputDirectory(options.outDir);
+
+      const { credentials: credentialOptions, ...convertOptions } = options;
+      const credentials = await buildCryptoCredential(credentialOptions);
       const summary = await convertDocument(
-        { ...options, fontFiles },
-        { logger, signal, ...progress },
+        {
+          ...convertOptions,
+          fontFiles,
+          ...(credentials === undefined ? {} : { credentials }),
+        },
+        { logger, signal: interrupt.signal, ...progress },
       );
       logger.info(summary.message);
       logger.flushWarningSummary();
-      if (summary.interrupted || interruptedBySignal) return EXIT_CODES.INTERRUPTED;
+      if (summary.interrupted || interrupt.interrupted()) return EXIT_CODES.INTERRUPTED;
       return summary.failedPages > 0 ? EXIT_CODES.PAGE : EXIT_CODES.OK;
     } finally {
-      if (listenForSigint) process.off('SIGINT', handleSigint);
+      interrupt.dispose();
     }
   } catch (error) {
     const failure = toCliError(error);

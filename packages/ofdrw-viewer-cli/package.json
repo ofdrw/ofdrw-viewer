@@ -46,6 +46,7 @@
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.13",
+    "@ofdrw/ofdrw-viewer-crypto": "workspace:*",
     "@ofdrw/ofdrw-viewer-engine": "workspace:*"
   }
 }

@@ -2,64 +2,137 @@
 
 [![npm version](https://img.shields.io/npm/v/@ofdrw/ofdrw-viewer-cli)](https://www.npmjs.com/package/@ofdrw/ofdrw-viewer-cli)
 [![GitHub release](https://img.shields.io/github/v/release/ofdrw/ofdrw-viewer)](https://github.com/ofdrw/ofdrw-viewer/releases)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/ofdrw/ofdrw-viewer/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](../../LICENSE)
 [![Node.js >= 22](https://img.shields.io/badge/node-%3E%3D22-green)](https://nodejs.org/)
 
-把单个本地 OFD 文件逐页导出为 PNG、JPEG 或 WebP 图片；需要文字坐标时，用 `--text` 让每页额外产出一个空间文本 JSON。图片与 JSON 使用同一页、同一 DPI、同一坐标系，可直接叠加。
+## ✨ 功能概述
 
-![ofdrw-viewer-cli 演示](https://raw.githubusercontent.com/ofdrw/ofdrw-viewer/main/packages/ofdrw-viewer-cli/demo/demo.gif)
+- **转图片**：把 OFD 逐页导出为 PNG（默认）、JPEG 或 WebP；
+- **空间文本**：加 `--text` 时每页额外导出带像素坐标的 JSON；
+- **加密文档**：用口令或 SM2 私钥解密后导出，明文不落盘；
+- **`info` 查询**：只读查看包大小、加密层、用户、签名与完整性，不解密、不验签；
+- **`verify` 验签**：一次性校验防夹带完整性、全部签名、证书链印章与时间戳（时间戳只解析展示，不验证）。
+
+> `verify` 不会修改文档，也不提供独立 `decrypt` 子命令；加密文档请直接用凭据执行转图片。
+
+![ofdrw-viewer-cli 演示](demo/demo.gif)
 
 ## 📦 安装
-
-全局安装即可使用 `ofdrw-viewer-cli` 命令：
 
 ```bash
 npm install -g @ofdrw/ofdrw-viewer-cli
 ```
 
-没有 Node 环境时，从 [Releases](https://github.com/ofdrw/ofdrw-viewer/releases) 下载对应平台压缩包：Linux/macOS 为 `.tar.gz`，Windows 为 `.zip`。解压后直接运行其中的可执行文件，无需安装 Node；运行前请用同目录的 `SHA256SUMS` 校验文件。
+不想安装 Node？从 [Releases](https://github.com/ofdrw/ofdrw-viewer/releases) 下载对应平台的压缩包：Linux/macOS 选 `.tar.gz`，Windows 选 `.zip`。解压后直接运行，无需安装 Node；可用同目录的 `SHA256SUMS` 校验文件。
 
 ## ⚡ 用法
 
-### 导出全部页
+### 导出图片
 
 ```bash
+# 全部页；输出到 ./<输入文件名>/
 ofdrw-viewer-cli input.ofd
-```
 
-默认把全部页导出为 PNG（96 DPI），输出到当前目录的 `<输入 stem>/`（如 `input/`），文件名为 `input-p001.png`、`input-p002.png` 等，页号至少补足 3 位。
-
-### 指定页、格式与 DPI
-
-```bash
+# 指定目录、页码、格式和清晰度
 ofdrw-viewer-cli input.ofd -o out --pages 1-3 --format jpeg --dpi 300
 ```
 
-`--pages` 使用 1 起闭区间，`1-3` 表示第 1 到第 3 页（含两端）；`--format` 支持 `png`、`jpeg`、`webp`。`--dpi` 同时影响图片分辨率和文本 JSON 的坐标缩放。
+`--pages 1-3` 只导出第 1 到第 3 页（含两端）；`--format` 可选 `png`、`jpeg`、`webp`；`--dpi` 控制清晰度，并同步影响文字坐标。
 
-### 导出空间文本
+### 导出文字位置
 
 ```bash
 ofdrw-viewer-cli input.ofd --text
 ```
 
-每页在图片之外生成一个同 stem 的 JSON（如 `input-p001.json`），内容是扁平数组，每项含 `text`、`x`、`y`、`w`、`h`。坐标单位为 px，原点在页面左上角，与同页图片使用相同 DPI。
+每页会多一个同名 JSON（如 `input-p001.json`），字段为 `text`、`x`、`y`、`w`、`h`；单位像素，原点在页面左上角，和同页图片使用相同 DPI。
 
-### 补充字体目录
+### 查询文档信息
 
 ```bash
-ofdrw-viewer-cli input.ofd -o out --font-dir ./fonts
+ofdrw-viewer-cli info input.ofd
+ofdrw-viewer-cli info input.ofd --json
 ```
 
-`--font-dir` 会递归扫描目录中的 `.ttf`、`.otf`、`.ttc`、`.otc`（扩展名大小写不敏感），按路径排序后作为补充字体交给引擎；CLI 通过 `OFDOpenOptions.loadInput` 注入 Node `node:fs` 读取器，**真正读取字体字节并解析实际 family**。TTC/OTC 会展开其中的全部字体面参与匹配，不只看第 0 个。
+`info` 只调用 crypto 的 `inspect`，不解密、不验签；加密文档不需要口令也能查询，成功退出 `0`。文本输出包含文件、大小、OFD 版本、加密层数、用户、签名数与完整性状态；`--json` 输出固定字段，便于脚本读取。CLI 用 `NodeFileByteSource` 随机读输入，以 `byte-source` 传给 `inspect`，不整包 `readFile`。`info` 只接受 `--json`，带凭据/`--root` 等参数会报用法错误。
 
-- 字体目录不存在、不是目录或不可读取时，命令以用法错误（退出码 1）失败。
-- 不会自动扫描系统字体、不会下载字体；缺字仍会输出 `W_FONT_MISSING`/`W_GLYPH_MISSING` warning。
-- 字体匹配失败只 warning，不中断导出；建议先用小样本确认字体目录覆盖目标文档。
+### 验证签名与完整性
+
+```bash
+# 配置信任根后验证
+ofdrw-viewer-cli verify signed.ofd --root root-ca.crt.pem
+
+# 多个根（PEM/DER/CER 均可，可重复）
+ofdrw-viewer-cli verify signed.ofd --root root.pem --root root.der --json
+
+# 加密文档先解密再验证
+ofdrw-viewer-cli verify encrypted.ofd --password 'your-password' --root root-ca.crt.pem
+ofdrw-viewer-cli verify encrypted.ofd --key signer.key.pem --key-passphrase 'key-pass' --root root-ca.crt.pem
+```
+
+`verify` 在一次调用中完成防夹带完整性与全部签名验证，并输出证书链、印章与时间戳解析结果（时间戳状态固定 `parsed-not-verified`，只解析、不验证）。CLI 同样用 `NodeFileByteSource` 随机读输入并以 `byte-source` 交给 crypto；需要解密时由 crypto 内部按需读取并关闭临时容器。**只有 `overall=valid` 才退出 0**；未配置根证书时链状态为 `unknown`，退出 `5`，这是预期安全状态，不是“验证通过”。
+
+- `--root`：信任根证书，PEM/DER/CER，可重复；仅 `verify` 使用；
+- `--user`：指定加密文档的 `UserInfo@UserName`，需配合 `--password` 或 `--key`；
+- `--password`：口令用户；与 `--key` 互斥；
+- `--key`：SM2 私钥文件（PEM/DER/PKCS#8）；
+- `--key-passphrase`：加密 PKCS#8 私钥口令，必须与 `--key` 一起使用；
+- `--sm2-user-id`：自定义 SM2 签名 userId，默认 `1234567812345678`，仅 `verify` 使用；
+- `--json`：`info`/`verify` 以 JSON 输出；`verify` 即使失败也输出完整报告再返回非 0；
+- `verify` 不接受 `-o`/`--format`/`--dpi`/`--pages`/`--font-dir`/`--text`，需要出图请直接使用转图片命令。
+
+### 加密文档转图片
+
+```bash
+ofdrw-viewer-cli encrypted.ofd -o out --password 'your-password'
+ofdrw-viewer-cli encrypted.ofd -o out --key encrypt.key.pem
+ofdrw-viewer-cli encrypted.ofd -o out --key encrypt.key.pem --key-passphrase 'key-pass'
+```
+
+CLI 用 `NodeFileByteSource` 随机读输入，并把 `{ kind: 'byte-source', source }` 交给 crypto；在内存中解密后把明文容器交给 engine 渲染，不生成明文临时文件。缺少凭据或凭据错误时退出 `4`，不会产出页面；其他转图片参数与明文文档完全一致。
+
+### 文件输入与随机访问
+
+CLI 的 OFD 文件输入统一走 `NodeFileByteSource`（`fs.promises.open` + 位置读取），以
+`{ kind: 'byte-source', source }` 传给 crypto 的 `inspect`/`openDecryptingContainer`/
+`verifyOfd`；`info`、`verify` 和加密转图片都不会对输入 OFD 调用 `readFile` 整包。
+字节源由 CLI 拥有，在成功、失败、取消或 SIGINT 后关闭；crypto 只读，不关闭调用方
+字节源。私钥、根证书、字体等非 OFD 小文件仍可按原方式读取。
+
+### 文件名恰好为 `info` 或 `verify`
+
+`info`、`verify` 是子命令名。若输入文件恰好叫这两个名字，请在路径前加 `./`，例如 `ofdrw-viewer-cli info ./info` 或 `ofdrw-viewer-cli ./verify`，避免被当成子命令。文件名恰好为 `decrypt` 时同样写成 `./decrypt`。
+
+## 📊 JSON 与文本输出
+
+- `info`/`verify` 的文本输出面向人阅读；`--json` 输出固定结构，写 stdout，可被脚本解析。
+- `info --json`：`command`、`input`、`packageSize`、`ofdVersion`、`encrypted`、`layers`、`users`、`signatureCount`、`integrityPresent`、`warnings`。
+- `verify --json`：`command`、`input`、`report`；`report` 包含 `overall`、`package`、`integrity`、`signatures`、`rootsConfigured`、`warnings` 等字段。
+- JSON 保留文档中的原始值；文本/错误/warning 会移除 ANSI 控制序列，并把换行、C0/C1 控制字符和 U+2028/U+2029 替换为空格，防止恶意 OFD 伪造终端输出行；未知异常的堆栈按原样输出。
+- warning 逐条写 stderr，结束时按 warning 码输出“警告汇总”；正常摘要写 stdout。
+
+## 🚦 退出码
+
+| 码 | 含义 |
+| --- | --- |
+| `0` | 成功：图片全部导出、`info` 查询成功，或 `verify` 的 `overall=valid` |
+| `1` | 用法/参数错误（未知参数、缺少输入、`decrypt`、参数组合冲突等） |
+| `2` | 文档级失败（非 OFD、包损坏、无法打开、SEA 资产失败等） |
+| `3` | 页级失败（至少一页失败；全部页失败仍为 3） |
+| `4` | 加密/凭据失败（缺少凭据、用户名不存在、口令/私钥错误、解密失败） |
+| `5` | 验证未通过（`invalid`/`unknown`/`unsupported`/`not-applicable`） |
+| `130` | 用户中断（SIGINT） |
+
+## 🔒 安全提示
+
+- `--password` 和 `--key-passphrase` 可能出现在 shell 历史或进程列表中，请使用安全的方式传递；
+- CLI 不打印口令、私钥、PEM 或 `EncryptedWK`；
+- 只对可信来源的 OFD 运行；超大页面或高 DPI 可能占用大量内存；
+- 未配置根证书时无法判断信任链，`verify` 会明确返回 `unknown` 而不是误报成功。
 
 ## 📖 完整说明
 
-运行 `ofdrw-viewer-cli --help` 查看参数与默认值；参数、输出、JSON、退出码、错误和 SEA 的完整说明见 [SKILL.md](https://github.com/ofdrw/ofdrw-viewer/blob/main/packages/ofdrw-viewer-cli/skills/ofdrw-viewer-cli/SKILL.md)。
+想了解全部参数、输出规则和 Agent 工作流，运行 `ofdrw-viewer-cli --help`，或查看 [完整说明](https://github.com/ofdrw/ofdrw-viewer/blob/main/packages/ofdrw-viewer-cli/skills/SKILL.md)。
 
 ## 🛠️ 开发
 
@@ -72,4 +145,4 @@ pnpm cli:test
 
 ## 📄 许可证
 
-本项目采用 [MIT License](https://github.com/ofdrw/ofdrw-viewer/blob/main/LICENSE) 开源。Copyright (c) 2026 Quan Guanyu
+本项目采用 [MIT License](../../LICENSE) 开源。Copyright (c) 2026 Quan Guanyu

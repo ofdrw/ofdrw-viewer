@@ -43,6 +43,28 @@ export const MULTI_OFD = join(SAMPLE_DIR, '999.ofd');
 /** 文本主样本：2 页，第 1 页 147 项、第 2 页 8,331 项。 */
 export const DENSE_OFD = join(SAMPLE_DIR, 'dense-text-perf.ofd');
 
+/** crypto 共用受保护夹具目录。 */
+export const CRYPTO_FIXTURES = join(
+  REPO_ROOT,
+  'packages',
+  'ofdrw-viewer-crypto',
+  'test',
+  'fixtures',
+  'crypto',
+);
+
+/** 夹具口令用户名。 */
+export const CRYPTO_PASSWORD_USER = 'fixture-password-user';
+
+/** 夹具口令。 */
+export const CRYPTO_PASSWORD = 'FixturePass123';
+
+/** 夹具证书用户名。 */
+export const CRYPTO_CERT_USER = 'fixture-cert-user';
+
+/** 夹具信任根（PEM）。 */
+export const CRYPTO_ROOT = join(CRYPTO_FIXTURES, 'certs', 'root-ca.crt.pem');
+
 /** 验收用字体候选：优先仓库本地夹具，其次常见系统字体。 */
 const FONT_CANDIDATES = [
   join(REPO_ROOT, 'test', '.fixtures', 'fonts', 'DroidSansFallbackFull.ttf'),

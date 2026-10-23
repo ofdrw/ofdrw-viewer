@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadImage } from '@napi-rs/canvas';
@@ -20,8 +20,22 @@ const SAMPLE_DIR = join(REPO_ROOT, 'ofd_pdf_match');
 /** 合成的最小合法 TTF，避免依赖本机/不可提交的系统字体。 */
 const FIXTURE_FONT = fileURLToPath(new URL('../fixtures/minimal.ttf', import.meta.url));
 
-/** 本机 Windows 字体目录（WSL）；不存在时相关用例 skip。 */
-const WINDOWS_FONT_DIR = '/mnt/c/Windows/Fonts';
+/**
+ * 可用的单个 CJK 字体候选。
+ *
+ * 只复制一个字体到临时目录再传给 `--font-dir`：Windows 字体目录包含 1 GB
+ * 以上字体，engine 会逐个读取全部补充字体，整目录传入在内存受限环境会
+ * 出现 ENOMEM 抖动。优先使用仓库本地夹具，其次 WSL Windows 中文字体。
+ */
+const CJK_FONT_CANDIDATES = [
+  join(REPO_ROOT, 'test', '.fixtures', 'fonts', 'DroidSansFallbackFull.ttf'),
+  '/mnt/c/Windows/Fonts/simsun.ttc',
+  '/mnt/c/Windows/Fonts/msyh.ttc',
+  '/mnt/c/Windows/Fonts/simhei.ttf',
+];
+
+/** 首个存在的 CJK 字体；全部缺失时跳过对应用例。 */
+const CJK_FONT = CJK_FONT_CANDIDATES.find((candidate) => existsSync(candidate));
 
 const tempDirs: string[] = [];
 
@@ -235,11 +249,14 @@ describe('CLI 图片导出 e2e', () => {
     expect(result.stdout).toContain('完成：1/1 页');
   });
 
-  it.skipIf(!existsSync(WINDOWS_FONT_DIR))(
+  it.skipIf(CJK_FONT === undefined)(
     '999.ofd 使用 --font-dir 加载非内嵌字体后 W_FONT_MISSING 归零',
     async () => {
       const cwd = await createTempDir();
       const outDir = join(cwd, 'out');
+      const fontDir = join(cwd, 'fonts');
+      await mkdir(fontDir);
+      await copyFile(CJK_FONT!, join(fontDir, basename(CJK_FONT!)));
 
       const result = await runCli(
         [
@@ -249,7 +266,7 @@ describe('CLI 图片导出 e2e', () => {
           '--pages',
           '1',
           '--font-dir',
-          WINDOWS_FONT_DIR,
+          fontDir,
         ],
         cwd,
       );

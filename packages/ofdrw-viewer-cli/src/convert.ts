@@ -12,6 +12,8 @@
  */
 
 import { parse as parsePath } from 'node:path';
+import { openDecryptingContainer } from '@ofdrw/ofdrw-viewer-crypto';
+import type { CryptoCredential } from '@ofdrw/ofdrw-viewer-crypto';
 import {
   DEFAULT_RESOURCE_LIMITS,
   OFDDocument,
@@ -22,8 +24,11 @@ import type {
   OFDPage,
   OFDWarning,
   PageImageFormat,
+  VirtualContainer,
 } from '@ofdrw/ofdrw-viewer-engine';
 import { createCanvasLike, encodeCanvasImage } from './canvas.js';
+import { closeCryptoByteSource, openCryptoSource } from './credentials.js';
+import { reportCryptoWarnings } from './crypto-output.js';
 import { CliError, EXIT_CODES, errorMessage, isCliError } from './errors.js';
 import type { FontFile } from './fonts.js';
 import { createNodeFontInputLoader } from './fonts.js';
@@ -54,6 +59,13 @@ export interface ConvertOptions {
   readonly fontFiles: readonly FontFile[];
   /** 是否额外导出空间文本 JSON。 */
   readonly text: boolean;
+  /**
+   * 加密文档凭据；`undefined` 表示未提供。
+   *
+   * 提供凭据时先经 crypto 检测/解密，再用明文容器打开文档；明文文档会忽略
+   * 凭据并产生 warning，行为与未提供凭据一致。
+   */
+  readonly credentials?: CryptoCredential;
 }
 
 /** 转换摘要，供成功/部分失败/取消时输出与计算退出码。 */
@@ -102,6 +114,7 @@ export async function convertDocument(
   const stem = parsePath(options.inputPath).name;
   let document: OFDDocument | undefined;
   let source: NodeFileByteSource | undefined;
+  let container: VirtualContainer | undefined;
 
   try {
     const openDocument = runtime.openDocument ?? OFDDocument.open;
@@ -124,11 +137,39 @@ export async function convertDocument(
       },
     };
 
-    source = await NodeFileByteSource.open(options.inputPath);
-    document = await openDocument({
-      ...commonOptions,
-      source: { kind: 'custom', source },
-    });
+    if (options.credentials === undefined) {
+      // 无凭据：保持既有流式路径；加密包由 engine 抛 OFD_ENCRYPTED，下面
+      // 映射为“需要凭据”的退出码 4。
+      source = await NodeFileByteSource.open(options.inputPath);
+      try {
+        document = await openDocument({
+          ...commonOptions,
+          source: { kind: 'custom', source },
+        });
+      } catch (error) {
+        if (isOFDError(error) && error.code === 'OFD_ENCRYPTED') {
+          throw new CliError(
+            'CLI_CREDENTIALS_REQUIRED',
+            `文档已加密，请使用 --user/--password 或 --key/--key-passphrase 提供凭据：${options.inputPath}`,
+            EXIT_CODES.CREDENTIAL,
+          );
+        }
+        throw error;
+      }
+    } else {
+      // 有凭据：inspect → openDecryptingContainer → 明文容器交给 engine。
+      // engine 借用容器不关闭，由本函数在 finally 中释放。
+      const opened = await openCryptoSource(options.inputPath);
+      source = opened.byteSource;
+      const decrypted = await openDecryptingContainer({
+        source: opened.source,
+        credentials: options.credentials,
+        ...(runtime.signal === undefined ? {} : { signal: runtime.signal }),
+      });
+      container = decrypted.container;
+      reportCryptoWarnings(logger, decrypted.warnings);
+      document = await openDocument({ ...commonOptions, container });
+    }
 
     const pageNumbers = resolvePageNumbers(options.pageNumbers, document.pageCount);
     const totalPages = pageNumbers.length;
@@ -271,13 +312,19 @@ export async function convertDocument(
         logger.warn('W_DOC_CLOSE_FAILED', `关闭文档失败：${errorMessage(error)}`);
       }
     }
-    // engine 会关闭 custom source；这里幂等兜底，确保打开失败/close 提前抛错时也释放句柄。
-    if (source !== undefined) {
+    // 解密容器由 crypto 创建、CLI 拥有；若它是 source-backed 明文容器，
+    // 必须先关闭容器再关闭文件句柄。engine 借用容器，不会替 CLI 关闭。
+    if (container !== undefined) {
       try {
-        await source.close();
+        await container.close();
       } catch (error) {
-        logger.warn('W_SOURCE_CLOSE_FAILED', `关闭输入文件失败：${errorMessage(error)}`);
+        logger.warn('W_CONTAINER_CLOSE_FAILED', `关闭解密容器失败：${errorMessage(error)}`);
       }
+    }
+    // engine 会关闭无凭据路径传入的 custom source；这里幂等兜底，确保
+    // 打开失败/close 提前抛错，以及带凭据路径（crypto 只借用）也释放句柄。
+    if (source !== undefined) {
+      await closeCryptoByteSource(source, logger);
     }
   }
 }
