@@ -117,10 +117,10 @@ export const OFDViewer = defineComponent({
   name: 'OFDViewer',
   inheritAttrs: false,
   props: {
-    /** 文档来源；变化时调用 `open()`。 */
+    /** 文档来源；省略时读取页面查询参数 `?file=` / `?base64=`。 */
     source: {
       type: [String, Object] as PropType<ViewerSource>,
-      required: true,
+      default: undefined,
     },
     /** 受控页码（1-based）。 */
     page: { type: Number, default: undefined },
@@ -151,7 +151,7 @@ export const OFDViewer = defineComponent({
   setup(props, { attrs, emit, expose }) {
     const container = shallowRef<HTMLElement | null>(null);
     const viewer = shallowRef<CoreOFDViewer | null>(null);
-    let lastSource: ViewerSource | null = null;
+    let lastSource: ViewerSource | undefined;
 
     /** 创建实例并绑定事件。 */
     function createViewer(element: HTMLElement): void {
@@ -159,7 +159,7 @@ export const OFDViewer = defineComponent({
       const created = new CoreOFDViewer({
         ...advanced,
         container: element,
-        source: props.source,
+        ...(props.source === undefined ? {} : { source: props.source }),
         ...(props.page === undefined ? {} : { initialPage: props.page }),
         ...(props.scale === undefined ? {} : { initialScale: props.scale }),
         ...(props.rotation === undefined ? {} : { rotation: props.rotation }),
@@ -194,7 +194,7 @@ export const OFDViewer = defineComponent({
     onBeforeUnmount(() => {
       viewer.value?.destroy();
       viewer.value = null;
-      lastSource = null;
+      lastSource = undefined;
     });
 
     watch(
@@ -287,7 +287,7 @@ export const OFDViewer = defineComponent({
     expose({
       getInstance: () => viewer.value,
       getViewer: () => viewer.value,
-      open: async (source: ViewerSource) => {
+      open: async (source?: ViewerSource) => {
         await viewer.value?.open(source);
       },
       close: async () => {

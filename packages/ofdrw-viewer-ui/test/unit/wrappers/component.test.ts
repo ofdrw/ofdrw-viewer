@@ -149,13 +149,16 @@ describe('<ofd-viewer>', () => {
     expect(element.viewer).toBe(second);
   });
 
-  it('无 src 时不创建实例，随后设置 src 再创建', async () => {
+  it('省略 src 时仍创建实例（供查询参数预览），随后设置 src 打开文档', async () => {
     const element = document.createElement(OFD_VIEWER_TAG) as OFDViewerElement;
     document.body.append(element);
-    expect(element.viewer).toBeNull();
+    expect(element.viewer).not.toBeNull();
+    expect((element.viewer as unknown as FakeViewer).options.source).toBeUndefined();
     element.setAttribute('src', 'later.ofd');
     await tick();
     expect(FakeViewer.instances).toHaveLength(1);
-    expect((element.viewer as unknown as FakeViewer).options.source).toBe('later.ofd');
+    const viewer = element.viewer as unknown as FakeViewer;
+    expect(viewer.options.source).toBeUndefined();
+    expect(viewer.openCalls).toEqual(['later.ofd']);
   });
 });

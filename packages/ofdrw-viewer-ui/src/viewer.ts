@@ -103,6 +103,7 @@ import type { UIDialogOptions, UIShellElements } from './ui/types';
 import type { UIShellHost } from './ui';
 import type { CertificateSource } from './options';
 import { HttpByteSource } from './source/http-byte-source';
+import { readPreviewSourceFromLocation } from './source/query-source';
 import {
   CryptoService,
   type CryptoOpenPreparation,
@@ -689,11 +690,15 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /**
    * 打开/切换文档；会关闭旧文档并取消渲染。
    *
-   * @param source 文档来源；省略时使用构造参数。
+   * 来源优先级：显式参数 > 构造参数 `source` > 页面查询参数 `?file=` / `?base64=`。
+   * 三者都没有时以 `OFD_INVALID_OPTION` 拒绝。
+   *
+   * @param source 文档来源；省略时按上述优先级解析。
    */
-  async open(source: ViewerSource = this.options.source): Promise<void> {
+  async open(source?: ViewerSource): Promise<void> {
     this.assertNotDisposed();
-    this.lastOpenSource = source;
+    const resolved = this.resolveOpenSource(source);
+    this.lastOpenSource = resolved;
     const previousSource = this.state.document.source;
     const previousOrigin = this.state.document.origin;
     this.openToken += 1;
@@ -705,7 +710,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.patchDocument({ status: 'opening', source: null, origin: undefined });
     this.commit();
     // 正常由 `document:open:start` 启动 150ms 计时；引擎事件不可用时在此降级。
-    if (!this.engineEvents) this.documentLoading.begin(source);
+    if (!this.engineEvents) this.documentLoading.begin(resolved);
     /** 尚未移交给阅读器的解密容器；取消/失败时必须关闭。 */
     let pendingContainer: VirtualContainer | null = null;
     /** 本次创建的 HTTP 字节源；明文路径移交给 engine，加密路径由 UI 关闭。 */
@@ -715,7 +720,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     try {
       // URL → HttpByteSource 只在这里做一次；crypto 与 engine 共用同一实例。
       const normalized: NormalizedViewerSource = normalizeViewerSourceDetailed(
-        source,
+        resolved,
         this.options.requestInit,
         { signal: abort.signal },
       );
@@ -864,6 +869,32 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     }
   }
 
+  /**
+   * 解析本次打开来源。
+   *
+   * 显式参数与构造参数优先；都省略时读取页面查询参数。查询参数同时包含
+   * `file`/`base64` 时由解析函数发出 warning。
+   *
+   * @param explicit 显式传入的来源。
+   * @returns 可用于规范化的来源。
+   * @throws {OFDViewerError} `OFD_INVALID_OPTION`：无任何来源或查询参数非法。
+   */
+  private resolveOpenSource(explicit?: ViewerSource): ViewerSource {
+    if (explicit !== undefined) return explicit;
+    if (this.options.source !== undefined) return this.options.source;
+    const location = this.ownerDocument.defaultView?.location;
+    if (location) {
+      const fromQuery = readPreviewSourceFromLocation(location, {
+        onWarning: (warning) => this.reportWarning(warning),
+      });
+      if (fromQuery !== null) return fromQuery;
+    }
+    throw new OFDViewerError(
+      'OFD_INVALID_OPTION',
+      '未提供文档来源：请传入 source，或使用页面查询参数 ?file= / ?base64= 预览',
+    );
+  }
+
   /** 关闭文档，保留阅读器实例。 */
   async close(): Promise<void> {
     if (this.disposed || this.closing) return;
@@ -977,7 +1008,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /** `document:open:start`：启动全屏 loading 计时。 */
   private handleDocumentOpenStart(event: DocumentOpenStartEvent): void {
     this.documentOpenOperationId = event.operationId;
-    this.documentLoading.begin(this.lastOpenSource ?? this.options.source);
+    this.documentLoading.begin(this.lastOpenSource ?? this.options.source ?? '');
   }
 
   /** `document:open:error`：立即切换全屏错误卡（不等 150ms）。 */

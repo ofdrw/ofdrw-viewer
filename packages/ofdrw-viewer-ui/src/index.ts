@@ -70,6 +70,15 @@ export { HttpByteSource } from './source/http-byte-source';
 export type { HttpByteSourceOptions } from './source/http-byte-source';
 
 // ---------------------------------------------------------------------------
+// 页面查询参数预览：?file= / ?base64=
+// ---------------------------------------------------------------------------
+export {
+  DEFAULT_MAX_BASE64_BYTES,
+  readPreviewSourceFromLocation,
+} from './source/query-source';
+export type { PreviewLocation, PreviewSourceOptions } from './source/query-source';
+
+// ---------------------------------------------------------------------------
 // 版本
 // ---------------------------------------------------------------------------
 export { VERSION, getVersions } from './version';

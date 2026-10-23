@@ -22,6 +22,14 @@ afterEach(() => {
 });
 
 describe('Vue wrapper', () => {
+  it('允许省略 source，由核心读取页面查询参数', async () => {
+    mount(OFDViewer);
+    await nextTick();
+    await nextTick();
+    expect(FakeViewer.instances).toHaveLength(1);
+    expect(FakeViewer.instances[0]!.options.source).toBeUndefined();
+  });
+
   it('挂载一次并同步受控属性，实例使用 markRaw 不进入 reactive', async () => {
     const wrapper = mount(OFDViewer, {
       props: {

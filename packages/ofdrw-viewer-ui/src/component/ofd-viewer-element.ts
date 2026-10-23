@@ -45,8 +45,9 @@ export const OFD_VIEWER_TAG = 'ofd-viewer';
 /**
  * `<ofd-viewer>` 自定义元素。
  *
- * 无 `src` 时不创建实例；设置 `src`/`source` 后再创建。断开连接会销毁实例，
- * 重新连接时按当前属性重建，确保不残留 canvas、事件与渲染任务。
+ * 无 `src`/`source` 时仍创建实例，以便读取页面查询参数 `?file=` / `?base64=`；
+ * 设置 `src`/`source` 后打开对应文档。断开连接会销毁实例，重新连接时按当前
+ * 属性重建，确保不残留 canvas、事件与渲染任务。
  */
 export class OFDViewerElement extends HTMLElement {
   /** 需要观察的属性。 */
@@ -213,9 +214,9 @@ export class OFDViewerElement extends HTMLElement {
     this.instance?.setFeatures(patch, options);
   }
 
-  /** 打开文档；实例不存在时先创建。 */
-  async open(source: ViewerSource): Promise<void> {
-    this.sourceValue = source;
+  /** 打开文档；实例不存在时先创建。省略来源时按页面查询参数解析。 */
+  async open(source?: ViewerSource): Promise<void> {
+    if (source !== undefined) this.sourceValue = source;
     if (!this.instance) {
       const created = this.ensureViewer();
       if (created) await created.ready;
@@ -282,7 +283,6 @@ export class OFDViewerElement extends HTMLElement {
   private ensureViewer(): OFDViewer | null {
     if (this.instance || !this.isConnected) return this.instance;
     const source = this.resolveSource();
-    if (!source) return null;
     const page = readNumber(this.getAttribute('page'));
     const scale = readScaleAttribute(this);
     const rotation = readRotationAttribute(this);
@@ -291,7 +291,7 @@ export class OFDViewerElement extends HTMLElement {
     const sidebar = readSidebarAttribute(this);
     this.instance = new OFDViewer({
       container: this,
-      source,
+      ...(source === null ? {} : { source }),
       ...(page === undefined ? {} : { initialPage: page }),
       ...(scale === undefined ? {} : { initialScale: scale }),
       ...(rotation === undefined ? {} : { rotation }),
@@ -302,6 +302,9 @@ export class OFDViewerElement extends HTMLElement {
       ...(this.display === undefined ? {} : { featureDisplay: this.display }),
       ...(this.cryptoValue === undefined ? {} : { crypto: this.cryptoValue }),
     });
+    // 省略来源且页面无查询参数时 ready 会拒绝；错误卡已由核心展示，这里避免
+    // 未处理的 Promise rejection。
+    void this.instance.ready.catch(() => undefined);
     this.unbindEvents = bindViewerEvents(this.instance, (event, payload) => {
       this.dispatchEvent(
         new CustomEvent(toDomEventName(event), {

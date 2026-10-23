@@ -26,6 +26,12 @@ afterEach(() => {
 });
 
 describe('React wrapper', () => {
+  it('允许省略 source，由核心读取页面查询参数', async () => {
+    render(<OFDViewer />);
+    await waitFor(() => expect(FakeViewer.instances).toHaveLength(1));
+    expect(FakeViewer.instances[0]!.options.source).toBeUndefined();
+  });
+
   it('挂载一次并同步受控属性，不重建实例', async () => {
     const { rerender, container } = render(
       <OFDViewer source="a.ofd" page={2} scale={1.5} features={{ print: false }} />,

@@ -44,8 +44,8 @@ export interface OFDViewerHandle {
   getInstance(): CoreOFDViewer | null;
   /** `getInstance` 的别名，便于与其它 wrapper 保持一致。 */
   getViewer(): CoreOFDViewer | null;
-  /** 打开/切换文档。 */
-  open(source: ViewerSource): Promise<void>;
+  /** 打开/切换文档；省略时按页面查询参数解析。 */
+  open(source?: ViewerSource): Promise<void>;
   /** 关闭文档。 */
   close(): Promise<void>;
   /** 跳转到指定页（1-based）。 */
@@ -104,8 +104,8 @@ export interface OFDViewerProps
       | 'onError'
     >,
     ViewerEventHandlers {
-  /** 文档来源；变化时调用 `open()`，不重建实例。 */
-  readonly source: ViewerSource;
+  /** 文档来源；省略时读取页面查询参数 `?file=` / `?base64=`。 */
+  readonly source?: ViewerSource;
   /** 受控页码（1-based）；变化时调用 `goToPage()`。 */
   readonly page?: number;
   /** 受控缩放；数字为倍率，字符串为模式。 */
@@ -140,7 +140,7 @@ function createOptions(
   return {
     ...(rest as Omit<OFDViewerOptions, 'container' | 'source'>),
     container,
-    source,
+    ...(source === undefined ? {} : { source }),
     ...(page === undefined ? {} : { initialPage: page }),
     ...(scale === undefined ? {} : { initialScale: scale }),
     ...(sidebar === undefined ? {} : { sidebar }),
@@ -170,7 +170,7 @@ export const OFDViewer = forwardRef<OFDViewerHandle, OFDViewerProps>(
     const viewerRef = useRef<CoreOFDViewer | null>(null);
     const propsRef = useRef(props);
     propsRef.current = props;
-    const lastSourceRef = useRef<ViewerSource | null>(null);
+    const lastSourceRef = useRef<ViewerSource | undefined>(undefined);
 
     useImperativeHandle(
       ref,
@@ -258,7 +258,7 @@ export const OFDViewer = forwardRef<OFDViewerHandle, OFDViewerProps>(
         unbind();
         viewer.destroy();
         viewerRef.current = null;
-        lastSourceRef.current = null;
+        lastSourceRef.current = undefined;
       };
     }, []);
 

@@ -116,8 +116,8 @@ export interface CryptoViewerOptions extends CryptoOptions {
 export interface OFDViewerOptions {
   /** 挂载点；字符串按 CSS 选择器解析。 */
   readonly container: HTMLElement | string;
-  /** 文档来源。 */
-  readonly source: ViewerSource;
+  /** 文档来源；省略时读取页面查询参数 `?file=` / `?base64=`。 */
+  readonly source?: ViewerSource;
   /** 初始页，1-based；默认 1。 */
   readonly initialPage?: number;
   /** 初始缩放；数字为倍率，默认 `auto`（适合宽度）。 */
@@ -157,7 +157,7 @@ export interface OFDViewerOptions {
 /** 展开默认值后的构造选项；由 `OFDViewer` 内部持有。 */
 export interface ResolvedViewerOptions {
   readonly container: HTMLElement | string;
-  readonly source: ViewerSource;
+  readonly source?: ViewerSource;
   readonly initialPage: number;
   readonly initialScale: ScaleValue;
   readonly rotation: Rotation;
@@ -187,7 +187,8 @@ export interface ResolveOptionsEnvironment {
  * 合并构造选项与默认值。
  *
  * 不校验 `container`/`source` 是否存在或合法，也不访问 DOM；这些由 `OFDViewer` 在
- * 构造/打开阶段完成，以便本函数可在测试与模块顶层安全调用。
+ * 构造/打开阶段完成，以便本函数可在测试与模块顶层安全调用。`source` 省略时由阅读器
+ * 在打开阶段读取页面查询参数。
  *
  * @param options 宿主传入的选项。
  * @param environment 环境信息；默认按桌面端解析。
