@@ -92,6 +92,10 @@ git push -u origin main
 - 选完后 GitHub 会自动创建 `github-pages` 环境，`pages.yml` 的 deploy job 依赖这个环境。
 - **不要**给 `github-pages` 环境添加 Required reviewers，否则每次 push `main` 后部署都会停在“等待审批”。
 
+> **新版界面说明**：Source 选为 `GitHub Actions` 后，页面会出现 “Use a suggested workflow, browse all workflows, or create your own.” 的引导卡片。这只表示源已配置好，**不要点任何建议 workflow**（Static HTML、Jekyll 等），那会新建一份重复的 workflow 文件；仓库里的 `pages.yml` 已经够用。关掉页面、推送 `main` 即可。
+>
+> 也不要用 `actions/configure-pages` 的 `enablement: true` 去自动启用：该参数要求一个非 `GITHUB_TOKEN` 的 PAT，默认 token 会失败。手动启用一次更简单。
+
 首次部署完成后，站点地址是 `https://ofdrw.github.io/ofdrw-viewer/`（仓库名不是 `<owner>.github.io` 时，`pages.yml` 会自动把 `BASE_PATH` 算成 `/<repo>/`）。
 
 ### 3.3 配置 `NPM_TOKEN`
