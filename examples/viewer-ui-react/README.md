@@ -47,7 +47,7 @@ node -e 'console.log("http://127.0.0.1:5182/?base64=" + encodeURIComponent(proce
 
 `file` 只接受 `http(s)`，`file://` 不支持；base64 会进入浏览器历史/服务器日志，**敏感文档
 不要用查询参数预览**。完整规则见
-[UI SKILL 通过 URI 参数预览](../../packages/ofdrw-viewer-ui/skills/SKILL.md#通过-uri-参数预览)。
+[UI API 通过 URI 参数预览](../../packages/ofdrw-viewer-ui/skills/API.md#通过-uri-参数预览)。
 
 ## 关键代码
 

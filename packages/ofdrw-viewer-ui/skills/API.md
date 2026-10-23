@@ -1,0 +1,1052 @@
+# @ofdrw/ofdrw-viewer-ui API 参考
+
+本文件是 `@ofdrw/ofdrw-viewer-ui` 的完整 API 参考。入口说明、安装、5 分钟示例和边界见 [SKILL.md](./SKILL.md)。
+
+```ts
+import { OFDViewer } from '@ofdrw/ofdrw-viewer-ui';
+import '@ofdrw/ofdrw-viewer-ui/style.css';
+
+const viewer = new OFDViewer({ container: '#viewer', source: file });
+await viewer.ready;
+```
+
+## 入口与版本
+
+### 子路径
+
+| 子路径 | 导出内容 |
+| --- | --- |
+| `@ofdrw/ofdrw-viewer-ui` | `OFDViewer`、公共类型、错误、`HttpByteSource`、URI 解析、版本 |
+| `@ofdrw/ofdrw-viewer-ui/react` | React `OFDViewer`、`OFDViewerHandle`、`OFDViewerProps` 及事件类型 |
+| `@ofdrw/ofdrw-viewer-ui/vue` | Vue `OFDViewer` 及共享 prop 类型（`FeatureDisplay`/`Rotation`/`ScaleValue`/`SidebarView`/`Theme`/`ViewerFeatures`） |
+| `@ofdrw/ofdrw-viewer-ui/element` | `OFDViewerElement`、`OFD_VIEWER_TAG`、`defineOFDViewerElement` |
+| `@ofdrw/ofdrw-viewer-ui/component` | `element` 的兼容别名 |
+| `@ofdrw/ofdrw-viewer-ui/style.css` | 主题样式，必须由宿主显式引入 |
+
+公共入口会安装内置 UI 外壳，并以副作用方式注册文本/查找、导航、签章、打印、导出能力；框架入口也会导入公共入口。
+
+### `VERSION` 与 `getVersions`
+
+`VERSION` 是 UI 包版本字符串，当前为 `0.1.0`。`getVersions()` 返回 UI、渲染引擎与密码能力包三个版本：
+
+```ts
+interface ViewerVersions {
+  readonly ui: string;
+  readonly engine: string;
+  readonly crypto: string;
+}
+```
+
+工具栏“更多 → 关于”也展示这些版本，便于用户反馈问题时截图。
+
+### `registerViewerExtension`
+
+```ts
+type ViewerExtension = (viewer: OFDViewer) => void | (() => void);
+
+function registerViewerExtension(extension: ViewerExtension): () => void;
+```
+
+- 注册后立即应用到当前所有活动阅读器，并在之后创建的阅读器构造时应用。
+- 同一个函数重复注册是幂等的，每个实例只应用一次。
+- 返回的函数只取消“后续注册”，不会对已应用实例执行清理；扩展返回的 cleanup 在该实例 `destroy()` 时调用。
+- 扩展抛错不会中断阅读器创建，错误通过 `error` 事件上报，错误码为 `OFD_UNSUPPORTED`。
+
+`viewer.applyExtension(extension)` 可对单个实例应用扩展；同样幂等。
+
+## 构造选项
+
+### `OFDViewerOptions`
+
+| 选项 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `container` | `HTMLElement / string` | 必填 | 挂载点；字符串按 CSS 选择器解析，元素必须已存在 |
+| `source` | `ViewerSource` | 无 | 文档来源；省略时读取 `?file=`/`?base64=` |
+| `initialPage` | `number` | `1` | 初始页，1-based；非有限值按 1，打开时夹取到有效页 |
+| `initialScale` | `number / ZoomMode` | `'auto'` | 数字为倍率（0.1–25）；字符串为缩放模式 |
+| `rotation` | `0 / 90 / 180 / 270` | `0` | 初始顺时针旋转角度 |
+| `sidebar` | `SidebarView / null` | `null` | 初始侧栏；`null` 表示关闭 |
+| `features` | `ViewerFeatures` | 全部开启 | 功能开关补丁，只需写要关闭的键 |
+| `featureDisplay` | `FeatureDisplay` | `'hide'` | 被关闭功能的展示方式 |
+| `theme` | `'light' / 'dark' / 'auto'` | `'auto'` | `auto` 跟随 `prefers-color-scheme` |
+| `locale` | `string` | `'zh-CN'` | 内置 `zh-CN`/`en-US`；翻译层不可识别时回落到 `zh-CN` |
+| `maxCanvasPixels` | `number` | `32_000_000` | 单页 canvas 像素上限（width × height） |
+| `pageCacheSize` | `number` | 桌面 `10`，移动 `4` | 已渲染页 canvas 缓存数量 |
+| `thumbnailCacheSize` | `number` | `100` | 缩略图缓存数量；当前版本尚未接入实现，见下 |
+| `renderConcurrency` | `number` | 桌面 `2`，移动 `1` | 同时渲染页数 |
+| `updateHash` | `boolean` | `false` | 把页码/缩放/旋转/侧栏写入 URL hash |
+| `requestInit` | `RequestInit` | 无 | URL 来源的额外请求参数；只使用 `headers` |
+| `onWarning` | `(warning: ViewerWarning) => void` | 无 | 非阻断诊断回调 |
+| `onError` | `(error: ViewerErrorInfo) => void` | 无 | 打开/渲染/交互失败回调 |
+| `crypto` | `CryptoViewerOptions` | 默认启用 | 加密文档与验签配置 |
+
+`container` 是唯一必填项。字符串选择器在构造时解析；找不到元素抛 `OFD_INVALID_OPTION`。
+
+`container` 是宿主挂载点，须自备确定高度（例如 `#viewer { height: 640px }`）。`OFDViewer` 不修改宿主样式，而是在挂载点内创建 `.ofd-viewer` 根节点；该根节点使用 `display: grid; grid-template-rows: auto 1fr; width: 100%; height: 100%; min-height: 0`，相对挂载点撑满。React/Vue 外层默认 `width/height: 100%`，同样需要父容器提供高度。
+
+### `ResolvedViewerOptions`
+
+`ResolvedViewerOptions` 是内部展开默认值后的完整选项形状，字段与 `OFDViewerOptions` 相同，但除 `source`、`requestInit`、`onWarning`、`onError`、`crypto` 外均为必填。调用方通常不需要构造该类型；它用于需要读取解析结果或编写扩展的 TypeScript 场景。
+
+### 默认值与移动端差异
+
+- 初始缩放 `auto` 等价于适合宽度；`page-width` 适合宽度，`page-fit` 适合整页，`page-actual` 为 100%。
+- `setScale()` 和数字型 `initialScale` 都会被夹取到 `0.1`–`25`；非有限数字按 `1`。
+- 移动端默认值在**构造时**按 `matchMedia('(max-width: 767px)')` 判断：页缓存 4、渲染并发 1；桌面为 10/2。断点变化不会自动改这些值。
+- `locale` 会设置根节点 `lang` 并写入 `state.ui.locale`；翻译器会把 `zh`/`en` 等别名归一，未注册语言回落到 `zh-CN`，但 `state.ui.locale` 保留传入值。
+- `maxCanvasPixels` 超限时通常静默降低该页渲染 DPI；只有连续降档仍失败时才产生 `W_CANVAS_LIMIT` warning，不能用它判断每一次降档。
+- `thumbnailCacheSize` 当前只被解析，未接入缩略图缓存实现，实际缓存数量固定；不要依赖该选项控制缩略图内存。
+- `updateHash` 默认关闭，避免嵌入场景污染宿主地址。启用后 hash 形如 `#page=3&zoom=page-width&rotation=90&sidebar=outline`，未知参数会保留；监听 `hashchange`/`popstate` 恢复视图，非法字段忽略。查询串 `?file=`/`?base64=` 与 hash 互不覆盖。
+
+### 容器与来源
+
+`source` 省略时，`open()` 依次检查显式参数、构造来源、`?file=`、`?base64=`；都没有时 `ready` 以 `OFD_INVALID_OPTION` 拒绝。详细解析规则见[通过 URI 参数预览](#通过-uri-参数预览)。
+
+`requestInit` 只对 URL 来源生效，且只读取 `headers`：先合并 `requestInit.headers`，再用来源对象自带 `headers` 覆盖（来源优先）。`credentials`、`mode`、`cache` 等字段不会转发，fetch 使用浏览器默认的 `same-origin` 凭据策略。
+
+### URL hash 同步
+
+启用 `updateHash` 后，页码、缩放、旋转、侧栏变化会写回 hash；`sidebar` 关闭写为 `none`。`hashchange`/`popstate` 触发的恢复只应用能解析的字段，不会因为非法字段清空视图。
+
+## 功能开关
+
+### 功能键
+
+`ViewerFeature` 是以下 19 个键的联合；`ViewerFeatures` 是 `Partial<Record<ViewerFeature, boolean>>`，未出现的键默认开启。
+
+| 功能键 | 作用 | 依赖 |
+| --- | --- | --- |
+| `toolbar` | 顶部工具栏 | — |
+| `sidebar` | 侧栏容器 | — |
+| `thumbnails` | 缩略图 | `sidebar` |
+| `outline` | 大纲 | `sidebar` |
+| `bookmarks` | 书签 | `sidebar` |
+| `pageNavigation` | 翻页/跳页 | — |
+| `pageNumberInput` | 页码输入框 | — |
+| `zoom` | 缩放按钮、快捷键与手势 | — |
+| `rotate` | 旋转 | — |
+| `fullscreen` | 全屏 | — |
+| `textLayer` | 透明文本层 | — |
+| `selection` | 文本选择与复制 | `textLayer` |
+| `find` | 全文查找与高亮 | `textLayer` |
+| `print` | 打印 | — |
+| `export` | 单页/多页图片导出 | — |
+| `signatures` | 签章列表、覆盖层与详情 | — |
+| `verification` | 验证面板与验签 | — |
+| `documentProperties` | 文档属性 | — |
+| `keyboardShortcuts` | 键盘快捷键 | — |
+
+依赖不满足时，被依赖功能以 `reason: 'dependency'` 关闭，并可能继续级联（例如 `sidebar` 关闭会关闭缩略图/大纲/书签）。`toolbar`/`sidebar` 关闭时，其内部控件即使自身开启也不可见。
+
+### 有效状态与原因
+
+```ts
+type FeatureReason = 'host' | 'document' | 'unsupported' | 'dependency';
+
+interface FeatureState {
+  readonly enabled: boolean;
+  readonly visible: boolean;
+  readonly reason?: FeatureReason;
+}
+
+type ViewerFeatureStates = Record<ViewerFeature, FeatureState>;
+
+interface FeatureAvailability {
+  readonly document?: Partial<Record<ViewerFeature, boolean>>;
+  readonly unsupported?: Partial<Record<ViewerFeature, boolean>>;
+}
+```
+
+优先级：宿主 `features[key] === false`（`host`）→ 文档权限不允许（`document`）→ 引擎/环境不支持（`unsupported`）→ 依赖不满足（`dependency`）。宿主无法用 `features: true` 绕过文档权限、环境能力或依赖。
+
+### 功能展示
+
+```ts
+type FeatureDisplayMode = 'hide' | 'disable';
+type FeatureDisplay =
+  | FeatureDisplayMode
+  | Partial<Record<ViewerFeature, FeatureDisplayMode>>;
+```
+
+- `'hide'`（默认）：隐藏对应控件。
+- `'disable'`：保留控件但禁用，并显示带原因的提示。
+- 对象形式按功能覆盖，未覆盖的键回落到 `'hide'`。
+
+`visible` 由展示方式决定：`disable` 时关闭的功能仍可见，但 `enabled === false`。展示方式不改变功能是否可用。
+
+### 运行时更新
+
+```ts
+viewer.setFeatures({ print: false }, { display: 'disable' });
+viewer.setFeatures({ print: true });
+viewer.setFeatureDisplay({ export: 'disable' });
+```
+
+`setFeatures(patch, { display? })` 合并补丁；`setFeatureDisplay(display)` 替换展示配置。两者都会立即刷新 UI 并触发 `featureschange`。
+
+### 文档与能力约束
+
+文档权限、内容可用性以及引擎/环境能力会写入 `FeatureAvailability`。例如没有文本层的文档会关闭 `textLayer` 及其依赖；`crypto.enabled=false` 时 `verification` 被标记为 `unsupported`，验证面板/按钮不可用，`verify()` 与 `openVerificationPanel()` 会以 `OFD_FEATURE_DISABLED`（`feature='verification'`）拒绝。
+
+## 事件
+
+### 事件名与载荷
+
+`ViewerEventMap` 定义全部事件；`ViewerEventName` 是键的联合，`ViewerEventPayload<K>` 是对应载荷，`ViewerEventHandler<K>` 是 `(payload) => void`。
+
+| 事件 | 载荷 | Web Component | React | Vue |
+| --- | --- | --- | --- | --- |
+| `documentopen` | `DocumentOpenEvent` | `ofd-document-open` | `onDocumentOpen` | `document-open` |
+| `documentclose` | `DocumentCloseEvent` | `ofd-document-close` | `onDocumentClose` | `document-close` |
+| `pagechanging` | `PageChangingEvent` | `ofd-page-change` | `onPageChange` | `page-change` |
+| `pagerendered` | `PageRenderedEvent` | `ofd-page-rendered` | `onPageRendered` | `page-rendered` |
+| `pagesloaded` | `PagesLoadedEvent` | `ofd-pages-loaded` | `onPagesLoaded` | `pages-loaded` |
+| `scalechanging` | `ScaleChangingEvent` | `ofd-scale-change` | `onScaleChange` | `scale-change` |
+| `rotationchanging` | `RotationChangingEvent` | `ofd-rotation-change` | `onRotationChange` | `rotation-change` |
+| `sidebarviewchanged` | `SidebarViewChangedEvent` | `ofd-sidebar-view-change` | `onSidebarViewChange` | `sidebar-view-change` |
+| `findstart` | `FindStartEvent` | `ofd-find-start` | `onFindStart` | `find-start` |
+| `findmatches` | `FindMatchesEvent` | `ofd-find-matches` | `onFindMatches` | `find-matches` |
+| `findcurrent` | `FindCurrentEvent` | `ofd-find-current` | `onFindCurrent` | `find-current` |
+| `selectionchange` | `SelectionChangeEvent` | `ofd-selection-change` | `onSelectionChange` | `selection-change` |
+| `signatureclick` | `SignatureClickEvent` | `ofd-signature-click` | `onSignatureClick` | `signature-click` |
+| `verificationcompleted` | `VerificationCompletedEvent` | `ofd-verification-completed` | `onVerificationCompleted` | `verification-completed` |
+| `printstart` | `PrintStartEvent` | `ofd-print-start` | `onPrintStart` | `print-start` |
+| `printprogress` | `PrintProgressEvent` | `ofd-print-progress` | `onPrintProgress` | `print-progress` |
+| `printend` | `PrintEndEvent` | `ofd-print-end` | `onPrintEnd` | `print-end` |
+| `exportprogress` | `ExportProgressEvent` | `ofd-export-progress` | `onExportProgress` | `export-progress` |
+| `warning` | `WarningEvent` | `ofd-warning` | `onWarning` | `warning` |
+| `error` | `ErrorEvent` | `ofd-error` | `onError` | `error` |
+| `featureschange` | `FeaturesChangeEvent` | `ofd-features-change` | `onFeaturesChange` | `features-change` |
+| `statechange` | `StateChangeEvent` | `ofd-state-change` | `onStateChange` | `state-change` |
+
+`signatureclick` 在类型和适配器桥接表中存在，但当前版本没有实际触发点；需要处理签章交互时，使用 `getSignatures()`/`showSignature()` 或内置侧栏的现有入口。
+
+### 载荷类型
+
+- `DocumentOpenEvent`：`{ pageCount: number }`，文档打开且页数已知。
+- `DocumentCloseEvent`：`Record<string, never>`，关闭完成。
+- `PageChangingEvent`：`{ pageNumber: number; previous: number }`，页码均为 1-based。
+- `PageRenderedEvent`：`{ pageNumber: number; scale: number; rotation: Rotation }`。
+- `PagesLoadedEvent`：`{ pageCount: number }`，初始可见页加载完成。
+- `ScaleChangingEvent`：`{ scale: number; zoomMode: ZoomMode; previous: number }`。
+- `RotationChangingEvent`：`{ rotation: Rotation; previous: Rotation }`。
+- `SidebarViewChangedEvent`：`{ view: SidebarView | null }`，关闭时为 `null`。
+- `FindStartEvent`、`FindMatchesEvent`、`FindCurrentEvent`：`{ query: string; total: number; current: number }`；`current` 为 1-based，无匹配为 0。
+- `SelectionChangeEvent`：`{ text: string; isEmpty: boolean }`。
+- `SignatureClickEvent`：`{ id: string; pageNumber: number }`。
+- `PrintStartEvent`、`PrintProgressEvent`、`PrintEndEvent`：`{ current: number; total: number }`。
+- `ExportProgressEvent`：`{ current: number; total: number }`。
+- `VerificationCompletedEvent`：等同于 `VerificationReport`，不含凭据。
+- `WarningEvent`：等同于 `ViewerWarning`，`{ code, message, pageIndex? }`，`pageIndex` 为 0-based。
+- `ErrorEvent`：等同于 `ViewerErrorInfo`，在 warning 字段之外可带 `cause`。
+- `FeaturesChangeEvent`：等同于 `ViewerFeatureStates`。
+- `StateChangeEvent`：等同于完整的 `ViewerState` 快照。
+
+### 订阅
+
+```ts
+const off = viewer.on('pagechanging', ({ pageNumber, previous }) => {
+  console.log(previous, '->', pageNumber);
+});
+viewer.once('documentopen', ({ pageCount }) => console.log(pageCount));
+off();
+viewer.off('pagechanging', handler);
+```
+
+`on` 返回取消订阅函数；`once` 只触发一次；`off` 需要传入同一函数引用。事件按注册顺序同步派发；`statechange` 在状态提交后触发。
+
+## 公共方法
+
+方法签名以 TypeScript 声明为准。带功能守卫的方法在功能关闭时抛 `OFD_FEATURE_DISABLED`（错误对象带 `feature`）；未打开文档时抛 `OFD_NOT_OPENED`；销毁后抛 `OFD_DESTROYED`。
+
+### 生命周期
+
+| 方法 | 说明 |
+| --- | --- |
+| `new OFDViewer(options)` | 创建 DOM 外壳并异步打开 `options.source`；构造本身不等待打开 |
+| `ready: Promise<void>` | 首次打开完成；失败时 reject |
+| `open(source?: ViewerSource): Promise<void>` | 打开/切换文档；省略时按构造来源或查询参数解析；会取消上一次未完成打开 |
+| `close(): Promise<void>` | 关闭文档，保留外壳；状态变为 `closed`，可再次 `open()` |
+| `destroy(): void` | 移除根节点、解绑事件、释放渲染与来源；可重复调用 |
+| `on(event, handler): () => void` | 订阅事件 |
+| `once(event, handler): () => void` | 订阅一次 |
+| `off(event, handler): void` | 取消订阅 |
+| `applyExtension(extension): void` | 对当前实例应用扩展；幂等 |
+
+### 状态读取
+
+| 方法 | 返回 |
+| --- | --- |
+| `getState()` | `ViewerState` 只读快照 |
+| `getPageCount()` | 总页数；未打开为 0 |
+| `getPageNumber()` | 当前页，1-based |
+| `getCurrentPage()` | `getPageNumber()` 的别名 |
+| `getFindState()` | `FindState` |
+| `getScale()` | 当前实际缩放倍率 |
+| `getRotation()` | 当前旋转角度 |
+| `getSidebarView()` | 当前侧栏；关闭为 `null` |
+| `getVisiblePageRange()` | `{ start, end }`，内部页索引 0-based 闭区间；无页时 `end < start` |
+| `getRenderStats()` | `{ queued, running, completed, failed, cancelled }` 渲染队列统计 |
+| `getFeatureState(feature)` | 单个 `FeatureState` |
+| `getFeatureStates()` | 全部 `ViewerFeatureStates` 快照 |
+| `isFeatureEnabled(feature)` | 功能是否可用 |
+| `getPageView(pageNumber)` | 页视图对象；页码越界返回 `undefined`，不做夹取 |
+| `getPageViews()` | 全部页视图只读数组 |
+| `getPageInfo(pageNumber)` | `PageInfo`；越界返回 `undefined` |
+| `getPageInfos()` | 全部 `PageInfo` 只读数组 |
+| `getDocument()` | 底层引擎文档；未打开为 `null` |
+| `getPage(pageNumber): Promise<EnginePage>` | 读取引擎页面对象；页码夹取到有效页 |
+| `getPermissions(): Promise<DocumentPermissions>` | 文档权限；未打开返回全部允许的宽松默认值 |
+| `getRoot()` | 阅读器根 `HTMLElement` |
+| `getElements()` | 内置 UI 结构元素 `{ root, toolbar, body, sidebar, sidebarMask, main, findbar, dialogLayer, toastLayer }` |
+| `warnCrypto(code, message)` | 供密码服务/扩展上报 warning，宿主一般不用 |
+
+`getPageView()`/`getPageViews()` 返回的是内部页视图对象，主要供扩展使用；普通宿主优先用 `getPageInfo()` 与引擎页面 API。
+
+### 导航与缩放
+
+| 方法 | 说明 |
+| --- | --- |
+| `goToPage(pageNumber, { smooth? })` | 跳页；1-based，越界夹取；`smooth` 控制平滑滚动 |
+| `nextPage()` / `previousPage()` | 下一页/上一页 |
+| `firstPage()` / `lastPage()` | 首页/末页 |
+| `setScale(scale)` | 设置实际倍率，夹取到 0.1–25 |
+| `setZoomMode(mode)` | 设置 `auto`/`page-actual`/`page-fit`/`page-width` |
+| `zoomIn()` / `zoomOut()` | 按预置档位放大/缩小 |
+| `resetZoom()` | 回到 `auto` |
+| `setRotation(rotation)` | 设置旋转；任意数字规范为 0/90/180/270 |
+| `rotateClockwise()` / `rotateCounterClockwise()` | 顺时针/逆时针旋转 90° |
+
+功能守卫：翻页与跳页需要 `pageNavigation`；缩放组需要 `zoom`；旋转组需要 `rotate`。
+
+### 侧栏、全屏与对话框
+
+| 方法 | 说明 |
+| --- | --- |
+| `openSidebar(view)` | 打开 `thumbnails`/`outline`/`bookmarks`/`signatures`；需要 `sidebar` 及对应功能 |
+| `closeSidebar()` | 关闭侧栏；已关闭时无操作 |
+| `toggleSidebar()` | 已打开则关闭，否则打开第一个可用侧栏 |
+| `setFullscreen(value): Promise<void>` | 进入/退出全屏；原生不支持或失败时回退为沉浸式样式并产生 `W_FULLSCREEN_FALLBACK` |
+| `toggleFullscreen()` | 不等待 `setFullscreen()` 返回的 Promise，也不会自动上报失败；需要错误处理时直接调用 `setFullscreen(value)` 并 `catch` |
+| `showDialog(options)` | 打开内置对话框，返回对话框元素；未挂载内置 UI 抛 `OFD_UNSUPPORTED` |
+| `closeDialog(restoreFocus = true)` | 关闭当前对话框，默认把焦点还给触发元素 |
+
+`UIDialogOptions`：
+
+```ts
+interface UIDialogAction {
+  readonly label: string;
+  readonly primary?: boolean;
+  readonly closeOnClick?: boolean; // 默认 true
+  readonly onClick?: () => void;
+}
+
+interface UIDialogOptions {
+  readonly name: DialogName;        // 'print' | 'export' | 'documentProperties' | 'signatureDetail' | 自定义
+  readonly title?: string;          // 默认“提示”
+  readonly description?: string;
+  readonly content?: Node | string;
+  readonly actions?: readonly UIDialogAction[]; // 默认“关闭”
+  readonly dismissible?: boolean;   // 默认 true，允许 Esc/遮罩关闭
+  readonly onClose?: () => void;
+}
+```
+
+`DialogName` 允许宿主扩展字符串，内置名称仅为约定。
+
+### 主题、语言与功能
+
+| 方法 | 说明 |
+| --- | --- |
+| `setTheme(theme)` | 设置 `light`/`dark`/`auto`，写入根节点 `data-theme` |
+| `setLocale(locale)` | 设置根节点 `lang`、`state.ui.locale` 与翻译器 |
+| `setFeatures(patch, { display? })` | 合并功能补丁并立即生效 |
+| `setFeatureDisplay(display)` | 替换功能展示配置 |
+
+这些方法没有功能守卫；非法值的行为由 TypeScript 类型约束，运行时不做完整校验。
+
+### 文本、查找与选区
+
+| 方法 | 说明 |
+| --- | --- |
+| `find(query, options?): Promise<void>` | 查找；空查询会清除查找；需要 `find` |
+| `findNext(): Promise<void>` | 下一个匹配，循环到首个 |
+| `findPrevious(): Promise<void>` | 上一个匹配，循环到末个 |
+| `clearFind()` | 清除查询、匹配与高亮 |
+| `getSelectedText()` | 当前选区文本；需要 `selection` |
+| `copySelection(): Promise<void>` | 复制选区；失败抛 `OFD_CLIPBOARD_FAILED` |
+| `clearSelection()` | 清除选区 |
+
+查找默认从当前页开始，按当前页→文末、文首→当前页前一页的顺序搜索；空查询不会抛错。
+
+### 签章与验证
+
+| 方法 | 说明 |
+| --- | --- |
+| `verify(options?): Promise<VerificationReport>` | 重新验证；可传 `signatureIds` 与 `signal`；需要 `verification` |
+| `getVerificationReport()` | 最近一次报告；未验证或文档关闭后为 `undefined` |
+| `setRootCertificates(roots): Promise<CertificateSummary[]>` | 替换信任根并尝试重新验证；需要密码能力启用 |
+| `getRootCertificates()` | 当前信任根摘要 |
+| `openVerificationPanel()` | 打开工具栏验证面板；需要 `verification` 与内置 UI；密码能力关闭时 `verification` 为 unsupported，调用抛 `OFD_FEATURE_DISABLED` |
+| `getSignatures()` | 当前签章摘要；需要 `signatures` |
+| `getSignatureDetail(id): Promise<SignatureDetail>` | 读取签章详情；需要签章服务 |
+| `showSignature(id): Promise<void>` | 打开/定位签章 |
+| `focusSignature(id): Promise<void>` | 当前实现等同于 `showSignature` |
+
+`crypto.enabled=false` 时 `verification` 功能为 unsupported，`verify()` 与 `openVerificationPanel()` 抛 `OFD_FEATURE_DISABLED`（`feature='verification'`），不是 `OFD_CRYPTO_UNSUPPORTED`；对 UI 公开方法而言，`OFD_CRYPTO_UNSUPPORTED` 仅用于加密文档打开、`setRootCertificates()` 等直接密码能力调用。`verification` 可用但文档未打开时，`verify()` 抛 `OFD_NOT_OPENED`。`setRootCertificates()` 中单个 `url`/`data` 根无效只产生 warning 并跳过，`path`/`filePath` 的 loader 抛错会以 `OFD_CRYPTO_FAILED` 失败；全部无效时返回空数组。
+
+### 打印与导出
+
+| 方法 | 说明 |
+| --- | --- |
+| `print(options?): Promise<void>` | 调用浏览器打印；默认当前页、自动 DPI、当前旋转、不含背景 |
+| `exportImage(options?): Promise<ExportImageResult>` | 导出单页图片并触发下载；默认当前页、PNG |
+| `exportImages(options?): Promise<void>` | 导出多页 ZIP 并触发下载；默认当前页 |
+
+打印失败抛 `OFD_PRINT_FAILED`；导出全部页失败抛 `OFD_EXPORT_FAILED`；单页失败降级为 `W_EXPORT_PAGE`/`W_EXPORT_PARTIAL` warning。取消通过 `signal` 传入：取消时统一转为 `AbortError`（`name='AbortError'`）拒绝；`OFD_INVALID_OPTION` 仅表示选项非法。
+
+### 扩展与服务
+
+以下方法主要供内置能力和扩展作者使用，普通宿主通常不需要调用：
+
+| 方法 | 说明 |
+| --- | --- |
+| `attachFindController(service)` | 挂载查找控制器，返回卸载函数 |
+| `attachTextLayerService(service)` | 挂载文本层服务 |
+| `attachSignatureService(service)` | 挂载签章服务 |
+| `attachPrintService(service)` | 挂载打印服务 |
+| `attachExportService(service)` | 挂载导出服务 |
+| `trackPageRenderStart(pageIndex, purpose)` | 登记一次页面渲染开始，返回 `{ drop() }`；`purpose` 为 `main`/`thumbnail`，页索引 0-based |
+
+同一类服务重复挂载时后挂载者生效；返回的卸载函数只移除对应服务。`trackPageRenderStart` 用于让扩展把引擎渲染事件与主页面/缩略图关联，普通宿主不需要使用。
+
+## 状态快照
+
+### `ViewerState`
+
+```ts
+interface ViewerState {
+  readonly document: DocumentState;
+  readonly view: ViewState;
+  readonly ui: UIState;
+}
+```
+
+状态是只读快照，所有变更由阅读器内部完成；页面级临时渲染状态（canvas、任务句柄）不会进入快照。
+
+### `DocumentState`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `source` | 引擎来源 / `null` | 规范化后的引擎来源；未打开为 `null` |
+| `origin` | `{ kind: 'url', url } / { kind: 'file', name } / { kind: 'blob' }` | 原始来源命名信息，用于标题和导出文件名 |
+| `pageCount` | `number` | 总页数 |
+| `pageInfos` | `PageInfo[]` | 全部页尺寸信息，按页索引升序 |
+| `metadata` | `DocumentMetadata` | 文档属性；不可用或未加载时省略 |
+| `signaturesSummary` | `SignatureEntryInfo[]` | 签章 XML 元数据摘要，不解析签名值 |
+| `outline` | `OutlineNode[]` | 大纲；未加载或为空时省略 |
+| `bookmarks` | `BookmarkItem[]` | 书签；未加载或为空时省略 |
+| `status` | `'idle' / 'opening' / 'ready' / 'error' / 'closed'` | 文档生命周期 |
+
+### `ViewState`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `pageNumber` | `number` | 当前页，1-based |
+| `scale` | `number` | 当前实际缩放倍率 |
+| `zoomMode` | `ZoomMode` | 当前缩放模式 |
+| `rotation` | `Rotation` | 当前旋转角度 |
+| `sidebarView` | `SidebarView / null` | 打开的侧栏；关闭为 `null` |
+| `fullscreen` | `boolean` | 是否全屏/沉浸 |
+| `scrollTop` | `number` | 主区域滚动位置，单位 px |
+| `visiblePageRange` | `VisiblePageRange` | 可见页范围，0-based 闭区间 |
+| `selectedText` | `string` | 当前选区文本 |
+| `findState` | `FindState` | 查找状态 |
+
+### `UIState`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `theme` | `Theme` | 当前主题 |
+| `locale` | `string` | 当前语言标签 |
+| `toolbarCollapsed` | `boolean` | 工具栏是否折叠 |
+| `dialog` | `DialogName / null` | 当前对话框 |
+| `toast` | `ViewerToast / null` | 当前 Toast |
+| `warnings` | `ViewerWarning[]` | 诊断信息列表 |
+| `features` | `ViewerFeatureStates` | 全部功能有效状态 |
+
+### `InitialViewerStateOptions`
+
+用于构造初始状态快照，主要供测试或自定义外壳：`pageNumber`（默认 1）、`scale`（默认 1）、`zoomMode`（默认 `auto`）、`rotation`（默认 0）、`sidebarView`（默认 `null`）、`theme`（默认 `auto`）、`locale`（默认 `zh-CN`）、`features`（默认全部开启）。
+
+### 诊断与 Toast
+
+- `ViewerWarning`：`{ code: string; message: string; pageIndex?: number }`；`pageIndex` 为 0-based，与页面无关时省略。
+- `ViewerErrorInfo`：继承 `ViewerWarning`，额外带 `cause?: unknown`。
+- `ViewerToast`：`{ id: string; message: string; level: ToastLevel }`；`ToastLevel` 为 `info`/`warning`/`error`。
+- `warnings` 只保留诊断，不代表操作失败；失败会同时通过 `error` 事件和 Promise 拒绝报告。
+
+## 文档、页面与文本类型
+
+### `DocumentMetadata` 与 `DocumentDestination`
+
+`DocumentMetadata` 描述文档属性：`version`、`pageCount`、`packageSize?`、`title?`、`author?`、`subject?`、`abstract?`、`creationDate?`、`modDate?`、`creator?`、`creatorVersion?`、`keywords?`、`docId?`、`customData?`。日期字段保留 OFD 原文，不转换时区。
+
+`DocumentDestination` 描述文档内跳转目标：`{ type, pageIndex, leftMm?, topMm?, rightMm?, bottomMm?, zoom? }`；`type` 为 `XYZ`/`Fit`/`FitH`/`FitV`/`FitR`，`pageIndex` 为 0-based，坐标单位 mm。当前版本没有 `goToDestination()`，需要自行读取目标页后调用 `goToPage(pageIndex + 1)`。
+
+### `PageInfo`
+
+`PageInfo` 为单页尺寸：`{ index, widthMm, heightMm, xMm?, yMm?, source? }`；`index` 为 0-based，尺寸单位为 mm，`source` 为 `page`/`template`/`default`。
+
+### `OutlineNode` 与 `BookmarkItem`
+
+- `OutlineNode`：`{ title, expanded?, children, dest? }`，`children` 保持 XML 顺序，`dest` 为目标。
+- `BookmarkItem`：`{ name, dest? }`，`name` 为书签名，`dest` 为目标。
+
+两者通过 `DocumentState.outline`/`bookmarks` 或侧栏展示；`dest` 缺失表示该条目不可跳转。
+
+### `TextContent` 与 `TextItem`
+
+`TextContent` 是一页文本内容：`{ pageIndex, dpi, unit, pageWidth, pageHeight, items, itemCount, charCount, truncated }`；坐标单位固定为 `px`，`truncated` 为 `{ items: boolean; chars: boolean }`。
+
+`TextItem` 是一个文本对象：包含 `order`、`objectId?`、`templateId?`、`annotationId?`、`blockId?`、`layer`、`layerType`、`zOrder?`、`visible`、`alpha`、`text`、`font`、`size`、`transform`、`origin`、`chars` 等字段。`font` 为字体元信息；`size` 单位为 px；`transform` 是布局局部 mm 到页面 px 的矩阵。
+
+### `TextChar`、`TextRect` 与 `TextQuad`
+
+- `TextChar`：`{ text, codePoint, glyphId?, faceKey?, fallback, origin, advance, rect, quad, approximate }`；`origin` 为基线起点，单位 px；`advance` 为推进量，单位 px。
+- `TextRect`：`{ x, y, width, height }`，单位 px，`x`/`y` 为左上角。
+- `TextQuad`：四个 `{ x, y }` 点组成的只读元组，顺序为左上、右上、右下、左下；旋转文字下“上”指字形自身方向。
+
+普通宿主通常通过查找/选区间接使用这些类型；需要自行渲染文本层时才直接消费。
+
+## 通过 URI 参数预览
+
+### `ViewerSource`
+
+```ts
+type ViewerSource =
+  | ArrayBuffer
+  | Uint8Array
+  | Blob                 // 包含 File
+  | string               // URL
+  | { readonly url: string; readonly headers?: Record<string, string> };
+```
+
+空 `ArrayBuffer`/`Uint8Array`、空 Blob、空 URL、空 `{ url }` 均以 `OFD_INVALID_OPTION` 拒绝。URL 字符串和 `{ url }` 都转换为 `HttpByteSource`；不能直接把 `HttpByteSource` 实例传给 `source`。
+
+### 来源解析与请求头
+
+来源优先级：`open(source)` 显式参数 → 构造 `options.source` → `?file=` → `?base64=`。`open()` 每次都会重新解析；普通打开失败时旧文档已在尝试新文档前关闭，状态为 `error`，需要调用方重新打开。若在凭据阶段取消（`OFD_CRYPTO_CANCELLED`），旧文档保持可读并恢复为 `ready`。
+
+请求头合并顺序：`requestInit.headers` 先，来源对象 `headers` 后（来源优先）。`requestInit` 的其余字段不转发。
+
+### `?file=`
+
+- 值应为目标地址的 `encodeURIComponent` 结果。
+- 先由 `URLSearchParams` 解码一次，再尝试一次 `decodeURIComponent`；非法百分号序列保留原值。
+- 绝对 `http(s)` 地址直接使用；相对路径以 `location.href` 为 base 解析。
+- 仅接受 `http:`/`https:`；`file:`、`javascript:`、`data:` 等以 `OFD_INVALID_OPTION` 拒绝。
+- 空值、非法 URL 以 `OFD_INVALID_OPTION` 拒绝。
+- 与 `base64` 同时存在时 `file` 优先，并产生 `W_QUERY_SOURCE` warning。
+
+### `?base64=`
+
+- 支持纯 base64 与 `data:...;base64,...`；data URI 必须包含 `;base64` 标记和逗号。
+- 兼容 URL-safe `-`/`_`、缺失 padding、换行/空格；未编码的 `+` 会被 `URLSearchParams` 解成空格后还原。
+- 解码后默认上限 `DEFAULT_MAX_BASE64_BYTES = 67_108_864`（64 MiB）。
+- 非法字符、空值、非法 data URI、超限抛 `OFD_INVALID_OPTION`；缺少 `atob` 抛 `OFD_UNSUPPORTED`。
+- base64 会进入历史、日志、Referer 和 APM；敏感文档不要使用。
+
+### `readPreviewSourceFromLocation`
+
+```ts
+function readPreviewSourceFromLocation(
+  location: PreviewLocation,
+  options?: PreviewSourceOptions,
+): ViewerSource | null;
+
+interface PreviewLocation {
+  readonly href: string;
+  readonly search: string;
+}
+
+interface PreviewSourceOptions {
+  readonly onWarning?: (warning: ViewerWarning) => void;
+  readonly maxBase64Bytes?: number; // 默认 64 MiB
+}
+```
+
+- 只读取 `search`，不读取或改写 hash。
+- 两个参数都不存在时返回 `null`；`file` 返回绝对 URL 字符串，`base64` 返回 `Uint8Array`。
+- `maxBase64Bytes` 非有限或为负时回落到默认值；传 `0` 会让任何非空数据超限。
+- 抛错类型与 `?file=`/`?base64=` 规则一致。
+
+## HttpByteSource
+
+### 构造与选项
+
+```ts
+const source = new HttpByteSource(url, options?);
+
+interface HttpByteSourceOptions {
+  readonly headers?: Record<string, string>;
+  readonly allowFullDownload?: boolean; // 默认 true
+  readonly signal?: AbortSignal;
+  readonly onProgress?: (loaded: number, total: number | undefined) => void;
+  readonly fetch?: typeof fetch;
+}
+```
+
+- `headers` 原样用于每次请求；与 `requestInit.headers` 的合并在阅读器内部完成，本类不做合并。
+- `allowFullDownload` 控制服务器忽略 Range 或启用内容编码时是否允许整包下载；默认允许。
+- `signal` 与 `close()` 合并生效。
+- `onProgress` 只在整包读取时回调，`loaded`/`total` 单位为 byte；无法确定总长时 `total` 为 `undefined`。
+- `fetch` 可注入，便于测试或宿主定制；缺省使用绑定到 `globalThis` 的全局 `fetch`。
+
+### 读取与关闭
+
+| 成员 | 说明 |
+| --- | --- |
+| `size: number` | 总字节数；探测完成前为 0 |
+| `ready(): Promise<void>` | 等待大小探测；重复调用不重复请求；关闭后调用抛 `OFD_CLOSED` |
+| `read(offset, length): Promise<Uint8Array>` | 读取区间；偏移越界、长度为 0 或 416 时返回空数组；关闭后抛 `OFD_CLOSED` |
+| `close(): Promise<void>` | 中止在途请求并释放监听；可重复调用 |
+
+探测先发 `HEAD`；服务器不支持 HEAD 或未给 `Content-Length` 时用 `Range: bytes=0-0`，从 `Content-Range` 读取总长。读取按需发 `Range`，不在内存中缓存整包；只有整包回退时才缓存。
+
+### 回退与错误
+
+- 服务器返回 200（忽略 Range）→ 整包下载并缓存；`allowFullDownload=false` 时抛 `OFD_INVALID_PACKAGE`。
+- 响应带 `Content-Encoding`（gzip/br 等）→ Range 不可信，整包下载后按真实字节切片；禁用整包回退时报错。
+- `Content-Range` 总长与探测值不一致 → 整包下载。
+- HTTP 非 2xx、探测失败、缺少总长且无 HEAD 兜底 → `OFD_INVALID_PACKAGE`。
+- 取消/关闭导致的错误原样重新抛出；`close()` 后 `read()` 抛 `OFD_CLOSED`。
+- 跨域需要服务端允许 `Range` 并暴露 `Content-Range`。
+
+## 查找、打印与导出
+
+### `FindOptions` 与 `FindState`
+
+| 选项 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `caseSensitive` | `boolean` | `false` | 是否区分大小写 |
+| `wholeWord` | `boolean` | `false` | 是否全词匹配（主要对拉丁文有效） |
+| `highlightAll` | `boolean` | `true` | 是否高亮全部匹配 |
+| `fromCurrentPage` | `boolean` | `true` | 是否从当前页开始搜索 |
+
+`FindState` 为 `{ query, current, total, searching, caseSensitive, wholeWord, highlightAll }`；`current` 为 1-based，无匹配为 0。查找文本会归一化空白；空查询会清空状态而不是抛错。
+
+### `PageRange`
+
+```ts
+type PageRange =
+  | 'all'
+  | 'current'
+  | { readonly from: number; readonly to: number } // 1-based 闭区间
+  | readonly number[];                             // 1-based，去重升序
+```
+
+- 页码必须为 1-based 整数；数组会去重并升序。
+- `{ from, to }` 要求 `1 <= from <= to <= pageCount`。
+- 空数组、越界、`from > to`、非整数值抛 `OFD_INVALID_OPTION`。
+- 内置打印/导出对话框还支持 `1-3,5`、`-3`、`5-` 文本；公开 TypeScript 类型只声明 `PageRange`，宿主直接传字符串需要自行断言，运行时会解析。
+
+### `PrintOptions`
+
+| 选项 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `pages` | `PageRange` | `'current'` | 打印范围 |
+| `dpi` | `number / 'auto'` | `'auto'` | 输出 DPI；`auto` 自动分档；显式值须为 `(0, 600]` 的有限数字，否则抛 `OFD_INVALID_OPTION`；结果四舍五入 |
+| `includeBackground` | `boolean` | `false` | 是否把页面背景渲染进图片；默认白底 |
+| `rotation` | `Rotation / 'current'` | `'current'` | 打印方向；`current` 沿用阅读旋转 |
+| `signal` | `AbortSignal` | 无 | 取消打印 |
+
+打印会先把页面渲染为图片，再调用浏览器打印对话框；不会生成 PDF。打印失败抛 `OFD_PRINT_FAILED`。
+
+### `ExportImageOptions`
+
+| 选项 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `page` | `number` | 当前页 | 页码，1-based；非法页抛 `OFD_INVALID_PAGE` |
+| `format` | `ImageFormat` | `'png'` | `ImageFormat` 等同于 `PageImageFormat`：`png`/`jpeg`/`webp`；WebP 不支持时可能回退 PNG |
+| `dpi` | `number / 'auto'` | `'auto'` | 输出 DPI；`auto` 自动分档；显式值须为 `(0, 600]` 的有限数字，否则抛 `OFD_INVALID_OPTION`；结果四舍五入 |
+| `quality` | `number` | `0.92` | JPEG/WebP 质量，0–1；越界抛 `OFD_INVALID_OPTION`；PNG 忽略 |
+| `background` | `string / null` | PNG 白底 | PNG 传 `null` 得到透明背景；JPEG/WebP 强制白底 |
+| `rotation` | `Rotation` | `0` | 导出旋转 |
+| `filename` | `string` | 自动生成 | 输出文件名（不含扩展名）；单页直接使用，多页作为前缀追加 `-p{pageNumber}` |
+| `signal` | `AbortSignal` | 无 | 取消导出 |
+
+### `ExportImagesOptions`
+
+继承 `ExportImageOptions`（去掉 `page`），额外支持：
+
+| 选项 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `pages` | `PageRange` | `'current'` | 导出范围 |
+| `zipFilename` | `string` | 自动生成 | ZIP 文件名（不含扩展名） |
+
+多页导出固定打包为 ZIP。多页导出时 `filename` 作为前缀追加 `-p{pageNumber}`；单页 `exportImage` 直接使用该名称。
+
+### `ExportImageResult` 与 `ExportProgressEvent`
+
+```ts
+interface ExportImageResult {
+  readonly blob: Blob;
+  readonly filename: string;
+  readonly pageNumber: number;
+  readonly format: ImageFormat;
+}
+
+interface ExportProgressEvent {
+  readonly current: number; // 已完成页数
+  readonly total: number;   // 总页数
+}
+```
+
+`exportImage()` 会触发浏览器下载并返回结果；`exportImages()` 只触发下载，不返回 ZIP 字节。
+
+### DPI、格式与文件名
+
+- `auto` DPI 按本次页数分档：≤50 页 200，51–200 页 150，>200 页 96；显式 DPI 须为 `(0, 600]`，结果四舍五入。
+- `quality` 只影响 JPEG/WebP；PNG 始终无损。
+- PNG 默认白底，`background: null` 透明；JPEG/WebP 不支持透明，强制白底。
+- 自动文件名优先使用来源文件名/URL 路径，其次为 `metadata.title`，都无法推导时用 `document`；默认图片名为 `{docName}-p{page}`。自定义 `filename` 在多页导出时作为前缀，单页 `exportImage` 直接使用该名称。多页 ZIP 使用 `zipFilename`（可带或不带 `.zip`），未提供时生成 `{docName}-images.zip`。
+- 单页失败产生 `W_EXPORT_PAGE`；部分失败产生 `W_EXPORT_PARTIAL`，成功页仍写入 ZIP；全部失败抛 `OFD_EXPORT_FAILED`。
+
+## 签章、验证与 crypto
+
+### `CryptoViewerOptions` 与 `CryptoOptions`
+
+`CryptoViewerOptions` 继承密码能力包的 `CryptoOptions`：
+
+| 选项 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `enabled` | `boolean` | `true` | 是否启用密码能力；`false` 时加密文档以 `OFD_CRYPTO_UNSUPPORTED` 拒绝，`verification` 功能变为 unsupported |
+| `credentials` | `CryptoCredential / CryptoCredential[]` | 无 | 预置凭据；提供后不弹内置登录框 |
+| `autoPrompt` | `boolean` | `true` | 无预置凭据时是否弹内置登录框 |
+| `rootCertificates` | `CertificateSource[]` | `[]` | 初始信任根；空数组表示未配置，链状态通常为 `unknown` |
+| `certificateLoader` | `CertificateInputLoader` | 无 | 读取 `path`/`filePath` 根证书的原始字节 |
+| `autoVerify` | `boolean` | `true` | 打开成功后自动验证一次；仅在密码能力启用、`verification` 功能开启且存在签章或完整性信息时执行 |
+| `onVerification` | `(report) => void` | 无 | 验证完成回调；回调抛错只产生 warning |
+| `onCredentialRequired` | `(inspection) => Promise<CryptoCredential / null>` | 无 | 接管凭据弹窗；返回 `null` 取消 |
+| `limits` | `Partial<CryptoLimits>` | 密码能力包默认值 | 资源上限；字段与默认值见密码能力 API |
+| `signal` | `AbortSignal` | 无 | 当前只用于根证书 `url` 读取与根证书解析，不取消文档 inspect/decrypt 或 `verify()` |
+| `onWarning` | `(warning) => void` | 无 | 密码能力 warning；与阅读器 `onWarning` 分开 |
+| `sm2UserId` | `string` | `'1234567812345678'` | SM2 签名 userId，不从证书推导 |
+| `now` | `Date` | `new Date()` | 校验证书有效期的当前时间，测试可注入 |
+
+`CryptoOptions` 本身包含 `limits`、`signal`、`onWarning`、`sm2UserId`、`now`。`limits` 的字段名、单位和默认值统一由密码能力包维护；UI 不复制默认值。
+
+### 凭据
+
+```ts
+type CryptoCredential =
+  | { kind: 'password'; userName?: string; password: string }
+  | {
+      kind: 'private-key';
+      userName?: string;
+      privateKey: { pem?: string; der?: Uint8Array; passphrase?: string };
+    };
+```
+
+- 口令按 UTF-8 参与 KDF，不做 Unicode 归一化。
+- SM2 私钥 `pem`/`der` 二选一；`passphrase` 用于加密 PKCS#8。
+- `userName` 省略时仅在唯一匹配用户时自动选择；多用户建议显式指定。
+- 凭据只保留在调用栈/内存，不写日志、DOM、URL 或浏览器存储。
+
+### 根证书
+
+```ts
+type CertificateSource =
+  | { data: ArrayBuffer | Uint8Array; name?: string }
+  | { url: string; headers?: Record<string, string>; name?: string }
+  | { path: string; name?: string }
+  | { filePath: string; name?: string };
+
+type CertificateInputLoader = (
+  source: CertificateSource,
+) => Uint8Array | ArrayBuffer | null | Promise<Uint8Array | ArrayBuffer | null>;
+```
+
+| 形态 | 读取方式 | 失败行为 |
+| --- | --- | --- |
+| `data` | 直接使用 | 解析失败 warning 并跳过 |
+| `url` | 浏览器 `fetch` | HTTP/解析失败 warning 并跳过 |
+| `path` / `filePath` | `certificateLoader` | 无 loader 时 warning 并跳过；loader 抛错时 `OFD_CRYPTO_FAILED` |
+
+`certificateLoader` 返回原始字节（PEM/DER/CER/Base64，可含多张证书），不要自行解析；UI 统一转换为 DER。浏览器宿主通常只用 `data`/`url`；Electron/Node 宿主可用 `fs.readFile` 实现路径读取。
+
+### 验证行为与错误
+
+- 预置 `credentials` 时不弹窗；`autoPrompt=false` 且无预置凭据时直接以 `OFD_CRYPTO_CREDENTIAL_REQUIRED` 拒绝，不会调用 `onCredentialRequired`。
+- `autoPrompt=true` 且无预置凭据时才调用 `onCredentialRequired`；返回 `null` → `OFD_CRYPTO_CANCELLED`。
+- `crypto.enabled=false` 时跳过密码初始化；加密文档打不开，明文文档正常阅读；`verification` 功能为 unsupported，调用 `verify()`/`openVerificationPanel()` 会在功能守卫处被拒绝。
+- `autoVerify=true` 且文档有签章或完整性信息时，打开成功后自动验证；没有可验证内容时跳过。
+- `verify({ signatureIds?, signal? })` 只验证指定签名或全部签名；`signal` 取消本次验证。
+- `features.verification=false` 或 `crypto.enabled=false` 时 `verify()` 与 `openVerificationPanel()` 抛 `OFD_FEATURE_DISABLED`（`feature='verification'`）；旧报告失效。
+- 验证失败统一映射为 `OFD_CRYPTO_FAILED` 并保留 `cause`；取消映射为 `OFD_CRYPTO_CANCELLED`。
+
+### `VerificationReport`
+
+| 字段 | 说明 |
+| --- | --- |
+| `overall` | 汇总状态；时间戳不参与 |
+| `package` | 包级信息（版本、条目数等） |
+| `decryption` | 加密源内部解密摘要；明文时省略 |
+| `integrity` | 防夹带完整性结果；无保护时为 `null`，不能当作“通过” |
+| `signatures` | 每个签名的 `SignatureVerification[]` |
+| `rootsConfigured` | 是否配置了信任根 |
+| `warnings` | 本次验证产生的 warning |
+| `startedAt` | 开始时间，ISO 8601 |
+| `durationMs` | 耗时，单位毫秒 |
+
+### `SignatureVerification`
+
+每个签名结果包含：`id`、`type`、`version`、`baseLoc`、`signedValuePath?`、`status`、`signature`（数学验签）、`dataHash`（原文摘要比对）、`references`（保护范围校验）、`certificate`（证书链）、`seal?`（印章校验）、`timestamp`（只解析）、`issues`。`status` 为 `VerificationStatus`，取值为 `valid`/`invalid`/`unknown`/`not-applicable`/`unsupported`。
+
+证书链状态可能为 `valid`/`invalid`/`expired`/`not-yet-valid`/`untrusted`/`incomplete`/`unsupported`/`not-present`/`unknown`；未配置根时通常为 `unknown`。时间戳状态固定为 `parsed-not-verified`/`not-present`/`parse-error`，永不参与 `overall`。
+
+### 签章摘要与详情类型
+
+- `SignatureEntryInfo`：`{ id, type, baseLoc, provider?, signatureDateTime?, references, stamps, signedValuePath?, hasSignedValue }`；`references` 为 `SignatureReferenceInfo[]`（`{ fileRef }`），`stamps` 为 `SignatureStampInfo[]`（`{ id?, pageId, pageIndex?, boundary, clip? }`，几何单位 mm）。
+- `SignatureProvider`：`{ name?, company?, version? }`。
+- `SignedValueFile`：`{ signatureId, path, data: Uint8Array, byteLength }`，原始签名值字节；调用方拥有，UI 不解释内容。
+- `SignatureDetail`：`{ entry, seal?, signer?, validation, warnings?, verification? }`。
+- `SealInfo`：`{ version, esId?, name?, typeCode?, typeLabel?, createDate?, validStart?, validEnd?, certificate?, image? }`。
+- `SealImageInfo`：`{ format, widthMm, heightMm, data? }`；`data` 仅用于 UI 以 Blob URL 渲染，不进入状态/日志。
+- `SignerInfo`：`{ certificate?, signedAt?, signedAtSource?, algorithm?, dataHash?, propertyInfo?, timestampPresent? }`；`SignedAtSource` 为 `timeInfo`/`signatureDateTime`/`timestamp-token`。
+- `SignatureValidation`：`{ status: 'not-verified', note }`；详情页只展示解析信息，不宣称验签通过。
+- `CertificateInfo`：`{ subject, issuer, serialNumber, notBefore?, notAfter?, subjectAttributes?, signatureAlgorithm?, publicKeyAlgorithm? }`。
+- `CertificateAttributes`：`{ cn?, o?, ou?, c?, st?, l?, email?, serialNumber? }`。
+- `AlgorithmInfo`：`{ oid, name? }`。
+- `CertificateSummary`：`{ subject, issuer, serialNumber, notBefore, notAfter, fingerprintSha256, publicKeyAlgorithm?, signatureAlgorithm?, keyUsage?, isCA }`。
+
+### 验证状态与检测结果
+
+`OfdInspection` 是打开前的检测结果：`{ encrypted, packageSize, entryCount, ofdVersion?, layers, users, signatures, integrityPresent, warnings }`。`layers` 与 `users` 分别描述加密层和用户，`signatures` 是签名摘要，`integrityPresent` 表示是否同时存在包级清单与签名值文件。
+
+`VerificationStatus` 是通用状态联合：`valid`/`invalid`/`unknown`/`not-applicable`/`unsupported`。密码能力包的算法覆盖、证书链判定、完整性校验与不检查项由[密码能力 API](../../ofdrw-viewer-crypto/skills/API.md)维护；UI 只负责展示，不在这里重复算法细节。
+
+## Web Component
+
+### 属性
+
+`<ofd-viewer>` 观察以下 HTML 属性；属性变化时调用对应实例方法，非法值被忽略。
+
+| 属性 | 类型 | 说明 |
+| --- | --- | --- |
+| `src` | URL 字符串 | 设置/替换文档来源；空值关闭文档 |
+| `page` | 数字 | 跳转到 1-based 页码；非法值忽略 |
+| `scale` | 数字 / 缩放模式 | 数字走 `setScale`，模式走 `setZoomMode` |
+| `rotation` | 数字 | 规范为 0/90/180/270 |
+| `theme` | `light`/`dark`/`auto` | 仅合法值生效 |
+| `locale` | 字符串 | 非空时生效 |
+| `sidebar` | 侧栏名 / 空 / `none` / `off` | 空、`none`、`off` 关闭侧栏；非法值忽略 |
+
+`src` 变化会重新打开文档；设置空 `src` 会关闭文档但保留元素。未连接 DOM 时设置属性不会创建实例，连接后按当前属性创建。
+
+### Property
+
+| Property | 类型 | 说明 |
+| --- | --- | --- |
+| `viewer` | `OFDViewer / null` | 底层实例，只读 |
+| `source` | `ViewerSource / null` | 复杂来源；优先于 `src` 属性；设为 `null` 关闭 |
+| `features` | `ViewerFeatures` | 功能补丁；设置时立即调用 `setFeatures`，不重建实例 |
+| `crypto` | `CryptoViewerOptions / undefined` | 密码能力配置；只在实例创建时读取，实例存在后修改不重建 |
+
+`features` getter 返回补丁副本；`crypto` 在实例创建前设置才生效。
+
+### 方法
+
+| 方法 | 说明 |
+| --- | --- |
+| `setFeatures(patch, { display? })` | 合并功能补丁；会保存补丁供重建使用 |
+| `open(source?)` | 打开文档；无实例时先创建 |
+| `close()` | 关闭文档并移除 `src` 属性 |
+| `verify(options?)` | 重新验证；无实例时抛普通 `Error` |
+| `getVerificationReport()` | 最近报告 |
+| `setRootCertificates(roots)` | 替换信任根；无实例时返回空数组 |
+| `getRootCertificates()` | 当前信任根摘要 |
+| `openVerificationPanel()` | 打开验证面板 |
+| `destroy()` | 销毁实例；可重复调用 |
+
+### 组件事件
+
+事件名为 `ofd-*`，`event.detail` 为对应载荷，`bubbles: true`、`composed: true`。完整映射见[事件名与载荷](#事件名与载荷)。
+
+### 组件生命周期
+
+- `connectedCallback` 创建实例并绑定事件；未设置 `src`/`source` 时仍会创建实例以读取查询参数。
+- `disconnectedCallback` 销毁实例并解绑事件；重新连接时按当前属性重建。
+- 无来源时 `ready` 会拒绝，组件内部已 catch，不会产生未处理 rejection。
+- 默认样式：仅当宿主内联 `display`/`height`/`min-height` 未设置时，`connectedCallback` 才补 `display: block; height: 100%; min-height: 0`；父容器仍需提供确定高度，组件不会替父容器撑高。
+
+`OFDViewerElement`、`OFD_VIEWER_TAG`、`defineOFDViewerElement(tagName = 'ofd-viewer')` 从 `/element` 导出；该入口还导出 `FeatureDisplay`、`SidebarView`、`ViewerFeatures`、`ViewerSource` 类型。导入 `/element` 会自动注册一次，重复调用安全。
+
+## React
+
+### React Props
+
+`OFDViewerProps` 继承 `Omit<OFDViewerOptions, 'container' | 'source' | 'initialPage' | 'initialScale' | 'sidebar' | 'onWarning' | 'onError'>` 与 `ViewerEventHandlers`，并增加：
+
+| Prop | 类型 | 说明 |
+| --- | --- | --- |
+| `source` | `ViewerSource` | 文档来源；省略时读查询参数 |
+| `page` | `number` | 受控页码，1-based；变化时调用 `goToPage` |
+| `scale` | `number / ZoomMode` | 受控缩放；数字为倍率，字符串为模式 |
+| `sidebar` | `SidebarView / null` | 受控侧栏；`null` 关闭 |
+| `onReady` | `() => void` | 首次打开完成回调 |
+| `className` | `string` | 外层容器 class |
+| `style` | `CSSProperties` | 外层容器样式；默认 `width/height: 100%` |
+
+`rotation`、`theme`、`locale`、`features`、`featureDisplay`、`crypto` 等其他构造选项通过继承直接传入。`onWarning`/`onError` 由 `ViewerEventHandlers` 提供，作为事件回调使用，不再作为构造选项。
+
+### 事件回调
+
+`ViewerEventHandlers` 的字段名为 `on` + 事件名 PascalCase，例如 `onDocumentOpen`、`onPageChange`、`onScaleChange`、`onRotationChange`、`onFindMatches`、`onVerificationCompleted`、`onWarning`、`onError`。完整对应关系见[事件名与载荷](#事件名与载荷)。
+
+### 命令句柄
+
+`OFDViewerHandle` 通过 `ref` 暴露：
+
+- 实例：`getInstance()`、`getViewer()`；
+- 文档：`open(source?)`、`close()`；
+- 导航/视图：`goToPage`、`nextPage`、`previousPage`、`setScale`、`setZoomMode`、`setRotation`、`setFeatures`；
+- 查找/输出：`find`、`print`、`exportImage`；
+- 状态：`getState`、`getFeatureState`、`isFeatureEnabled`；
+- 验证：`verify`、`getVerificationReport`、`setRootCertificates`、`getRootCertificates`、`openVerificationPanel`。
+
+`getInstance` 在挂载前返回 `null`；`exportImage` 在无实例时返回 `null`；`verify` 在无实例时抛 `Error('阅读器尚未挂载')`。
+
+### React 受控同步
+
+- `page`、`scale`、`rotation`、`theme`、`locale`、`sidebar`、`features`、`featureDisplay` 变化分别调用对应实例方法；受控同步中的抛错/拒绝被静默忽略，不会触发核心 `error` 事件；需要错误反馈时直接调用命令句柄并自行处理 Promise。
+- `source` 变化调用 `open`，不会重建实例；引用相等时不重复打开；打开失败仍由核心 `error` 事件报告。
+- 卸载时解绑事件并 `destroy()`。
+- 外层只创建一个 `div`；阅读器在其内部建立 DOM。
+
+`/react` 额外导出 `Rotation`、`ScaleValue`、`SidebarView`、`ViewerEventHandlers`、`ViewerFeatures`、`FeatureDisplay`、`Theme`、`OFDViewerHandle`、`OFDViewerProps`。
+
+## Vue
+
+### Vue Props
+
+| Prop | 类型 | 说明 |
+| --- | --- | --- |
+| `source` | `ViewerSource` | 文档来源；省略时读查询参数 |
+| `page` | `number` | 受控页码，1-based |
+| `scale` | `number / ZoomMode` | 受控缩放 |
+| `rotation` | `0/90/180/270` | 初始/受控旋转 |
+| `theme` | `light/dark/auto` | 初始/受控主题 |
+| `locale` | `string` | 初始/受控语言 |
+| `sidebar` | `SidebarView / null` | 初始/受控侧栏 |
+| `features` | `ViewerFeatures` | 功能补丁 |
+| `featureDisplay` | `FeatureDisplay` | 功能展示 |
+| `options` | `AdvancedOptions` | 高级构造选项；公共 props 优先 |
+
+`AdvancedOptions = Omit<OFDViewerOptions, 'container' | 'source'>`。`options` 可传 `crypto`、缓存、并发、`updateHash`、`onWarning`/`onError` 等；与顶层 props 同名时顶层优先。
+
+### Emits
+
+组件 emit `ready` 以及事件桥接的 kebab-case 名称：`document-open`、`document-close`、`page-change`、`page-rendered`、`pages-loaded`、`scale-change`、`rotation-change`、`sidebar-view-change`、`find-start`、`find-matches`、`find-current`、`selection-change`、`signature-click`、`verification-completed`、`print-start`、`print-progress`、`print-end`、`export-progress`、`warning`、`error`、`features-change`、`state-change`。载荷与核心事件一致。
+
+### Expose
+
+模板 ref 暴露 `getInstance`、`getViewer`、`open`、`close`、`goToPage`、`nextPage`、`previousPage`、`setScale`、`setZoomMode`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage`、`getState`、`getFeatureState`、`isFeatureEnabled`、`verify`、`getVerificationReport`、`setRootCertificates`、`getRootCertificates`、`openVerificationPanel`。
+
+### Vue 受控同步
+
+- `page`、`scale`、`rotation`、`theme`、`locale`、`sidebar` 等受控同步中的抛错/拒绝被静默忽略，不会触发核心 `error` 事件；需要错误反馈时直接调用 expose 命令并自行处理 Promise。
+- `source` 变化调用 `open`，值未变化时跳过；打开失败由核心 `error` 事件报告。
+- `features` 深度监听，变化时调用 `setFeatures`。
+- 卸载时 `destroy()`；组件实例用 `shallowRef`/`markRaw` 持有，不进入响应式代理。
+- `/vue` 额外导出 `FeatureDisplay`、`Rotation`、`ScaleValue`、`SidebarView`、`Theme`、`ViewerFeatures`。
+
+## 错误
+
+### `OFDViewerError`
+
+```ts
+class OFDViewerError extends Error {
+  readonly code: ViewerErrorCode;
+  readonly feature?: ViewerFeature;
+  readonly pageNumber?: number;
+  readonly cause?: unknown;
+}
+```
+
+`feature` 只在功能类错误上出现；`pageNumber` 为 1-based；`cause` 保留底层错误。`name` 固定为 `OFDViewerError`。
+
+```ts
+interface ViewerErrorOptions {
+  readonly cause?: unknown;
+  readonly feature?: ViewerFeature;
+  readonly pageNumber?: number;
+}
+```
+
+
+### UI 错误码
+
+`ViewerErrorCode`：
+
+| 错误码 | 触发场景 |
+| --- | --- |
+| `OFD_FEATURE_DISABLED` | 功能被关闭时调用受守卫方法；带 `feature` |
+| `OFD_INVALID_OPTION` | 容器/来源/选项/范围/查询参数非法 |
+| `OFD_INVALID_PAGE` | 导出页码非法 |
+| `OFD_NOT_OPENED` | 需要已打开文档的操作 |
+| `OFD_DESTROYED` | 实例销毁后调用方法 |
+| `OFD_UNSUPPORTED` | 缺少服务、内置 UI 或环境能力 |
+| `OFD_EXPORT_FAILED` | 多页导出全部失败 |
+| `OFD_PRINT_FAILED` | 打印失败 |
+| `OFD_SIGNATURE_PARSE_FAILED` | 签章详情解析失败 |
+| `OFD_CLIPBOARD_FAILED` | 复制选区失败 |
+| `OFD_CRYPTO_CREDENTIAL_REQUIRED` | 无预置凭据且 `autoPrompt=false` |
+| `OFD_CRYPTO_CANCELLED` | 用户取消凭据或验证 |
+| `OFD_CRYPTO_UNSUPPORTED` | 加密文档在密码能力关闭时打开、`setRootCertificates()` 等直接密码能力调用；`verification` 关闭时先由功能守卫拦截 |
+| `OFD_CRYPTO_FAILED` | 解密/验签/根证书加载失败 |
+
+`OFD_FEATURE_DISABLED` 常量值为字符串 `'OFD_FEATURE_DISABLED'`。
+
+### 辅助函数
+
+| 函数 | 说明 |
+| --- | --- |
+| `isOFDViewerError(value)` | 判断是否为 `OFDViewerError` |
+| `createFeatureDisabledError(feature, message?)` | 创建带 `feature` 的功能关闭错误 |
+| `isFeatureDisabledError(value, feature?)` | 判断功能关闭错误；省略 `feature` 时只校验错误码 |
+| `assertFeatureEnabled(feature, state)` | 状态不可用时抛功能关闭错误 |
+| `toOFDViewerError(error, code, message, options?)` | 包装为 `OFDViewerError`；已是该类型时原样返回 |
+
+`OFDError`、`OFDErrorCode`、`OFDErrorOptions`、`isOFDError`、`toOFDError` 从渲染引擎包原样重导出，用于统一判断底层错误；引擎错误码清单见[渲染引擎 SKILL](../../ofdrw-viewer-engine/skills/SKILL.md)。
+
+## 导出索引
+
+以下名称均从 `@ofdrw/ofdrw-viewer-ui` 公共入口导出。
+
+**核心与扩展**：`OFDViewer`、`registerViewerExtension`、`ViewerExtension`、`VERSION`、`getVersions`、`ViewerVersions`。
+
+**构造与 crypto 选项**：`OFDViewerOptions`、`ResolvedViewerOptions`、`CryptoViewerOptions`、`CryptoOptions`、`CertificateSource`、`CertificateInputLoader`。
+
+**功能**：`ViewerFeature`、`ViewerFeatures`、`ViewerFeatureStates`、`FeatureState`、`FeatureReason`、`FeatureDisplay`、`FeatureDisplayMode`、`FeatureAvailability`。
+
+**状态**：`ViewerState`、`DocumentState`、`ViewState`、`UIState`、`InitialViewerStateOptions`、`ViewerWarning`、`ViewerErrorInfo`、`ViewerToast`、`ToastLevel`、`DialogName`、`VisiblePageRange`、`FindState`、`ZoomMode`、`ScaleValue`、`Rotation`、`SidebarView`、`Theme`。
+
+**事件**：`ViewerEventMap`、`ViewerEventName`、`ViewerEventPayload`、`ViewerEventHandler`、`DocumentOpenEvent`、`DocumentCloseEvent`、`PageChangingEvent`、`PageRenderedEvent`、`PagesLoadedEvent`、`ScaleChangingEvent`、`RotationChangingEvent`、`SidebarViewChangedEvent`、`FindStartEvent`、`FindMatchesEvent`、`FindCurrentEvent`、`SelectionChangeEvent`、`SignatureClickEvent`、`VerificationCompletedEvent`、`PrintStartEvent`、`PrintProgressEvent`、`PrintEndEvent`、`ExportProgressEvent`、`WarningEvent`、`ErrorEvent`、`FeaturesChangeEvent`、`StateChangeEvent`。
+
+**来源与预览**：`ViewerSource`、`PreviewLocation`、`PreviewSourceOptions`、`DEFAULT_MAX_BASE64_BYTES`、`readPreviewSourceFromLocation`、`HttpByteSource`、`HttpByteSourceOptions`。
+
+**文档与页面**：`DocumentMetadata`、`DocumentDestination`、`PageInfo`、`OutlineNode`、`BookmarkItem`、`PageRange`、`ImageFormat`、`PageImageFormat`、`GoToPageOptions`。
+
+**文本**：`TextContent`、`TextItem`、`TextChar`、`TextRect`、`TextQuad`。
+
+**查找/打印/导出**：`FindOptions`、`PrintOptions`、`ExportImageOptions`、`ExportImagesOptions`、`ExportImageResult`。
+
+**签章与验证**：`SignatureEntryInfo`、`SignatureProvider`、`SignatureReferenceInfo`、`SignatureStampInfo`、`SignedValueFile`、`SignatureDetail`、`SignatureValidation`、`SignatureVerification`、`SealInfo`、`SealImageInfo`、`CertificateInfo`、`CertificateAttributes`、`AlgorithmInfo`、`SignerInfo`、`SignedAtSource`、`VerificationReport`、`VerificationStatus`、`CertificateSummary`、`OfdInspection`、`CryptoCredential`。
+
+**UI 对话框**：`UIDialogAction`、`UIDialogOptions`。
+
+**错误**：`OFDViewerError`、`ViewerErrorCode`、`ViewerErrorOptions`、`OFD_FEATURE_DISABLED`、`isOFDViewerError`、`createFeatureDisabledError`、`isFeatureDisabledError`、`assertFeatureEnabled`、`toOFDViewerError`、`OFDError`、`OFDErrorCode`、`OFDErrorOptions`、`isOFDError`、`toOFDError`。
+
+`/react`、`/vue`、`/element` 的额外导出见各适配器章节。

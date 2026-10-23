@@ -67,9 +67,9 @@ const target = new URL('/api/ofd/发票 2026.ofd', location.href).href;
 const previewUrl = `${location.origin}${location.pathname}?file=${encodeURIComponent(target)}`;
 ```
 
-完整规则、参数表与安全提醒见 [SKILL.md 通过 URI 参数预览](skills/SKILL.md#通过-uri-参数预览)。
+完整规则、参数表与安全提醒见 [API.md 通过 URI 参数预览](skills/API.md#通过-uri-参数预览)。
 
-完整选项、方法、事件与使用边界见 [SKILL.md](skills/SKILL.md)。
+完整选项、方法、事件与使用边界见 [API.md](skills/API.md)。
 
 各平台演示代码：
 

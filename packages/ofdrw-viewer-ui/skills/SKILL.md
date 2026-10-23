@@ -5,20 +5,9 @@ description: Embed the framework-agnostic OFD reader UI from @ofdrw/ofdrw-viewer
 
 # OFD 阅读器 UI（@ofdrw/ofdrw-viewer-ui）
 
-把 `@ofdrw/ofdrw-viewer-ui` 嵌入 Web 应用，得到完整的 OFD 阅读器。核心是 `OFDViewer` 类；`<ofd-viewer>`、React、Vue 都是对同一实例的薄封装。UI 消费 engine 的页面渲染与 crypto 的验签报告，不维护第二套 ASN.1/验签实现。
+把 `@ofdrw/ofdrw-viewer-ui` 嵌入 Web 应用，得到完整的 OFD 阅读器。核心是 `OFDViewer` 类；`<ofd-viewer>`、React、Vue 都是对同一实例的薄封装。UI 负责阅读器外壳、交互和网络读取，消费渲染引擎的页面绘制与密码能力包的验证报告，不维护第二套 ASN.1/验签实现。
 
-阅读器运行在**纯 SPA** 环境；当前不承诺 SSR/服务端水合。不提供局部/瓦片渲染。
-
-当前能力：
-
-- 连续滚动阅读、页码/缩放/旋转、侧栏、主题与中英文界面；
-- 透明文本层、文本选择与复制、全文查找与高亮；
-- 缩略图、大纲、书签导航；
-- 加密文档打开（口令 / SM2 私钥）、工具栏验证面板、签章点击验证与根证书配置；
-- 签章摘要、详情与页面覆盖层；签名、证书链、防夹带完整性和时间戳结果分层展示；
-- 浏览器打印、单页/多页图片导出（PNG/JPEG/WebP，多页 ZIP）；
-- `<ofd-viewer>` Web Component、React 18/19、Vue 3.3+ 薄适配；
-- 无需传 `source` 的 URI 参数预览：`?file=` 或 `?base64=`。
+阅读器运行在**纯 SPA** 环境，不承诺 SSR/服务端水合，也不提供局部/瓦片渲染。完整选项、事件、方法、类型和默认值见 [API.md](./API.md)。
 
 ## 什么时候用
 
@@ -26,11 +15,11 @@ description: Embed the framework-agnostic OFD reader UI from @ofdrw/ofdrw-viewer
 - 需要连续滚动、页码、缩放/旋转、缩略图、大纲与书签导航；
 - 需要透明文本层、文本选择/复制、全文查找与高亮；
 - 需要打开加密 OFD（口令或 SM2 私钥），展示签章覆盖层与验证面板；
-- 需要浏览器打印、单页/多页图片导出；
+- 需要浏览器打印、单页/多页图片导出（PNG/JPEG/WebP，多页 ZIP）；
 - 需要 `<ofd-viewer>` Web Component 或 React/Vue 薄适配；
 - 需要用 `?file=` / `?base64=` 链接直接预览 OFD，而不改宿主代码。
 
-不适用：只需要把页面渲染到 Canvas 用 `@ofdrw/ofdrw-viewer-engine`；批量转图片文件用 `ofdrw-viewer-cli`；只读文字用 `mineru`。
+不适用：只需要把页面渲染到 Canvas，直接用渲染引擎包；批量转换文件用命令行工具；只提取文字用文档解析工具。
 
 ## 安装
 
@@ -39,17 +28,17 @@ pnpm add @ofdrw/ofdrw-viewer-ui
 # 或 npm install @ofdrw/ofdrw-viewer-ui
 ```
 
-从源码开发或在本仓库内构建：
+在本仓库内从源码构建：
 
 ```bash
 pnpm install
-pnpm -C packages/ofdrw-viewer-engine build   # 类型检查依赖 engine/dist/index.d.ts
+pnpm -C packages/ofdrw-viewer-engine build
 pnpm -C packages/ofdrw-viewer-ui build
 ```
 
-- 运行时需要 DOM、ES2020、Canvas 2D；打印依赖 `window.print`，剪贴板优先使用 `navigator.clipboard`，不可用时回退 `execCommand('copy')`。
-- React/Vue 是可选 peer 依赖；只使用纯 HTML/Web Component 时不会加载框架代码。
-- 包未声明 `sideEffects: false`，公共入口与各能力模块顶层的 `registerViewerExtension` 注册不会被消费方 bundler 当作纯模块摇掉。
+- 运行时需要 DOM、ES2020、Canvas 2D；打印依赖 `window.print`。
+- React/Vue 是可选 peer 依赖；只用纯 HTML/Web Component 时不会加载框架代码。
+- 包未声明 `sideEffects: false`，公共入口和各能力模块的注册不会被 bundler 当作纯模块摇掉。
 
 ## 样式与容器
 
@@ -59,15 +48,17 @@ pnpm -C packages/ofdrw-viewer-ui build
 import '@ofdrw/ofdrw-viewer-ui/style.css';
 ```
 
-阅读器根元素需要确定高度，例如：
+阅读器根元素需要确定高度，父容器也要有高度：
 
 ```html
 <div id="viewer" style="height: 640px"></div>
 ```
 
+挂载点必须自备确定高度，`OFDViewer` 不会修改宿主样式；它在挂载点内创建 `display: grid` 的 `.ofd-viewer` 根节点，并通过 `width/height: 100%` 撑满挂载点。`<ofd-viewer>` 自身是宿主：只有内联 `display`/`height`/`min-height` 未设置时，`connectedCallback` 才补 `display: block; height: 100%; min-height: 0`；父容器仍需提供高度，组件不会替父容器撑高。
+
 ## 5 分钟跑通
 
-若页面 URL 已带 `?file=` 或 `?base64=`，可以省略下面的 `source`，直接 `new OFDViewer({ container: '#viewer' })`（见“通过 URI 参数预览”）。
+页面 URL 已带 `?file=` 或 `?base64=` 时可以省略 `source`，直接 `new OFDViewer({ container })`。
 
 ```ts
 import { OFDViewer } from '@ofdrw/ofdrw-viewer-ui';
@@ -80,14 +71,9 @@ const viewer = new OFDViewer({
   initialScale: 'auto',
   theme: 'auto',
   locale: 'zh-CN',
-  features: {
-    print: false,
-    find: true,
-    toolbar: true,
-  },
-  featureDisplay: 'hide',
-  onWarning: (warning) => console.warn(warning.code, warning.message),
-  onError: (error) => console.error(error.code, error.message),
+  features: { print: false },
+  onWarning: ({ code, message }) => console.warn(code, message),
+  onError: ({ code, message }) => console.error(code, message),
 });
 
 await viewer.ready;
@@ -95,47 +81,37 @@ await viewer.ready;
 viewer.on('pagechanging', ({ pageNumber }) => {
   console.log('当前页', pageNumber);
 });
-
 viewer.goToPage(2);
 viewer.setZoomMode('page-width');
-viewer.setRotation(90);
 viewer.openSidebar('thumbnails');
 
 // 销毁：解绑 DOM/事件并释放渲染资源。
 viewer.destroy();
 ```
 
-### 文档来源
+`container` 是唯一必填选项；`source` 省略时按查询参数解析，两者都没有则 `ready` 以 `OFD_INVALID_OPTION` 拒绝。默认初始页为 1、初始缩放为 `auto`、主题为 `auto`、语言为 `zh-CN`。
 
-`source` 支持以下形态；切换文档直接调用 `await viewer.open(newSource)`。也可以完全省略 `source`，由 `?file=`/`?base64=` 查询参数提供来源（见“通过 URI 参数预览”）。
+## 文档来源
 
-| 形态 | 说明 |
-| --- | --- |
-| `File` / `Blob` | 本地文件或拖拽得到的文件；UI 以 `blob` 交给 engine |
-| `ArrayBuffer` / `Uint8Array` | 已读入内存的字节；UI 以 `arraybuffer` 交给 engine |
-| `string` | 公开 URL；**UI 内部创建 `HttpByteSource`** 按 Range 读取，engine 只收字节 |
-| `{ url, headers? }` | URL 加自定义请求头，适合鉴权资源；构造方式同上 |
-| 省略 | 构造时读取 `?file=`/`?base64=`；都没有则 `ready` 以 `OFD_INVALID_OPTION` 拒绝 |
+`source` 支持 `File`/`Blob`、`ArrayBuffer`/`Uint8Array`、URL 字符串、`{ url, headers? }`。切换文档直接 `await viewer.open(nextSource)`；`await viewer.open()` 会重新按构造来源或当前查询参数打开。
 
-`requestInit` 只对 URL 来源生效，且**只使用 `headers`**：先合并 `requestInit.headers`，再由来源对象的 `headers` 覆盖（来源优先）。`requestInit.credentials` 不转发，fetch 使用默认 `same-origin` 凭据策略。
+- 空字节、空 Blob、空 URL 以 `OFD_INVALID_OPTION` 拒绝。
+- URL 由 UI 在内部转换为 `HttpByteSource`；引擎只接收字节，不联网。
+- `requestInit` 只对 URL 来源生效，且**只使用 `headers`**：先合并 `requestInit.headers`，再由来源对象的 `headers` 覆盖（来源优先）。`credentials` 不转发，fetch 使用浏览器默认的 `same-origin` 凭据策略。
+- 鉴权 token 的刷新、重试与存储由宿主负责，阅读器不持久化凭据。
 
-### 通过 URI 参数预览
+## 通过 URI 参数预览
 
-不传 `source` 也能预览：阅读器在 `open()` 时读取当前页面的 `location.search`，识别 `?file=` 与 `?base64=`。适合“把 OFD 链接直接发给别人打开”的轻量预览页，不需要改宿主代码；只读查询串，不读取也不改写 `updateHash` 使用的 hash。
-
-#### 来源优先级
+不传 `source` 时，`open()` 读取当前页面的 `location.search`，识别 `?file=` 与 `?base64=`；只读查询串，不读取也不改写 `updateHash` 使用的 hash。来源优先级：
 
 1. `viewer.open(source)` 的显式参数；
 2. 构造选项 `options.source`；
-3. 页面查询参数：`?file=` 优先于 `?base64=`；两者同时存在时用 `file`，并产生一条 `W_QUERY_SOURCE` warning。
+3. `?file=`；
+4. `?base64=`。
 
-`OFDViewerOptions.source` 已是可选。三者都没有时，`viewer.ready` 以 `OFD_INVALID_OPTION` 拒绝（错误文案会提示传 `source` 或使用 `?file=`/`?base64=`）。`<ofd-viewer>` 没有 `src` 时仍会创建实例读取查询参数，组件内部已 catch `ready`，不会产生未处理 rejection；React/Vue 不传 `source` 同理。
+`file` 与 `base64` 同时存在时用 `file`，并产生一条 `W_QUERY_SOURCE` warning。
 
-#### `?file=`：按 URL 读取
-
-- 值必须是目标地址经过 `encodeURIComponent` 后的结果；实现先由 `URLSearchParams` 解码一次，再尝试一次 `decodeURIComponent`，所以正常编码一次即可，非法百分号序列会保留原值。
-- 支持绝对 `http(s)` 地址，也支持相对当前页面的路径（同源 `/api/ofd/123.ofd`、`./files/a.ofd`）；相对值以 `location.href` 为 base 解析。
-- 解析后仅接受 `http:`/`https:`；`file:`、`javascript:`、`data:` 等协议一律以 `OFD_INVALID_OPTION` 拒绝。`file://` 不支持，本地文件请用 `File`/`Blob` 传给 `source`。
+`?file=` 的值必须是目标地址经过 `encodeURIComponent` 后的结果；实现会先由 `URLSearchParams` 解码一次，再尝试一次 `decodeURIComponent`，非法百分号序列保留原值。支持绝对 `http(s)` 地址和相对当前页面的路径；解析后仅接受 `http:`/`https:`，`file:`、`javascript:`、`data:` 等协议一律以 `OFD_INVALID_OPTION` 拒绝。
 
 ```text
 # 绝对地址（值本身已 encodeURIComponent）
@@ -148,69 +124,38 @@ https://viewer.example.com/app/?file=%2Fapi%2Fofd%2F123.ofd
 https://viewer.example.com/?file=%2Fapi%2Fofd%2F%E5%8F%91%E7%A5%A8%202026.ofd
 ```
 
-生成编码后的链接：
-
 ```js
 const target = new URL('/api/ofd/发票 2026.ofd', window.location.href).href;
 const url = `${location.origin}${location.pathname}?file=${encodeURIComponent(target)}`;
 ```
 
-#### `?base64=`：直接携带字节
-
-- 支持纯 base64，也支持 `data:application/ofd;base64,...` 形式；data URI 必须带 `;base64` 标记和逗号。
-- 兼容 URL-safe 字符（`-`/`_`）、缺失的 `=` padding、换行/空格；但仍建议对值做 `encodeURIComponent`，避免 `+`、`/`、`=` 被查询串解释。
-- 解码后的字节上限默认 **64 MiB**（`DEFAULT_MAX_BASE64_BYTES`）。非法字符、空值、非法 data URI、超限都会抛 `OFD_INVALID_OPTION`；环境缺少 `atob` 时抛 `OFD_UNSUPPORTED`。直接调用 `readPreviewSourceFromLocation()` 可用 `maxBase64Bytes` 调整上限；`OFDViewer` 本身不暴露该选项。
+`?base64=` 支持纯 base64 和 `data:application/ofd;base64,...`；data URI 必须带 `;base64` 标记与逗号。兼容 URL-safe 字符（`-`/`_`）、缺失的 padding、换行/空格，但仍建议对值做 `encodeURIComponent`，避免 `+`、`/`、`=` 被查询串解释。解码后默认上限 **64 MiB**（`DEFAULT_MAX_BASE64_BYTES`）；非法字符、空值、非法 data URI、超限抛 `OFD_INVALID_OPTION`，环境缺少 `atob` 抛 `OFD_UNSUPPORTED`。
 
 ```text
-# 纯 base64（下面只是可解析的格式示例，不是完整 OFD；必须替换为完整文件的 base64）
+# 纯 base64（只是格式示例，必须替换为完整文件）
 https://viewer.example.com/?base64=UEsDBBQAAAAI
 
-# data URI（同样只是格式示例，必须替换为完整值）
+# data URI（同样只是格式示例）
 https://viewer.example.com/?base64=data%3Aapplication%2Fofd%3Bbase64%2CUEsDBBQAAAAI
 ```
-
-生成可直接打开的链接（Node）：
 
 ```bash
 B64=$(base64 -w0 demo.ofd)
 node -e 'console.log("https://viewer.example.com/?base64=" + encodeURIComponent(process.argv[1]))' "$B64"
-node -e 'console.log("https://viewer.example.com/?base64=" + encodeURIComponent("data:application/ofd;base64," + process.argv[1]))' "$B64"
 ```
 
-#### 参数表
+安全提醒：
 
-| 参数 | 是否编码 | 支持的值 | 解析/限制 | 失败或告警 |
-| --- | --- | --- | --- | --- |
-| `file` | 需要 `encodeURIComponent` | 绝对 `http(s)` URL、同源/相对路径 | 以当前页面为 base；仅 `http`/`https` | 空值、非法 URL、非 http(s) → `OFD_INVALID_OPTION`；`file:` 不支持 |
-| `base64` | 建议编码 | 纯 base64、`data:...;base64,...` | URL-safe、缺 padding、空白；默认 64 MiB | 非法/空/超限 → `OFD_INVALID_OPTION`；无 `atob` → `OFD_UNSUPPORTED` |
-| `file` + `base64` | — | 同时出现 | `file` 优先 | 产生 `W_QUERY_SOURCE` warning |
-| 都没有 | — | 且无 `source` | 构造后 `ready` 拒绝 | `OFD_INVALID_OPTION` |
+- base64 会进入浏览器历史、服务器访问日志、Referer 和监控/APM；敏感文档不要用 `?base64=`，改用一次性 `source`、POST 或短时效下载链接。
+- 不要把鉴权 token 拼进 URL；需要鉴权时用 `{ url, headers? }` 或 `requestInit.headers`。
+- 超长 URL 可能被代理/浏览器截断；大文件优先用 `file=` 或直接传字节。
+- 部署时服务端需允许 CORS 与 `Range`，并暴露 `Content-Range`。
 
-可直接使用解析函数与默认上限：
+完整参数表、解析函数 `readPreviewSourceFromLocation()` 与 `PreviewLocation`/`PreviewSourceOptions` 见 [API.md 通过 URI 参数预览](./API.md#通过-uri-参数预览)。
 
-```ts
-import {
-  DEFAULT_MAX_BASE64_BYTES,
-  readPreviewSourceFromLocation,
-} from '@ofdrw/ofdrw-viewer-ui';
+## 网络来源与字节源
 
-const source = readPreviewSourceFromLocation(window.location, {
-  onWarning: (warning) => console.warn(warning.code, warning.message),
-});
-console.log(DEFAULT_MAX_BASE64_BYTES); // 67108864（64 MiB）
-```
-
-#### 安全与部署
-
-- **base64 会进入浏览器历史、服务器访问日志、Referer 和监控/APM**；敏感文档不要用 `?base64=`，改用一次性 `source`、POST 或短时效下载链接。
-- 只接受 `http(s)`；`file://`、`javascript:`、`data:` 不能作为 `file` 的参数值（`base64` 的 data URI 只作为数据载体，不是导航目标）。
-- 不要把鉴权 token 拼进 URL；需要鉴权时用 `{ url, headers? }` 或 `requestInit.headers`。查询参数预览本身不提供额外鉴权。
-- 超长 URL 可能被代理/浏览器截断；大文件优先用 `file=` 或直接传字节，base64 只适合小文档。
-- 部署时仍需服务端允许 CORS 与 `Range`，并暴露 `Content-Range`，否则 `?file=` 的 Range 读取会回退整包或失败。
-
-### 网络来源与字节源
-
-URL 不再交给 engine：UI 的 `normalizeViewerSourceDetailed()` 只规范化一次，把 URL 转成 `{ kind: 'custom', source: HttpByteSource }`，crypto 与 engine 共用同一实例，避免重复探测/下载。`HttpByteSource` 与 `HttpByteSourceOptions` 从公共入口导出，供宿主在 UI 之外复用同一套 HTTP Range 适配（例如直接交给 engine）：
+URL 不交给引擎：UI 的 `HttpByteSource` 按 HTTP Range 读取，crypto 与 engine 共用同一实例，避免重复探测/下载。明文路径由 engine 拥有 `custom` 源并在关闭文档时释放；加密路径由 UI 持有并关闭。
 
 ```ts
 import { HttpByteSource, type HttpByteSourceOptions } from '@ofdrw/ofdrw-viewer-ui';
@@ -219,7 +164,7 @@ const options: HttpByteSourceOptions = {
   headers: { Authorization: 'Bearer <token>' }, // 与 requestInit.headers 合并时来源优先
   signal: abortController.signal,
   allowFullDownload: true,
-  onProgress: (loaded, total) => console.log(loaded, total), // byte
+  onProgress: (loaded, total) => console.log(loaded, total), // 单位 byte
 };
 const httpSource = new HttpByteSource('/api/doc.ofd', options);
 await httpSource.ready(); // 大小探测完成；失败时抛 OFDError
@@ -230,22 +175,15 @@ const head = await httpSource.read(0, 4);
 const viewer = new OFDViewer({ container: '#viewer', source: '/api/doc.ofd' });
 ```
 
-| 能力 | 说明 |
-| --- | --- |
-| 构造 | `new HttpByteSource(url, options?)`；`size` 探测完成前为 0 |
-| 读取 | `ready()` 缓存探测结果；`read(offset, length)` 按需发 Range，越界截断 |
-| 关闭 | `close()` 幂等、中止在途请求；关闭后 `read()` 抛 `OFD_CLOSED` |
-| Range | 先 `HEAD` 探测大小，必要时 `Range: bytes=0-0`；读取按需发 Range，不缓存整包 |
-| 回退 | 服务器忽略 Range（200）、响应启用 `Content-Encoding` 或总长不一致时整包下载并缓存；`allowFullDownload=false` 时改为报错 |
-| CORS | 跨域需要服务端允许 `Range`，并暴露 `Content-Range`（`Access-Control-Expose-Headers: Content-Range`） |
-| 取消 | `signal` 与 `close()` 合并生效；`viewer.open()` 切换/关闭会取消旧打开并关闭对应字节源 |
-| 进度 | `onProgress` 仅在整包回退/整包来源时可用；UI 公共 API 不额外暴露字节级进度，加载态以 `documentopen`/`document:open:*` 事件为准 |
-| 共享 | 明文路径 engine 拥有 `custom` 源并在 `doc.close()` 关闭；加密路径由 UI 持有并关闭，crypto 只借用（不转发 close） |
-| 鉴权 | 用来源 `headers` 或 `requestInit.headers`；token 刷新/重试由宿主负责 |
+- 探测：先 `HEAD`，必要时 `Range: bytes=0-0`；`ready()` 缓存结果，重复调用不重复请求。
+- 读取：`read(offset, length)` 按需发 Range，越界截断；416 或越界返回空数组。
+- 回退：服务器忽略 Range（200）、响应启用 `Content-Encoding` 或总长不一致时整包下载并缓存；`allowFullDownload=false` 时改为报错。
+- 取消：`signal` 与 `close()` 合并生效；关闭后 `read()` 抛 `OFD_CLOSED`，`close()` 可重复调用。
+- CORS：跨域需要服务端允许 `Range`，并暴露 `Content-Range`。
+- 进度：`onProgress` 只在整包读取时可用；UI 不额外暴露字节级进度。
+- 字体：引擎不读取字体 URL/路径，UI 也没有字体配置项；需要补充字体时由宿主直接向引擎提供字体字节。
 
-- `HttpByteSource` 只负责 URL → `ByteSource`；ZIP 解析、解密、渲染仍在 engine/crypto。
-- URL 打开失败（HTTP 非 2xx、Range 不符、CORS）属于 UI/网络层错误，不再由 engine 报“网络读取失败”。
-- **字体**：engine 不再读取字体 URL/路径。UI 当前不提供字体配置；宿主若需要补充字体，把字体读成 `{ data }` 传给 engine，或实现 `FontProvider` 后由宿主直接使用 engine（不在 UI 选项内）。
+完整构造参数、默认值与错误语义见 [API.md HttpByteSource](./API.md#httpbytesource)。
 
 ## 框架适配
 
@@ -268,26 +206,19 @@ const viewer = new OFDViewer({ container: '#viewer', source: '/api/doc.ofd' });
 </script>
 ```
 
-- 标签固定为 `ofd-viewer`，采用 light DOM，不创建 Shadow DOM。
-- 基础属性：`src`、`page`、`scale`、`rotation`、`theme`、`locale`、`sidebar`。
-- 省略 `src` 时仍会创建实例并读取 `?file=`/`?base64=`；无查询参数时 `ready` 拒绝，组件已 catch，不会产生未处理 rejection。
-- 复杂配置用 property：`reader.features = { ... }` / `reader.setFeatures({ ... })`；`src` 变化会重新打开文档。
-- 事件名为 `ofd-*`（如 `ofd-document-open`、`ofd-page-change`、`ofd-error`），`event.detail` 为对应载荷；`reader.viewer` 是底层只读实例。
-- 断开连接会销毁实例，重新连接会按当前属性重建。
+标签默认是 `ofd-viewer`，采用 light DOM，不创建 Shadow DOM。基础属性为 `src`、`page`、`scale`、`rotation`、`theme`、`locale`、`sidebar`；复杂配置用 `features`、`crypto`、`source` property。省略 `src` 时仍会创建实例并读取查询参数；断开连接销毁实例，重新连接按当前属性重建。事件名为 `ofd-*`，`event.detail` 为对应载荷，`reader.viewer` 是底层只读实例。
+
+完整属性/property/方法/事件见 [API.md Web Component](./API.md#web-component)。
 
 ### React
 
 ```tsx
 import { useRef } from 'react';
-import {
-  OFDViewer,
-  type OFDViewerHandle,
-} from '@ofdrw/ofdrw-viewer-ui/react';
+import { OFDViewer, type OFDViewerHandle } from '@ofdrw/ofdrw-viewer-ui/react';
 import '@ofdrw/ofdrw-viewer-ui/style.css';
 
 export function Reader() {
   const ref = useRef<OFDViewerHandle>(null);
-
   return (
     <div style={{ height: 640 }}>
       <OFDViewer
@@ -302,7 +233,9 @@ export function Reader() {
 }
 ```
 
-`source`/`features` 等 prop 变化只调用核心方法，不会重建实例；卸载时销毁。`source` 可省略，此时由 `?file=`/`?base64=` 提供来源。ref 暴露 `getInstance`、`open`、`goToPage`、`setScale`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage` 等薄方法。
+`source`/`features` 等 prop 变化只调用核心方法，不会重建实例；卸载时销毁。`page` 为 1-based 受控页码，`scale` 可传数字或缩放模式，`sidebar` 传 `null` 关闭。ref 暴露 `getInstance`、`open`、`goToPage`、`setScale`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage`、`verify` 等薄方法。外层容器默认 `width/height: 100%`。
+
+完整 props、事件回调和句柄见 [API.md React](./API.md#react)。
 
 ### Vue
 
@@ -325,303 +258,119 @@ const features = { print: false };
 </template>
 ```
 
-Vue 组件使用 `defineComponent` + `shallowRef`/`markRaw`，实例不会进入响应式代理；事件使用 kebab-case。通过模板 ref 可调用 `getInstance`、`goToPage`、`setScale`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage` 等 expose 方法。`source` 可省略，此时由 `?file=`/`?base64=` 提供来源。
+组件只创建一个外层 `div`，实例用 `shallowRef`/`markRaw` 持有，不进入响应式代理。公共 props 覆盖 `options` 里的同名项；事件使用 kebab-case。模板 ref 可调用 `getInstance`、`goToPage`、`setScale`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage`、`verify` 等 expose 方法。
 
-### 子路径导出
+完整 props、emits 与 expose 见 [API.md Vue](./API.md#vue)。
 
-| 子路径 | 内容 |
-| --- | --- |
-| `@ofdrw/ofdrw-viewer-ui` | 框架无关核心与公共类型 |
-| `@ofdrw/ofdrw-viewer-ui/react` | React wrapper |
-| `@ofdrw/ofdrw-viewer-ui/vue` | Vue wrapper |
-| `@ofdrw/ofdrw-viewer-ui/element` | `<ofd-viewer>` Web Component |
-| `@ofdrw/ofdrw-viewer-ui/component` | `element` 的兼容别名 |
-| `@ofdrw/ofdrw-viewer-ui/style.css` | 主题样式 |
+子路径与导出内容见 [子路径导出](./API.md#子路径)。
 
-公共入口会安装内置 UI 外壳，并 side-effect 注册文本/查找、导航、签章、打印、导出能力；直接 `import '@ofdrw/ofdrw-viewer-ui'` 即可获得完整阅读器。框架适配器入口也会导入公共入口，因此扩展同样生效。
+## 核心工作流
 
-## 配置参数
-
-### 构造选项
-
-| 选项 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `container` | `HTMLElement / string` | 必填 | 挂载点；字符串按 CSS 选择器解析，元素必须已存在 |
-| `source` | `ViewerSource` | 可选 | 文档来源；省略时读取 `?file=`/`?base64=`，无来源则 `ready` 以 `OFD_INVALID_OPTION` 拒绝，见“通过 URI 参数预览” |
-| `initialPage` | `number` | `1` | 1-based 页码；小于 1 或非法值按 1 处理 |
-| `initialScale` | `number / ZoomMode` | `'auto'` | 数字为倍率（0.1–25）；`auto`/`page-width` 适合宽度，`page-fit` 适合页面，`page-actual` 为 100% |
-| `rotation` | `0 / 90 / 180 / 270` | `0` | 顺时针初始旋转角度 |
-| `sidebar` | `thumbnails / outline / bookmarks / signatures / null` | `null` | 初始侧栏；`null` 表示关闭 |
-| `features` | `Partial<Record<ViewerFeature, boolean>>` | 全部开启 | 功能开关补丁，见“功能开关” |
-| `featureDisplay` | `'hide' / 'disable' / { 功能键: 'hide' / 'disable' }` | `'hide'` | 被关闭功能的展示方式，见“功能展示” |
-| `theme` | `'light' / 'dark' / 'auto'` | `'auto'` | `auto` 跟随 `prefers-color-scheme` |
-| `locale` | `string` | `'zh-CN'` | 内置 `zh-CN`/`en-US`；`zh`/`en` 等别名会归一，未注册语言回落 `zh-CN` |
-| `maxCanvasPixels` | `number` | `32_000_000` | 单页 canvas 像素上限；超限会降低渲染 DPI 并产生 `W_CANVAS_LIMIT` |
-| `pageCacheSize` | `number` | 桌面 10 / 移动 4 | 已渲染页 canvas 缓存数量 |
-| `thumbnailCacheSize` | `number` | `100` | 缩略图缓存数量 |
-| `renderConcurrency` | `number` | 桌面 2 / 移动 1 | 同时渲染的页数 |
-| `updateHash` | `boolean` | `false` | 把页码/缩放/旋转/侧栏写入 URL hash，并响应 `hashchange`/`popstate` |
-| `requestInit` | `RequestInit` | 无 | URL 来源的额外请求参数；**只使用 `headers`**，与来源合并（来源优先），`credentials` 不转发 |
-| `onWarning` | `(warning: ViewerWarning) => void` | 无 | 非阻断诊断；包含 `code`、`message`、`pageIndex`（0-based） |
-| `onError` | `(error: ViewerErrorInfo) => void` | 无 | 打开/渲染失败；在 warning 字段之外包含 `cause` |
-| `crypto` | `CryptoViewerOptions` | 默认启用 | 加密文档与验签配置，见“加密文档与签名验证” |
-
-`container` 是唯一必填项；`source` 可省略（由 URI 参数提供），其余省略时使用默认值。`updateHash` 默认关闭，避免嵌入场景污染宿主地址；缓存/并发越大越流畅，但内存占用更高，移动端默认值更小。运行时可修改的配置见“运行时修改”。
-
-一个包含常用配置的完整示例：
+### 打开、切换与关闭
 
 ```ts
-const viewer = new OFDViewer({
-  container: '#viewer',
-  source: {
-    url: '/api/doc.ofd',
-    headers: { Authorization: 'Bearer <token>' },
-  },
-  initialPage: 3,
-  initialScale: 'page-fit',
-  rotation: 90,
-  sidebar: 'outline',
-  theme: 'dark',
-  locale: 'en-US',
-  features: { print: false, export: false },
-  featureDisplay: { print: 'disable', export: 'disable' },
-  maxCanvasPixels: 24_000_000,
-  pageCacheSize: 6,
-  renderConcurrency: 2,
-  updateHash: true,
-  onWarning: ({ code, message }) => console.warn(code, message),
-  onError: ({ code, message, cause }) => console.error(code, message, cause),
-});
-
-await viewer.ready;
+await viewer.open('/api/doc-b.ofd');
+await viewer.open();  // 重新按 options.source 或 ?file=/?base64= 打开
+await viewer.close(); // 保留外壳，状态回到 closed，可再次 open
+viewer.destroy();     // 移除根节点；销毁后调用方法抛 OFD_DESTROYED
 ```
 
-### 功能开关
+`open()` 会取消上一次未完成的打开并释放其来源；失败通过 `ready`/返回的 Promise 拒绝，同时触发 `error` 事件。
 
-`features` 是补丁对象，只需写要关闭的功能；未出现的键默认 `true`，非法键/值会被忽略。
-
-| 功能键 | 作用 | 依赖 |
-| --- | --- | --- |
-| `toolbar` | 顶部工具栏 | — |
-| `sidebar` | 侧栏容器 | — |
-| `thumbnails` | 缩略图 | `sidebar` |
-| `outline` | 大纲 | `sidebar` |
-| `bookmarks` | 书签 | `sidebar` |
-| `pageNavigation` | 翻页/跳页 | — |
-| `pageNumberInput` | 页码输入框 | — |
-| `zoom` | 缩放按钮、快捷键与手势 | — |
-| `rotate` | 旋转 | — |
-| `fullscreen` | 全屏 | — |
-| `textLayer` | 透明文本层 | — |
-| `selection` | 文本选择与复制 | `textLayer` |
-| `find` | 全文查找与高亮 | `textLayer` |
-| `print` | 打印 | — |
-| `export` | 单页/多页图片导出 | — |
-| `signatures` | 签章列表、覆盖层与详情 | — |
-| `verification` | 验证面板与验签；需同时启用 crypto | — |
-| `documentProperties` | 文档属性 | — |
-| `keyboardShortcuts` | 键盘快捷键 | — |
-
-有效状态还会受文档权限、环境能力与依赖影响；`features: true` 不能绕过文档或引擎限制。`getFeatureState()` 返回 `{ enabled, visible, reason }`，`reason` 为 `host`、`document`、`unsupported` 或 `dependency`。表中的“依赖”指会级联关闭功能键的硬依赖；关闭 `toolbar`/`sidebar` 时，其内部控件即使自身开启也不可见。
-
-功能关闭时，对应方法抛 `OFD_FEATURE_DISABLED`；可用 `isFeatureDisabledError(error, 'print')` 判断。依赖不满足时也会级联关闭，例如关闭 `textLayer` 会同时关闭 `selection` 和 `find`。
-
-### 功能展示
-
-`featureDisplay` 只决定被关闭功能的控件如何展示，不改变功能是否可用：
-
-- `'hide'`（默认）：隐藏对应控件；
-- `'disable'`：保留控件但禁用，并显示带原因的提示；
-- 对象形式按功能覆盖，未覆盖的键回落到 `'hide'`：
+### 导航、缩放与旋转
 
 ```ts
-featureDisplay: {
-  print: 'disable',
-  export: 'disable',
-  signatures: 'hide',
-},
+viewer.goToPage(3, { smooth: true }); // 页码 1-based；越界夹取到有效页
+viewer.nextPage();
+viewer.setScale(1.5);                 // 夹取到 0.1–25
+viewer.setZoomMode('page-fit');       // auto/page-actual/page-fit/page-width
+viewer.zoomIn();
+viewer.setRotation(270);              // 规范为 0/90/180/270
+viewer.rotateClockwise();
 ```
 
-### 运行时修改
+页面滚动、可见页范围和渲染队列由阅读器维护；调用方只需要设置目标页/缩放/旋转。
 
-`setFeatures(patch)` 合并功能补丁；`setFeatureDisplay(display)` 替换展示配置。`setFeatureDisplay('disable')` 可全局切换，传对象时只覆盖写出的功能。其余常用配置方法：
+### 功能开关与展示
 
 ```ts
 viewer.setFeatures({ print: false }, { display: 'disable' });
-viewer.setFeatures({ print: true }); // 重新启用
+viewer.setFeatures({ print: true });
 viewer.setFeatureDisplay({ export: 'disable' });
-
-viewer.setTheme('dark');
-viewer.setLocale('en-US');
-
-await viewer.open(nextSource);
-await viewer.open(); // 无参：重新按 options.source 或当前 ?file=/?base64= 打开
-viewer.goToPage(3, { smooth: true });
-viewer.setScale(1.5);              // 0.1–25
-viewer.setZoomMode('page-fit');
-viewer.setRotation(90);
-viewer.openSidebar('outline');
-await viewer.setRootCertificates([{ url: '/roots.pem' }]);
 ```
 
-这些方法同样受功能开关约束；功能被禁用时抛 `OFD_FEATURE_DISABLED`。`setRootCertificates()` 会替换信任根并重新验证当前文档。
+`features` 是补丁对象，未出现的键默认开启；非法键/值被忽略。关闭 `textLayer` 会级联关闭 `selection` 和 `find`，关闭 `sidebar` 会级联关闭 `thumbnails`/`outline`/`bookmarks`。受功能守卫的方法在功能禁用时抛 `OFD_FEATURE_DISABLED`，可用 `isFeatureDisabledError(error, 'print')` 判断；`closeSidebar()` 等清理方法不设守卫。
 
-## 加密文档与签名验证
+`featureDisplay` 只决定被关闭功能的控件如何展示：`hide` 隐藏，`disable` 保留但禁用。`features: true` 不能绕过文档权限或引擎/环境限制；完整功能键、依赖与有效状态见 [API.md 功能开关](./API.md#功能开关)。
 
-加密文档默认走内置凭据弹窗；也可预置口令或 SM2 私钥。验证能力由 `@ofdrw/ofdrw-viewer-crypto` 提供，UI 不再维护第二套 ASN.1/验签实现：
+### 查找与选中
+
+```ts
+await viewer.find('发票', { caseSensitive: false, wholeWord: false });
+await viewer.findNext();
+await viewer.findPrevious();
+viewer.clearFind();
+console.log(viewer.getSelectedText());
+await viewer.copySelection();
+```
+
+查找默认从当前页开始、高亮全部匹配；空查询会清除查找。`find`/`findNext`/`findPrevious`/`clearFind` 需要 `find` 功能，选中与复制需要 `selection` 和 `textLayer`。完整选项与事件见 [API.md 查找、打印与导出](./API.md#查找打印与导出)。
+
+### 打印与图片导出
+
+```ts
+await viewer.print({ pages: 'current', dpi: 'auto', includeBackground: false });
+const result = await viewer.exportImage({
+  page: 1,
+  format: 'png',
+  dpi: 300,
+  background: null, // PNG 透明；JPEG/WebP 强制白底
+});
+await viewer.exportImages({
+  pages: 'all',
+  format: 'jpeg',
+  quality: 0.92,
+  zipFilename: '发票',
+});
+```
+
+默认打印当前页、`dpi: 'auto'`、沿用当前旋转；默认导出当前页、PNG、`quality: 0.92`。`auto` DPI 按本次页数分档：≤50 页 200、51–200 页 150、>200 页 96；显式 DPI 须为 `(0, 600]`，结果四舍五入。多页导出生成 ZIP；单页失败会降级为 warning，全部失败抛 `OFD_EXPORT_FAILED`。打印调用浏览器打印对话框，不生成 PDF；图片导出不合并为 PDF。
+
+### 加密文档与签名验证
 
 ```ts
 const viewer = new OFDViewer({
   container: '#viewer',
   source: encryptedFile,
   crypto: {
-    enabled: true, // 默认 true
-    credentials: [
-      // 二选一；password 或 SM2 私钥（PEM/PKCS#8）
-      { kind: 'password', userName: 'alice', password: '***' },
-      // { kind: 'private-key', userName: 'alice', privateKey: { pem: '-----BEGIN PRIVATE KEY-----...' } },
-    ],
-    autoPrompt: true,
-    autoVerify: true,
-    rootCertificates: [
-      // data 是 PEM/DER/CER/Base64 字节；也可用 { url } / { path } / { filePath }
-      { data: new TextEncoder().encode(rootPem) },
-    ],
-    certificateLoader: async (input) => {
-      // path/filePath 由宿主读取；Web 默认不支持 path/filePath
-      return null;
-    },
-    onVerification: (report) => console.log(report.overall),
+    enabled: true,
+    credentials: [{ kind: 'password', userName: 'alice', password: '***' }],
   },
 });
 
 await viewer.ready;
+const report = await viewer.verify();
+console.log(report.overall);
 ```
 
-### crypto 选项
-
-| 选项 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `enabled` | `boolean` | `true` | 是否启用密码能力；`false` 时加密文档以 `OFD_CRYPTO_UNSUPPORTED` 拒绝 |
-| `credentials` | `CryptoCredential / CryptoCredential[]` | 无 | 预置凭据；提供后不弹内置登录框 |
-| `autoPrompt` | `boolean` | `true` | 无预置凭据时是否弹内置登录框；`false` 时以 `OFD_CRYPTO_CREDENTIAL_REQUIRED` 拒绝 |
-| `rootCertificates` | `CertificateSource[]` | `[]` | 初始信任根；空数组时证书链为 `unknown` |
-| `certificateLoader` | `(source) => bytes / null / Promise` | 无 | 读取 `path`/`filePath` 根证书的原始字节 |
-| `autoVerify` | `boolean` | `true` | 打开成功后自动验证一次；`false` 时手动调用 `verify()` |
-| `onVerification` | `(report) => void` | 无 | 验证完成回调；回调抛错只产生 warning |
-| `onCredentialRequired` | `(inspection) => Promise<CryptoCredential / null>` | 无 | 接管凭据弹窗；仅在 `autoPrompt=true` 且无预置凭据时调用，返回 `null` 取消 |
-| `limits` | `Partial<CryptoLimits>` | crypto 默认值 | 资源上限；字段见下方说明 |
-| `signal` | `AbortSignal` | 无 | 取消密码能力操作；中止时抛 `CRYPTO_ABORTED` |
-| `onWarning` | `(warning) => void` | 无 | crypto 层 warning；与 `OFDViewerOptions.onWarning` 分开 |
-| `sm2UserId` | `string` | `'1234567812345678'` | SM2 签名 userId，不从证书推导 |
-| `now` | `Date` | `new Date()` | 校验证书有效期使用的当前时间，测试可注入 |
-
-`limits` 可覆盖 `maxSourceBytes`、`maxEntries`、`maxEntryBytes`、`maxTotalDecryptedBytes`、`maxCompressionRatio`、`maxDecryptLayers`、`maxAsn1Bytes`、`maxAsn1Depth`、`maxCertificates`、`maxTrustRoots`（字节类字段单位为 byte）；默认值见 [crypto API](../../ofdrw-viewer-crypto/skills/API.md)。例如 `limits: { maxSourceBytes: 128 * 1024 * 1024 }` 可把输入包上限定为 128 MB。
-
-### 凭据
-
-| 形态 | 字段 | 说明 |
-| --- | --- | --- |
-| 口令 | `{ kind: 'password', userName?, password }` | `password` 必填；`userName` 省略时仅在唯一用户时自动匹配 |
-| SM2 私钥 | `{ kind: 'private-key', userName?, privateKey: { pem?, der?, passphrase? } }` | `pem`/`der` 二选一；`passphrase` 用于加密 PKCS#8 |
-
-`credentials` 可传单个对象或数组；多个用户时建议显式写 `userName`。凭据只保留在调用栈/内存中，不写入日志、DOM、URL 或浏览器存储。
-
-### 根证书
-
-| 形态 | 读取方式 | 说明 |
-| --- | --- | --- |
-| `{ data, name? }` | 直接使用 | `ArrayBuffer`/`Uint8Array`；支持 PEM/DER/CER/Base64，可含多张证书 |
-| `{ url, headers?, name? }` | 浏览器 `fetch` | HTTP 失败或解析失败只产生 warning 并跳过 |
-| `{ path, name? }` / `{ filePath, name? }` | `certificateLoader` | 没有 loader 时 warning 并跳过；loader 抛错时以 `OFD_CRYPTO_FAILED` 失败 |
-
-`certificateLoader(source)` 返回 `Uint8Array`、`ArrayBuffer` 或它们的 Promise；返回 `null` 表示跳过并 warning。返回值是原始字节（PEM/DER/CER/Base64，可含多张），UI 统一调用 crypto 转成 DER，loader 不要自行解析证书。Electron/Node 宿主可用 `fs.readFile` 读取 `path`/`filePath`；浏览器宿主通常只用 `data`/`url`。
-
-### 验证行为
-
-- **凭据流程**：预置 `credentials` 时不弹窗；`autoPrompt=false` 且无预置凭据时直接以 `OFD_CRYPTO_CREDENTIAL_REQUIRED` 拒绝，不会调用 `onCredentialRequired`。需要自定义弹窗时保持 `autoPrompt=true`，由 `onCredentialRequired` 接管（返回 `null` 取消，取消为 `OFD_CRYPTO_CANCELLED`）。错误重试、取消与秘密清理由内置弹窗负责，不在日志/DOM 中输出明文凭据。
-- **crypto 三态边界**：明文文档始终可打开；加密文档在 `crypto.enabled=true` 时用凭据解密后交给 engine；`crypto.enabled=false` 时加密文档以 `OFD_CRYPTO_UNSUPPORTED` 拒绝，不会把密文当明文渲染。`inspect` 失败统一上报 `OFD_CRYPTO_FAILED`（保留 cause）。
-- **验证面板**：工具栏“验证”打开/关闭面板，也可调用 `openVerificationPanel()`；`verify()` 重新执行一次完整性+签名验证，`getVerificationReport()` 读取最近报告。`features.verification=false` 时入口隐藏、面板收起、旧报告失效，`verify()` 抛 `OFD_FEATURE_DISABLED`。面板有可读状态文字（颜色不是唯一信息），并带 `aria-live="polite"` 播报。
-- **印章点击**：点击签章覆盖层/侧栏项会打开验证浮层；验证中/失败/未配置根时也可查看未验证的解析详情，不会显示旧的 `valid`。
-- **根证书**：`rootCertificates` 支持 `data`/`url`/`path`/`filePath`；`url` 用 fetch，`path`/`filePath` 必须由 `certificateLoader` 读取。正确根 → `valid`；未配置根 → 链 `unknown`；错误根/配置根但缺中间证书 → `incomplete`（链可建但锚不是配置根时为 `untrusted`）；全部根解析失败视为未配置（`rootsConfigured=false`），不伪造成 `valid`。`setRootCertificates()` 会替换根并重新验证。
-- **时间戳**：状态固定为 `parsed-not-verified` / `not-present` / `parse-error`，界面文案分别为“已解析，未验证”/“无”/“不可解析”；**任何情况下都不声称 TSA 签名或时间戳已通过验证**。
-- **完整性**：`report.integrity === null` 表示没有 `OFDEntries.xml` + `signedvalue.dat` 的防夹带保护，不是“完整性通过”；以 `report.package.integrityPresent === false` 判断未保护。
-
-## 公共读取与控制 API
-
-- `getCurrentPage()`：`getPageNumber()` 的别名，返回 1-based 页码。
-- `getFindState()`：读取 `query`、`current`、`total`、`searching` 等查找状态。
-- `getSignatures()` / `getSignatureDetail(id)` / `showSignature(id)` / `focusSignature(id)`：读取或定位签章；`features.signatures=false` 时同步抛 `OFD_FEATURE_DISABLED`（`feature='signatures'`）。
-- `verify({ signatureIds?, signal? })` / `getVerificationReport()`：重新验证/读取最近报告；未打开文档时拒绝，`features.verification=false` 时 `verify()` 抛 `OFD_FEATURE_DISABLED`（`feature='verification'`）。
-- `openVerificationPanel()`：打开工具栏验证面板；`setRootCertificates(roots)` / `getRootCertificates()`：替换/读取信任根并触发重新验证（全部无效返回空数组，不抛异常）。
-- `showDialog(options)` / `closeDialog(restoreFocus?)`：控制内置 UI 对话框；未挂载内置 UI 时抛 `OFD_UNSUPPORTED`。
-- `getVersions()` / `VERSION`：读取阅读器 UI、渲染引擎与密码能力包的版本；工具栏“更多 → 关于”也会可视化展示，并提供“开源软件许可”链接查看第三方许可文本，便于用户反馈问题时截图。
-- 打印/导出按钮会打开选项对话框，可选择当前页/全部页/自定义范围、DPI、旋转、打印背景，以及导出格式、质量、背景；确认后分别调用 `print(options)` / `exportImages(options)` 或 `exportImage(options)`。
-
-**P1 延期**：`goToDestination(DocumentDestination)` 尚未暴露。当前替代方式是读取 `getPageInfos()` 后用 `goToPage(pageIndex + 1)` 跳转；页内坐标/缩放锚点由调用方处理。该差异属于本迭代已知范围，后续补齐时保持向后兼容。
-
-### 查找选项
-
-`find(query, options)`：
-
-| 选项 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `caseSensitive` | `boolean` | `false` | 是否区分大小写 |
-| `wholeWord` | `boolean` | `false` | 是否全词匹配（仅对拉丁文有效） |
-| `highlightAll` | `boolean` | `true` | 是否高亮全部匹配 |
-| `fromCurrentPage` | `boolean` | `true` | 是否从当前页开始查找 |
-
-### 打印与导出选项
-
-`print(options)`：
-
-| 选项 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `pages` | `PageRange` | `'current'` | 打印范围 |
-| `dpi` | `number / 'auto'` | `'auto'` | 输出 DPI；`auto` 按页数分档，最大 600 |
-| `includeBackground` | `boolean` | `false` | 是否打印页面背景；默认白底 |
-| `rotation` | `0 / 90 / 180 / 270 / 'current'` | `'current'` | 打印方向；`current` 沿用当前阅读旋转 |
-| `signal` | `AbortSignal` | 无 | 取消打印 |
-
-`exportImage(options)` / `exportImages(options)`：
-
-| 选项 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `page` | `number` | 当前页 | 单页导出的页码，1-based |
-| `pages` | `PageRange` | `'current'` | 多页导出范围 |
-| `format` | `'png' / 'jpeg' / 'webp'` | `'png'` | 图片格式；WebP 不支持时可能回退 PNG |
-| `dpi` | `number / 'auto'` | `'auto'` | 输出 DPI；`auto` 按页数分档，最大 600 |
-| `quality` | `number` | `0.92` | JPEG/WebP 质量，0–1；PNG 忽略 |
-| `background` | `string / null` | PNG 白底 | PNG 传 `null` 得到透明背景；JPEG/WebP 强制白底 |
-| `rotation` | `0 / 90 / 180 / 270` | `0` | 导出旋转 |
-| `filename` | `string` | 自动生成 | 文件名前缀（不含扩展名）；单页直接使用，多页加 `-pN` |
-| `zipFilename` | `string` | 自动生成 | 多页 ZIP 文件名（不含扩展名） |
-| `signal` | `AbortSignal` | 无 | 取消导出 |
-
-`PageRange` 支持 `'current'`、`'all'`、`{ from, to }`（闭区间）和页码数组；选项对话框文本还支持 `1-3,5` 这类写法。`auto` DPI 按本次页数分档：≤50 页 200、51–200 页 150、>200 页 96。
-
-## 事件
-
-`on(event, handler)` 返回取消订阅函数，`once`/`off` 同样可用。事件包括 `documentopen`、`pagechanging`、`pagerendered`、`scalechanging`、`rotationchanging`、`findstart`/`findmatches`/`findcurrent`、`selectionchange`、`signatureclick`、`printstart`/`printprogress`/`printend`、`exportprogress`、`warning`/`error`、`verificationcompleted`、`featureschange`、`statechange` 等。
+- 预置 `credentials` 时不弹内置登录框；未预置时由 `autoPrompt`/`onCredentialRequired` 决定弹窗或拒绝。
+- `crypto.enabled=false` 时只保证明文文档阅读：加密文档以 `OFD_CRYPTO_UNSUPPORTED` 拒绝；`verification` 功能为 unsupported，`verify()`/`openVerificationPanel()` 以 `OFD_FEATURE_DISABLED`（`feature='verification'`）拒绝，不把密文当明文渲染。
+- 完整 crypto 选项、凭据/根证书形态、自动验证、报告字段与取消语义见 [API.md 验证行为与错误](./API.md#验证行为与错误)。
 
 ## 已知边界
 
-- 签名验证覆盖 SM2/SM3/SM4、SES v1/v4/v5、Reference、证书链/信任根/有效期和 GB/T 35275 防夹带完整性；不检查 CRL/OCSP，`revocation` 固定 `not-checked`。
-- 时间戳只解析、不验证 TSA 签名/ESSCertID/策略链；不参与整体 `overall`。
-- `crypto.enabled=false` 时只保证明文文档阅读；加密文档以 `OFD_CRYPTO_UNSUPPORTED` 拒绝，不提供降级渲染。
-- 打印调用浏览器打印对话框，不生成 PDF；图片导出不合并为 PDF。
-- 不提供局部/瓦片渲染。
-- **网络获取在 UI 层**：URL 由 UI 的 `HttpByteSource` 读取（Range + 整包回退），engine 只消费字节；跨域需要 CORS 与 `Content-Range` 暴露头。取消/关闭由 UI 管理，鉴权头由宿主提供。
-- **字体在宿主机**：engine 不再读取字体 URL/路径；UI 无字体配置项，需要补充字体时由宿主直接使用 engine（`{ data }` 或 `FontProvider`）。
-- **URI 参数预览只读查询串**：`?file=` 仅接受 `http(s)`（`file://` 不支持），`?base64=` 默认上限 64 MiB；base64 会进入历史/日志/Referer，敏感文档不应使用。查询参数不改变 engine 来源契约，`OFDOpenOptions.source` 仍必填。
-- 缩放入口：工具栏/API/下拉，以及 Ctrl/Command+滚轮与触控板双指缩放（以指针为锚点）、触摸屏双指捏合（以两指中点为锚点）、双击在适合宽度与 100% 间切换；`zoom` 功能关闭时手势不拦截默认行为。
-- 性能目标（设计 §12.6）为 **P1/延期，非 MVP 门禁**：1000 页、约 0.8MB 派生夹具多轮实测打开约 4.7–7.4s、全篇查找约 20.3–30.0s，未达到 2s/5s 目标；按用户决定暂不优化性能、先补手势。50–200MB 夹具与目标信创机型复测尚未提供，不宣称达标。`test/e2e/performance.spec.ts` 只记录指标并在未达标时显式标注，不使用注水阈值。
+- **纯 SPA**：不承诺 SSR/水合；不提供局部/瓦片渲染。
+- **网络在 UI 层**：URL 由 `HttpByteSource` 读取（Range + 整包回退），跨域需要 CORS 与 `Content-Range` 暴露头；鉴权头由宿主提供。
+- **字体在宿主机**：引擎不读取字体 URL/路径，UI 无字体配置项；需要补充字体时由宿主直接使用引擎。
+- **URI 参数预览只读查询串**：`?file=` 仅接受 `http(s)`；`?base64=` 默认上限 64 MiB，且会进入历史/日志/Referer，敏感文档不应使用。
+- **打印/导出范围**：打印调用浏览器对话框，不生成 PDF；图片导出不合并为 PDF。
+- **加密边界**：`crypto.enabled=false` 时加密文档直接拒绝；吊销状态不检查，固定为未检查；时间戳只解析、不验证，不参与整体结论。
+- **跳转目标**：`goToDestination` 尚未暴露；可读 `getPageInfos()` 后用 `goToPage(pageIndex + 1)` 跳转，页内坐标由调用方处理。
+- **性能**：未对数千页大文档、超大文件或低端设备做硬性性能承诺；首屏与全篇查找耗时随页数增长，宿主应自行压测。
+- **缩略图缓存**：`thumbnailCacheSize` 当前仅被解析，尚未接入缩略图缓存实现，实际缓存数量固定；需要严格控制内存时不要依赖该选项。
 
 ## 参考
 
-- [UI 设计方案](../../../docs/ofdrw-viewer-ui设计方案.md)
-- [引擎 API 说明](../../../docs/ofdrw-viewer-ui-engine-api.md)
-- [密码能力总体设计方案](../../../docs/ofdrw-viewer-crypto设计方案.md)
-- [跨模块契约](../../../docs/CONTRACTS.md)
-- [密码能力包](../../ofdrw-viewer-crypto/README.md)
-- [渲染引擎 SKILL](../../ofdrw-viewer-engine/skills/SKILL.md)
+- [API.md](./API.md)：完整构造选项、功能开关、事件、方法、类型与适配器参考。
+- [渲染引擎 SKILL](../../ofdrw-viewer-engine/skills/SKILL.md)：页面渲染、文本层、字体与引擎类型。
+- [密码能力 API](../../ofdrw-viewer-crypto/skills/API.md)：解密、验签、证书链与报告细节。
