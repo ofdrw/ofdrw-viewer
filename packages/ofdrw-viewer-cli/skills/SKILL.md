@@ -42,7 +42,7 @@ CLI="${OFDRW_VIEWER_CLI:-ofdrw-viewer-cli}"
 ## 命令
 
 ```bash
-# 转图片：全部页 PNG，默认 96 DPI，输出到 ./<输入文件名>/
+# 转图片：全部页 PNG，默认 96 DPI，输出到 ./<输入名>/（不含扩展名）
 "$CLI" input.ofd
 
 # 指定页、输出目录、格式、DPI
@@ -83,7 +83,7 @@ CLI="${OFDRW_VIEWER_CLI:-ofdrw-viewer-cli}"
 | 参数 | 默认 | 适用 | 说明 |
 | --- | --- | --- | --- |
 | `<input>` | 必填 | 全部 | 本地 OFD 文件 |
-| `-o, --out <dir>` | `./<输入文件名>/` | 转图片 | 输出目录 |
+| `-o, --out <dir>` | `./<输入名>/`（不含扩展名） | 转图片 | 输出目录 |
 | `-f, --format <fmt>` | `png` | 转图片 | `png` / `jpeg` / `webp` |
 | `-d, --dpi <n>` | `96` | 转图片 | 图片与文本共用的 DPI |
 | `-p, --pages <ranges>` | 全部 | 转图片 | 1 起闭区间，如 `1-3,5`；总跨度上限 100000 页 |
@@ -123,7 +123,8 @@ OFD 版本: 未知
 - `command: "info"`、`input`、`packageSize`、`ofdVersion?`、`encrypted`；
 - `layers[]`：每层 `layer/id/encryptDate?/encryptScope?/decryptSeedPath/entriesMapPath/users[]`；
 - `users[]`：去重后的 `userName/method`（`password`/`certificate`/`unknown`）；
-- `signatureCount`、`integrityPresent`、`warnings[]`。
+- `signatureCount`、`integrityPresent`、`warnings[]`；
+- `document?`：仅明文文档，含 `version`、`pageCount`、`pageSizes[].widthMm/heightMm`、`title`、`author`、`subject`、`abstract`、`creationDate`、`modDate`、`creator`、`creatorVersion`、`keywords`、`docId`、`customData`；缺失字段省略。加密文档不输出（`info` 不读取凭据）。
 
 `info` 对加密包也返回 0，不需要口令；它不会解密、不会验签、不会读取私钥。包损坏/无法读取时才退出 2。
 
@@ -156,6 +157,24 @@ OFD 版本: 未知
 - 缺少凭据、用户名不存在、口令/私钥错误：退出 4，不产出页面；
 - 明文文档不加凭据时行为与旧版完全一致；
 - 没有独立 `decrypt`；`"$CLI" decrypt` 固定退出 1。
+
+## 字体与缺省渲染
+
+适用于转图片；`info`/`verify` 不加载字体。CLI 默认自动发现系统字体，用它们渲染文档中未内嵌的文字（尤其是中文）：
+
+| 平台 | 只读扫描目录 |
+| --- | --- |
+| Linux | `/usr/share/fonts`、`/usr/local/share/fonts`、`~/.fonts`、`~/.local/share/fonts` |
+| macOS | `/System/Library/Fonts`、`/Library/Fonts`、`~/Library/Fonts` |
+| Windows | `%WINDIR%\Fonts`、`%LOCALAPPDATA%\Microsoft\Windows\Fonts` |
+
+发现过程只收集 `ttf/otf/ttc/otc`，按 realpath 去重，CJK 关键字字体优先；最多扫描 2000 个字体文件，并按优先级注入前 6 个、总字节不超过 96 MiB（TTC/OTC 按整个文件字节计，超出预算的字体跳过并继续尝试后续更小字体）。只读上述白名单目录，不写系统目录、不访问网络；不跟随目录符号链接，文件符号链接的真实路径必须仍在白名单目录内。
+
+- 不传 `--font-dir`：只使用自动发现的系统字体；
+- `--font-dir <dir>`：扫描结果作为扩充，参与字体匹配时排在系统字体之前，两者按 realpath 去重；
+- `--no-system-fonts`：关闭自动发现，仅使用 `--font-dir`，与旧版本行为一致。
+
+发现数量以一行日志写入 stderr（如 `自动发现系统字体 6 个（扫描 46 个文件）`），不污染 stdout 的摘要/JSON；使用 `--no-system-fonts` 时不扫描、也不输出该行。系统目录不存在或不可读时视为未发现，不报错；仍然找不到字体时按原有 `W_FONT_MISSING`/`W_GLYPH_MISSING` 处理。
 
 ## 输出（图片与文本）
 
@@ -208,7 +227,7 @@ out/
 4. **预览**：转图片先 `--pages 1`，检查 PNG 是否正常。
 5. **坐标**：需要时加 `--text`，读取 JSON，按 `text` 搜索并用 `x/y/w/h` 定位。
 6. **加密转换**：带 `--password` 或 `--key`；不要把口令写进脚本日志或提交到仓库。
-7. **缺字/乱码**：CLI 默认会自动发现系统字体（stderr 有「自动发现系统字体 N 个（扫描 M 个文件）」）；若仍有 `W_FONT_MISSING`/`W_GLYPH_MISSING`，向用户询问字体目录并用 `--font-dir` 追加。不要自动下载字体；`--no-system-fonts` 仅用于复现旧版行为或强制只用指定目录。
+7. **缺字/乱码**：CLI 默认会自动发现系统字体（stderr 有「自动发现系统字体 N 个（扫描 M 个文件）」）；若仍有 `W_FONT_MISSING`/`W_GLYPH_MISSING`，向用户询问字体目录并用 `--font-dir` 追加。不要自动下载字体；`--no-system-fonts` 仅用于复现旧版行为或强制只用指定目录。详见「字体与缺省渲染」。
 8. **大文档**：优先按页码范围分批，避免一次生成过多图片与 JSON。
 
 ## 退出码与错误
