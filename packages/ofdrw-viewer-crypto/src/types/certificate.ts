@@ -1,22 +1,17 @@
 /**
  * 证书输入与公开摘要类型。
  *
- * 公共 API 遵循冻结设计 §3.1：`CertificateInput` 只有 `data`/`pem`/`der`
- * 三种自包含来源。URL/path/filePath 属于宿主层（UI/CLI）的
- * `CertificateSource`，由宿主读取成字节后传成三态输入，crypto 不解析宿主路径。
+ * 公共 API 只接收单张证书的 DER 字节；PEM/CER/Base64/多证书识别由入口工具
+ * `certificatesToDer` 完成，crypto 核心不解析文本、扩展名或宿主路径。
  */
 
 /**
- * 单个 X.509 证书输入；`data`/`pem`/`der` 三选一。
+ * 证书 DER 字节。
+ *
+ * `parseCertificates` 可直接接收拼接的多张证书 DER；`loadCertificates` 的
+ * 数组每项必须是一张证书。归调用方所有；crypto 不修改，也不跨调用持有。
  */
-export interface CertificateInput {
-  /** 证书字节（DER/CER 或 PEM 文本字节）；归调用方所有。 */
-  readonly data?: ArrayBuffer | Uint8Array;
-  /** PEM 文本，可包含多张证书。 */
-  readonly pem?: string;
-  /** DER/CER 字节（可拼接多张证书）。 */
-  readonly der?: Uint8Array;
-}
+export type CertificateDer = Uint8Array;
 
 /** 证书 KeyUsage 名称。 */
 export type CertificateKeyUsage =

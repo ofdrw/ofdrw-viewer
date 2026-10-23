@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type {
-  CertificateInput,
+  CertificateDer,
   CertificateSummary,
   CryptoErrorCode,
   CryptoOptions,
@@ -53,6 +53,7 @@ const EXPECTED_EXPORTS = [
   'parseCertificates',
   'parseSm2Cipher',
   'parseSm2PrivateKey',
+  'certificatesToDer',
   'parseX509Certificate',
   'sha256',
   'sm2CipherToC1C3C2',
@@ -123,13 +124,14 @@ describe('ESM / CJS / d.ts 构建产物', () => {
       'declare function sm2Encrypt',
       'declare function parseSm2Cipher',
       'declare function parseCertificate',
+      'declare function certificatesToDer',
       'declare function loadCertificates',
       'DEFAULT_SM2_USER_ID',
     ]) {
       expect(dts, symbol).toContain(symbol);
     }
     for (const typeName of [
-      'interface CertificateInput',
+      'type CertificateDer = Uint8Array',
       'interface CertificateSummary',
       'interface CryptoOptions',
       'interface Sm2Cipher',
@@ -137,6 +139,7 @@ describe('ESM / CJS / d.ts 构建产物', () => {
     ]) {
       expect(dts, typeName).toContain(typeName);
     }
+    expect(dts).not.toContain('interface CertificateInput');
   });
 
   it('ESM 与 CJS 运行时导出集合一致且关键 API 齐全', () => {
@@ -245,7 +248,7 @@ describe('ESM / CJS / d.ts 构建产物', () => {
       sm2UserId: DEFAULT_SM2_USER_ID,
       now: new Date('2025-06-01T00:00:00Z'),
     };
-    const input: CertificateInput = { pem: 'x' };
+    const input: CertificateDer = new Uint8Array([0x30, 0x00]);
     const cipher: Sm2Cipher = {
       x: new Uint8Array(32),
       y: new Uint8Array(32),
@@ -255,7 +258,7 @@ describe('ESM / CJS / d.ts 构建产物', () => {
     const code: CryptoErrorCode = 'CRYPTO_INVALID_ARGUMENT';
     const typeCheck = (
       _options: CryptoOptions,
-      _input: CertificateInput,
+      _input: CertificateDer,
       _cipher: Sm2Cipher,
       _code: CryptoErrorCode,
       _certificate: X509Certificate,
@@ -264,7 +267,7 @@ describe('ESM / CJS / d.ts 构建产物', () => {
     ): void => undefined;
     expect(typeof typeCheck).toBe('function');
     expect(typeof options).toBe('object');
-    expect(typeof input).toBe('object');
+    expect(input).toBeInstanceOf(Uint8Array);
     expect(cipher.c2).toHaveLength(1);
     expect(code).toBe('CRYPTO_INVALID_ARGUMENT');
   });

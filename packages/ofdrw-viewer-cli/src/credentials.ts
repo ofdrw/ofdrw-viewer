@@ -8,9 +8,9 @@
  */
 
 import { readFile, stat } from 'node:fs/promises';
-import { looksLikePem } from '@ofdrw/ofdrw-viewer-crypto';
+import { certificatesToDer, looksLikePem } from '@ofdrw/ofdrw-viewer-crypto';
 import type {
-  CertificateInput,
+  CertificateDer,
   CryptoCredential,
   CryptoSource,
 } from '@ofdrw/ofdrw-viewer-crypto';
@@ -185,27 +185,28 @@ export async function buildCryptoCredential(
 }
 
 /**
- * 读取全部信任根证书。
+ * 读取全部信任根证书并转换为逐张 DER。
  *
- * PEM 文件传 `pem` 文本，其余（DER/CER）传 `der` 字节；多证书 PEM 由
- * crypto 的证书加载器拆分。
+ * 每个文件读取原始字节后交给 crypto 的 `certificatesToDer`，支持 PEM
+ * （单/多证书）、DER/CER 与 Base64；转换后的 DER 数组直接传给只接收 DER
+ * 的 `verifyOfd`。
  *
  * @param paths 根证书文件绝对路径列表
- * @returns crypto 证书输入数组；无根时为空数组
+ * @returns 逐张证书 DER；无根时为空数组
  * @throws {CliError} 任一文件不存在或不可读时抛出（退出码 1）
+ * @throws {CryptoError} 文件内容不是合法证书时抛出（按 CLI 既有错误码映射）
  */
 export async function readTrustRoots(
   paths: readonly string[],
-): Promise<readonly CertificateInput[]> {
-  const roots: CertificateInput[] = [];
+): Promise<readonly CertificateDer[]> {
+  const roots: CertificateDer[] = [];
   for (const path of paths) {
     const bytes = await readFileBytes(path, {
       label: '根证书文件',
       notFoundCode: 'CLI_ROOT_FILE_NOT_FOUND',
       unreadableCode: 'CLI_ROOT_FILE_UNREADABLE',
     });
-    const text = new TextDecoder().decode(bytes);
-    roots.push(looksLikePem(text) ? { pem: text } : { der: bytes });
+    roots.push(...certificatesToDer(bytes));
   }
   return roots;
 }

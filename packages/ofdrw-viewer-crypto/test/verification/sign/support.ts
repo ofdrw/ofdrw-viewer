@@ -76,17 +76,17 @@ export function entryOf(name: string, path: string): Uint8Array {
   return bytes;
 }
 
-/** 默认信任根（PEM）。 */
-export const rootPem = fixtureText('certs/root-ca.crt.pem');
+/** 默认信任根 DER。 */
+export const rootDer = fixtureBytes('certs/root-ca.crt.der');
 
-/** 错误根证书（加密证书，不属于签名链）。 */
-export const wrongRootPem = fixtureText('certs/encrypt.crt.pem');
+/** 错误根证书 DER（加密证书，不属于签名链）。 */
+export const wrongRootDer = fixtureBytes('certs/encrypt.crt.der');
 
 /** 生成 verifyOfd 选项，默认注入根证书。 */
 export function verifyOptions(
   overrides: Partial<Omit<VerifyOfdOptions, 'container' | 'source'>> = {},
 ): Omit<VerifyOfdOptions, 'container' | 'source'> {
-  return { roots: [{ pem: rootPem }], ...overrides };
+  return { roots: [rootDer], ...overrides };
 }
 
 /** 打开 fixture 并验证。 */

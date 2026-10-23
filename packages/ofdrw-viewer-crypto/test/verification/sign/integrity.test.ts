@@ -12,7 +12,7 @@ import {
   verifyContainer,
   verifyFixture,
   verifyOptions,
-  wrongRootPem,
+  wrongRootDer,
 } from './support';
 
 describe('防夹带完整性正向', () => {
@@ -177,7 +177,7 @@ describe('防夹带完整性负例', () => {
 
   it('错误根证书 → 完整性证书链 incomplete/invalid', async () => {
     const report = await verifyFixture('integrity.ofd', {
-      roots: [{ pem: wrongRootPem }],
+      roots: [wrongRootDer],
     });
     expect(report.overall).toBe('invalid');
     expect(report.integrity?.status).toBe('invalid');

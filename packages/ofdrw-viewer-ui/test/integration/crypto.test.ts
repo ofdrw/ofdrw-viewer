@@ -12,6 +12,7 @@ const cryptoMocks = vi.hoisted(() => ({
   inspect: vi.fn(),
   open: vi.fn(),
   verify: vi.fn(),
+  certificatesToDer: vi.fn(),
   loadCertificates: vi.fn(),
   toCertificateSummary: vi.fn(),
 }));
@@ -23,6 +24,7 @@ vi.mock('@ofdrw/ofdrw-viewer-crypto', async (importOriginal) => {
     inspect: cryptoMocks.inspect,
     openDecryptingContainer: cryptoMocks.open,
     verifyOfd: cryptoMocks.verify,
+    certificatesToDer: cryptoMocks.certificatesToDer,
     loadCertificates: cryptoMocks.loadCertificates,
     toCertificateSummary: cryptoMocks.toCertificateSummary,
   };
@@ -180,8 +182,10 @@ beforeEach(() => {
   cryptoMocks.inspect.mockReset();
   cryptoMocks.open.mockReset();
   cryptoMocks.verify.mockReset();
+  cryptoMocks.certificatesToDer.mockReset();
   cryptoMocks.loadCertificates.mockReset();
   cryptoMocks.toCertificateSummary.mockReset();
+  cryptoMocks.certificatesToDer.mockImplementation(() => [new Uint8Array([1, 2, 3])]);
   cryptoMocks.loadCertificates.mockResolvedValue([{ fake: true }]);
   cryptoMocks.toCertificateSummary.mockReturnValue(ROOT_SUMMARY);
   cryptoMocks.verify.mockImplementation(
@@ -427,16 +431,14 @@ describe('验证面板与信任根', () => {
     expect(summaries).toEqual([ROOT_SUMMARY]);
     expect(viewer.getVerificationReport()?.overall).toBe('valid');
 
+    const converted = cryptoMocks.certificatesToDer.mock.calls[0]?.[0];
+    expect(converted).toBeInstanceOf(Uint8Array);
     const loadInput = cryptoMocks.loadCertificates.mock.calls[0]?.[0] as unknown[];
-    expect(loadInput).toHaveLength(1);
-    expect(loadInput[0]).toHaveProperty('data');
-    expect(loadInput[0]).not.toHaveProperty('filePath');
-    expect(loadInput[0]).not.toHaveProperty('path');
-    expect(loadInput[0]).not.toHaveProperty('url');
+    expect(loadInput).toEqual([new Uint8Array([1, 2, 3])]);
     const verifyInput = cryptoMocks.verify.mock.calls.at(-1)?.[0] as {
       roots?: readonly unknown[];
     };
-    expect(verifyInput.roots?.[0]).toHaveProperty('data');
+    expect(verifyInput.roots?.[0]).toBeInstanceOf(Uint8Array);
 
     viewer.openVerificationPanel();
     const panel = document.querySelector<HTMLElement>('.ofd-verification-panel')!;

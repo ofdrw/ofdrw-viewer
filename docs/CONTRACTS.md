@@ -860,6 +860,31 @@ export type CryptoSource =
 
 export type CryptoCredential = PasswordCredential | PrivateKeyCredential;
 
+/** X.509 证书 DER 字节；crypto 证书接口只接收该类型。 */
+export type CertificateDer = Uint8Array;
+
+/** 证书入口转换选项；`maxBytes` 单位 byte，`maxCertificates` 单位张。 */
+export interface CertificatesToDerOptions {
+  readonly maxBytes?: number;
+  readonly maxCertificates?: number;
+}
+
+/** PEM/Base64/DER/CER（含多证书）→ 逐张 DER；转换只发生在 UI/CLI 入口。 */
+export function certificatesToDer(
+  input: ArrayBuffer | Uint8Array | string,
+  options?: CertificatesToDerOptions,
+): readonly CertificateDer[];
+
+export function loadCertificates(
+  inputs: readonly CertificateDer[],
+  options?: LoadCertificatesOptions,
+): Promise<X509Certificate[]>;
+
+export function loadCertificate(
+  input: CertificateDer,
+  options?: LoadCertificatesOptions,
+): Promise<X509Certificate>;
+
 export function inspect(
   source: CryptoSource,
   options?: CryptoOptions,
@@ -884,7 +909,7 @@ export function parseTimestamp(
 ): TimestampParseResult;
 ```
 
-关键类型名冻结：`CryptoOptions`、`CryptoLimits`、`DEFAULT_CRYPTO_LIMITS`、`CryptoSource`、`ByteSource`、`CryptoCredential`、`Sm2PrivateKeyInput`、`CertificateInput`、`OfdInspection`、`DecryptingContainerResult`、`VerificationReport`、`VerificationStatus`、`ChainStatus`、`TimestampStatus`、`SignatureVerification`、`IntegrityVerification`、`CertificateChainVerification`、`SealVerification`、`ParsedSeal`、`SealPictureInfo`、`ParsedSignedValue`、`TimestampParseResult`、`CertificateSummary`、`X509Certificate`、`CryptoWarning`。
+关键类型名冻结：`CryptoOptions`、`CryptoLimits`、`DEFAULT_CRYPTO_LIMITS`、`CryptoSource`、`ByteSource`、`CryptoCredential`、`Sm2PrivateKeyInput`、`CertificateDer`、`CertificatesToDerOptions`、`OfdInspection`、`DecryptingContainerResult`、`VerificationReport`、`VerificationStatus`、`ChainStatus`、`TimestampStatus`、`SignatureVerification`、`IntegrityVerification`、`CertificateChainVerification`、`SealVerification`、`ParsedSeal`、`SealPictureInfo`、`ParsedSignedValue`、`TimestampParseResult`、`CertificateSummary`、`X509Certificate`、`CryptoWarning`。
 
 `byte-source` 约束：
 
@@ -903,6 +928,7 @@ export function parseTimestamp(
 - `parseTimestamp` 固定 `status='parsed-not-verified'`（或 `not-present`/`parse-error`），永不返回“已验证”。
 - 验证报告 `overall` 仅用 `valid/invalid/unknown/not-applicable/unsupported`；时间戳不参与聚合。
 - 无 `OFDEntries.xml`+`signedvalue.dat` 时 `integrity=null`（未保护），`package.integrityPresent=false`；不得把它当成 valid。
+- 证书边界：crypto 公共证书接口只收 DER（`CertificateDer`），PEM/Base64/CER/多证书必须先经 `certificatesToDer` 在 UI/CLI 入口转换；`loadCertificates` 的数组每项只含一张证书。
 - 未配置信任根时 `rootsConfigured=false`、链状态 `unknown`；配置根但缺 issuer/中间证书为 `incomplete`，终点不是配置根为 `untrusted`。
 
 ### 13.6 错误码、warning 与 UI/CLI 映射（冻结）

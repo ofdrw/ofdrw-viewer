@@ -12,7 +12,7 @@ import {
   sm2Verify,
   toHex,
 } from '@ofdrw/ofdrw-viewer-crypto';
-import { JAVA_SM2, fixtureText } from './fixtures';
+import { JAVA_SM2, fixtureBytes, fixtureText } from './fixtures';
 
 const JAVA_MESSAGE = fromHex(JAVA_SM2.message);
 const JAVA_PUBLIC_KEY = fromHex(JAVA_SM2.publicKey);
@@ -90,7 +90,7 @@ describe('SM2 签名/验签', () => {
   });
 
   it('与证书公钥互通（fixtures signer）', () => {
-    const certificate = parseCertificate(fixtureText('certs', 'signer.crt.pem'));
+    const certificate = parseCertificate(fixtureBytes('certs', 'signer.crt.der'));
     const privateKey = parseSm2PrivateKey({ pem: fixtureText('certs', 'signer.key.pem') });
     expect(toHex(privateKey.publicKey)).toBe(toHex(certificate.publicKey));
     const message = new TextEncoder().encode('OFD 签章原文');

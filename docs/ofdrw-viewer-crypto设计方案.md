@@ -394,12 +394,31 @@ export interface PrivateKeyCredential {
 
 export type CryptoCredential = PasswordCredential | PrivateKeyCredential;
 
-/** 单个 X.509 证书输入；data/pem/der 三选一。 */
-export interface CertificateInput {
-  readonly data?: ArrayBuffer | Uint8Array;
-  readonly pem?: string;
-  readonly der?: Uint8Array;
+/** X.509 证书 DER 字节；crypto 公共证书接口只接收该类型。 */
+export type CertificateDer = Uint8Array;
+
+/** 证书转换选项；字节类字段单位均为 byte。 */
+export interface CertificatesToDerOptions {
+  /** 原始输入与单张 DER 上限，单位 byte。 */
+  readonly maxBytes?: number;
+  /** 输出证书张数上限，单位张。 */
+  readonly maxCertificates?: number;
 }
+
+/**
+ * 入口转换：PEM/Base64/DER/CER（单张或拼接/多证书）→ 逐张 DER。
+ *
+ * crypto 核心不做格式探测，证书接口只接收 DER；UI/CLI 必须在调用
+ * loadCertificates/loadCertificate 或 verifyOfd 前先经过本工具。
+ *
+ * @param input 原始输入（ArrayBuffer/Uint8Array 或 PEM/Base64 文本）。
+ * @param options 大小与数量上限；`maxBytes` 单位 byte。
+ * @returns 按输入顺序排列的每张证书 DER（调用方拥有所有权）。
+ */
+export function certificatesToDer(
+  input: ArrayBuffer | Uint8Array | string,
+  options?: CertificatesToDerOptions,
+): readonly CertificateDer[];
 
 /** 加密/验证资源上限；字节类字段单位均为 byte。 */
 export interface CryptoLimits {
@@ -592,7 +611,7 @@ export interface VerifyOfdOptions extends CryptoOptions {
   readonly container?: VirtualContainer;
   readonly credentials?: CryptoCredential | readonly CryptoCredential[];
   /** 信任根；空数组/省略 = 未配置，链状态 unknown。 */
-  readonly roots?: readonly CertificateInput[];
+  readonly roots?: readonly CertificateDer[];
   /** 只验证指定签名 ID；省略验证全部。 */
   readonly signatureIds?: readonly string[];
 }
@@ -1176,7 +1195,7 @@ SM2Cipher ::= SEQUENCE {
 
 ### 5.4 证书链、信任根、有效期与 KeyUsage
 
-- 输入：`roots?: CertificateInput[]`；每个 root 必须是合法 X.509，否则 `CRYPTO_TRUST_ROOT_INVALID`（整个 verify 入口失败）。
+- 输入：`roots?: CertificateDer[]`；每个 root 必须是 DER 编码的合法 X.509，否则 `CRYPTO_TRUST_ROOT_INVALID`（整个 verify 入口失败）。PEM/Base64/CER 必须先经 `certificatesToDer` 在入口转换。
 - 链构建：
   1. 从签名者/制章者证书开始；
   2. 从 `SES_Signature`/`SESeal` 内嵌证书 + 完整性 `SignedData.certificates` + roots 中寻找 issuer 匹配的 CA；
@@ -1277,7 +1296,10 @@ export type CertificateSource =
   | { readonly path: string; readonly name?: string }
   | { readonly filePath: string; readonly name?: string };
 
-/** 宿主证书加载器；path/filePath 由宿主平台实现，Web 默认不支持。 */
+/**
+ * 宿主证书加载器；path/filePath 由宿主平台实现，Web 默认不支持。
+ * 返回原始字节（可含 PEM/Base64/多证书），由 UI 经 certificatesToDer 转为 DER。
+ */
 export type CertificateInputLoader = (
   source: CertificateSource,
 ) => Uint8Array | ArrayBuffer | null | Promise<Uint8Array | ArrayBuffer | null>;
@@ -1424,7 +1446,8 @@ viewer.open(source)
   - `url` 默认 `fetch`（带 `headers`），失败 → `W_CRYPTO_CERT_SOURCE_UNSUPPORTED`；
   - `path`/`filePath` 必须由宿主 `certificateLoader` 提供；Web 默认不支持，给 warning，不阻塞文档；
   - loader 返回 `null` → 跳过该根并 warning；抛错 → 包装 `OFD_CRYPTO_FAILED`。
-- 文件选择接受 `.pem/.der/.cer`；PEM 可包含多证书，DER/CER 单证书；同一文件重复导入按 DER 指纹去重。
+- 文件选择接受 `.pem/.der/.cer`；读取到的原始字节统一经 `certificatesToDer` 转换为 DER，再传给只接收 DER 的 crypto 证书接口。PEM 可包含多证书，DER/CER 可为单证书或拼接 DER；同一文件重复导入按 DER 指纹去重。
+- **边界约定：crypto 公共证书接口只收 DER，格式转换只发生在 UI/CLI 入口工具。**
 - 解析失败/非 X.509 → 该根忽略 + warning；全部根失败时 `rootsConfigured=false`，链状态 unknown。
 - 根证书只用于验证信任锚，不自动成为文档签名证书；不写入文档、不上传网络。
 - 配置根后重新验证；UI 显示根 subject/指纹/有效期；不显示私钥。
@@ -1464,7 +1487,7 @@ ofdrw-viewer-cli verify <input.ofd> [加密凭据选项] [--root <file>]... [--s
 ```
 
 - `info` **不接受** `--user/--password/--key/--key-passphrase/--root`；出现即用法错误（1），明确“info 只查询，不解密/不验证”。
-- `verify` 的 `--root` 可重复；支持 PEM/DER/CER；无 root = unknown。
+- `verify` 的 `--root` 可重复；CLI 读取文件原始字节后经 `certificatesToDer` 转为 DER，再传给只接收 DER 的 `verifyOfd`。支持 PEM/DER/CER（PEM 可多证书）；无 root = unknown。
 - 不提供 `decrypt` 子命令；`ofdrw-viewer-cli decrypt ...` 固定用法错误（1），提示“请使用 verify 或带凭据的转图片命令”。
 - 子命令识别：第一个位置参数严格等于 `info` 或 `verify` 时进入子命令；文件名恰好为 `info`/`verify` 时用 `./info` 规避，文档明确。
 - 凭据不打印；`--password`/`--key-passphrase` 的 shell 历史/进程列表风险在帮助中提示；CLI 自身不记录 argv。

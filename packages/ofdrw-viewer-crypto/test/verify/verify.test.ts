@@ -16,7 +16,7 @@ import {
   type CryptoCredential,
   type VerificationReport,
 } from '@ofdrw/ofdrw-viewer-crypto';
-import { fixtureBytes, fixtureText } from '../core/fixtures';
+import { fixtureBytes } from '../core/fixtures';
 import {
   buildAuthAttrsIntegrityContainer,
   buildV1Seal,
@@ -30,7 +30,7 @@ import {
 import { makeCertificate, testKeyPair } from './certs';
 
 /** 信任根输入。 */
-const ROOTS = [{ pem: fixtureText('certs', 'root-ca.crt.pem') }];
+const ROOTS = [fixtureBytes('certs', 'root-ca.crt.der')];
 /** 口令凭据。 */
 const PASSWORD: CryptoCredential = {
   kind: 'password',
@@ -424,7 +424,7 @@ describe('verifyOfd 加密源与参数', () => {
     try {
       const report = await verifyOfd({
         container,
-        roots: [{ der: fixtureBytes('certs', 'root-ca.crt.der') }],
+        roots: [fixtureBytes('certs', 'root-ca.crt.der')],
       });
       expect(report.overall).toBe('valid');
       expect(report.signatures[0]?.certificate.status).toBe('valid');
@@ -488,7 +488,7 @@ describe('verifyOfd 加密源与参数', () => {
     const container = await open('plain.ofd');
     try {
       expect(
-        await codeOf(verifyOfd({ container, roots: [{ der: new Uint8Array([0x30, 0x01]) }] })),
+        await codeOf(verifyOfd({ container, roots: [new Uint8Array([0x30, 0x01])] })),
       ).toBe('CRYPTO_TRUST_ROOT_INVALID');
     } finally {
       await container.close();
@@ -970,7 +970,7 @@ describe('t19 修复回归', () => {
     try {
       const report = await verifyOfd({
         container,
-        roots: [{ der: rootCert }],
+        roots: [rootCert],
       });
       expect(report.overall).toBe('valid');
       expect(report.integrity?.status).toBe('valid');

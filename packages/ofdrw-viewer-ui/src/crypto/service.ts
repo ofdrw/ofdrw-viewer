@@ -8,6 +8,7 @@
  */
 
 import {
+  certificatesToDer,
   inspect,
   isCryptoError,
   loadCertificates,
@@ -16,7 +17,7 @@ import {
   verifyOfd,
 } from '@ofdrw/ofdrw-viewer-crypto';
 import type {
-  CertificateInput,
+  CertificateDer,
   CertificateSummary,
   CryptoCredential,
   CryptoSource,
@@ -76,8 +77,8 @@ export type VerificationTarget =
 export interface TrustRootItem {
   /** 原始输入；用于展示与重新加载。 */
   readonly input: CertificateSource;
-  /** UI 已解析出的证书字节；验证时交给 crypto。 */
-  readonly certificate: CertificateInput;
+  /** 该来源转换出的逐张证书 DER；验证时交给 crypto。 */
+  readonly ders: readonly CertificateDer[];
   /** 该输入解析出的证书摘要（PEM 可有多张）。 */
   readonly summaries: readonly CertificateSummary[];
 }
@@ -352,7 +353,7 @@ export class CryptoService {
       const report = await verifyOfd({
         ...this.targetOptions(this.target),
         ...this.cryptoOptions(),
-        roots: this.rootItems.map((item) => item.certificate),
+        roots: this.rootItems.flatMap((item) => item.ders),
         ...(options.signatureIds ? { signatureIds: options.signatureIds } : {}),
         signal: controller.signal,
       });
@@ -802,32 +803,35 @@ export class CryptoService {
   // -------------------------------------------------------------------------
 
   /**
-   * 把 UI 的四态根证书来源收敛为 crypto 的字节输入。
+   * 把 UI 的四态根证书来源读取为原始字节并转换为逐张 DER。
    *
-   * `url` 由浏览器 `fetch` 读取；`path`/`filePath` 交给宿主 `certificateLoader`。
-   * crypto 只接收证书字节，不感知 UI 的路径/URL 形态。
+   * `data` 直接使用；`url` 由浏览器 `fetch` 读取；`path`/`filePath` 交给宿主
+   * `certificateLoader`。转换统一调用 crypto 的 `certificatesToDer`，crypto
+   * 证书接口只接收 DER，不感知 UI 的路径/URL 形态。
    *
    * @param root UI 根证书来源。
-   * @returns crypto 证书字节输入。
+   * @returns 逐张证书 DER。
    * @throws {Error} 缺少加载器、网络失败或加载结果为空。
    */
-  private async resolveRootInput(root: CertificateSource): Promise<CertificateInput> {
-    if ('data' in root) return { data: root.data };
-    if ('url' in root) {
+  private async resolveRootDers(root: CertificateSource): Promise<readonly CertificateDer[]> {
+    let bytes: Uint8Array;
+    if ('data' in root) {
+      bytes = root.data instanceof ArrayBuffer ? new Uint8Array(root.data) : root.data;
+    } else if ('url' in root) {
       const response = await fetch(root.url, {
         headers: root.headers,
         signal: this.options.signal,
       });
       if (!response.ok) throw new Error(`加载根证书失败：HTTP ${response.status}`);
-      return { data: new Uint8Array(await response.arrayBuffer()) };
+      bytes = new Uint8Array(await response.arrayBuffer());
+    } else {
+      const loader = this.options.certificateLoader;
+      if (!loader) throw new Error('没有配置 certificateLoader，无法读取根证书路径');
+      const loaded = await loader(root);
+      if (!loaded) throw new Error('certificateLoader 未返回证书字节');
+      bytes = loaded instanceof ArrayBuffer ? new Uint8Array(loaded) : loaded;
     }
-    const loader = this.options.certificateLoader;
-    if (!loader) throw new Error('没有配置 certificateLoader，无法读取根证书路径');
-    const loaded = await loader(root);
-    if (!loaded) throw new Error('certificateLoader 未返回证书字节');
-    return {
-      data: loaded instanceof ArrayBuffer ? new Uint8Array(loaded) : loaded,
-    };
+    return certificatesToDer(bytes, this.certificateLimits());
   }
 
   /**
@@ -844,7 +848,7 @@ export class CryptoService {
     const items: TrustRootItem[] = [];
     const seen = new Set<string>();
     for (const root of roots) {
-      let input: CertificateInput;
+      let ders: readonly CertificateDer[];
       if ('path' in root || 'filePath' in root) {
         const loader = this.options.certificateLoader;
         if (!loader) {
@@ -864,23 +868,24 @@ export class CryptoService {
           this.warnRootSource(root);
           continue;
         }
-        input = {
-          data: loaded instanceof ArrayBuffer ? new Uint8Array(loaded) : loaded,
-        };
+        try {
+          ders = certificatesToDer(loaded, this.certificateLimits());
+        } catch {
+          this.warnRootSource(root);
+          continue;
+        }
       } else {
         try {
-          input = await this.resolveRootInput(root);
+          ders = await this.resolveRootDers(root);
         } catch {
-          // url/data 失败只 warning，继续加载其余根。
+          // url/data 读取或转换失败只 warning，继续加载其余根。
           this.warnRootSource(root);
           continue;
         }
       }
       try {
-        const certificates = await loadCertificates([input], {
-          ...(this.options.limits?.maxAsn1Bytes
-            ? { maxBytes: this.options.limits.maxAsn1Bytes }
-            : {}),
+        const certificates = await loadCertificates(ders, {
+          ...this.certificateLimits(),
           ...(this.options.signal ? { signal: this.options.signal } : {}),
         });
         const fresh = certificates
@@ -891,12 +896,23 @@ export class CryptoService {
             return true;
           });
         if (fresh.length === 0) continue;
-        items.push({ input: root, certificate: input, summaries: fresh });
+        items.push({ input: root, ders, summaries: fresh });
       } catch {
         this.warnRootSource(root);
       }
     }
     return items;
+  }
+
+  /**
+   * 根证书转换/加载共用的字节上限。
+   *
+   * @returns crypto 证书加载选项；`maxBytes` 单位 byte。
+   */
+  private certificateLimits(): { maxBytes?: number } {
+    return this.options.limits?.maxAsn1Bytes
+      ? { maxBytes: this.options.limits.maxAsn1Bytes }
+      : {};
   }
 
   /** 根证书单项失败只 warning。 */

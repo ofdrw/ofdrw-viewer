@@ -72,7 +72,9 @@ ofdrw-viewer-cli verify encrypted.ofd --key signer.key.pem --key-passphrase 'key
 
 `verify` 在一次调用中完成防夹带完整性与全部签名验证，并输出证书链、印章与时间戳解析结果（时间戳状态固定 `parsed-not-verified`，只解析、不验证）。CLI 同样用 `NodeFileByteSource` 随机读输入并以 `byte-source` 交给 crypto；需要解密时由 crypto 内部按需读取并关闭临时容器。**只有 `overall=valid` 才退出 0**；未配置根证书时链状态为 `unknown`，退出 `5`，这是预期安全状态，不是“验证通过”。
 
-- `--root`：信任根证书，PEM/DER/CER，可重复；仅 `verify` 使用；
+`--root` 文件由 CLI 读取原始字节后调用 `certificatesToDer` 转换为逐张 DER，再传给只接收 DER 的 `verifyOfd`；crypto 不做 PEM/Base64/CER 探测。单个 PEM 文件可含多张证书，多个 `--root` 会按文件顺序展开。
+
+- `--root`：信任根证书，PEM/DER/CER，可重复；CLI 入口先经 `certificatesToDer` 转为 DER；仅 `verify` 使用；
 - `--user`：指定加密文档的 `UserInfo@UserName`，需配合 `--password` 或 `--key`；
 - `--password`：口令用户；与 `--key` 互斥；
 - `--key`：SM2 私钥文件（PEM/DER/PKCS#8）；

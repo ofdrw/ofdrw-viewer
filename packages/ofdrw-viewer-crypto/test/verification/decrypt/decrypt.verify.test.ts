@@ -65,7 +65,7 @@ describe('加密检测 inspect', () => {
     const user = result.users[0];
     expect(user.userName).toBe('fixture-cert-user');
     expect(user.method).toBe('certificate');
-    const expected = toCertificateSummary(parseCertificate(fixtureBytes('certs', 'encrypt.crt.pem')));
+    const expected = toCertificateSummary(parseCertificate(fixtureBytes('certs', 'encrypt.crt.der')));
     expect(user.certificate).toEqual(expected);
     expect(user.certificate?.fingerprintSha256).toBe(
       '20fd11b661cf3638747de012a72b26f61dc48af95cd7eb5b7c41834e38332331',

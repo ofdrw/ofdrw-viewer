@@ -19,7 +19,7 @@ export type {
 } from './credentials';
 
 export type {
-  CertificateInput,
+  CertificateDer,
   CertificateKeyUsage,
   CertificateSummary,
 } from './certificate';

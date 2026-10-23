@@ -70,7 +70,7 @@ function syncErrorCode(run: () => unknown): string | undefined {
 
 describe('SM2 私钥解析', () => {
   it('解析 PKCS#8 PEM/DER 并派生公钥', () => {
-    const certificate = parseCertificate(fixtureText('certs', 'signer.crt.pem'));
+    const certificate = parseCertificate(fixtureBytes('certs', 'signer.crt.der'));
     const fromPem = parseSm2PrivateKey({ pem: PKCS8_PEM });
     const fromDer = parseSm2PrivateKey({ der: PKCS8_DER });
     expect(fromPem.format).toBe('pkcs8');
@@ -97,7 +97,7 @@ describe('SM2 私钥解析', () => {
     expect(() =>
       parseSm2PrivateKey({ pem: toSec1Pem({ curveOid: '1.2.840.10045.3.1.7' }) }),
     ).toThrowError(/sm2p256v1/);
-    const other = parseCertificate(fixtureText('certs', 'encrypt.crt.pem'));
+    const other = parseCertificate(fixtureBytes('certs', 'encrypt.crt.der'));
     expect(() =>
       parseSm2PrivateKey({ pem: toSec1Pem({ publicKey: other.publicKey }) }),
     ).toThrowError(/不匹配/);

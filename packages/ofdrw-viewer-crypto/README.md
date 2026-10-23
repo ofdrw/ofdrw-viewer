@@ -262,27 +262,31 @@ SM2 `userId` 默认是标准值，**不从证书推导**；需要自定义时在
 
 ## 🏛️ 根证书配置
 
-`verifyOfd` 的 `roots` 是**自包含证书输入**，不是 URL/path：
+`verifyOfd` 的 `roots` 只接收 **DER 字节**（`CertificateDer = Uint8Array`），不是
+URL/path，也不是 PEM/Base64 文本。入口格式先经 `certificatesToDer` 转换：
 
 ```ts
-const report = await verifyOfd({
-  source,
-  roots: [
-    { pem: rootPem },             // PEM 文本，可含多张
-    { der: rootDerBytes },        // DER/CER 字节
-    { data: rootPemBytes },       // 原始字节（PEM 或 DER）
-  ],
-});
+import { certificatesToDer, verifyOfd } from '@ofdrw/ofdrw-viewer-crypto';
+
+const roots = [
+  ...certificatesToDer(rootPem),        // PEM 文本，可含多张
+  ...certificatesToDer(rootDerBytes),   // DER/CER 字节或拼接 DER
+];
+const report = await verifyOfd({ source, roots });
 ```
 
-- `CertificateInput` 的 `data`/`pem`/`der` 必须且只能提供一个；
+- **公共证书接口只收 DER**：`roots`、`loadCertificates`、`loadCertificate` 都不做
+  PEM/Base64/CER 探测，PEM 文本或拼接 DER 必须先经 `certificatesToDer` 拆成
+  逐张 DER；
+- `certificatesToDer` 接受 PEM（单/多证书、CRLF）、DER/CER、拼接 DER 和 Base64；
+  每张输出是独立副本，调用方拥有所有权；
 - 根证书非法 → `CRYPTO_TRUST_ROOT_INVALID`；
 - `roots` 省略或空数组 → **不配置信任根**；证书链状态为 `unknown` 并产生 `W_CRYPTO_TRUST_UNKNOWN`，不会判为 `valid`；
 - 配置根后，链必须能追到 SHA-256 指纹一致的根（即证书内容一致）；缺少中间证书为 `incomplete`，终点不是根为 `untrusted`；
 - 有效期使用 `now`（默认 `new Date()`），边界为 `notBefore <= now <= notAfter`；
 - 不检查 CRL/OCSP，`certificate.revocation` 固定为 `'not-checked'`。
 
-UI/CLI 若需要 `url`/`path`/`filePath` 根证书来源，应先由宿主读取成字节，再转换成上述三态；crypto 不 import `node:fs`。
+UI/CLI 若需要 `url`/`path`/`filePath` 根证书来源，应先由宿主读取成原始字节，再调用 `certificatesToDer` 转为 DER；crypto 不 import `node:fs`。
 
 ## ⚠️ 错误码与 warning
 
@@ -378,8 +382,9 @@ warning 不中断流程，通过 `onWarning` 接收；同一 warning 由 `Warnin
 | `parseTimestamp(data, options?)` | `TimestampParseResult` | 解析 RFC 3161/GM/T 0033 时间戳（不验证） |
 | `parseSignaturesXml` / `parseSignatureXml` | `SignaturesXml` / `SignatureXml` | 解析签名索引/单签名 XML |
 | `parseOfdEntriesXml` | `OfdEntriesInfo` | 解析防夹带完整性清单 |
-| `parseCertificates` / `parseCertificate` | `X509Certificate[]` / `X509Certificate` | 解析 PEM/DER/Base64 证书 |
-| `loadCertificates` / `loadCertificate` | `Promise<X509Certificate[]>` / `Promise<X509Certificate>` | 加载 `CertificateInput`，去重/限额/取消 |
+| `certificatesToDer(input, options?)` | `readonly CertificateDer[]` | 把 PEM/Base64/DER/CER（含多证书）转为逐张 DER |
+| `parseCertificates` / `parseCertificate` | `X509Certificate[]` / `X509Certificate` | 解析 DER 证书（拼接 DER / 恰好一张） |
+| `loadCertificates` / `loadCertificate` | `Promise<X509Certificate[]>` / `Promise<X509Certificate>` | 加载 DER 数组，去重/限额/取消 |
 | `parseSm2PrivateKey` | `Sm2PrivateKey` | 解析 PKCS#8/SEC1 私钥 |
 | `sm2Sign` / `sm2Verify` | `Uint8Array` / `boolean` | SM3withSM2 签名/验签 |
 | `sm3Digest` / `sm4EncryptCbc` | `Uint8Array` | SM3/SM4 基础能力 |

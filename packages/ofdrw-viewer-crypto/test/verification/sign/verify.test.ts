@@ -13,13 +13,12 @@ import {
   javaSignature,
   memoryContainer,
   openFixtureEntries,
-  rootPem,
   tamperSealSignature,
   tamperSignedValueSignature,
   verifyContainer,
   verifyFixture,
   verifyOptions,
-  wrongRootPem,
+  wrongRootDer,
 } from './support';
 
 /** 允许的状态集合；用于确认状态字段是单值而非“同时 valid+invalid”。 */
@@ -123,7 +122,7 @@ describe('签名/证书链：有效、unknown 与错误根', () => {
 
   it('错误根证书 → incomplete/invalid', async () => {
     const report = await verifyFixture('signed-sesv4.ofd', {
-      roots: [{ pem: wrongRootPem }],
+      roots: [wrongRootDer],
     });
     expect(report.overall).toBe('invalid');
     expect(javaSignature('negative-tampered-content.ofd').valid).toBe(false);
@@ -171,7 +170,7 @@ describe('签名/证书链：有效、unknown 与错误根', () => {
 
   it('DERRoot（DER 输入）同样通过', async () => {
     const report = await verifyFixture('signed-sesv4.ofd', {
-      roots: [{ der: fixtureBytes('certs/root-ca.crt.der') }],
+      roots: [fixtureBytes('certs/root-ca.crt.der')],
     });
     expect(report.overall).toBe('valid');
     expect(report.signatures[0]?.certificate.status).toBe('valid');
@@ -389,7 +388,7 @@ describe('报告聚合、参数与容器注入', () => {
         verifyOfd({ container, roots: 'bad' as never }),
       ).rejects.toMatchObject({ code: 'CRYPTO_INVALID_ARGUMENT' });
       await expect(
-        verifyOfd({ container, roots: [{ der: new Uint8Array([0x30, 0x01]) }] }),
+        verifyOfd({ container, roots: [new Uint8Array([0x30, 0x01])] }),
       ).rejects.toMatchObject({ code: 'CRYPTO_TRUST_ROOT_INVALID' });
     } finally {
       await container.close();

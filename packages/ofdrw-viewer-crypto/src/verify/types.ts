@@ -7,7 +7,7 @@
 
 import type { VirtualContainer } from '@ofdrw/ofdrw-viewer-engine';
 import type { DecryptionLayerSummary } from '../decrypt';
-import type { CertificateSummary } from '../types/certificate';
+import type { CertificateDer, CertificateSummary } from '../types/certificate';
 import type { CryptoCredential } from '../types/credentials';
 import type { CryptoOptions } from '../types/options';
 import type { CryptoSource } from '../types/source';
@@ -188,8 +188,8 @@ export interface VerifyOfdOptions extends CryptoOptions {
   readonly container?: VirtualContainer;
   /** 解密凭据；仅加密 `source` 使用。 */
   readonly credentials?: CryptoCredential | readonly CryptoCredential[];
-  /** 信任根；空数组/省略 = 未配置，链状态 unknown。 */
-  readonly roots?: readonly import('../types/certificate').CertificateInput[];
+  /** 信任根；每项一张证书 DER；空数组/省略 = 未配置，链状态 unknown。 */
+  readonly roots?: readonly CertificateDer[];
   /** 只验证指定签名 ID；省略验证全部。 */
   readonly signatureIds?: readonly string[];
 }

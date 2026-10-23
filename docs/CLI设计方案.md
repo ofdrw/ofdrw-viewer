@@ -42,7 +42,7 @@ OFD 文件
 - `info` 查询加密层/用户/签名/完整性摘要，不解密、不验签；
 - `verify` 一次性完成防夹带完整性、全部签名、证书链、印章与时间戳解析；
 - 加密文档转图片：`--password` 或 `--key`（PEM/DER/PKCS#8），可选 `--key-passphrase`/`--user`；
-- `--root`（PEM/DER/CER，可重复）与 `--sm2-user-id`；
+- `--root`（PEM/DER/CER，可重复，CLI 入口经 `certificatesToDer` 转为 DER）与 `--sm2-user-id`；
 - 终端人类可读输出清理控制字符，JSON 保留原始值；
 - Agent skill（仅仓库源文件，不安装到本机，也不随 release 打包）。
 
@@ -206,7 +206,7 @@ ofdrw-viewer-cli signed-encrypted.ofd --password '***' --root root-ca.crt.pem
 | `--password <password>` | 无 | 口令用户；与 `--key` 互斥；转图片/verify |
 | `--key <path>` | 无 | SM2 私钥（PEM/DER/PKCS#8）；转图片/verify |
 | `--key-passphrase <text>` | 无 | 加密 PKCS#8 私钥口令；必须配合 `--key` |
-| `--root <file>` | 无 | 信任根证书（PEM/DER/CER，可重复）；仅 verify |
+| `--root <file>` | 无 | 信任根证书（PEM/DER/CER，可重复）；CLI 读取后经 `certificatesToDer` 转为 DER；仅 verify |
 | `--sm2-user-id <id>` | `1234567812345678` | 自定义 SM2 签名 userId；仅 verify |
 | `--json` | 关闭 | info/verify 输出固定 JSON |
 | `-h, --help` | — | 帮助 |
@@ -875,7 +875,7 @@ interface CliVerifyJson {
 - `overall` 取 `valid`/`invalid`/`unknown`/`unsupported`/`not-applicable`；时间戳不参与聚合。
 - 只有 `overall=valid` 退出 0；其余（含 `unknown`）退出 5。
 - **未配置 `--root` 时链状态为 `unknown`，这是预期安全状态，不是验证通过**；需要可信结论时必须配置正确根证书。
-- `--root` 可重复，支持 PEM/DER/CER；同一根以多条路径传入时，文本按实际命中的 `trustAnchor` 指纹去重计数。
+- `--root` 可重复，支持 PEM/DER/CER；CLI 读取每个文件的原始字节后调用 crypto 的 `certificatesToDer` 转为逐张 DER，再传给只接收 DER 的 `verifyOfd`。同一根以多条路径传入时，文本按实际命中的 `trustAnchor` 指纹去重计数。
 - 根证书行固定为 `根证书: 未配置 / 链 <status>` 或 `根证书: 已配置 N / 链 <status>`；多签名/完整性链状态按“签名顺序 + 完整性”去重聚合（如 `valid/incomplete`）。
 - `--sm2-user-id` 覆盖默认 SM2 userId `1234567812345678`；仅影响签名数学验证。
 - `--json` 即使 `invalid`/`unknown` 也先输出完整报告，再返回 5。

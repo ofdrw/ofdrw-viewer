@@ -10,21 +10,29 @@ import {
   parseDer,
   parseCertificates,
   sm2Verify,
-  toBase64,
   toCertificateSummary,
   toHex,
   utf8Encode,
 } from '@ofdrw/ofdrw-viewer-crypto';
 import { fixtureBytes, fixtureText } from '../core/fixtures';
 
-const ROOT_PEM = fixtureText('certs', 'root-ca.crt.pem');
-const SIGNER_PEM = fixtureText('certs', 'signer.crt.pem');
 const SIGNER_DER = fixtureBytes('certs', 'signer.crt.der');
 const ROOT_DER = fixtureBytes('certs', 'root-ca.crt.der');
+const SIGNER_PEM = fixtureText('certs', 'signer.crt.pem');
 
-describe('X.509 证书解析', () => {
-  it('解析 PEM / DER 并读取关键字段', () => {
-    const certificate = parseCertificate(SIGNER_PEM);
+/** 断言同步抛出的 CryptoError 错误码。 */
+function codeOf(run: () => unknown): string {
+  try {
+    run();
+  } catch (error) {
+    return (error as { code?: string }).code ?? 'NO_CODE';
+  }
+  throw new Error('未按预期抛出错误');
+}
+
+describe('X.509 证书解析（DER）', () => {
+  it('读取关键字段', () => {
+    const certificate = parseCertificate(SIGNER_DER);
     expect(certificate.version).toBe(3);
     expect(certificate.serialNumber).toBe('3e9');
     expect(certificate.subject).toBe(
@@ -64,32 +72,28 @@ describe('X.509 证书解析', () => {
     expect(root.subject).toBe(root.issuer);
   });
 
-  it('支持多张 PEM、拼接 DER 与 Base64 文本', () => {
-    const pemBoth = `${ROOT_PEM}\n${SIGNER_PEM}`;
-    const fromPem = parseCertificates(pemBoth);
-    expect(fromPem.map((certificate) => certificate.serialNumber)).toEqual(['3e8', '3e9']);
-
+  it('parseCertificates 接受 DER 拼接并保持顺序', () => {
     const concatenated = new Uint8Array([...ROOT_DER, ...SIGNER_DER]);
     expect(parseCertificates(concatenated).map((item) => item.serialNumber)).toEqual([
       '3e8',
       '3e9',
     ]);
 
-    expect(parseCertificates(toBase64(SIGNER_DER))[0].serialNumber).toBe('3e9');
-    expect(parseCertificate(SIGNER_DER).serialNumber).toBe('3e9');
+    const reverse = new Uint8Array([...SIGNER_DER, ...ROOT_DER]);
+    expect(parseCertificates(reverse).map((item) => item.serialNumber)).toEqual(['3e9', '3e8']);
   });
 
-  it('忽略 PEM 中的非证书块', () => {
-    const pem = `${fixtureText('certs', 'signer.key.pem')}\n${SIGNER_PEM}`;
-    expect(parseCertificates(pem).map((certificate) => certificate.serialNumber)).toEqual(['3e9']);
+  it('parseCertificate 要求恰好一张证书', () => {
+    const concatenated = new Uint8Array([...ROOT_DER, ...SIGNER_DER]);
+    expect(codeOf(() => parseCertificate(concatenated))).toBe('CRYPTO_CERTIFICATE_INVALID');
   });
 
   it('与 @peculiar/asn1-x509 字段一致', () => {
     const certificate = parseCertificate(SIGNER_DER);
     const asn = AsnParser.parse(SIGNER_DER, Certificate);
-    expect(BigInt(`0x${Buffer.from(asn.tbsCertificate.serialNumber).toString('hex')}`).toString(16)).toBe(
-      certificate.serialNumber,
-    );
+    expect(
+      BigInt(`0x${Buffer.from(asn.tbsCertificate.serialNumber).toString('hex')}`).toString(16),
+    ).toBe(certificate.serialNumber);
     expect(asn.tbsCertificate.validity.notBefore.getTime().getTime()).toBe(
       certificate.notBefore.getTime(),
     );
@@ -120,8 +124,8 @@ describe('X.509 证书解析', () => {
   });
 
   it('证书签名可由 SM2 验签（根自签 + 叶证书链）', () => {
-    const root = parseCertificate(ROOT_PEM);
-    const signer = parseCertificate(SIGNER_PEM);
+    const root = parseCertificate(ROOT_DER);
+    const signer = parseCertificate(SIGNER_DER);
     expect(sm2Verify(root.tbsDer, root.signature, root.publicKey)).toBe(true);
     expect(sm2Verify(signer.tbsDer, signer.signature, root.publicKey)).toBe(true);
     const tampered = signer.tbsDer.slice();
@@ -130,7 +134,7 @@ describe('X.509 证书解析', () => {
   });
 
   it('有效期状态按包含端点判断', () => {
-    const certificate = parseCertificate(SIGNER_PEM);
+    const certificate = parseCertificate(SIGNER_DER);
     expect(checkCertificateValidity(certificate, new Date('2024-12-31T23:59:59Z'))).toBe(
       'not-yet-valid',
     );
@@ -149,7 +153,7 @@ describe('X.509 证书解析', () => {
   });
 
   it('生成稳定摘要', () => {
-    const summary = toCertificateSummary(parseCertificate(SIGNER_PEM));
+    const summary = toCertificateSummary(parseCertificate(SIGNER_DER));
     expect(summary).toEqual({
       subject: 'CN=OFDRW Viewer Crypto Fixtures Signer,O=ofdrw-viewer test,C=CN',
       issuer: 'CN=OFDRW Viewer Crypto Fixtures Root CA,O=ofdrw-viewer test,C=CN',
@@ -166,40 +170,45 @@ describe('X.509 证书解析', () => {
   });
 });
 
-describe('证书解析错误', () => {
-  it('拒绝空输入、乱码与错误 PEM', () => {
-    expect(() => parseCertificate('')).toThrowError(/为空/);
-    expect(() => parseCertificate('!!!!')).toThrowError(/PEM\/DER/);
-    expect(() =>
-      parseCertificate('-----BEGIN CERTIFICATE-----\n****\n-----END CERTIFICATE-----'),
-    ).toThrowError(/证书/);
-    expect(() => parseCertificate('-----BEGIN PRIVATE KEY-----\nAQID\n-----END PRIVATE KEY-----')).toThrowError(
-      /CERTIFICATE/,
+describe('证书解析错误（仅 DER）', () => {
+  it('拒绝空输入、乱码与非 DER 类型', () => {
+    expect(codeOf(() => parseCertificate(new Uint8Array(0)))).toBe(
+      'CRYPTO_CERTIFICATE_INVALID',
+    );
+    expect(codeOf(() => parseCertificate('' as never))).toBe('CRYPTO_INVALID_ARGUMENT');
+    expect(codeOf(() => parseCertificate(utf8Encode(SIGNER_PEM)))).toBe(
+      'CRYPTO_CERTIFICATE_INVALID',
     );
   });
 
   it('拒绝截断 DER 与非证书 DER', () => {
-    expect(() => parseCertificate(SIGNER_DER.subarray(0, SIGNER_DER.length - 8))).toThrowError(
-      /证书/,
+    expect(codeOf(() => parseCertificate(SIGNER_DER.subarray(0, SIGNER_DER.length - 8)))).toBe(
+      'CRYPTO_CERTIFICATE_INVALID',
     );
-    expect(() => parseCertificate(derSequence(derInteger(1n)))).toThrowError(/Certificate|证书/);
-    expect(() => parseCertificates(new Uint8Array(0))).toThrowError(/为空/);
+    expect(codeOf(() => parseCertificate(derSequence(derInteger(1n))))).toBe(
+      'CRYPTO_CERTIFICATE_INVALID',
+    );
+    expect(codeOf(() => parseCertificates(new Uint8Array(0)))).toBe(
+      'CRYPTO_CERTIFICATE_INVALID',
+    );
   });
 
-  it('强制 maxBytes 与 maxCertificates', () => {
-    expect(() => parseCertificates(SIGNER_DER, { maxBytes: 32 })).toThrowError(/超过上限/);
-    expect(() => parseCertificates(`${ROOT_PEM}${SIGNER_PEM}`, { maxCertificates: 1 })).toThrowError(
-      /超过上限/,
+  it('强制 maxBytes、maxCertificates 与非法选项', () => {
+    expect(codeOf(() => parseCertificates(SIGNER_DER, { maxBytes: 32 }))).toBe(
+      'CRYPTO_LIMIT_EXCEEDED',
     );
-    expect(() =>
-      parseCertificates(new Uint8Array([...ROOT_DER, ...SIGNER_DER]), { maxCertificates: 1 }),
-    ).toThrowError(/超过上限/);
-  });
-});
-
-describe('证书解析输入兼容', () => {
-  it('接受 Uint8Array 与 UTF-8 字符串', () => {
-    expect(parseCertificate(utf8Encode(SIGNER_PEM)).serialNumber).toBe('3e9');
-    expect(parseCertificate(SIGNER_DER).serialNumber).toBe('3e9');
+    expect(
+      codeOf(() =>
+        parseCertificates(new Uint8Array([...ROOT_DER, ...SIGNER_DER]), {
+          maxCertificates: 1,
+        }),
+      ),
+    ).toBe('CRYPTO_LIMIT_EXCEEDED');
+    expect(codeOf(() => parseCertificate(SIGNER_DER, { maxBytes: 0 }))).toBe(
+      'CRYPTO_INVALID_ARGUMENT',
+    );
+    expect(codeOf(() => parseCertificates(SIGNER_DER, { maxCertificates: 0 }))).toBe(
+      'CRYPTO_INVALID_ARGUMENT',
+    );
   });
 });

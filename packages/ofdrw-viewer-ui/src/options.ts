@@ -66,8 +66,9 @@ export const ZOOM_LEVELS: readonly number[] = Object.freeze([
  * 根证书来源；UI 宿主层保留 data/url/path/filePath 四态。
  *
  * `url` 由浏览器 `fetch` 读取；`path`/`filePath` 必须由宿主
- * `certificateLoader` 读取。传给 crypto 前统一收敛为 `CertificateInput`
- * 的 data/pem/der 三态字节输入。
+ * `certificateLoader` 读取。读取到的原始字节（可为 DER/CER/PEM/Base64，
+ * 也可含多张证书）统一经 crypto 的 `certificatesToDer` 转换为 DER 数组，
+ * 再传给只接收 DER 的 crypto 证书接口。
  */
 export type CertificateSource =
   | { readonly data: ArrayBuffer | Uint8Array; readonly name?: string }
@@ -79,7 +80,12 @@ export type CertificateSource =
   | { readonly path: string; readonly name?: string }
   | { readonly filePath: string; readonly name?: string };
 
-/** 宿主证书加载器；`path`/`filePath` 由宿主平台实现。 */
+/**
+ * 宿主证书加载器；`path`/`filePath` 由宿主平台实现。
+ *
+ * 返回值是原始字节（可含 PEM/Base64/多证书），由 UI 调用
+ * `certificatesToDer` 转换后再传给 crypto；加载器不得自行解析证书。
+ */
 export type CertificateInputLoader = (
   source: CertificateSource,
 ) => Uint8Array | ArrayBuffer | null | Promise<Uint8Array | ArrayBuffer | null>;
