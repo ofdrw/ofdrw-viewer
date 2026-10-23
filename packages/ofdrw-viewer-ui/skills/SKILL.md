@@ -1,6 +1,6 @@
 ---
 name: ofdrw-viewer-ui
-description: Embed the framework-agnostic OFD reader UI from @ofdrw/ofdrw-viewer-ui in web apps. Use this skill whenever a task involves a complete OFD reading interface, including continuous scrolling, zoom/rotation, thumbnails, outline/bookmarks, text selection and search, printing, PNG/JPEG/WebP export, encrypted-document credentials, signature overlays and verification panels, or the Web Component/React/Vue adapters. Covers installation, style import, container sizing, OFDViewer options/methods/events, feature gates, crypto configuration, framework wrappers, and known boundaries. Also covers URL loading in the UI layer: HttpByteSource, HTTP Range/CORS, request headers, cancellation, shared byte sources (engine does not fetch), and host-controlled font bytes. Use for OFD 阅读器、OFD 在线预览、Vue/React OFD 组件、URL 跨域/Range 排障, or when embedding @ofdrw/ofdrw-viewer-ui.
+description: Embed the framework-agnostic OFD reader UI from @ofdrw/ofdrw-viewer-ui in web apps. Use this skill whenever a task involves a complete OFD reading interface, including continuous scrolling, zoom/rotation, thumbnails, outline/bookmarks, text selection and search, printing, PNG/JPEG/WebP export, encrypted-document credentials, signature overlays and verification panels, or the Web Component/React/Vue adapters. Covers installation, style import, container sizing, OFDViewer options/methods/events, feature gates, crypto configuration, framework wrappers, and known boundaries. Also covers URL loading in the UI layer: HttpByteSource, HTTP Range/CORS, request headers, cancellation, shared byte sources (engine does not fetch), host-controlled font bytes, and URI parameter preview: ?file= URLs, ?base64= values, base64 预览, encoding, priority and security. Use for OFD 阅读器、OFD 在线预览、URI 参数预览、?file=、?base64=、base64 预览、Vue/React OFD 组件、URL 跨域/Range 排障, or when embedding @ofdrw/ofdrw-viewer-ui.
 ---
 
 # OFD 阅读器 UI（@ofdrw/ofdrw-viewer-ui）
@@ -17,7 +17,8 @@ description: Embed the framework-agnostic OFD reader UI from @ofdrw/ofdrw-viewer
 - 加密文档打开（口令 / SM2 私钥）、工具栏验证面板、签章点击验证与根证书配置；
 - 签章摘要、详情与页面覆盖层；签名、证书链、防夹带完整性和时间戳结果分层展示；
 - 浏览器打印、单页/多页图片导出（PNG/JPEG/WebP，多页 ZIP）；
-- `<ofd-viewer>` Web Component、React 18/19、Vue 3.3+ 薄适配。
+- `<ofd-viewer>` Web Component、React 18/19、Vue 3.3+ 薄适配；
+- 无需传 `source` 的 URI 参数预览：`?file=` 或 `?base64=`。
 
 ## 什么时候用
 
@@ -26,7 +27,8 @@ description: Embed the framework-agnostic OFD reader UI from @ofdrw/ofdrw-viewer
 - 需要透明文本层、文本选择/复制、全文查找与高亮；
 - 需要打开加密 OFD（口令或 SM2 私钥），展示签章覆盖层与验证面板；
 - 需要浏览器打印、单页/多页图片导出；
-- 需要 `<ofd-viewer>` Web Component 或 React/Vue 薄适配。
+- 需要 `<ofd-viewer>` Web Component 或 React/Vue 薄适配；
+- 需要用 `?file=` / `?base64=` 链接直接预览 OFD，而不改宿主代码。
 
 不适用：只需要把页面渲染到 Canvas 用 `@ofdrw/ofdrw-viewer-engine`；批量转图片文件用 `ofdrw-viewer-cli`；只读文字用 `mineru`。
 
@@ -64,6 +66,8 @@ import '@ofdrw/ofdrw-viewer-ui/style.css';
 ```
 
 ## 5 分钟跑通
+
+若页面 URL 已带 `?file=` 或 `?base64=`，可以省略下面的 `source`，直接 `new OFDViewer({ container: '#viewer' })`（见“通过 URI 参数预览”）。
 
 ```ts
 import { OFDViewer } from '@ofdrw/ofdrw-viewer-ui';
@@ -103,7 +107,7 @@ viewer.destroy();
 
 ### 文档来源
 
-`source` 支持以下形态；切换文档直接调用 `await viewer.open(newSource)`：
+`source` 支持以下形态；切换文档直接调用 `await viewer.open(newSource)`。也可以完全省略 `source`，由 `?file=`/`?base64=` 查询参数提供来源（见“通过 URI 参数预览”）。
 
 | 形态 | 说明 |
 | --- | --- |
@@ -111,8 +115,98 @@ viewer.destroy();
 | `ArrayBuffer` / `Uint8Array` | 已读入内存的字节；UI 以 `arraybuffer` 交给 engine |
 | `string` | 公开 URL；**UI 内部创建 `HttpByteSource`** 按 Range 读取，engine 只收字节 |
 | `{ url, headers? }` | URL 加自定义请求头，适合鉴权资源；构造方式同上 |
+| 省略 | 构造时读取 `?file=`/`?base64=`；都没有则 `ready` 以 `OFD_INVALID_OPTION` 拒绝 |
 
 `requestInit` 只对 URL 来源生效，且**只使用 `headers`**：先合并 `requestInit.headers`，再由来源对象的 `headers` 覆盖（来源优先）。`requestInit.credentials` 不转发，fetch 使用默认 `same-origin` 凭据策略。
+
+### 通过 URI 参数预览
+
+不传 `source` 也能预览：阅读器在 `open()` 时读取当前页面的 `location.search`，识别 `?file=` 与 `?base64=`。适合“把 OFD 链接直接发给别人打开”的轻量预览页，不需要改宿主代码；只读查询串，不读取也不改写 `updateHash` 使用的 hash。
+
+#### 来源优先级
+
+1. `viewer.open(source)` 的显式参数；
+2. 构造选项 `options.source`；
+3. 页面查询参数：`?file=` 优先于 `?base64=`；两者同时存在时用 `file`，并产生一条 `W_QUERY_SOURCE` warning。
+
+`OFDViewerOptions.source` 已是可选。三者都没有时，`viewer.ready` 以 `OFD_INVALID_OPTION` 拒绝（错误文案会提示传 `source` 或使用 `?file=`/`?base64=`）。`<ofd-viewer>` 没有 `src` 时仍会创建实例读取查询参数，组件内部已 catch `ready`，不会产生未处理 rejection；React/Vue 不传 `source` 同理。
+
+#### `?file=`：按 URL 读取
+
+- 值必须是目标地址经过 `encodeURIComponent` 后的结果；实现先由 `URLSearchParams` 解码一次，再尝试一次 `decodeURIComponent`，所以正常编码一次即可，非法百分号序列会保留原值。
+- 支持绝对 `http(s)` 地址，也支持相对当前页面的路径（同源 `/api/ofd/123.ofd`、`./files/a.ofd`）；相对值以 `location.href` 为 base 解析。
+- 解析后仅接受 `http:`/`https:`；`file:`、`javascript:`、`data:` 等协议一律以 `OFD_INVALID_OPTION` 拒绝。`file://` 不支持，本地文件请用 `File`/`Blob` 传给 `source`。
+
+```text
+# 绝对地址（值本身已 encodeURIComponent）
+https://viewer.example.com/?file=https%3A%2F%2Ffiles.example.com%2Fofd%2Fdemo.ofd
+
+# 同源相对路由，以当前页面为 base
+https://viewer.example.com/app/?file=%2Fapi%2Fofd%2F123.ofd
+
+# 含中文与空格的路径（原路径 /api/ofd/发票 2026.ofd）
+https://viewer.example.com/?file=%2Fapi%2Fofd%2F%E5%8F%91%E7%A5%A8%202026.ofd
+```
+
+生成编码后的链接：
+
+```js
+const target = new URL('/api/ofd/发票 2026.ofd', window.location.href).href;
+const url = `${location.origin}${location.pathname}?file=${encodeURIComponent(target)}`;
+```
+
+#### `?base64=`：直接携带字节
+
+- 支持纯 base64，也支持 `data:application/ofd;base64,...` 形式；data URI 必须带 `;base64` 标记和逗号。
+- 兼容 URL-safe 字符（`-`/`_`）、缺失的 `=` padding、换行/空格；但仍建议对值做 `encodeURIComponent`，避免 `+`、`/`、`=` 被查询串解释。
+- 解码后的字节上限默认 **64 MiB**（`DEFAULT_MAX_BASE64_BYTES`）。非法字符、空值、非法 data URI、超限都会抛 `OFD_INVALID_OPTION`；环境缺少 `atob` 时抛 `OFD_UNSUPPORTED`。直接调用 `readPreviewSourceFromLocation()` 可用 `maxBase64Bytes` 调整上限；`OFDViewer` 本身不暴露该选项。
+
+```text
+# 纯 base64（下面只是可解析的格式示例，不是完整 OFD；必须替换为完整文件的 base64）
+https://viewer.example.com/?base64=UEsDBBQAAAAI
+
+# data URI（同样只是格式示例，必须替换为完整值）
+https://viewer.example.com/?base64=data%3Aapplication%2Fofd%3Bbase64%2CUEsDBBQAAAAI
+```
+
+生成可直接打开的链接（Node）：
+
+```bash
+B64=$(base64 -w0 demo.ofd)
+node -e 'console.log("https://viewer.example.com/?base64=" + encodeURIComponent(process.argv[1]))' "$B64"
+node -e 'console.log("https://viewer.example.com/?base64=" + encodeURIComponent("data:application/ofd;base64," + process.argv[1]))' "$B64"
+```
+
+#### 参数表
+
+| 参数 | 是否编码 | 支持的值 | 解析/限制 | 失败或告警 |
+| --- | --- | --- | --- | --- |
+| `file` | 需要 `encodeURIComponent` | 绝对 `http(s)` URL、同源/相对路径 | 以当前页面为 base；仅 `http`/`https` | 空值、非法 URL、非 http(s) → `OFD_INVALID_OPTION`；`file:` 不支持 |
+| `base64` | 建议编码 | 纯 base64、`data:...;base64,...` | URL-safe、缺 padding、空白；默认 64 MiB | 非法/空/超限 → `OFD_INVALID_OPTION`；无 `atob` → `OFD_UNSUPPORTED` |
+| `file` + `base64` | — | 同时出现 | `file` 优先 | 产生 `W_QUERY_SOURCE` warning |
+| 都没有 | — | 且无 `source` | 构造后 `ready` 拒绝 | `OFD_INVALID_OPTION` |
+
+可直接使用解析函数与默认上限：
+
+```ts
+import {
+  DEFAULT_MAX_BASE64_BYTES,
+  readPreviewSourceFromLocation,
+} from '@ofdrw/ofdrw-viewer-ui';
+
+const source = readPreviewSourceFromLocation(window.location, {
+  onWarning: (warning) => console.warn(warning.code, warning.message),
+});
+console.log(DEFAULT_MAX_BASE64_BYTES); // 67108864（64 MiB）
+```
+
+#### 安全与部署
+
+- **base64 会进入浏览器历史、服务器访问日志、Referer 和监控/APM**；敏感文档不要用 `?base64=`，改用一次性 `source`、POST 或短时效下载链接。
+- 只接受 `http(s)`；`file://`、`javascript:`、`data:` 不能作为 `file` 的参数值（`base64` 的 data URI 只作为数据载体，不是导航目标）。
+- 不要把鉴权 token 拼进 URL；需要鉴权时用 `{ url, headers? }` 或 `requestInit.headers`。查询参数预览本身不提供额外鉴权。
+- 超长 URL 可能被代理/浏览器截断；大文件优先用 `file=` 或直接传字节，base64 只适合小文档。
+- 部署时仍需服务端允许 CORS 与 `Range`，并暴露 `Content-Range`，否则 `?file=` 的 Range 读取会回退整包或失败。
 
 ### 网络来源与字节源
 
@@ -176,6 +270,7 @@ const viewer = new OFDViewer({ container: '#viewer', source: '/api/doc.ofd' });
 
 - 标签固定为 `ofd-viewer`，采用 light DOM，不创建 Shadow DOM。
 - 基础属性：`src`、`page`、`scale`、`rotation`、`theme`、`locale`、`sidebar`。
+- 省略 `src` 时仍会创建实例并读取 `?file=`/`?base64=`；无查询参数时 `ready` 拒绝，组件已 catch，不会产生未处理 rejection。
 - 复杂配置用 property：`reader.features = { ... }` / `reader.setFeatures({ ... })`；`src` 变化会重新打开文档。
 - 事件名为 `ofd-*`（如 `ofd-document-open`、`ofd-page-change`、`ofd-error`），`event.detail` 为对应载荷；`reader.viewer` 是底层只读实例。
 - 断开连接会销毁实例，重新连接会按当前属性重建。
@@ -207,7 +302,7 @@ export function Reader() {
 }
 ```
 
-`source`/`features` 等 prop 变化只调用核心方法，不会重建实例；卸载时销毁。ref 暴露 `getInstance`、`open`、`goToPage`、`setScale`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage` 等薄方法。
+`source`/`features` 等 prop 变化只调用核心方法，不会重建实例；卸载时销毁。`source` 可省略，此时由 `?file=`/`?base64=` 提供来源。ref 暴露 `getInstance`、`open`、`goToPage`、`setScale`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage` 等薄方法。
 
 ### Vue
 
@@ -230,7 +325,7 @@ const features = { print: false };
 </template>
 ```
 
-Vue 组件使用 `defineComponent` + `shallowRef`/`markRaw`，实例不会进入响应式代理；事件使用 kebab-case。通过模板 ref 可调用 `getInstance`、`goToPage`、`setScale`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage` 等 expose 方法。
+Vue 组件使用 `defineComponent` + `shallowRef`/`markRaw`，实例不会进入响应式代理；事件使用 kebab-case。通过模板 ref 可调用 `getInstance`、`goToPage`、`setScale`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage` 等 expose 方法。`source` 可省略，此时由 `?file=`/`?base64=` 提供来源。
 
 ### 子路径导出
 
@@ -252,7 +347,7 @@ Vue 组件使用 `defineComponent` + `shallowRef`/`markRaw`，实例不会进入
 | 选项 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `container` | `HTMLElement / string` | 必填 | 挂载点；字符串按 CSS 选择器解析，元素必须已存在 |
-| `source` | `ViewerSource` | 必填 | 文档来源，见上一节 |
+| `source` | `ViewerSource` | 可选 | 文档来源；省略时读取 `?file=`/`?base64=`，无来源则 `ready` 以 `OFD_INVALID_OPTION` 拒绝，见“通过 URI 参数预览” |
 | `initialPage` | `number` | `1` | 1-based 页码；小于 1 或非法值按 1 处理 |
 | `initialScale` | `number / ZoomMode` | `'auto'` | 数字为倍率（0.1–25）；`auto`/`page-width` 适合宽度，`page-fit` 适合页面，`page-actual` 为 100% |
 | `rotation` | `0 / 90 / 180 / 270` | `0` | 顺时针初始旋转角度 |
@@ -271,7 +366,7 @@ Vue 组件使用 `defineComponent` + `shallowRef`/`markRaw`，实例不会进入
 | `onError` | `(error: ViewerErrorInfo) => void` | 无 | 打开/渲染失败；在 warning 字段之外包含 `cause` |
 | `crypto` | `CryptoViewerOptions` | 默认启用 | 加密文档与验签配置，见“加密文档与签名验证” |
 
-`container`、`source` 是仅有的必填项；其余省略时使用默认值。`updateHash` 默认关闭，避免嵌入场景污染宿主地址；缓存/并发越大越流畅，但内存占用更高，移动端默认值更小。运行时可修改的配置见“运行时修改”。
+`container` 是唯一必填项；`source` 可省略（由 URI 参数提供），其余省略时使用默认值。`updateHash` 默认关闭，避免嵌入场景污染宿主地址；缓存/并发越大越流畅，但内存占用更高，移动端默认值更小。运行时可修改的配置见“运行时修改”。
 
 一个包含常用配置的完整示例：
 
@@ -360,6 +455,7 @@ viewer.setTheme('dark');
 viewer.setLocale('en-US');
 
 await viewer.open(nextSource);
+await viewer.open(); // 无参：重新按 options.source 或当前 ?file=/?base64= 打开
 viewer.goToPage(3, { smooth: true });
 viewer.setScale(1.5);              // 0.1–25
 viewer.setZoomMode('page-fit');
@@ -517,6 +613,7 @@ await viewer.ready;
 - 不提供局部/瓦片渲染。
 - **网络获取在 UI 层**：URL 由 UI 的 `HttpByteSource` 读取（Range + 整包回退），engine 只消费字节；跨域需要 CORS 与 `Content-Range` 暴露头。取消/关闭由 UI 管理，鉴权头由宿主提供。
 - **字体在宿主机**：engine 不再读取字体 URL/路径；UI 无字体配置项，需要补充字体时由宿主直接使用 engine（`{ data }` 或 `FontProvider`）。
+- **URI 参数预览只读查询串**：`?file=` 仅接受 `http(s)`（`file://` 不支持），`?base64=` 默认上限 64 MiB；base64 会进入历史/日志/Referer，敏感文档不应使用。查询参数不改变 engine 来源契约，`OFDOpenOptions.source` 仍必填。
 - 缩放入口：工具栏/API/下拉，以及 Ctrl/Command+滚轮与触控板双指缩放（以指针为锚点）、触摸屏双指捏合（以两指中点为锚点）、双击在适合宽度与 100% 间切换；`zoom` 功能关闭时手势不拦截默认行为。
 - 性能目标（设计 §12.6）为 **P1/延期，非 MVP 门禁**：1000 页、约 0.8MB 派生夹具多轮实测打开约 4.7–7.4s、全篇查找约 20.3–30.0s，未达到 2s/5s 目标；按用户决定暂不优化性能、先补手势。50–200MB 夹具与目标信创机型复测尚未提供，不宣称达标。`test/e2e/performance.spec.ts` 只记录指标并在未达标时显式标注，不使用注水阈值。
 

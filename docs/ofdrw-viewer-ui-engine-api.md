@@ -2,7 +2,7 @@
 
 | 项 | 内容 |
 |---|---|
-| 状态 | 已确认并实现（P0/P1 + P2 权限/附件/导出旋转；renderRegion 暂不实现）；R1 容器/crypto 边界已同步；网络获取委托（engine 不联网）已同步 |
+| 状态 | 已确认并实现（P0/P1 + P2 权限/附件/导出旋转；renderRegion 暂不实现）；R1 容器/crypto 边界已同步；网络获取委托（engine 不联网）已同步；UI 查询参数预览（`?file=`/`?base64=`）边界已同步 |
 | 版本 | 0.4-r1 |
 | 日期 | 2026-10-23 |
 | 使用方 | `@ofdrw/ofdrw-viewer-ui` |
@@ -61,7 +61,7 @@
 
 `OFDDocument.open` 支持两种参数：
 
-- `OFDOpenOptions`：`source` 必填，使用默认 ZIP 或可选 `containerFactory`；容器工厂返回的容器归 engine 拥有。
+- `OFDOpenOptions`：`source` 必填（engine 契约；UI 的 `source` 可省略并由查询参数解析，见 §0.6），使用默认 ZIP 或可选 `containerFactory`；容器工厂返回的容器归 engine 拥有。
 - `OFDOpenFromContainerOptions`：`container` 必填、`source` 可选上下文；纯容器打开使用，engine 借用容器不关闭。
 
 ```ts
@@ -92,6 +92,17 @@ engine 的 `OFDSource` 收敛为 `arraybuffer`/`blob`/`custom ByteSource`，字�
 - 取消信号（`viewer.open()` 内部的 `AbortController`）贯通 URL 探测、读取、crypto inspect 与 engine 打开；`close()`/切换文档后无悬挂请求；
 - `HttpByteSource`/`HttpByteSourceOptions` 从 UI 公共入口导出；`requestInit` 只使用 `headers`，来源 `headers` 覆盖 `requestInit.headers`；
 - 字体：engine 不再读取字体 URL/路径，UI 也不提供字体配置；宿主需要补充字体时直接向 engine 传 `{ data }` 或实现 `FontProvider`。
+
+### 0.6 UI 查询参数预览与 engine 边界
+
+UI 新增 `?file=` / `?base64=` 预览，但**不改变 engine 的打开契约**：`OFDOpenOptions.source` 仍然必填，engine 不解析 URL、不读查询串、不读 base64。
+
+- UI 的 `OFDViewerOptions.source` 已可选；`open(source)` 未传时按“显式参数 > 构造 `source` > 查询参数”解析，查询参数内 `file` 优先于 `base64`。
+- `?file=` 的值先由 `URLSearchParams` 解码，再尝试一次 `decodeURIComponent`；支持绝对 `http(s)` 与相对当前页面的路径，以 `location.href` 为 base 解析。仅接受 `http:`/`https:`，`file:`、`javascript:`、`data:` 以 `OFD_INVALID_OPTION` 拒绝。
+- `?base64=` 支持纯 base64 与 `data:application/ofd;base64,...`，兼容 URL-safe、缺失 padding 与空白；解码后默认上限 64 MiB（`DEFAULT_MAX_BASE64_BYTES`），非法或超限抛 `OFD_INVALID_OPTION`，缺少 `atob` 抛 `OFD_UNSUPPORTED`。
+- 两者同时存在时使用 `file` 并产生 `W_QUERY_SOURCE`；没有显式/构造 `source` 且查询参数也没有时，`viewer.ready` 以 `OFD_INVALID_OPTION` 拒绝。
+- 解析逻辑由 `readPreviewSourceFromLocation(location, options?)` 提供并从 UI 公共入口导出；UI 解析完成后仍走既有 `normalizeViewerSourceDetailed()` → `HttpByteSource` → engine 字节源的路径。
+- 安全边界：base64 会进入浏览器历史、服务器日志、Referer；只适合非敏感小文档；`file://` 不支持，本地文件应由宿主读成 `File`/`Blob` 或字节。
 
 ## 1. API 总览
 

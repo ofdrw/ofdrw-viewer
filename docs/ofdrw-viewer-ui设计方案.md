@@ -2,7 +2,7 @@
 
 | 项 | 内容 |
 |---|---|
-| 状态 | 已实现；v2 密码能力增量已同步；加载动画需求已补充（待实现） |
+| 状态 | 已实现；v2 密码能力增量已同步；加载动画需求已补充（待实现）；URI 参数预览（`?file=`/`?base64=`）已实现并同步 |
 | 版本 | 0.2-r2 |
 | 日期 | 2026-10-23 |
 | 目标包 | `packages/ofdrw-viewer-ui`，包名 `ofdrw-viewer-ui` |
@@ -165,7 +165,8 @@ UIState:
 ### 3.4 数据流
 
 ```text
-open(source)  // 取消上一次打开
+open(source?)  // 取消上一次打开；source 可省略
+  → resolveOpenSource()：显式 source > options.source > ?file= > ?base64=（file 优先，冲突产生 W_QUERY_SOURCE）
   → normalizeViewerSourceDetailed(source)：URL → HttpByteSource → { kind: 'custom' }，保留 origin；字节/Blob 原样
   → crypto.prepareOpen(OFDSource)   // 内部映射为 CryptoSource；URL 共用同一个 HttpByteSource
       ├─ 明文 → engine.open({ source })
@@ -189,7 +190,7 @@ open(source)  // 取消上一次打开
 | 选项 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `container` | `HTMLElement \| string` | 必填 | 挂载点；字符串按 CSS 选择器解析 |
-| `source` | `ArrayBuffer \| Uint8Array \| Blob \| string \| { url, headers? }` | 必填 | 本地文件、Blob、公开 URL；URL 支持可选 headers（企业系统预留）。URL 由 UI 的 `HttpByteSource` 读取，engine 只收字节 |
+| `source` | `ArrayBuffer \| Uint8Array \| Blob \| string \| { url, headers? }` | 可选 | 本地文件、Blob、公开 URL；URL 支持可选 headers（企业系统预留）。URL 由 UI 的 `HttpByteSource` 读取，engine 只收字节。省略时读取 `?file=`/`?base64=`；均无则打开以 `OFD_INVALID_OPTION` 拒绝 |
 | `initialPage` | `number` | `1` | 1-based |
 | `initialScale` | `number \| 'auto' \| 'page-actual' \| 'page-fit' \| 'page-width'` | `'auto'` | 数字为缩放倍数 |
 | `rotation` | `0 \| 90 \| 180 \| 270` | `0` | 初始旋转 |
@@ -212,7 +213,7 @@ open(source)  // 取消上一次打开
 
 | 方法 | 说明 |
 |---|---|
-| `open(source)` | 打开/切换文档；会先关闭旧文档 |
+| `open(source?)` | 打开/切换文档；会先关闭旧文档。省略 `source` 时按构造 `source`、`?file=`/`?base64=` 顺序解析 |
 | `close()` | 关闭文档、取消任务、清缓存，但保留容器/事件 |
 | `destroy()` | 关闭 + 解绑 DOM/事件，实例不可再用 |
 | `getState()` | 返回只读 `ViewerState` 快照；含 `features` 的有效状态 |
@@ -275,6 +276,7 @@ open(source)  // 取消上一次打开
 
 - 标签：`<ofd-viewer>`。
 - 属性：`src`、`page`、`scale`、`rotation`、`theme`、`locale`、`sidebar` 等基础标量。
+- `src` 可省略：没有 `src` 时仍创建实例并读取 `?file=`/`?base64=`；无查询参数时 `ready` 拒绝，组件已 catch。
 - 复杂配置用 property：`viewer.features = { print: false, find: false }`，或调用 `setFeatures()`；不要用 JSON 塞 attribute。
 - 属性变化映射到 `OFDViewer` 方法；`src` 变化重新 `open`。
 - 事件：`ofd-document-open`、`ofd-page-change`、`ofd-error` 等，`detail` 为对应载荷。
@@ -505,7 +507,7 @@ new OFDViewer({
 
 ### 6.1 打开流程
 
-1. `viewer.open()` 取消上一次打开（abort 在途请求），并**只规范化一次** `source`：URL → `HttpByteSource` → `{ kind: 'custom' }`，同时保留 origin 供标题/导出命名；ArrayBuffer/Uint8Array/Blob 原样转成 engine 来源。
+1. `viewer.open()` 取消上一次打开（abort 在途请求），并解析来源：显式参数 > `options.source` > `?file=` > `?base64=`（`file` 优先，冲突发 `W_QUERY_SOURCE`）。随后**只规范化一次**：URL → `HttpByteSource` → `{ kind: 'custom' }`，同时保留 origin 供标题/导出命名；ArrayBuffer/Uint8Array/Blob 原样转成 engine 来源。`?file=` 以 `location.href` 为 base 解析且仅接受 `http(s)`；`?base64=` 默认上限 64 MiB。三者都没有时以 `OFD_INVALID_OPTION` 拒绝。
 2. `crypto.prepareOpen(OFDSource, signal)`：明文直接进入下一步；加密则 inspect/解密得到容器。crypto 与 engine 共用同一个 URL 字节源，不重复下载。
 3. `OFDDocument.open({ source | container, signal })`；`document:open:start` 后 150 ms 仍未完成才显示全屏 loading；取消/切换文档/`close()` 都会中止打开。
 4. 取 `pageCount`；调用 `getPageInfos()` 拿全部页尺寸（P0 新 API）。
@@ -1274,11 +1276,11 @@ packages/ofdrw-viewer-ui/
 #### 14.6.1 共同契约
 
 - wrapper 不复制 UI，不另写布局/渲染/查找/打印；只做挂载、props 同步、事件映射、ref 暴露。
-- 粗粒度受控：`source`、`page`（可选）、`scale`（可选）、`theme`、`locale`、`features`；滚动、选区、查找当前项、渲染队列仍由核心内部管理。
+- 粗粒度受控：`source`（可选）、`page`（可选）、`scale`（可选）、`theme`、`locale`、`features`；`source` 省略时由 `?file=`/`?base64=` 提供。滚动、选区、查找当前项、渲染队列仍由核心内部管理。
 - `features` 是对象 prop：变化时调 `setFeatures(patch)`，不重建实例；`featureschange` 只更新宿主 UI，不回写成新对象，避免事件回环。
 - 细粒度操作走核心方法：`goToPage`、`setScale`、`findNext`、`print`、`exportImage`、`getFeatureState`、`getState` 等。
 - 事件以核心 `CustomEvent`/回调为准，wrapper 只改命名风格（React `onPageChange`，Vue `@page-change`）；不新增第二套语义。
-- `source` 变化调用 `open()`，不重建实例；旧打开任务要取消，避免旧文档事件覆盖新状态。
+- `source` 变化调用 `open()`，不重建实例；旧打开任务要取消，避免旧文档事件覆盖新状态。`source` 从有到无时 `open()` 会回落到查询参数。
 - wrapper 卸载调用 `destroy()`；核心 `destroy()` 必须幂等。
 
 #### 14.6.2 React wrapper
@@ -1364,6 +1366,10 @@ packages/ofdrw-viewer-ui/
 - 本地文件用 `<input type=file>`/拖拽；拖拽需 `preventDefault` 并校验扩展名/MIME。
 - 不在 URL 中放敏感 token；如必须，使用宿主提供的 `headers`。
 - 取消：切换文档/`close()`/显式中止会关闭 `HttpByteSource` 并 abort 在途请求；进度由 `HttpByteSource.onProgress` 在整包读取时提供，UI 不额外暴露字节级进度。
+- **URI 参数预览**：只读 `location.search`，不影响 `updateHash` 写入的页码/缩放 hash；无 `source` 时按 `?file=` > `?base64=` 解析，二者同时存在用 `file` 并发 `W_QUERY_SOURCE`。
+- `?file=` 的值需 `encodeURIComponent`；支持绝对 `http(s)` 与相对当前页面的路径，以 `location.href` 为 base 解析；`file://`、`javascript:`、`data:` 一律拒绝（`OFD_INVALID_OPTION`）。
+- `?base64=` 支持纯 base64、`data:application/ofd;base64,...`、URL-safe、缺失 padding；解码后默认上限 64 MiB（`DEFAULT_MAX_BASE64_BYTES`），非法/超限抛 `OFD_INVALID_OPTION`。base64 会进入浏览器历史、服务器日志与 Referer，仅适合非敏感小文档。
+- `readPreviewSourceFromLocation(location, options?)`、`DEFAULT_MAX_BASE64_BYTES` 与相关类型从 UI 公共入口导出；解析结果仍走 `normalizeViewerSourceDetailed()` → `HttpByteSource`，不新增 engine 契约。
 
 ### 15.4 CSP
 
@@ -1379,7 +1385,7 @@ packages/ofdrw-viewer-ui/
 - **证书信息**：只本地展示；不上传；详情缓存只在内存，`close()` 清理。
 - **密码能力**：ASN.1/X.509/验签交给 crypto 包；UI 不维护第二套解析器。crypto 对输入大小/深度/节点数限制；UI 捕获 `CryptoError` 并降级展示，不把异常原文/私钥写日志。
 - **文本层**：用 `textContent` 创建节点，不拼 `innerHTML`；避免 XSS。
-- **URL**：不把用户输入直接插入 `innerHTML`；文件名清洗；下载 URL 用 `URL.createObjectURL` 并 revoke。
+- **URL**：不把用户输入直接插入 `innerHTML`；文件名清洗；下载 URL 用 `URL.createObjectURL` 并 revoke。URI 预览的 `file` 仅允许 `http(s)`，`base64` 不进入 DOM/日志；页面需自行避免把敏感文档放进查询串。
 - **剪贴板**：只在用户手势内调用；失败回退。
 - **许可**：
   - pdf.js Apache-2.0：不复制源码；如复用，保留许可/NOTICE。
