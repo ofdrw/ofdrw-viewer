@@ -1,6 +1,6 @@
 # OFDRW-Viewer 可视化
 
-[![engine](https://img.shields.io/npm/v/@ofdrw/ofdrw-viewer-engine?label=engine)](https://www.npmjs.com/package/@ofdrw/ofdrw-viewer-engine) [![crypto](https://img.shields.io/npm/v/@ofdrw/ofdrw-viewer-crypto?label=crypto)](https://www.npmjs.com/package/@ofdrw/ofdrw-viewer-crypto) [![cli](https://img.shields.io/npm/v/@ofdrw/ofdrw-viewer-cli?label=cli)](https://www.npmjs.com/package/@ofdrw/ofdrw-viewer-cli) [![release](https://img.shields.io/github/v/release/ofdrw/ofdrw-viewer?label=release)](https://github.com/ofdrw/ofdrw-viewer/releases) [![license](https://img.shields.io/github/license/ofdrw/ofdrw-viewer?label=license)](LICENSE) [![node](https://img.shields.io/badge/node-%3E%3D22-339933)](https://nodejs.org/)
+[![在线体验](https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E4%BD%93%E9%AA%8C-GitHub%20Pages-2563eb)](https://ofdrw.github.io/ofdrw-viewer/) [![engine](https://img.shields.io/npm/v/@ofdrw/ofdrw-viewer-engine?label=engine)](https://www.npmjs.com/package/@ofdrw/ofdrw-viewer-engine) [![crypto](https://img.shields.io/npm/v/@ofdrw/ofdrw-viewer-crypto?label=crypto)](https://www.npmjs.com/package/@ofdrw/ofdrw-viewer-crypto) [![cli](https://img.shields.io/npm/v/@ofdrw/ofdrw-viewer-cli?label=cli)](https://www.npmjs.com/package/@ofdrw/ofdrw-viewer-cli) [![release](https://img.shields.io/github/v/release/ofdrw/ofdrw-viewer?label=release)](https://github.com/ofdrw/ofdrw-viewer/releases) [![license](https://img.shields.io/github/license/ofdrw/ofdrw-viewer?label=license)](LICENSE) [![node](https://img.shields.io/badge/node-%3E%3D22-339933)](https://nodejs.org/)
 
 ## ✨ 功能概述
 
@@ -8,11 +8,17 @@
 
 ![渲染能力展示](docs/img/ofd-render-showcase.gif)
 
+
 ## 🧩 应用生态
 
 ### 📖 OFD Web阅读器
 
  [**ofdrw/ofdrw-viewer-ui**](packages/ofdrw-viewer-ui/README.md) **HTML5 OFD阅读器**，功能完备的产品级别的HTML5 OFD阅读器，支持可视化浏览、书签、缩略图、解密、验证等阅读器功能，可以用于快速接入实现OFD在线预览；
+
+[**👉 在线体验**： *https://ofdrw.github.io/ofdrw-viewer/index.html*](https://ofdrw.github.io/ofdrw-viewer/index.html)
+
+![ofdrw/ofdrw-viewer-ui 演示](docs/img/ofdrw-viewer-ui-showcase.gif)
+
 
 [👉 *进入了解 ofdrw-viewer-ui*🔗](packages/ofdrw-viewer-ui/README.md)
 
@@ -24,11 +30,27 @@
 
 [👉 *进入了解 ofdrw-viewer-cli*🔗](packages/ofdrw-viewer-cli/README.md)
 
-### 🎨 OFD渲染引擎工具库
+### 🎨 OFD渲染引擎库
 
-[**ofdrw/ofdrw-viewer-engine**](packages/ofdrw-viewer-engine/README.md) **OFD 渲染引擎工具库**，通过 API 控制 OFD 页面绘制、文档信息获取，支持浏览器、Node.js 和小程序等多平台；
+[**ofdrw/ofdrw-viewer-engine**](packages/ofdrw-viewer-engine/README.md) **OFD 渲染引擎库**，通过 API 控制 OFD 页面绘制、文档信息获取，支持浏览器、Node.js 和小程序等多平台；
+
+```ts
+import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
+
+const doc = await OFDDocument.open({ source: { kind: 'blob', blob: file } });
+const page = await doc.getPage(0);
+const viewport = page.getViewport({ dpi: 144 });   // 默认 96 DPI
+
+canvas.width = Math.ceil(viewport.width);
+canvas.height = Math.ceil(viewport.height);
+await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise;
+
+await doc.close();
+```
 
 [👉 *进入了解 ofdrw-viewer-engine*🔗](packages/ofdrw-viewer-engine/README.md)
+
+
 
 ### 🔐 OFD密码工具库
 
