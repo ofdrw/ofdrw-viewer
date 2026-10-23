@@ -118,7 +118,7 @@ export type CertificateValidity = 'valid' | 'expired' | 'not-yet-valid';
 /**
  * 解析 X.509 证书 DER。
  *
- * @param der 证书 DER（不接收 PEM；PEM 由 `cert/parse.ts` 解码）。
+ * @param der 证书 DER（不接收 PEM；PEM 由 `certificatesToDer` 前置转换为 DER）。
  * @param options DER 解析上限。
  * @returns 证书结构；原始 DER/TBS 均为输入视图或副本，保留原始字节。
  * @throws CryptoError `CRYPTO_ASN1_INVALID` / `CRYPTO_CERTIFICATE_INVALID`。

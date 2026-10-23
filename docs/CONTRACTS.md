@@ -877,12 +877,12 @@ export function certificatesToDer(
 
 export function loadCertificates(
   inputs: readonly CertificateDer[],
-  options?: LoadCertificatesOptions,
+  options?: CertificateLoadOptions,
 ): Promise<X509Certificate[]>;
 
 export function loadCertificate(
   input: CertificateDer,
-  options?: LoadCertificatesOptions,
+  options?: CertificateLoadOptions,
 ): Promise<X509Certificate>;
 
 export function inspect(

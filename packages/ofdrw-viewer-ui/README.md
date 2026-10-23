@@ -108,7 +108,7 @@ const viewer = new OFDViewer({
     autoPrompt: true,
     autoVerify: true,
     rootCertificates: [
-      // data 是 PEM/DER/CER 字节；也可用 { url } / { path } / { filePath }
+      // data 是 PEM/DER/CER/Base64 字节；也可用 { url } / { path } / { filePath }
       { data: new TextEncoder().encode(rootPem) },
     ],
     certificateLoader: async (input) => {
