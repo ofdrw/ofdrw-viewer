@@ -2,22 +2,22 @@
 
 | 项 | 内容 |
 |---|---|
-| 状态 | 设计稿，待评审 |
-| 版本 | 0.1 |
-| 日期 | 2026-10-22 |
+| 状态 | 已实现；v2 密码能力增量已同步 |
+| 版本 | 0.2-r1 |
+| 日期 | 2026-10-23 |
 | 目标包 | `packages/ofdrw-viewer-ui`，包名 `ofdrw-viewer-ui` |
-| 依赖 | `@ofdrw/ofdrw-viewer-engine`、[v1.1 文本内容 API 设计](./text-content-api.md)、[OFD 渲染引擎设计方案](./OFD渲染引擎设计方案.md) |
+| 依赖 | `@ofdrw/ofdrw-viewer-engine`、`@ofdrw/ofdrw-viewer-crypto`、[v1.1 文本内容 API 设计](./text-content-api.md)、[OFD 渲染引擎设计方案](./OFD渲染引擎设计方案.md)、[密码能力总体设计](./ofdrw-viewer-crypto设计方案.md) |
 | 参考实现 | pdf.js 6.x viewer（`viewer.html` / `viewer.css` / `app.js` / component 层） |
-| 明确不做 | OFD 渲染、电子签章验签、PDF 导出、OCR、在线批注编辑 |
+| 明确不做 | OFD 渲染、PDF 导出、OCR、在线批注编辑；密码学算法/ASN.1/验签由 crypto 包实现，UI 不重复实现 |
 
 ## 0. 结论摘要
 
 1. **不 fork pdf.js viewer**。pdf.js 的 `PDFViewer` 与 `PDFDocumentProxy` / `PDFPageProxy` 强耦合（视口、文字、注释、可选内容都走 pdf.js 内部对象），替换后端的工作量和风险都高于重写 UI 层。复用它的**布局、交互、渲染队列、文字层、查找、历史记录和快捷键模式**，代码按 OFD 引擎重写。
 2. **UI 采用“框架无关核心 + 可选薄适配”**。核心 `OFDViewer` 是一个不依赖框架的类；`<ofd-viewer>`、React、Vue 只做属性/事件/生命周期桥接，不把核心逻辑放进组件，也不按框架重写阅读器。
-3. **MVP 范围**：基础阅读、缩略图、大纲/书签、查找与文本选择/复制、打印/导出图片、签章信息（不验签）。
+3. **MVP 范围**：基础阅读、缩略图、大纲/书签、查找与文本选择/复制、打印/导出图片、签章信息；v2 增加加密打开、验证面板、印章点击验证与根证书配置（时间戳只解析）。
 4. **大规模页按 1000 页设计**：批量页尺寸 + 虚拟滚动 + 可见页渲染 + LRU 缓存；缩放时**重新渲染**保证清晰，不做 CSS 放大糊图；1000 页以内不需要瓦片/局部渲染。
-5. **文本层是一层透明文字覆盖**，坐标来自引擎 `getTextContent`。但截至 2026-10-22，当前 `main` 工作树的 `OFDPage` 只有 `getSize` / `getViewport` / `render` / `exportImage`，`getTextContent` 只存在于 v1.1 设计文档，**尚未实现**。这是 MVP 的前置依赖，详见 §9 和 §13。
-6. **签章信息**：引擎只从 OFD 容器返回 `Signature.xml` 元数据和 `SignedValue.dat` 的**原始字节**，不解析电子签章，也不把 `Seal.esl` 作为公开资源；UI 侧用 ASN.1 库解析 `SignedValue.dat`，从 `TBS_Sign.eseal` 取印章信息，展示签章时间、签署人、证书主题、印章属性等；**不做证书链、签名值、时间戳验证**，UI 明确标注“未验证”。
+5. **文本层是一层透明文字覆盖**，坐标来自引擎 `OFDPage.getTextContent`；该 API 已按 [v1.1 文本内容 API 设计](./text-content-api.md) 实现，查找/选择/复制按本文 §9 接入。
+6. **签章与密码能力（v2 增量）**：engine 只返回 `Signature.xml` 元数据和 `SignedValue.dat`/`Seal.esl` 原始字节；UI 统一调用 `@ofdrw/ofdrw-viewer-crypto` 的 `parseSignedValue`/`parseSeal`/`verifyOfd`，不再维护第二套 ASN.1 解析器。验证面板和印章浮层展示签名数学结果、Reference、证书链、防夹带完整性和印章结果；**时间戳只解析、不验证**，无根证书时链状态为 `unknown`，绝不把“有签章”表述为“文档有效”。
 7. **打印/导出**：支持当前页、页码范围、全部页；打印用图片 + `@page`，导出支持 PNG/JPEG/WebP，多页导出打包 ZIP；1000 页大任务采用自适应 DPI 和进度/取消。
 8. **框架集成**：核心不依赖 React/Vue；提供 React 18/19、Vue 3 的薄 wrapper；按纯 SPA 设计，不做 SSR；单包 + 子路径导出；默认内置 UI，同时提供 `features.toolbar=false` + 命令/事件，允许宿主自绘工具栏。详见 §14.6。
 
@@ -40,7 +40,7 @@
 ### 1.3 非目标
 
 - 不实现 OFD 解析/渲染（由引擎负责）。
-- 不做电子签章验签、证书链校验、时间戳验证、OCSP/CRL。
+- 不实现密码学算法/ASN.1/证书链/验签；这些由 `@ofdrw/ofdrw-viewer-crypto` 实现，UI 只做交互、状态展示与宿主凭据/根证书适配。时间戳仅展示解析结果，不验证 TSA 签名、ESSCertID 或策略链；不做 OCSP/CRL。
 - 不做 PDF 导出、OFD 编辑、批注写入、表单填写、OCR。
 - 不做服务端、登录、权限管理、文档上传。
 - MVP 不做附件面板、图层/可选内容、演示模式、PDF 式密码输入。
@@ -107,8 +107,11 @@ pdf.js 为 Apache-2.0。若后续直接复用少量代码/样式，必须在仓�
 │  ├─ ThumbnailViewer / OutlineView / BookmarkView              │
 │  ├─ FindController / TextLayerBuilder / SelectionManager      │
 │  ├─ PrintService / ExportService                              │
-│  ├─ SignatureService（摘要 + 按需 ASN.1 详情）                │
+│  ├─ SignatureService（签章摘要/详情/覆盖层）                   │
+│  ├─ CryptoService（inspect/凭据/解密容器/验证面板/根证书）     │
 │  ├─ EventBus / Theme / I18n / Keyboard / History / A11y       │
+├──────────────────────────────────────────────────────────────┤
+│ @ofdrw/ofdrw-viewer-crypto（inspect/decrypt/verify/parseSeal） │
 ├──────────────────────────────────────────────────────────────┤
 │ @ofdrw/ofdrw-viewer-engine（OFDDocument / OFDPage / RenderTask） │
 └──────────────────────────────────────────────────────────────┘
@@ -130,7 +133,8 @@ pdf.js 为 Apache-2.0。若后续直接复用少量代码/样式，必须在仓�
 | `SelectionManager` | 选区文本、复制、清空、与查找高亮协作 | 不修改文档 |
 | `PrintService` | 打印范围、逐页图片、`@page`、进度/取消 | 不生成 PDF |
 | `ExportService` | 单页/多页导出、ZIP、下载 | 不改变页面内容 |
-| `SignatureService` | 签章摘要、按需解析 ASN.1、缓存、错误降级 | 不验签 |
+| `SignatureService` | 签章摘要、详情、页面覆盖层、印章点击；消费 crypto 报告并校准缓存 | 不实现 ASN.1/验签 |
+| `CryptoService` | `inspect`、凭据弹窗/预置凭据、解密容器、验证面板、根证书、报告状态机 | 不渲染页面/不绘制 Canvas |
 | `EventBus` | 类型化事件、订阅/退订、错误隔离 | 不做全局单例 |
 | `Theme` | light/dark/auto、CSS 变量、高对比 | 不硬编码颜色 |
 | `I18n` | 文案字典、`Intl` 日期/数字 | 不引重型 i18n 运行时 |
@@ -141,6 +145,7 @@ pdf.js 为 Apache-2.0。若后续直接复用少量代码/样式，必须在仓�
 ```text
 DocumentState:
   source, pageCount, pageInfos[], metadata?, signaturesSummary[],
+  inspection?, verificationReport?, cryptoStatus: disabled|plaintext|encrypted|error,
   outline?, bookmarks?, status: idle|opening|ready|error|closed
 
 ViewState:
@@ -160,7 +165,10 @@ UIState:
 
 ```text
 open(source)
-  → engine.open → pageCount
+  → crypto.inspect(source)
+      ├─ 明文 → engine.open({ source })
+      └─ 加密 → 凭据 → crypto.openDecryptingContainer() → engine.open({ container })
+  → autoVerify ? crypto.verifyOfd() → VerificationReport → UI 面板/浮层
   → engine.getPageInfos()（P0 新 API）
   → PageLayout 建立页壳
   → 计算可见页 → RenderQueue
@@ -196,6 +204,7 @@ open(source)
 | `requestInit` | `RequestInit` | 无 | URL 来源的额外请求参数（credentials 默认 `same-origin`） |
 | `onWarning` | `(warning) => void` | 无 | 引擎/UI warning |
 | `onError` | `(error) => void` | 无 | 打开/渲染等错误 |
+| `crypto` | `CryptoViewerOptions` | 默认启用 | 凭据、根证书、验证面板/自动验证；`enabled=false` 仅允许明文文档 |
 
 ### 4.2 实例方法
 
@@ -224,9 +233,12 @@ open(source)
 | `getSelectedText()` / `copySelection()` / `clearSelection()` | 选区 |
 | `print(options?)` | 打开打印流程 |
 | `exportImage(options?)` / `exportImages(options?)` | 单页/多页导出 |
-| `getSignatures()` | 签章摘要列表（不解析 ASN.1） |
-| `getSignatureDetail(id)` | 按需解析详情 |
+| `getSignatures()` | 签章摘要列表（详情解析由 crypto 包完成） |
+| `getSignatureDetail(id)` | 按需解析详情（crypto 提供结构化字段） |
 | `showSignature(id)` / `focusSignature(id)` | 打开详情/滚动到页面位置 |
+| `verify(options?)` / `getVerificationReport()` | 重新验证/读取最近报告；`verification` 功能关闭时抛 `OFD_FEATURE_DISABLED` |
+| `openVerificationPanel()` | 打开工具栏验证面板 |
+| `setRootCertificates(roots)` / `getRootCertificates()` | 替换/读取信任根并触发重新验证；四态来源见 §11.5 |
 | `setTheme(theme)` / `setLocale(locale)` | |
 | `setFullscreen(boolean)` | Fullscreen API + 回退 |
 | `showDialog(name)` / `closeDialog()` | 高级 UI 控制 |
@@ -252,6 +264,7 @@ open(source)
 | `exportprogress` | 导出 | `{ current, total }` |
 | `warning` / `error` | 诊断 | `{ code, message, pageIndex? }` |
 | `featureschange` | 功能开关或有效能力变化 | `Record<ViewerFeature, FeatureState>` |
+| `verificationcompleted` | 一次验证完成（成功） | `VerificationReport` |
 | `statechange` | 任意视图状态变化 | `ViewerState` |
 
 ### 4.4 Web Component 薄壳
@@ -344,6 +357,7 @@ type FeatureDisplay =
 | `print` | `true` | 打印按钮/对话框 | 还受文档权限和引擎导出能力限制 |
 | `export` | `true` | 导出图片按钮/对话框 | 还受文档权限和引擎导出能力限制 |
 | `signatures` | `true` | 签章标签、页面覆盖层、详情 | 依赖引擎 `getSignatureEntries`/`getSignedValue` |
+| `verification` | `true` | 工具栏验证入口、验证面板、印章点击验证 | 依赖 crypto；关闭后 `verify()` 拒绝、旧报告失效 |
 | `documentProperties` | `true` | 文档属性对话框 | P1；无 `getMetadata` 时隐藏 |
 | `keyboardShortcuts` | `true` | 全局快捷键 | `false` 时仍可用按钮；Ctrl+F/P 等不响应 |
 
@@ -666,8 +680,8 @@ empty → queued → preparing → rendering → rendered → evicted
 
 - 设计采用**透明文字层**：canvas 负责视觉，DOM 文字层负责选择、复制、读屏、查找高亮。
 - 文字层数据来自引擎 `OFDPage.getTextContent(options)`，契约见 [v1.1 文本内容 API 设计](./text-content-api.md)。
-- **当前实现状态**：`packages/ofdrw-viewer-engine/src/api/page.ts` 只有 `getSize`、`getViewport`、`render`、`exportImage`；`getTextContent` 只存在于 `docs/text-content-api.md`，并明确标注“不属于 v1 公共契约、尚未实现”。`src/render/text.ts` 提供内部 `layoutText`，但未导出为页面 API。
-- 因此：**文本层/查找/选择/复制是 MVP 的前置阻塞项**。若已有另一分支/未合并实现，按同一契约对齐；否则引擎需先落 T13.2（`getTextContent` + 类型 + 缓存/取消/上限）。
+- **当前实现状态**：`packages/ofdrw-viewer-engine/src/api/page.ts` 已导出 `getTextContent(options)`，复用内部 `layoutText`/`preparePage`，支持分页/缓存/取消/上限；契约见 [v1.1 文本内容 API 设计](./text-content-api.md)。
+- 因此文本层/查找/选择/复制可直接基于该 API 实现；仍需处理旋转/缩放下的选区几何与超限降级（见下文）。
 - 如果 MVP 必须在不改引擎的情况下先交付，只能降级为“无文本层”的纯 Canvas 阅读器（无查找/选择），与已确认的 MVP 冲突，不建议。
 
 ### 9.2 文本层 DOM
@@ -780,217 +794,85 @@ empty → queued → preparing → rendering → rendered → evicted
 
 ---
 
-## 11. 签章信息（不验签）
+## 11. 签章与密码能力（v2 增量）
 
 ### 11.1 目标与边界
 
-- 展示“这份 OFD 里有哪些签章、盖在哪、印章是谁的、什么时候签的、证书主题是什么”。
-- **不做**：签名值验证、证书链验证、证书有效期合法性判断、CRL/OCSP、时间戳验证、签章完整性判断。
-- UI 状态统一为“未验证”，不使用“有效/无效/验签通过”等措辞。
+- 展示文档中的签章、页面位置、印章名称/类型、签署时间、证书摘要，以及验证报告中的数学签名、Reference、证书链、防夹带完整性、印章和时间戳状态。
+- **UI 不实现密码学**：SES v1/v4/v5 解析、SignedValue/Seal 解析、SM2/SM3/SM4、证书链/信任根/有效期、防夹带完整性和时间戳解析全部调用 `@ofdrw/ofdrw-viewer-crypto`。
+- **时间戳只解析不验证**：状态固定 `parsed-not-verified`/`not-present`/`parse-error`，文案“已解析，未验证”/“无”/“不可解析”，不得显示“时间戳有效/可信时间”。
+- **无根证书 = unknown**：不是 invalid，也不得显示 valid；配置根后重新验证才可能变为 valid。
+- 不检查 CRL/OCSP，报告 `revocation: 'not-checked'`；不得声称吊销状态有效。
 
-### 11.2 数据来源
+### 11.2 打开、解密与验证流程
 
-| 文件 | 内容 | 用途 |
-|---|---|---|
-| `Signs/Signatures.xml` | `Signature@ID/@Type/@BaseLoc` 索引 | 签章列表、类型 |
-| `Signature.xml` | `SignedInfo/Provider`、`SignatureDateTime`、`References/Reference@FileRef`、`StampAnnot@PageRef/@Boundary/@Clip`、`SignedValue/BaseLoc` | 摘要、时间、保护范围、页面位置 |
-| `SignedValue.dat` | `SES_Signature`（v1/v4/v5），`TBS_Sign.eseal` 内含印章信息 | **唯一公开的签章资源**：签章时间、签章者证书、签名算法、印章信息、时间戳 |
-| `Seal.esl` | `SESeal`（v1/v4/v5） | **不读取**；仅引擎渲染外观时可能内部使用，不进入公开 API |
-| 证书 DER | X.509 | 主题、颁发者、序列号、有效期 |
+```text
+viewer.open(source)
+  → crypto.inspect(source)
+      ├─ 明文 → OFDDocument.open({ source, ... })
+      └─ 加密且 crypto.enabled=true
+           ├─ crypto.credentials 预置 → openDecryptingContainer
+           ├─ autoPrompt=false 且无预置 → OFD_CRYPTO_CREDENTIAL_REQUIRED
+           ├─ onCredentialRequired → 宿主返回凭据/null
+           └─ 内置登录弹窗 → 凭据 → openDecryptingContainer
+                ├─ 失败：弹窗保留、显示错误、可重试/取消
+                └─ 成功：OFDDocument.open({ container })
+                      → autoVerify ? verifyOfd({ container, roots }) : 等待工具栏
+  → documentopen / verificationcompleted
+```
 
-### 11.3 ASN.1 结构
+- `inspect` 失败按 `OFD_CRYPTO_FAILED` 上报并保留 cause；取消为 `OFD_CRYPTO_CANCELLED`。
+- `crypto.enabled=false` 时加密文档打开失败为 `OFD_CRYPTO_UNSUPPORTED`；明文文档仍按原行为。
+- 解密容器由 crypto 创建；engine 只借用，`doc.close()` 后由 UI 关闭容器。凭据只在本次打开/验证调用内存中存在，不写入日志、DOM 属性或 localStorage。
+- 根证书变更、`verification` 功能关闭或重新验证开始时，立即失效旧报告并关闭依赖旧报告的印章浮层；在途 verify 用代次 + `AbortController` 取消，旧结果不得回写。
 
-#### 11.3.1 印章信息：`SignedValue.dat` 的 `TBS_Sign.eseal`
+### 11.3 验证结果模型
 
-UI **不读取 `Seal.esl`**。印章信息统一从 `SignedValue.dat` 的 `TBS_Sign.eseal` 获取，其结构为 `SES_SealInfo`：
+UI 直接消费 crypto `VerificationReport`：
 
-`SES_SealInfo`：
-
-| 字段 | 说明 |
+| 字段 | UI 展示 |
 |---|---|
-| `header` | `id="ES"`、`version`（1/4/5）、`vid`（厂商 ID） |
-| `esID` | 印章编码（IA5String） |
-| `property` | `SES_ESPropertyInfo` |
-| `picture` | `SES_ESPictrueInfo`（图片类型/数据/宽高） |
-| `extDatas` | 厂商扩展，可选 |
+| `overall` | `valid`/`invalid`/`unknown`/`not-applicable`/`unsupported`，颜色+文字+图标，不能只靠颜色区分 |
+| `integrity` | `valid`/`invalid`/`unknown`/`unsupported`；`null` 显示“未受保护”，`package.integrityPresent=false` |
+| `signatures[].status` | 单签名聚合状态；含 `references`/`certificate`/`seal`/`math` 子状态 |
+| `signatures[].certificate.status` | `valid`/`expired`/`not-yet-valid`/`untrusted`/`incomplete`/`unsupported`/`not-present`/`unknown`/`invalid` |
+| `signatures[].seal` | 印章签名、链、与 SignedValue 匹配；无印章节点为 `not-applicable` |
+| `signatures[].timestamp` | `parsed-not-verified`/`not-present`/`parse-error`，不参与 overall |
+| `rootsConfigured` | false 时提示“未配置信任根，链状态未知”，不显示为成功 |
+| `warnings` | 可折叠的诊断信息，不得包含凭据/私钥/PEM |
 
-`SES_ESPropertyInfo`：
+- 成功解析 `parseSeal` 只表示结构可读；`hasSignature` 不代表验签通过。`ParsedSeal.warnings`（如 `W_CRYPTO_SEAL_PICTURE_INVALID`）单独提示，不能把图片损坏当成签名失败或成功。
+- Reference 失败、证书过期/不受信/缺中间证书、签名数学失败等必须在面板和详情中明确区分；不得把 `unknown`/`not-applicable` 显示为 `valid`。
 
-| 字段 | 说明 |
+### 11.4 工具栏验证面板与印章浮层
+
+- **工具栏入口**：`verification` 功能默认启用；关闭时入口隐藏/禁用，`viewer.verify()` 抛 `OFD_FEATURE_DISABLED`，已打开面板收起、旧报告失效。
+- **验证面板**：显示整体状态、完整性、签名列表、根证书状态、时间戳和 warning；正在验证时显示 loading 并禁用重复提交；失败显示可重试错误，不保留旧 valid。
+- **印章点击**：点击签章覆盖层/侧栏项打开浮层，展示签章类型、印章、签署时间、证书链、Reference、完整性、时间戳和验签状态；无报告/验证功能关闭时只展示解析详情并标注“未验证”，不读取本地旧报告。
+- **重新验证**：面板按钮/`viewer.verify({ signatureIds?, signal? })` 重新调用 `verifyOfd`；成功发 `verificationcompleted`，UI 用新报告替换全部旧详情/标题。
+- **根证书**：面板展示根证书列表与来源；`setRootCertificates()` 替换根后自动重新验证；全部根解析失败返回 `[]` 并提示“未配置/根证书无效”，链状态为 unknown。
+
+### 11.5 根证书四态与安全语义
+
+| 输入 | 处理 |
 |---|---|
-| `type` | 1=单位印章，2=个人印章；其他值原样展示 |
-| `name` | 印章名称（UTF8String） |
-| `certListType` | 1=证书列表，2=证书杂凑值列表（v4/v5） |
-| `certList` | `CertInfoList`（OCTET STRING 证书序列）或 `CertDigestList` |
-| `createDate` | 制章日期（v1 UTCTime；v4/v5 GeneralizedTime） |
-| `validStart` / `validEnd` | 印章有效期 |
+| `data` | 直接作为证书字节（PEM/DER/CER） |
+| `url` | 浏览器 `fetch` 读取；失败 warning，不伪造成有效 |
+| `path`/`filePath` | 必须由宿主 `certificateLoader` 读取；loader 抛错映射 `OFD_CRYPTO_FAILED` |
 
-#### 11.3.2 `SignedValue.dat`（SES_Signature）
+- 未配置根：`rootsConfigured=false`，链 `unknown`；这是正常的“无法判断信任”，不是“无签章”。
+- 正确根：链可追到 SHA-256 指纹一致的根，签名/有效期/KeyUsage 通过 → `valid`。
+- 错误根：链无法连到配置根时通常是 `incomplete`；链可建但终点不在 roots → `untrusted`。
+- 配置根但缺 issuer/中间证书 → `incomplete`；不得当成 `unknown` 或 `valid`。
+- 所有根都解析失败：忽略并 warning，最终按未配置根处理（`rootsConfigured=false`），不抛“全部根无效”的未捕获异常。
+- 不允许把根证书内容/私钥写日志；证书摘要只展示 subject/issuer/serial/fingerprint。
 
-| 版本 | 外层字段 | 说明 |
-|---|---|---|
-| v1 | `toSign`, `signature` | `toSign` 内含 `cert`/`signatureAlgorithm`；外层只有签名 BIT STRING |
-| v4 | `toSign`, `cert`, `signatureAlgID`, `signature`, `timeStamp[0]?` | `toSign` 为 `TBS_Sign` |
-| v5 | `toSign`, `cert`, `signatureAlgID`, `signatureValue`, `timeStamp[0]?` | 与 v4 类似 |
+### 11.6 无障碍、键盘与测试
 
-`TBS_Sign`：
-
-| 版本 | 字段 |
-|---|---|
-| v1 | `version`, `eseal`, `timeInfo`(BIT STRING), `dataHash`(BIT STRING), `propertyInfo`(IA5String), `cert`(OCTET STRING), `signatureAlgorithm`(OID) |
-| v4/v5 | `version`, `eseal`, `timeInfo`(GeneralizedTime), `dataHash`(BIT STRING), `propertyInfo`(IA5String), `extDatas[0]?` |
-
-要点：
-
-- `SignedValue.dat` 是 **SES_Signature**，不是 PKCS#7/CMS SignedData；不需要 CMS 解析器。
-- `TBS_Sign.eseal` 就是 `SES_SealInfo`，印章名称/类型/图片等从这里取；**不再读取 `Seal.esl`，也没有回退逻辑**。
-- 签章者证书在 v4/v5 外层 `cert`；v1 在 `TBS_Sign.cert`。
-- `timeInfo` 是签章时间：v4/v5 直接是 GeneralizedTime；v1 是 BIT STRING，可能是 ASCII 时间或时间戳 token，需容错。
-- `timeStamp[0]` 是可选时间戳，**只显示“含时间戳”，不解析/不验证**。
-
-#### 11.3.3 X.509 证书
-
-- `cert` 是 OCTET STRING，内容为 DER 证书。
-- 解析 `TBSCertificate` 的 `serialNumber`、`issuer`、`validity`、`subject`、`subjectPublicKeyInfo`。
-- 主题 DN 属性：`CN`、`O`、`OU`、`C`、`ST`、`L`、`emailAddress`、`serialNumber`；按常见顺序格式化为字符串。
-- 证书只读展示；不做链、有效期判断、吊销检查。
-
-### 11.4 ASN.1 库选型
-
-| 方案 | 版本/许可 | 体积（未压缩） | 浏览器 | 结论 |
-|---|---|---|---|---|
-| `asn1.js` | 5.4.1 / MIT | ~49 KB | CJS；依赖 `Buffer`，浏览器需 polyfill | 可用但不首选 |
-| `asn1js` | 4.0.0 / BSD-3 | ~179 KB | 纯 ESM，基于 ArrayBuffer，无 Node polyfill | **首选解析器** |
-| `@peculiar/asn1-schema` | 2.11.0 / MIT | ~110 KB | ESM，类型化 schema | 可选，提升可维护性 |
-| `@peculiar/asn1-x509` | 2.11.0 / MIT | ~171 KB | ESM，X.509 类型 | 可选，解析证书 |
-| `@peculiar/x509` | 2.2.0 / MIT | ~593 KB | ESM，功能全但重 | 不采用 |
-| `pkijs` | 3.4.3 / BSD-3 | ~1.96 MB | 功能全但过重 | 不采用 |
-
-推荐组合：
-
-- `asn1js`（DER/BER 解析）+ 自定义 SES schema（v1/v4/v5）。
-- 证书解析用 `@peculiar/asn1-x509` + `@peculiar/asn1-schema`，避免手写 X.509 全量 schema。
-- 整个签章解析器**动态 import**，只在用户打开“签章”面板/详情时加载；不进入首屏包。
-- 如果团队坚持使用 `asn1.js`：需要引入 `buffer` polyfill（Vite `resolve.alias` / `optimizeDeps`，tsup 打包时注入），并为其补 `.d.ts`；功能等价，但信创浏览器/包体风险更高。
-- 许可：`asn1js` BSD-3、`@peculiar/*` MIT，均可用于商业项目；发布时保留 NOTICE。
-
-### 11.5 引擎 API 与 UI 侧类型
-
-引擎只负责“从 OFD 容器取对象信息和原始字节”，**不解析电子签章**。完整契约见 [引擎 API 与功能说明](./ofdrw-viewer-ui-engine-api.md)。
-
-| API | 说明 | 优先级 |
-|---|---|---|
-| `document.getSignatureEntries(options?)` | 只读 `Signatures.xml`/`Signature.xml`，返回签章条目、页面位置、`SignedValue` 路径；**不读、不解析** `SignedValue.dat` | P0 |
-| `document.getSignedValue(id, options?)` | 返回 `SignedValue.dat` 原始字节；**不解析 ASN.1**；未声明/缺失时返回 `undefined` | P0 |
-
-`SignatureEntryInfo`（引擎返回）：
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `id` | `string` | 签章 ID |
-| `type` | `'Seal' \| 'Sign' \| string` | 盖章/签名 |
-| `baseLoc` | `string` | `Signature.xml` 包内路径 |
-| `provider` | `{ name?, company?, version? }?` | `Signature.xml` 的 Provider |
-| `signatureDateTime` | `string?` | `SignatureDateTime` 原文 |
-| `references` | `{ fileRef: string }[]` | 保护范围 `Reference@FileRef` |
-| `stamps` | `SignatureStampInfo[]` | 页面位置，可多个 |
-| `signedValuePath` | `string?` | `SignedValue.dat` 包内路径 |
-| `hasSignedValue` | `boolean` | 是否声明了 `SignedValue.dat` |
-
-`SignatureStampInfo`：`{ id?, pageId, pageIndex?, boundary: Box, clip?: Box }`；`Box` 为 `{ x, y, width, height }`，单位 mm。
-
-注意：`SignedValue.dat` 内含 `TBS_Sign.eseal`，印章信息从该文件解析；**不读取 `Seal.esl`，也没有 `Seal.esl` 回退**。`hasSignedValue` 只表示“是否声明了路径”；`SignedValue.dat` 缺失时条目仍显示，详情标注“信息不完整”。
-
-以下类型由 **UI 包**在拿到 `SignatureEntryInfo` + `SignedValue.dat` 原始字节后构造，不是引擎返回值：
-
-`SignatureDetail`：
-
-| 字段 | 说明 |
-|---|---|
-| `entry` | 对应的 `SignatureEntryInfo` |
-| `seal?` | 印章信息（UI 解析 `SignedValue.dat` 的 `TBS_Sign.eseal`） |
-| `signer?` | 签章者/签名信息（UI 解析 `SignedValue.dat`） |
-| `validation` | 固定 `{ status: 'not-verified', note }` |
-| `warnings?` | 解析降级信息（非致命） |
-
-`SealInfo`：
-
-| 字段 | 说明 |
-|---|---|
-| `version` | `'v1' \| 'v4' \| 'v5' \| 'unknown'` |
-| `esId?` | 印章编码 |
-| `name?` | 印章名称 |
-| `typeCode?` | 原始整数 |
-| `typeLabel?` | `单位印章` / `个人印章` / `未知` |
-| `createDate?` | 制章日期 |
-| `validStart?` / `validEnd?` | 有效期 |
-| `certificate?` | 印章属性 `certList` 中可解析的证书（不保证存在） |
-| `image?` | `{ format, widthMm, heightMm }`（不暴露原始字节） |
-
-`SignerInfo`：
-
-| 字段 | 说明 |
-|---|---|
-| `certificate?` | 签章者证书 |
-| `signedAt?` | 签章时间 |
-| `signedAtSource?` | `timeInfo` / `signatureDateTime` / `timestamp-token` |
-| `algorithm?` | `{ oid, name? }` |
-| `dataHash?` | 原文摘要（hex，可选展示） |
-| `propertyInfo?` | 签章属性信息（路径/自定义） |
-| `timestampPresent?` | 是否含时间戳 |
-
-`CertificateInfo`：
-
-| 字段 | 说明 |
-|---|---|
-| `subject` / `issuer` | 格式化 DN |
-| `serialNumber` | 十六进制/十进制字符串 |
-| `notBefore` / `notAfter` | ISO 8601 |
-| `subjectAttributes` | `{ cn?, o?, ou?, c?, st?, l?, email?, serialNumber? }` |
-| `signatureAlgorithm?` / `publicKeyAlgorithm?` | OID + 友好名 |
-
-### 11.6 解析流程（引擎取数 + UI 解析）
-
-1. 打开文档时调用 `getSignatureEntries()`：只读 `Signatures.xml` 索引和 `Signature.xml` 元数据；**不读** `SignedValue.dat`。
-2. 用户打开签章侧栏/点击覆盖层时，UI 按 `hasSignedValue` 调 `getSignedValue(id)`；`hasSignedValue=false` 时只展示条目，详情标注“缺少签名值文件”。
-3. UI 解析 `SignedValue.dat`：按外层字段数/TBS 首字段判版本；解析 `TBS_Sign`；取签章时间、`eseal`、`cert`、算法、签名值、时间戳标记。
-4. UI 从 `TBS_Sign.eseal`（`SES_SealInfo`）取印章名称/类型/编码/制章日期/有效期/图片，**不读取 `Seal.esl`，也没有回退**。
-5. UI 解析 X.509 证书主题/颁发者/序列号/有效期；v4/v5 证书在外层 `cert`，v1 在 `TBS_Sign.cert`。
-6. UI 构造 `SignatureDetail`；字段缺失/解析失败只 warning，仍展示已有字段；引擎不参与 ASN.1 语义。
-7. UI 缓存详情（按签名 ID + 文件内容哈希）；`destroy()` 清理；引擎不缓存原始字节或只做有界缓存。
-
-### 11.7 UI
-
-- 侧栏“签章”标签：
-  - 按页分组/排序；每项：图标（盖章/签名）、印章名称或“未命名签章”、签章时间、签章者 CN、页码；右侧灰色徽标“未验证”。
-  - 点击项：滚动到对应页并高亮覆盖层；再次点击/详情按钮打开详情。
-  - 空态：“本文档未发现签章”。
-- 页面覆盖层 `.ofd-page__signature-layer`：
-  - 每个 `StampAnnot` 一个绝对定位框（mm→px），边框 `--ofd-signature-outline`，hover 显示 tooltip。
-  - 点击打开详情；键盘可聚焦（`tabindex=0`，Enter/Space）。
-  - 覆盖层默认 `pointer-events:none`，仅签章框 `pointer-events:auto`，不阻断文字选择。
-- 详情对话框/侧栏分区：
-  1. **基本信息**：签章类型、签章 ID、签章时间、签章提供者、保护范围。
-  2. **印章信息**：印章名称、类型、编码、制章日期、有效期、印章属性中的证书（若有）。
-  3. **签章者**：证书主题（CN 优先）、颁发者、序列号、有效期、签名算法、时间戳有无。
-  4. **页面位置**：页号、Boundary/Clip（mm）。
-  5. **技术细节**（折叠）：ASN.1 版本、OID、dataHash、propertyInfo、解析 warning。
-  6. **声明**： “本面板仅展示签章信息，未进行签名验证/证书链校验。”
-- 颜色：未验证用中性灰，不用绿色勾；不要显示“有效”。
-- 解析失败：显示“签章信息不完整”，列出可用字段和 warning；不阻断阅读。
-- 移动端：详情用底部抽屉，签章列表全屏。
-
-### 11.8 错误与限制
-
-- `SignedValue.dat` 缺失、损坏、非标准版本：摘要仍显示；详情部分字段为空 + warning；缺失时不回退读取 `Seal.esl`。
-- 文档只有 `Seal.esl`、没有 `SignedValue.dat`：无法提供签章时间/签章者/印章详情；条目仍显示，详情标注“缺少签名值文件”。这是当前简化方案的明确取舍。
-- 非标“非标签章”：v1 的 `TBS_Sign` 结构可能不完整；保留能解析的字段，签章者/印章信息可能缺失。
-- 证书主题含非 UTF8/BMPString：按 ASN.1 字符串类型解码；失败显示“无法解析”。
-- 时间字段格式异常：保留原文 + warning；不猜测。
-- 安全限制：单文件解析上限（如 16 MB）、DER 深度 ≤ 32、节点数 ≤ 100k、匹配数上限；解析在 try/catch 中，禁止 `eval`；不联网。
-- 不做验签；如未来要做，必须是独立可选 API，且不能复用本面板的“未验证”状态冒充“已验证”。
-
----
+- 验证面板使用 `role="status"`/`aria-live="polite"` 播报状态与错误，不抢焦点；状态徽标有 `aria-hidden` 图标 + 可读文字，色盲用户可辨识。
+- 印章覆盖层可键盘聚焦/激活；浮层使用对话框语义（标题、关闭、焦点陷阱、Esc 关闭、关闭后焦点返回触发元素）。
+- 凭据弹窗字段使用显式 `label[for]`，错误 `role="alert"`，关闭/取消清空秘密，焦点不进入日志。
+- Playwright/axe 覆盖：加密打开、错误重试、取消、验证面板四态、时间戳 `parsed-not-verified`、印章键盘浮层、根证书四态、移动/桌面视口；axe 扫描面板/对话框 0 serious/critical。
 
 ## 12. 大规模文档（1000 页）
 
@@ -1075,7 +957,7 @@ UI **不读取 `Seal.esl`**。印章信息统一从 `SignedValue.dat` 的 `TBS_S
 | 关闭 | `document.close()` | 已有 |
 | warning/error | `OFDWarning` / `OFDError` | 已有 |
 
-### 13.2 必须新增（MVP 阻塞）
+### 13.2 必须新增（已实现）
 
 | API | 契约要点 | 优先级 |
 |---|---|---|
@@ -1105,7 +987,7 @@ UI **不读取 `Seal.esl`**。印章信息统一从 `SignedValue.dat` 的 `TBS_S
 - 所有 IO 型 API 异步、可取消、可缓存；错误用 `OFDError`，warning 不中断。
 - 新增 API 不破坏现有 v1 契约；文本 API 按 v1.1 增量发布。
 - `getPageInfos` 不得为了取尺寸而完整 `preparePage`/解码图片/字体；否则 1000 页打开会退化。
-- 引擎**不引入** `asn1js`/`asn1.js`/`@peculiar/*`；ASN.1/X.509 解析全部在 UI 包内动态加载，只在打开签章详情时进入。
+- 引擎**不引入** `asn1js`/`asn1.js`/`@peculiar/*`；ASN.1/X.509/验签全部由 `@ofdrw/ofdrw-viewer-crypto` 按需加载，UI 只消费结构化结果/报告。
 - 新增 warning 码建议（字符串允许扩展）：
   - 引擎：`W_TEXT_ITEM_LIMIT` / `W_TEXT_CHAR_LIMIT`（v1.1 已定义）、`W_SIGNATURE_ENTRY`、`W_SIGNATURE_RESOURCE`、`W_OUTLINE_TARGET`、`W_PAGE_INFO_MISSING`
   - UI：`W_SIGNATURE_ASN1`、`W_SIGNATURE_CERT`、`W_SIGNATURE_EMPTY`
@@ -1194,25 +1076,23 @@ packages/ofdrw-viewer-ui/
 | 依赖 | 用途 | 引入方式 |
 |---|---|---|
 | `@ofdrw/ofdrw-viewer-engine` | OFD 打开/渲染/导出 | workspace 依赖 |
-| `asn1js` | ASN.1 DER/BER 解析 | 动态 import，签章详情专用 |
-| `@peculiar/asn1-schema` | 类型化 schema | 动态 import |
-| `@peculiar/asn1-x509` | X.509 证书解析 | 动态 import |
+| `@ofdrw/ofdrw-viewer-crypto` | 解密/ASN.1/X.509/签名/完整性/时间戳解析 | workspace 依赖；由 `CryptoService` 统一封装 |
 | `fflate` | 多页导出 ZIP | 按需 import |
 | `react` / `react-dom` | React wrapper | 可选 peer，`>=18`；核心不 import |
 | `vue` | Vue wrapper | 可选 peer，`>=3.3`；核心不 import |
 
 - 核心入口不引入 React/Vue；只有 `./react`、`./vue` 子路径 import 对应框架。
 - 不引入 pdf.js 运行时；只参考模式。
-- 不依赖 Node 内置模块（`Buffer`、`fs`）；`asn1js` 满足。
-- 已定 `asn1js` + `@peculiar/*`；不再为 `asn1.js` 加 `buffer` polyfill。
+- 不依赖 Node 内置模块（`Buffer`、`fs`）；crypto 的浏览器构建已验证无 Node 内建依赖。
+- 不再直接依赖 `asn1js`/`@peculiar/*`；统一由 crypto 提供严格 DER/X.509/SES 解析。
 
 ### 14.3 构建
 
 - `tsup` 输出 ESM + CJS + `.d.ts`；CSS 单独文件，`exports` 提供 `./style.css`。
 - `sideEffects` 标注 CSS；避免把整个 UI 树摇掉。
 - 目标 `es2020`；不输出可选链之外的过新语法（可选链/空值合并自身在 ES2020，目标浏览器支持）。
-- 动态 import 签章 ASN.1 解析器，形成独立 chunk；首屏不加载。
-- 若使用 `@peculiar/asn1-schema` 的装饰器 schema，`tsconfig` 需开启 `experimentalDecorators`；也可改用手写 schema 函数，避免装饰器/元数据依赖。
+- 按需 import crypto 的验证/印章解析入口，形成独立 chunk；首屏不加载。
+- crypto 已提供构建产物；UI 不额外配置 ASN.1 schema 装饰器/元数据。
 - 类型导出：`OFDViewer`、选项/事件/状态类型；内部模块不导出。
 - 提供 `exports`：
   - `.` → 核心 JS + types
@@ -1353,22 +1233,22 @@ packages/ofdrw-viewer-ui/
 ### 15.4 CSP
 
 - 文本层/页面定位需要内联 `style`；若宿主 CSP 禁止 `style-src 'unsafe-inline'`，需通过 CSSOM 设置样式或使用 nonce。设计默认允许内联样式；文档需说明。
-- 不使用 `eval`/`new Function`；ASN.1 解析不执行内容。
+- 不使用 `eval`/`new Function`；crypto 的 ASN.1 解析不执行内容，UI 不拼接不可信 HTML。
 - 图标内联 SVG；不使用远程字体/图片。
 
 ---
 
 ## 16. 安全、隐私与许可
 
-- **不验签**：签章面板明确“未验证”；不得把“有签章”表述为“文档有效”。
+- **不夸大验证**：未验证/未配置根时明确“未验证/未知”；不得把“有签章”表述为“文档有效”，也不得把 `unknown` 当 `valid`。
 - **证书信息**：只本地展示；不上传；详情缓存只在内存，`close()` 清理。
-- **ASN.1 解析**：限制输入大小/深度/节点数；捕获异常；不递归展开未知结构；不解析证书扩展中的任意 OCTET STRING。
+- **密码能力**：ASN.1/X.509/验签交给 crypto 包；UI 不维护第二套解析器。crypto 对输入大小/深度/节点数限制；UI 捕获 `CryptoError` 并降级展示，不把异常原文/私钥写日志。
 - **文本层**：用 `textContent` 创建节点，不拼 `innerHTML`；避免 XSS。
 - **URL**：不把用户输入直接插入 `innerHTML`；文件名清洗；下载 URL 用 `URL.createObjectURL` 并 revoke。
 - **剪贴板**：只在用户手势内调用；失败回退。
 - **许可**：
   - pdf.js Apache-2.0：不复制源码；如复用，保留许可/NOTICE。
-  - `asn1js` BSD-3、`@peculiar/*` MIT、`fflate` MIT；发布时汇总 NOTICE。
+  - crypto 的第三方依赖（`sm-crypto`、`asn1js`、`@peculiar/*`、`fflate`）按其许可证汇总 NOTICE。
   - 项目自身许可证待确认；根仓库当前无 LICENSE 文件，发布前补齐。
 
 ---
@@ -1383,36 +1263,36 @@ packages/ofdrw-viewer-ui/
 | M1 | 包骨架、`OFDViewer`、打开/渲染首页、工具栏、页码、缩放/旋转/全屏 | M0 的 `getPageInfos` |
 | M2 | 连续滚动、虚拟页壳、渲染队列、LRU、1000 页性能 | M1 |
 | M3 | 缩略图、大纲、书签 | M0 outline/bookmarks |
-| M4 | 文本层、选择/复制、查找 | M0 text |
+| M4 | 文本层、选择/复制、查找 | 已实现 text API |
 | M5 | 打印、导出（含 ZIP） | M1 |
-| M6 | 签章摘要/详情/覆盖层 | M0 signature + ASN.1 |
+| M6 | 签章摘要/详情/覆盖层 | engine 原始字节 + crypto |
 | M7 | 响应式、主题、a11y、信创兼容、E2E、文档、发布 | 全部 |
 
 ### 17.2 风险
 
 | 风险 | 影响 | 应对 |
 |---|---|---|
-| 文本 API 未实现 | 查找/选择/复制无法交付 | 列为 M0 阻塞；先落 v1.1；不伪造文本层 |
-| 签章 ASN.1 变体多/非标 | 详情字段缺失/解析失败 | 容错解析、warning、保留摘要；用 ofdrw-gm 夹具覆盖 v1/v4/v5 |
+| 文本层几何/超限 | 选区错位或文本截断 | 按 `TextContent` 视口坐标/旋转映射；超限 warning + 截断提示，不伪造文本层 |
+| 签章/加密格式变体 | 详情字段缺失/解析失败 | crypto 统一容错/warning/结构化报告；用 ofdrw-gm 夹具覆盖 v1/v4/v5 |
 | 1000 页性能不达标 | 滚动卡顿/内存高 | 虚拟滚动、可见优先、LRU、canvas 上限；压测后调队列/缓存 |
 | 大页高倍缩放超 canvas 上限 | 模糊/失败 | 降 DPI + CSS 放大 + warning；未来 renderRegion |
 | 混合页尺寸打印 | 分页/缩放不正确 | 命名 `@page` 分组；旧内核回退 auto |
 | 信创浏览器 API 缺失 | 功能降级 | 特性检测 + 回退；目标版本实测 |
 | 旋转下选区错位 | 复制体验差 | 回归测试；提供“复制本页文本” |
 | 1000 页全量查找慢 | UI 卡顿 | 分片、缓存、进度、取消；默认从当前页开始 |
-| 用户误以为已验签 | 合规/信任风险 | UI 明确“未验证”；文档/文案统一 |
+| 用户误以为已验证 | 合规/信任风险 | 明确未知/未验证；无根 unknown，时间戳只解析；文案统一 |
 | pdf.js 许可 | 合规 | 不复制源码；如需复用保留 NOTICE |
 
 ### 17.3 已确认与待确认
 
 已确认：
 
-- 文本/空间信息按 [v1.1 文本内容 API 设计](./text-content-api.md) 落实现；当前 `main` 未实现，作为 M0 阻塞。
+- 文本/空间信息按 [v1.1 文本内容 API 设计](./text-content-api.md) 实现；`getTextContent` 已导出并接入 UI 文本层。
 - 框架：React 18/19 + Vue 3；纯 SPA，不做 SSR。
 - UI：默认内置；具体功能统一用 `features` 开关（§4.7），`features.toolbar=false` 时宿主自绘工具栏；MVP 不做 slot 深度定制。
 - 包：单包 + 子路径导出（`/react`、`/vue`、`/element`、`/style.css`）。
-- ASN.1：`asn1js` + `@peculiar/asn1-schema` / `@peculiar/asn1-x509`，UI 侧动态加载；引擎不解析电子签章。
-- 签章资源：`Seal.esl` 不进入公开 API；`SignedValue.dat` 的 `TBS_Sign.eseal` 已含印章信息。只保留 `getSignedValue(id)`，不再暴露 `kind`；`SignedValue.dat` 缺失时返回 `undefined`，不回退 `Seal.esl`。
+- 密码能力：`@ofdrw/ofdrw-viewer-crypto` 内置严格 ASN.1/X.509/SM 实现，UI 通过 `CryptoService` 统一调用；engine 不解析电子签章，UI 不再维护第二套 ASN.1 依赖。
+- 签章资源：`Seal.esl` 不进入 engine 公开 API；crypto 的 `parseSeal`/`verifyOfd` 解析 `Seal.esl`/`TBS_Sign.eseal`。只保留 `getSignedValue(id)`，不再暴露 `kind`；`SignedValue.dat` 缺失时返回 `undefined`，不回退 `Seal.esl`。
 
 待确认：
 
@@ -1455,17 +1335,20 @@ packages/ofdrw-viewer-ui/
 | 代际 | 页面渲染任务版本号；旧代际结果丢弃 |
 | DPI | 每英寸点数；引擎 `getViewport({dpi})` 使用 |
 | mm→px | `px = mm * 96 / 25.4`（CSS px，96 DPI） |
-| 未验证 | 仅展示签章信息，未做密码学验证 |
+| 未验证 | 未取得可用的验证报告，或用户关闭/未启用验证；不得据此声称文档有效 |
+| parsed-not-verified | 时间戳结构已解析，但未验证 TSA 签名/证书链/策略；固定文案“已解析，未验证” |
 
 ### 18.3 参考文件
 
 - [引擎 API 与功能说明](./ofdrw-viewer-ui-engine-api.md)
 - [OFD 渲染引擎设计方案](./OFD渲染引擎设计方案.md)
+- [密码能力总体设计](./ofdrw-viewer-crypto设计方案.md)
+- [跨模块契约](./CONTRACTS.md)
+- [crypto 公开 API](../packages/ofdrw-viewer-crypto/skills/公开API.md)
+- [crypto README](../packages/ofdrw-viewer-crypto/README.md)
 - [v1.1 文本内容 API 设计](./text-content-api.md)
-- [引擎公共契约](./CONTRACTS.md)
 - [引擎页面 API](../packages/ofdrw-viewer-engine/src/api/page.ts)
 - [引擎签章外观解析](../packages/ofdrw-viewer-engine/src/model/seal.ts)
-- [引擎最小 DER 读取器](../packages/ofdrw-viewer-engine/src/model/asn1.ts)
 - [ofdrw-gm SES v1](../references/ofdrw/ofdrw-gm/src/main/java/org/ofdrw/gm/ses/v1/SESeal.java)
 - [ofdrw-gm SES v4](../references/ofdrw/ofdrw-gm/src/main/java/org/ofdrw/gm/ses/v4/SESeal.java)
 - [ofdrw-gm SES v5](../references/ofdrw/ofdrw-gm/src/main/java/org/ofdrw/gm/ses/v5/SESeal.java)
@@ -1473,4 +1356,4 @@ packages/ofdrw-viewer-ui/
 
 ---
 
-**评审重点**：§9.1 文本 API 现状、§11.4 ASN.1 选型、§12 1000 页策略、§13 引擎 P0 缺口、§17.3 待确认项。
+**评审重点**：§9.1 文本 API 现状、§11 密码能力 UI 边界、§12 1000 页策略、§13 引擎 P0 缺口、§17.3 待确认项。

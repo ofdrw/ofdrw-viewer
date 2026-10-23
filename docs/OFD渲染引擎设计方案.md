@@ -1,9 +1,9 @@
 # OFD 渲染引擎设计方案
 
-> 版本：0.5-r11（设计稿，按 pdf.js 形态 + Monorepo 子包 + Renderer 扩展点 + 纯页面内容调整）
-> 日期：2026-10-22  
+> 版本：0.5-r12（设计稿，按 pdf.js 形态 + Monorepo 子包 + Renderer 扩展点 + 纯页面内容调整）
+> 日期：2026-10-23
 > 技术栈：TypeScript + Canvas 2D + fontkit  
-> 仓库：Monorepo，当前唯一子包 `@ofdrw/ofdrw-viewer-engine`  
+> 仓库：Monorepo，包含 `@ofdrw/ofdrw-viewer-engine`、`@ofdrw/ofdrw-viewer-crypto`、`@ofdrw/ofdrw-viewer-ui`、`@ofdrw/ofdrw-viewer-cli`
 > 范围：只做“把 OFD 页面画到 Canvas”的 engine 库，不含阅读器 UI、任何端实现（Web/Node/Electron/小程序宿主）、编辑、签章密码学验证；v1 包含注释/签章外观的静态渲染
 
 ---
@@ -16,13 +16,14 @@
 > 0.5-r10 变更（2026-10-22）：记录非标准兼容扩展 `Clips@TransFlag`（缺省 false=裁剪区不受外部对象 CTM 影响；true=受外部 CTM 影响、在对象 CTM 后应用），并明确其优先于 t48 图片 manual 逆 CTM 兼容路径；`CT_Clip` 标准 schema 无此属性，不作为标准能力。
 > 0.5-r10 P2 变更（2026-10-22）：权限只读声明不做 DRM、附件元信息/原始字节不解析内容、`exportImage.rotation` 仅导出方向；`page.renderRegion` 按用户决定不实现/不导出。
 > 0.5-r11 变更（2026-10-22）：新增可选 `OFDOpenOptions.loadInput`/`FontInputLoader`，Web 默认行为不变，Node CLI `--font-dir` 注入 `node:fs` 并真实解析 family；同步 `g` 组 count=0 合法、页面积成功回退不提示（仅最终 A4）、空注释外观只提示一次。
+> 0.5-r12 变更（2026-10-23，R1）：新增公共 `VirtualContainer`/`openZipVirtualContainer` 与 `OFDOpenFromContainerOptions`；`OFDOpenOptions.source` 保持必填，新增 `container`（借用）/`containerFactory`（engine 拥有）；明确 raw/明文容器、`OFD_ENCRYPTED`、借用容器关闭后清引用与 AbortSignal 共享取消；密码学职责移交 `@ofdrw/ofdrw-viewer-crypto`。
 > 0.4 变更：采用 Monorepo 子包 `@ofdrw/ofdrw-viewer-engine`；`Renderer` 改为 `beginGroup/endGroup`，H5 的 `CanvasFactory`/scratch 完全内部化，公开 API 不再有 `RenderSurface`；`fallbackFonts` 更名为 `supplementaryFonts`；删除 engine 级独立块栅格缓存，改为复用 display list。
 
 1. **引擎做成一个独立、平台无关的 TypeScript 库**：以 Monorepo 子包 `@ofdrw/ofdrw-viewer-engine` 交付；公开 API 按 pdf.js 形态收敛为 `open → getPage → page.getViewport/page.render（可选 page.exportImage） → close`；核心只定义 `ByteSource`、Canvas、图片解码器、字体来源等接口，`Renderer` 作为正式扩展点但默认实现由 engine 提供，**v1 不实现任何端适配器**。
 2. **ZIP 不做整体解压**。打开时只读 `OFD.xml`、`Document.xml` 和页树；渲染某页时才按中央目录定位并解压该页的 `Content.xml`、`PageRes.xml`、模板页、字体和图片。天然支持 HTTP Range、`Blob.slice`、Node 文件句柄和微信文件系统。
 3. **文字绝不走 Canvas 文本 API**。统一走 `字体文件 → fontkit 解析 → 字形轮廓 → 路径 → fill/stroke`，因此不会受系统字体缺失、Canvas `fillText` 差异、小程序字体加载限制影响。
 4. **渲染分为“异步准备”和“同步绘制”两段**：先把该页需要的字体、图片、资源 XML 全部解析/解码完，再在一个同步循环里按文档顺序绘制，避免画到一半 `await` 导致 Canvas 状态被外部改写。
-5. **v1 的保真度分档**：基础路径/文字/图片、纯色、轴向渐变、路径裁剪、复合对象、模板页、页资源、**注释/签章外观**、**Gouraud/网格渐变**、**JBIG2/TIFF**、**Pattern 底纹** 为必做；**径向渐变 v1 不做**，识别到就 warning + 降级（平均色/透明），算法设计保留给 v2；重复/反射渐变、图像蒙版、边框、文字裁剪、合成粗斜体为次优先；ICC、BlendMode、加密文档、签名密码学验证不在 v1。
+5. **v1 的保真度分档**：基础路径/文字/图片、纯色、轴向渐变、路径裁剪、复合对象、模板页、页资源、**注释/签章外观**、**Gouraud/网格渐变**、**JBIG2/TIFF**、**Pattern 底纹** 为必做；**径向渐变 v1 不做**，识别到就 warning + 降级（平均色/透明），算法设计保留给 v2；重复/反射渐变、图像蒙版、边框、文字裁剪、合成粗斜体为次优先；ICC、BlendMode 不在 v1；加密文档解密与签名密码学验证不在 engine 范围，由 `@ofdrw/ofdrw-viewer-crypto` 提供。
 6. **最大风险不是解析，而是字体补充**：样例统计中约 35% 的文字对象没有内嵌字体，而浏览器/小程序无法直接读取操作系统字体轮廓。已确认方向：引擎不内置 CJK 字体，通过 `FontProvider` 或 `supplementaryFonts` 由宿主补充；包体积和授权压力留在宿主侧。
 7. **标准与实现存在若干冲突**（Alpha 默认值、MiterLimit 默认值、层顺序、负尺寸 Boundary、缺失 CTM 的图片等）。本方案在“标准优先、兼容真实文件”的原则下逐项给出明确口径；仍未定的只剩宿主字体清单、径向渐变 v2 时间和 TIFF 真实样本。
 8. **注释、复合对象、底纹共用“独立空间块”**：先在块内坐标记录显示列表，再整体映射回页面；同一红章/水印的显示列表可跨位置、跨页复用，group 合成由 renderer 内部处理。不要把注释外观写成单独的绘制循环。
@@ -2367,8 +2368,7 @@ export interface CacheOptions {
   textPages?: number;               // 文本层 mm 缓存页数，默认 4（r9）
 }
 
-export interface OFDOpenOptions {
-  source: OFDSource;
+export interface OFDOpenBaseOptions {
   documentIndex?: number;              // 默认 0
   limits?: Partial<ResourceLimits>;
   supplementaryFonts?: FontInput[];    // 宿主补充的字体，按需用于缺字/缺字体
@@ -2379,19 +2379,26 @@ export interface OFDOpenOptions {
   cache?: Partial<CacheOptions>;
   strictImageCtm?: boolean;            // 默认 true（identity 1×1）；false 才铺满 Boundary
   layerOrder?: 'document' | 'type';    // 默认 type（先类型后出现顺序）
-  /** 渲染器扩展点；默认 H5Canvas2DRenderer，普通用户无需传 */
-  renderer?: Renderer;
-  /**
-   * 临时画布工厂；供默认 H5 渲染器、矢量签章嵌套渲染和 page.exportImage 使用。
-   * 页面 render 传了 renderer 时以 renderer 为准；exportImage 仍使用本工厂。
-   * 未注入时走 document/OffscreenCanvas；参数/返回值单位均为像素。
-   */
+  renderer?: Renderer;                 // 渲染器扩展点；默认 H5Canvas2DRenderer
   createCanvas?: (width: number, height: number) => Canvas2DLike;
-  /**
-   * 页面图片编码钩子，供 page.exportImage 使用；不传时浏览器走
-   * canvas.convertToBlob/toBlob，Node/小程序宿主必须注入。
-   */
   encodeImage?: (canvas: CanvasImageEncodeSource, format: PageImageFormat, quality: number) => Promise<Uint8Array>;
+}
+
+export interface OFDOpenOptions extends OFDOpenBaseOptions {
+  /** 默认 ZIP/容器工厂的来源；必填，既有调用不变。 */
+  source: OFDSource;
+  /** 已构造好的明文容器；与 containerFactory 互斥，engine 借用不关闭。 */
+  container?: VirtualContainer;
+  /** engine 调用并拥有的容器工厂；与 container 互斥，source 作为输入。 */
+  containerFactory?: VirtualContainerFactory;
+}
+
+export interface OFDOpenFromContainerOptions extends OFDOpenBaseOptions {
+  /** 宿主借用的明文容器；必填，encrypted=false 且 read() 返回明文。 */
+  container: VirtualContainer;
+  /** 可选宿主上下文；engine 不打开、不关闭。 */
+  source?: OFDSource;
+  containerFactory?: never;
 }
 
 export type OFDSource =
@@ -2470,7 +2477,7 @@ export class H5Canvas2DRenderer implements Renderer {
 }
 
 export class OFDDocument {
-  static open(options: OFDOpenOptions): Promise<OFDDocument>;
+  static open(options: OFDOpenOptions | OFDOpenFromContainerOptions): Promise<OFDDocument>;
 
   /** 页数，打开后立即可用 */
   readonly pageCount: number;
@@ -2529,14 +2536,14 @@ export class OFDDocument {
 
 ### 15.1.2 阅读器 UI API（r9/r10）
 
-面向 `@ofdrw/ofdrw-viewer-ui` 的 P0/P1/P2 数据读取接口；完整字段/单位/错误见 `docs/公开API.md` §3/§4 与 `docs/ofdrw-viewer-ui-engine-api.md`。
+面向 `@ofdrw/ofdrw-viewer-ui` 的 P0/P1/P2 数据读取接口；完整字段/单位/错误见 `packages/ofdrw-viewer-engine/skills/公开API.md` §3/§4 与 `docs/ofdrw-viewer-ui-engine-api.md`。
 
 | 优先级 | API | 说明 |
 | --- | --- | --- |
 | P0 | `document.getPageInfos(options?)` | 页尺寸/页区域，mm；只读页头，不 prepare |
 | P0 | `document.getOutline/getBookmarks(options?)` | 大纲/书签及跳转目标，mm；无结果空数组 |
 | P0 | `document.getSignatureEntries(options?)` | 签章 XML 元数据、页面戳记，mm；只读 XML |
-| P0 | `document.getSignedValue(id, options?)` | SignedValue.dat 原始字节；UI 侧解析 ASN.1 |
+| P0 | `document.getSignedValue(id, options?)` | SignedValue.dat 原始字节；由 crypto 解析 ASN.1/电子印章 |
 | P0 | `page.getTextContent(options?)` | 文本层，px；复用 layoutText，不调用 Canvas 文字 API |
 | P1 | `document.getMetadata(options?)` | DocInfo/版本/页数，日期保留原文 |
 | P1 | `page.prepare(options?)` | 预取页面资源，不创建 canvas、不绘制 |
@@ -2547,8 +2554,8 @@ export class OFDDocument {
 
 边界：
 
-- 引擎不解析 `SignedValue.dat` 的 ASN.1/DER/X.509/CMS，不验签、不判断证书/签章有效性；ASN.1 是 UI 包的依赖。
-- `Seal.esl` 不进入公开 API；印章信息由 UI 从 `SignedValue.dat` 的 `TBS_Sign.eseal` 获取。引擎内部签章外观渲染可读 `Seal.esl`，不属于本 API。
+- 引擎不解析 `SignedValue.dat` 的 ASN.1/DER/X.509/CMS，不验签、不判断证书/签章有效性；密码学验证与电子印章解析由独立包 `@ofdrw/ofdrw-viewer-crypto` 负责，UI/CLI 消费其报告。
+- `Seal.esl` 不进入 engine 公开 API；印章信息由 crypto 的 `parseSeal`/`verifyOfd` 从 `Seal.esl` 或 `TBS_Sign.eseal` 解析。引擎内部签章外观渲染仍可读 `Seal.esl`，不属于本 API。
 - `getSignatureEntries` 只返回 `Signature.xml` 元数据；`getSignedValue` 只返回原始字节；未声明/文件缺失返回 `undefined`，不抛 `OFD_ENTRY_NOT_FOUND`。
 - 文本层几何 px，内部 mm 缓存；`CacheOptions.textPages` 默认 4，缓存键不含 dpi；超限截断 + `W_TEXT_ITEM_LIMIT`/`W_TEXT_CHAR_LIMIT`。
 - 取消统一 `OFD_ABORTED`、关闭 `OFD_CLOSED`；可选数据缺失返回空数组/`undefined`，不是错误。
@@ -2560,6 +2567,38 @@ export class OFDDocument {
 - **附件**：`getAttachments` 按需解析 `Attachments.xml` 并缓存元信息；`Size` 按 GB/T 33190 的 KB ×1024 换算为 byte；`Visible` 缺省 true、`Usage` 缺省 `none`；不暴露 `FileLoc`。`getAttachmentData` 返回原始 `Uint8Array`，不解析附件内容；不存在/文件缺失 warning `W_ATTACHMENT_RESOURCE` 后返回 `undefined`，包级错误原样抛出。字段/路径非法 warning `W_ATTACHMENT_FIELD`。
 - **导出旋转**：`exportImage({ rotation })` 只改变最终图片方向，不改变 `page.render`/页面模型；90/270 宽高互换；非法值 warning `W_BAD_NUMBER` 后回退 0。
 - **局部渲染**：用户决定不实现 `page.renderRegion`，不进入 `src/index.ts` 与 `OFDPage`；未来若排期需重新评审，保持整页图层/对象顺序，仅改变 CTM/clip。
+
+### 15.1.4 虚拟容器与加密文档（v2.0-r1）
+
+`packages/ofdrw-viewer-engine/src/platform/virtual-container.ts` 定义并导出统一只读容器；默认实现为 ZIP 容器，所有 engine 读取路径（OFD.xml、Document.xml、页面、资源、字体、图片、签章、印章、附件、嵌套章）都必须经 `container.read`，不得保留 `ZipReader` 直读旁路。
+
+```ts
+export interface VirtualContainer {
+  readonly packageSize: number; // 原始包字节数，单位 byte；解密容器保留加密源大小
+  readonly encrypted: boolean;  // true=raw package container；false=明文容器
+  list(): readonly VirtualFileMeta[];
+  has(path: string): boolean;
+  stat(path: string): VirtualFileMeta | undefined;
+  read(path: string, options?: VirtualReadOptions): Promise<Uint8Array>;
+  close(): Promise<void>;
+}
+
+export interface OpenZipVirtualContainerOptions {
+  limits?: Partial<ResourceLimits>; // 仅 ZIP 相关限制；大小单位 byte
+}
+
+export function openZipVirtualContainer(
+  source: OFDSource,
+  options?: OpenZipVirtualContainerOptions,
+): Promise<VirtualContainer>;
+```
+
+- `openZipVirtualContainer` 返回 **raw package container**：它是默认 ZIP 容器，`encrypted=false` 的明文包可直接注入；加密包 `encrypted=true` 时 `read()` 可能返回密文，只能检查/交给 crypto 解密。
+- 明文容器必须 `encrypted=false` 且 `read()` 返回明文；把它注入 `OFDDocument.open` 才能保证页面读取的是明文。`OFDDocument.open` 对 `encrypted=true` 的容器抛 `OFD_ENCRYPTED`。
+- 打开参数：`OFDOpenOptions` 的 `source` 必填；纯容器用 `OFDOpenFromContainerOptions`（`container` 必填、`source` 可选上下文）。`container` 与 `containerFactory` 互斥。
+- 所有权：`container` 为宿主借用，engine 不关闭，`close()` 只清引用；`containerFactory` 返回的容器归 engine 拥有并在打开失败/`close()` 时关闭；默认 ZIP 容器由 engine 拥有。
+- 取消：`VirtualReadOptions.signal` 取消本次读取；engine 高层读取合并宿主/close signal，共享加载只受 close 控制，单个调用方取消不中止其他等待方。
+- 错误：缺失 `OFD_ENTRY_NOT_FOUND`、超限 `OFD_LIMIT_EXCEEDED`、关闭 `OFD_CLOSED`、取消 `OFD_ABORTED`、未知压缩 `OFD_UNSUPPORTED_COMPRESSION`；容器构造失败按 `OFD_INVALID_PACKAGE` 映射。完整契约见 [CONTRACTS 第 13 章](./CONTRACTS.md#133-engine-公共-virtualcontainer冻结) 与 [密码能力设计方案](./ofdrw-viewer-crypto设计方案.md)。
 
 ### 15.2 为什么用 `page.getViewport`
 

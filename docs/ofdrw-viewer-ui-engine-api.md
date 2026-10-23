@@ -2,19 +2,19 @@
 
 | 项 | 内容 |
 |---|---|
-| 状态 | 已确认并实现（P0/P1 + P2 权限/附件/导出旋转；renderRegion 暂不实现） |
-| 版本 | 0.3 |
-| 日期 | 2026-10-22 |
+| 状态 | 已确认并实现（P0/P1 + P2 权限/附件/导出旋转；renderRegion 暂不实现）；R1 容器/crypto 边界已同步 |
+| 版本 | 0.4-r1 |
+| 日期 | 2026-10-23 |
 | 使用方 | `@ofdrw/ofdrw-viewer-ui` |
 | 提供方 | `@ofdrw/ofdrw-viewer-engine` |
 | 关联设计 | [ofdrw-viewer-ui 设计方案](./ofdrw-viewer-ui设计方案.md) |
-| 核心边界 | 引擎只负责**从 OFD 容器读取数据、结构化为对象信息、返回原始字节**；不解析电子签章，不做 ASN.1/X.509/证书链/签名值/时间戳验证，不负责 UI |
+| 核心边界 | 引擎负责**从 OFD 明文容器读取数据、结构化为对象信息、返回原始字节**；不解析电子签章，不做 ASN.1/X.509/证书链/签名值/时间戳验证，不负责 UI。电子印章/解密/验签由 `@ofdrw/ofdrw-viewer-crypto` 提供，UI 消费其 `VerificationReport` |
 
 ## 0. 边界声明
 
 ### 0.1 引擎做什么
 
-- 打开/关闭 OFD 容器，读取 ZIP 条目。
+- 打开/关闭 OFD 明文容器，读取包内条目；支持默认 ZIP、宿主注入容器和容器工厂。
 - 解析 OFD XML（`Document.xml`、`Page.xml`、`Signatures.xml`、`Signature.xml`、`OFD.xml` 等）为**对象信息**。
 - 提供页面尺寸、页面文本/空间信息、大纲、书签、签章 XML 元数据、原始签章资源字节、文档元数据、权限、附件。
 - 复用现有渲染管线绘制页面和签章外观。
@@ -22,7 +22,7 @@
 ### 0.2 引擎不做什么
 
 - **不解析 `SignedValue.dat` 的 ASN.1 结构**；不解析 DER/BER、X.509 证书、CMS/SES 字段。
-- 不把 `Seal.esl` 作为公开资源；印章信息由 UI 从 `SignedValue.dat` 的 `TBS_Sign.eseal` 获取。
+- 不把 `Seal.esl` 作为 engine 公开资源；电子印章由 crypto 的 `parseSeal`/`verifyOfd` 解析，UI 直接消费结构化结果。
 - 不判断签章时间、签署人、证书主题、印章类型、签章有效性。
 - 不做证书链、CRL/OCSP、时间戳、签名值验证。
 - 不实现阅读器 UI、布局、缩放、打印编排；提供整页 `exportImage`（含可选导出旋转），但不负责阅读器交互旋转/裁剪。
@@ -36,23 +36,49 @@
   SignedValue.dat 原始字节
         │
         ▼
-@ofdrw/ofdrw-viewer-ui 的 SignatureService：
-  ASN.1 解析 SES_Signature
-  从 TBS_Sign.eseal 取印章信息
-  X.509 证书解析
-  字段映射、格式化、错误降级
+@ofdrw/ofdrw-viewer-crypto：
+  SES v1/v4/v5 解析与验签
+  Seal.esl / TBS_Sign.eseal 电子印章解析
+  证书链/信任根/有效期、防夹带完整性、时间戳只解析
         │
         ▼
-UI：签章列表、页面覆盖层、详情面板、“未验证”标识
+@ofdrw/ofdrw-viewer-ui：
+  CryptoService/SignatureService 消费报告
+  签章列表、页面覆盖层、验证面板、印章浮层
 ```
 
-这样引擎不依赖 `asn1js` / `asn1.js` / `@peculiar/*`，包体和职责都更小；签章格式差异由 UI 侧处理。
+这样 engine 不依赖 `asn1js`/`asn1.js`/`@peculiar/*` 或 SM 算法，包体和职责更小；UI 不再维护第二套 ASN.1/验签路径，统一消费 crypto 报告。
 
 > 为什么只返回 `SignedValue.dat`：v1/v4/v5 的 `TBS_Sign` 都包含 `eseal`，印章信息（名称/类型/图片等）可以从 `SignedValue.dat` 得到，因此不需要再单独读取 `Seal.esl`。`Seal.esl` 仅保留给引擎渲染外观的内部路径使用，不进入公开 API。
 
-> 说明：引擎现有的 `decodeSealImage` 为了**渲染签章外观**可能读取 `Seal.esl`；这属于渲染路径，不是本次公开的签章信息 API。
+> 说明：引擎现有的 `decodeSealImage` 为了**渲染签章外观**可能读取 `Seal.esl`；这属于渲染路径，不是本次公开的签章信息 API。电子印章元信息/验签统一由 crypto 处理。
 
 ---
+
+## 0.4 打开方式与虚拟容器
+
+`OFDDocument.open` 支持两种参数：
+
+- `OFDOpenOptions`：`source` 必填，使用默认 ZIP 或可选 `containerFactory`；容器工厂返回的容器归 engine 拥有。
+- `OFDOpenFromContainerOptions`：`container` 必填、`source` 可选上下文；纯容器打开使用，engine 借用容器不关闭。
+
+```ts
+import { OFDDocument, openZipVirtualContainer } from '@ofdrw/ofdrw-viewer-engine';
+
+const container = await openZipVirtualContainer({ kind: 'arraybuffer', data: bytes });
+try {
+  const doc = await OFDDocument.open({ container });
+  try { /* doc.getPage... */ } finally { await doc.close(); }
+} finally {
+  await container.close();
+}
+```
+
+- `openZipVirtualContainer` 是 **raw package container**：明文包 `encrypted=false` 可直接注入；加密包 `encrypted=true` 的 `read()` 可能返回密文，`OFDDocument.open` 抛 `OFD_ENCRYPTED`，应先交给 crypto 解密。
+- 明文容器必须 `encrypted=false` 且 `read()` 返回明文；`containerFactory` 与 `container` 互斥。
+- 借用容器在 `doc.close()` 后只清 engine 引用，宿主负责 `await container.close()`；工厂/默认 ZIP 容器由 engine 关闭。
+- `VirtualReadOptions.signal` 取消本次读取；engine 合并宿主/close signal，共享加载不会被单个调用方取消。
+- 详细签名/所有权见 [CONTRACTS 第 13 章](./CONTRACTS.md#133-engine-公共-virtualcontainer冻结) 与 [引擎设计 15.1.4](./OFD渲染引擎设计方案.md#1514-虚拟容器与加密文档v20-r1)。
 
 ## 1. API 总览
 
@@ -749,7 +775,7 @@ interface PageImageExportOptions {
 - `getMetadata` 已接入 `DocInfo` 解码；`CT_DocInfo` 字段注意 `Title`（ofdrw 的 `getTile` 是拼写问题，不是字段名）。
 - `getPermissions`/`getAttachments` 已实现且为加法，不影响现有打开流程；`getAttachmentData` 按需读取，不解析内容。
 - `exportImage.rotation` 在导出侧二次绘制，仅改变输出方向；正常 `page.render` 不变。`renderRegion` 不实现、不导出。
-- 不要为了这些 API 在引擎里引入 `asn1js`/`asn1.js`/`@peculiar/*`；ASN.1 是 UI 包的依赖。
+- 不要为了这些 API 在引擎里引入 `asn1js`/`asn1.js`/`@peculiar/*`；ASN.1/电子印章/验签统一由 `@ofdrw/ofdrw-viewer-crypto` 负责，UI 不再维护第二套 ASN.1 依赖。
 
 ### 16.3 测试夹具
 
@@ -785,8 +811,8 @@ interface PageImageExportOptions {
 
 ### 18.1 已确认
 
-- 引擎不解析电子签章；只提供 `Signature.xml` 元数据和 `SignedValue.dat` 原始字节。
-- `Seal.esl` 不进入公开 API；v1/v4/v5 的 `TBS_Sign.eseal` 已包含印章信息，UI 从 `SignedValue.dat` 解析即可。
+- 引擎不解析电子签章；只提供 `Signature.xml` 元数据和 `SignedValue.dat` 原始字节，电子印章/验签由 `@ofdrw/ofdrw-viewer-crypto` 提供。
+- `Seal.esl` 不进入 engine 公开 API；crypto 的 `parseSeal`/`verifyOfd` 负责解析 `Seal.esl`/`TBS_Sign.eseal`，UI 消费结构化结果。
 - 只保留 `getSignedValue(id, options?)`，不接受 `kind`；`SignedValue.dat` 缺失时返回 `undefined`，不回退读取 `Seal.esl`。
 - 未声明 `SignedValue` 返回 `undefined` 且不 warning；声明但文件缺失返回 `undefined` + `W_SIGNATURE_RESOURCE`，不抛 `OFD_ENTRY_NOT_FOUND`。
 
@@ -813,4 +839,4 @@ interface PageImageExportOptions {
 | `exportImage.rotation` | 已实现（P2） | 0/90/180/270；仅导出方向；90/270 宽高互换；非法值 `W_BAD_NUMBER` 回退 0 |
 | `renderRegion` | **暂不实现/无排期** | 不导出、不在 `OFDPage` 上；UI 不得依赖 |
 
-边界复核：引擎不新增 ASN.1/X.509/CMS 依赖；`Seal.esl` 不进入公开 API；`SignedValue.dat` 只作为原始字节返回。公开文档以 `docs/公开API.md` 和 `src/index.ts` 为准。
+边界复核：引擎不新增 ASN.1/X.509/CMS 依赖；`Seal.esl` 不进入 engine 公开 API；`SignedValue.dat` 只作为原始字节返回。电子印章、解密和验签由 `@ofdrw/ofdrw-viewer-crypto` 负责，公开文档以 `packages/ofdrw-viewer-engine/skills/公开API.md`、`packages/ofdrw-viewer-crypto/skills/公开API.md` 和 `src/index.ts` 为准。

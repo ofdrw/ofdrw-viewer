@@ -1,9 +1,9 @@
-# OFD 渲染引擎跨模块契约（v1.0，T1 冻结）
+# OFD 渲染引擎跨模块契约（v1.0-r12，T1 冻结）
 
 > 适用范围：`@ofdrw/ofdrw-viewer-engine` v1（Web 优先）。
-> 依据：`docs/OFD渲染引擎设计方案.md` v0.4 第 6/8/10/14/15/19 节。
+> 依据：`docs/OFD渲染引擎设计方案.md` v0.5-r12 第 6/8/10/14/15/19 节。
 > 冻结时间：T1 完成时。冻结后本文件与下列公共契约文件只读；变更必须先由架构负责人（architect）评估并同步 captain。
-> 最近修订：v1.0-r11（2026-10-22，t94/t96）。
+> 最近修订：v1.0-r12（2026-10-23，R1 文档同步）。
 
 ## 1. 冻结范围与变更规则
 
@@ -725,3 +725,212 @@ interface Clip {
 | v1.0-r2 | T6a | 依据 GB/T 33190—2016 CT_ImageObject 与设计方案 8.2，纠正 `ImageObject.substitution/imageMask` 为可选 `ResourceId`（`ST_RefID`）；T6a 通过 `ImageDrawContext.substitutionMode/dpi` 实现 auto/always/never |
 | v1.0-r1 | T1 | 按 T3 反馈补齐：`PatternSpec.cell/styleRoot/tile`、`IndependentBlock.boundary/displayList`、`CommonData.defaultColorSpaceId`、`DocumentModel.templatePages/pageAnnotIndex/annotationsFile`、`ResourceIndex.colorSpaces/defaultColorSpace`、`DecodeOptions` 末位参数、`decodeAnnotationsIndex`、`flattenPageTree` options；`ImageObject.substitution/imageMask` 定为 boolean；`TemplateRef.zOrder` 改为可选 |
 | v1.0 | T1 | 初始冻结：工程骨架、模块接口、错误/warning 码、并行规则 |
+
+## 13. 密码能力模块契约（v2.0-r1，R1 冻结）
+
+> 本章为 `@ofdrw/ofdrw-viewer-crypto` 的增量契约，不改变第 1–12 章已冻结的 engine/UI/CLI 行为。详细设计、算法分支、UI 交互、CLI 输出与验收见 `docs/ofdrw-viewer-crypto设计方案.md`；两者冲突时以本章的接口/依赖/归属约束为准，算法细节以设计方案为准并由 architect 同步修正。
+
+### 13.1 包与职责
+
+| 项 | 冻结值 |
+|---|---|
+| 包名 | `@ofdrw/ofdrw-viewer-crypto` |
+| 目录 | `packages/ofdrw-viewer-crypto/` |
+| 版本 | `0.1.0`，与 engine/UI/CLI 同批发布 |
+| 职责 | 加密 OFD 检测/解密、SES v1/v4/v5 与 SignedValue 解析验签、电子印章解析、防夹带完整性、证书链/信任根/有效期、时间戳仅解析、明文 `VirtualContainer` 工厂 |
+| 非职责 | 页面渲染、Canvas、字体/图片解码、UI 组件、CLI 参数解析、独立 decrypt 命令、时间戳 TSA 验签、CRL/OCSP |
+| 公共入口 | `src/index.ts`；内部模块不得从包根导出 |
+
+### 13.2 依赖方向（硬约束）
+
+```text
+@ofdrw/ofdrw-viewer-engine
+          ↑
+@ofdrw/ofdrw-viewer-crypto
+          ↑
+@ofdrw/ofdrw-viewer-ui      @ofdrw/ofdrw-viewer-cli
+```
+
+- engine **不得**依赖/导入 crypto，不得包含 SM2/SM3/SM4/ASN.1 验签实现；engine 只定义并消费 `VirtualContainer`。
+- crypto **不得**依赖 ui/cli，不得导入 DOM、`node:*`、`fs`、`path`、Canvas；只依赖 engine 公共 API + `sm-crypto`/`fflate`/ASN.1/XML 纯 JS 库。
+- UI/CLI 依赖 crypto；UI 迁移后不得保留第二套 ASN.1 验签路径；CLI 不直接调用 `sm-crypto`。
+- 新增依赖只能来自设计方案 §1.3；新增依赖须先改本章与设计方案并通知 captain/architect。
+
+### 13.3 engine 公共 `VirtualContainer`（冻结）
+
+文件：`packages/ofdrw-viewer-engine/src/platform/virtual-container.ts`，从包根导出。
+
+```ts
+export interface VirtualFileMeta {
+  readonly path: string;
+  readonly size: number;
+  readonly compressedSize?: number;
+  readonly compression?: 'stored' | 'deflate';
+  readonly origin?: 'package' | 'decrypted' | 'generated';
+}
+
+export interface VirtualReadOptions {
+  readonly maxBytes?: number;
+  readonly signal?: AbortSignal;
+  readonly onWarning?: (warning: OFDWarning) => void;
+  readonly verifyChecksum?: boolean;
+}
+
+export interface VirtualContainer {
+  readonly packageSize: number;
+  readonly encrypted: boolean;
+  list(): readonly VirtualFileMeta[];
+  has(path: string): boolean;
+  stat(path: string): VirtualFileMeta | undefined;
+  read(path: string, options?: VirtualReadOptions): Promise<Uint8Array>;
+  close(): Promise<void>;
+}
+
+export type VirtualContainerFactory = (
+  source: OFDSource,
+) => Promise<VirtualContainer>;
+
+export interface OpenZipVirtualContainerOptions {
+  limits?: Partial<ResourceLimits>;
+}
+
+export function openZipVirtualContainer(
+  source: OFDSource,
+  options?: OpenZipVirtualContainerOptions,
+): Promise<VirtualContainer>;
+```
+
+- 容器有两种角色：**raw package container**（`encrypted=true`，`read()` 返回存仓原始字节，加密包可能为密文，只能检查/解密）与**明文容器**（`encrypted=false`，`read()` 返回明文，可注入 engine）。不得把 raw 容器直接注入 `OFDDocument`。
+- `packageSize` 为原始包字节数；解密容器保留加密源大小；`metadata.packageSize` 取该值。
+- `list()` 按规范化 path 升序、不含目录；明文容器 `read()` 返回明文；raw 容器 `read()` 可能返回密文。
+- `has/stat` 对非法/不存在路径返回 false/undefined；`read/list` 关闭后抛 `OFD_CLOSED`；缺失抛 `OFD_ENTRY_NOT_FOUND`；超限抛 `OFD_LIMIT_EXCEEDED`；取消抛 `OFD_ABORTED`。
+- `VirtualReadOptions.signal` 透传取消；engine 高层读取合并宿主 signal，单个等待方取消只影响本次等待，不得中止其他调用方的共享加载；`close()` 中止全部。`close()` 幂等；关闭后 `read/list` 抛 `OFD_CLOSED`。
+- `encrypted` 仅表示容器内存在 `Encryptions.xml`（未解密 OFD 加密元数据）；crypto 解密容器固定 `false`。
+- 默认 ZIP 容器由 `openZipVirtualContainer` 构造（包装 `ByteSource`/`ZipReader`，保留资源限制/CRC/warning）；`encrypted=true` 的容器 `OFDDocument.open` 在解析 XML 前抛 `OFD_ENCRYPTED`；明文包 `encrypted=false` 可直接注入。
+
+### 13.4 注入、所有权与生命周期（冻结）
+
+`OFDOpenBaseOptions` 是 engine 既有公共基础选项（`documentIndex`/`limits`/字体/图片解码/渲染器/缓存/warning 等），本处不重复展开，只冻结 source/container 注入差异。
+
+```ts
+export interface OFDOpenOptions extends OFDOpenBaseOptions {
+  /** 默认 ZIP/容器工厂的字节来源；必填。 */
+  source: OFDSource;
+  /** 已构造好的明文容器；与 containerFactory 互斥。 */
+  container?: VirtualContainer;
+  /** engine 调用并拥有的容器工厂；与 container 互斥，source 作为工厂输入。 */
+  containerFactory?: VirtualContainerFactory;
+}
+
+export interface OFDOpenFromContainerOptions extends OFDOpenBaseOptions {
+  /** 宿主借用的明文容器；必填，encrypted=false 且 read() 返回明文。 */
+  container: VirtualContainer;
+  /** 可选宿主上下文；engine 不打开、不关闭。 */
+  source?: OFDSource;
+  containerFactory?: never;
+}
+
+static open(options: OFDOpenOptions | OFDOpenFromContainerOptions): Promise<OFDDocument>;
+```
+
+规则：
+
+1. `OFDOpenOptions.source` 必填，保持既有 `source` 调用兼容；纯容器打开使用 `OFDOpenFromContainerOptions`，其 `container` 必填、`source` 可选。
+2. `container` 与 `containerFactory` 互斥；同时出现抛 `OFD_INVALID_PACKAGE`。纯容器模式不提供工厂。
+3. 无注入时 engine 打开 source 并创建默认 ZIP 容器，行为与既有版本完全一致；默认 ZIP 容器由 engine 拥有并在 `close()` 关闭。
+4. `container` 为**宿主借用**：engine 不关闭；宿主在 `doc.close()` 后自行 `await container.close()`；同一容器可复用。
+5. `containerFactory` 返回的容器归 engine 拥有；打开失败/`doc.close()` 时 engine 关闭容器；source 所有权随工厂。
+6. `container` + `source` 同时出现时 engine 不打开 source，只用容器；source 不由 engine 关闭。
+7. engine 只在 `OFDDocument.close()` 中先中止渲染/读取，再关闭自有容器，再释放字体/图片/渲染器；借用容器只清引用。
+8. 注入 `encrypted=true` 容器抛 `OFD_ENCRYPTED`，要求先用 crypto 解密；所有 engine 读取路径（OFD.xml/Document.xml/资源/页面/字体/图片/签名/印章/附件/嵌套章）必须经 `container.read`，不得保留 `ZipReader` 直读旁路。
+
+### 13.5 crypto 公共 API（冻结签名）
+
+```ts
+export type CryptoSource =
+  | { readonly kind: 'arraybuffer'; readonly data: ArrayBuffer | Uint8Array }
+  | { readonly kind: 'blob'; readonly blob: Blob }
+  | { readonly kind: 'url'; readonly url: string; readonly headers?: Record<string, string> };
+
+export type CryptoCredential = PasswordCredential | PrivateKeyCredential;
+
+export function inspect(
+  source: CryptoSource,
+  options?: CryptoOptions,
+): Promise<OfdInspection>;
+
+export function openDecryptingContainer(
+  options: OpenDecryptingContainerOptions,
+): Promise<DecryptingContainerResult>;
+
+export function verifyOfd(options: VerifyOfdOptions): Promise<VerificationReport>;
+
+export function parseSignedValue(
+  data: Uint8Array,
+  options?: ParseOptions,
+): ParsedSignedValue;
+
+export function parseSeal(data: Uint8Array, options?: ParseOptions): ParsedSeal;
+
+export function parseTimestamp(
+  data: Uint8Array,
+  options?: ParseOptions,
+): TimestampParseResult;
+```
+
+关键类型名冻结：`CryptoOptions`、`CryptoLimits`、`DEFAULT_CRYPTO_LIMITS`、`CryptoSource`、`CryptoCredential`、`Sm2PrivateKeyInput`、`CertificateInput`、`OfdInspection`、`DecryptingContainerResult`、`VerificationReport`、`VerificationStatus`、`ChainStatus`、`TimestampStatus`、`SignatureVerification`、`IntegrityVerification`、`CertificateChainVerification`、`SealVerification`、`ParsedSeal`、`SealPictureInfo`、`ParsedSignedValue`、`TimestampParseResult`、`CertificateSummary`、`X509Certificate`、`CryptoWarning`。
+
+入口语义：
+
+- `inspect` 只查询，不解密/不验证；加密包也返回层/用户。
+- `openDecryptingContainer` 明文包原样透传；加密包需要凭据；返回 `VirtualContainer` 且 `encrypted=false`、`packageSize` 保留原始大小。
+- `verifyOfd` 的 `source`/`container` 二选一；`container.encrypted=true` 拒绝，要求先解密；加密 source 内部解密后验证。
+- `parseSeal` 返回 `ParsedSeal`：含 `picture?`、`timestamp`、`warnings`（图片损坏等用 `W_CRYPTO_SEAL_PICTURE_INVALID`）与 `byteLength`；`ParsedSeal.warnings` 不改变 `hasSignature`，解析成功不等于验签通过。`X509Certificate.subjectDer/issuerDer` 为链匹配保留原始 Name DER，不进入 `CertificateSummary`。
+- `parseTimestamp` 固定 `status='parsed-not-verified'`（或 `not-present`/`parse-error`），永不返回“已验证”。
+- 验证报告 `overall` 仅用 `valid/invalid/unknown/not-applicable/unsupported`；时间戳不参与聚合。
+- 无 `OFDEntries.xml`+`signedvalue.dat` 时 `integrity=null`（未保护），`package.integrityPresent=false`；不得把它当成 valid。
+- 未配置信任根时 `rootsConfigured=false`、链状态 `unknown`；配置根但缺 issuer/中间证书为 `incomplete`，终点不是配置根为 `untrusted`。
+
+### 13.6 错误码、warning 与 UI/CLI 映射（冻结）
+
+`CryptoErrorCode` 冻结为设计方案 §3.7 的并集，包括：`CRYPTO_INVALID_ARGUMENT`、`CRYPTO_CREDENTIALS_REQUIRED`、`CRYPTO_SOURCE_UNSUPPORTED`、`CRYPTO_LIMIT_EXCEEDED`、`CRYPTO_ABORTED`、`CRYPTO_INVALID_PACKAGE`、`CRYPTO_NOT_ENCRYPTED`、`CRYPTO_UNSUPPORTED_ENCRYPTION`、`CRYPTO_ENTRY_MAP_INVALID`、`CRYPTO_DECRYPT_FAILED`、`CRYPTO_DECRYPT_LAYER_LIMIT`、`CRYPTO_LAYER_LOOP`、`CRYPTO_USER_NOT_FOUND`、`CRYPTO_USER_AMBIGUOUS`、`CRYPTO_WRONG_PASSWORD`、`CRYPTO_PRIVATE_KEY_INVALID`、`CRYPTO_PRIVATE_KEY_PASSPHRASE_REQUIRED`、`CRYPTO_PRIVATE_KEY_UNSUPPORTED_ENCRYPTION`、`CRYPTO_PRIVATE_KEY_MISMATCH`、`CRYPTO_ASN1_INVALID`、`CRYPTO_UNSUPPORTED_SES_VERSION`、`CRYPTO_UNSUPPORTED_ALGORITHM`、`CRYPTO_CERTIFICATE_INVALID`、`CRYPTO_TRUST_ROOT_INVALID`、`CRYPTO_INTEGRITY_INVALID`、`CRYPTO_SIGNATURE_INVALID`、`CRYPTO_TIMESTAMP_PARSE`。
+
+`CryptoWarningCode` 冻结为设计方案 §3.7 的并集，含 `W_CRYPTO_DUPLICATE_USER`、`W_CRYPTO_CREDENTIAL_IGNORED`、`W_CRYPTO_ENTRIES_MAP_PLAINTEXT`、`W_CRYPTO_ENTRY_MAP_INVALID`、`W_CRYPTO_KEY_USAGE_MISSING`、`W_CRYPTO_MULTI_LAYER`、`W_CRYPTO_TIMESTAMP_PARSE`、`W_CRYPTO_TIMESTAMP_IMPRINT_MISMATCH`、`W_CRYPTO_UNKNOWN_SES_VERSION`、`W_CRYPTO_REFERENCE_UNSUPPORTED`、`W_CRYPTO_SEAL_PICTURE_INVALID`、`W_CRYPTO_TRUST_UNKNOWN`、`W_CRYPTO_CERT_SOURCE_UNSUPPORTED`。
+
+映射：
+
+- UI 新增 `OFD_CRYPTO_CREDENTIAL_REQUIRED`、`OFD_CRYPTO_CANCELLED`、`OFD_CRYPTO_UNSUPPORTED`、`OFD_CRYPTO_FAILED`；凭据弹窗重试，取消保留旧文档。
+- CLI 新增退出码 4（加密/凭据失败）与 5（验证未通过：invalid/unknown/unsupported/not-applicable）；既有 0/1/2/3/130 不变。
+- CLI `info` 只查询，不接受凭据/根参数；`verify` 一次性执行完整性+签名；不提供 `decrypt` 子命令。
+- 任何错误/报告/日志不得包含口令、私钥、PEM、`EncryptedWK`；UI/DOM/localStorage 同样禁止。
+
+### 13.7 UI/CLI 契约要点（冻结）
+
+- UI 新选项 `crypto?: CryptoViewerOptions`，含 `enabled/credentials/autoPrompt/rootCertificates/certificateLoader/autoVerify/onVerification/onCredentialRequired`；`CertificateSource` 对齐 FontInput 的 `data/url/path/filePath` 与 loader。
+- UI 打开流程：`inspect` → 加密则登录弹窗/预置凭据 → `openDecryptingContainer` → `OFDDocument.open({ container })`；失败可重试/取消；取消 `OFD_CRYPTO_CANCELLED`。
+- UI 工具栏新增 `verification` feature、验证面板、印章点击浮层、根证书配置；时间戳固定 `parsed-not-verified` +“已解析，未验证”；无根显示 `unknown`。
+- UI `setRootCertificates`/`getRootCertificates`/`verify`/`getVerificationReport` 与 `verificationcompleted` 事件按设计方案 §6.1。
+- CLI 命令：`info <input> [--json]`、`verify <input> [凭据/--root] [--json]`、既有 `<input> [转图片参数] [凭据]`；加密转图片参数为 `--user/--password/--key/--key-passphrase`。
+- CLI `info` 加密包退出 0（查询成功）；`verify` 只有 `overall=valid` 退出 0；无根 unknown 退出 5。
+
+### 13.8 测试、夹具与文档
+
+- 夹具固定 `packages/ofdrw-viewer-crypto/test/fixtures/crypto/`：12 case、20 证书/私钥、`manifest.json`/`manifest.sha256`；生成/校验脚本 `scripts/crypto-fixtures/`；`verify-fixtures.sh` 必须退出 0。
+- 夹具全部为测试材料，README/manifest 标注 `testOnly`；生产密钥禁止入库；过期证书由测试内生成，不提交过期私钥。
+- engine 新增 VirtualContainer/所有权/OFD_ENCRYPTED/读取路径测试；既有 engine 测试必须全绿且默认行为不变。
+- UI Playwright 覆盖加密打开、错误重试、取消、验证面板、印章点击、根证书四态、无障碍；CLI acceptance 覆盖 JSON/退出码/无 decrypt。
+- 文档同步范围见设计方案 §9；新包 README 按 engine README 章节结构；根 README 必须增加 crypto 模块入口；CONTRACTS 本章为冻结依据。
+
+### 13.9 变更规则（v2.0-r1）
+
+1. 本章由 architect 维护；实现者只改 inScope，新增/修改公共字段、签名、错误码、warning 码、注入语义必须先改本章与设计方案并通知 captain/architect。
+2. 冻结文件只读；不得为实现方便回退既有 engine 公共行为（`source` 调用、错误码、packageSize、页面结果）。
+3. 跨模块修改先发消息给 owner 与 architect；不得直接改 `.agent-teams/`、`references/`、`src_material/`。
+4. 不新增未经批准的依赖；不执行 `git push`；测试结束关闭浏览器/服务并清理临时文件。
+5. 任何“time stamp verified/有效”的 UI/CLI 文案、把 unknown 当 invalid/valid、或无根却返回 valid 的实现，均视为验收失败。
+
+### 13.10 变更记录
+
+| 版本 | 任务 | 说明 |
+|---|---|---|
+| v2.0-r1 | R1/T2 | 新增 `@ofdrw/ofdrw-viewer-crypto` 模块契约；冻结 engine `VirtualContainer` 注入/所有权、crypto API/错误码、UI/CLI 密码能力与测试夹具要求 |

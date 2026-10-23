@@ -1,8 +1,8 @@
-# OFD 转图片与空间文本 CLI（ofdrw-viewer-cli）设计方案
+# OFD 转图片、加密查询与验签 CLI（ofdrw-viewer-cli）设计方案
 
-> 状态：设计定稿 v1.2（2026-10-22）
-> 定位：`@ofdrw/ofdrw-viewer-engine` 的 Node CLI 子包；消费 engine 公共 API，输出页面图片，并可通过 `--text` 额外导出带坐标的文本；发布为多平台自包含可执行文件，并配套仓库内 Agent skill。
-> 依据：《OFD 渲染引擎设计方案》v0.4 第 6.1/14.4/15 节、[`docs/text-content-api.md`](./text-content-api.md)。
+> 状态：设计定稿 v1.3（2026-10-23）
+> 定位：`@ofdrw/ofdrw-viewer-engine` 的 Node CLI 子包；消费 engine 与 `@ofdrw/ofdrw-viewer-crypto` 公共 API，输出页面图片/空间文本，并提供 `info` 查询、`verify` 验签与加密文档转图片；发布为多平台自包含可执行文件，并配套仓库内 Agent skill。
+> 依据：《OFD 渲染引擎设计方案》v0.5-r12 第 6.1/14.4/15 节、[`docs/text-content-api.md`](./text-content-api.md)、[`docs/ofdrw-viewer-crypto设计方案.md`](./ofdrw-viewer-crypto设计方案.md) 第 7 章。
 
 ## 1. 背景与目标
 
@@ -10,8 +10,11 @@ engine 只提供平台无关的页面渲染与文本内容 API，不负责读文
 
 ```text
 OFD 文件
-  ├─ page.getTextContent() → 文字 + 位置（px）
-  └─ page.render()        → Canvas → PNG/JPEG/WebP
+  ├─ crypto.inspect()        → 加密层/用户/签名/完整性摘要（info）
+  ├─ crypto.openDecryptingContainer() → 内存明文容器（加密转图片/verify）
+  ├─ crypto.verifyOfd()      → 完整性+签名+链+印章+时间戳解析（verify）
+  ├─ page.getTextContent()   → 文字 + 位置（px）
+  └─ page.render()           → Canvas → PNG/JPEG/WebP
 ```
 
 目标：
@@ -20,11 +23,13 @@ OFD 文件
 2. 图片与文本共用同一页、同一 DPI、同一坐标系，可直接叠加；
 3. 发布为 Linux/macOS/Windows 自包含可执行文件，用户无需安装 Node；
 4. 提供仓库内 Agent skill，让 agent 能稳定定位可执行文件、调用、读取图片与可选 JSON；
-5. 对坏文件、缺字体、缺图、文本截断、超大页面给出明确错误/警告。
+5. 对坏文件、缺字体、缺图、文本截断、超大页面给出明确错误/警告；
+6. 提供 `info`（只查询）与 `verify`（一次性完整性+签名验证）子命令；
+7. 加密 OFD 可用口令或 SM2 私钥在内存中解密后转图片，不落盘明文，不提供独立 `decrypt`。
 
 ## 2. 范围
 
-### 2.1 v1 范围内
+### 2.1 v1.3 范围内
 
 - 单个本地 OFD 文件输入；
 - 输出 PNG（默认）、JPEG、WebP；
@@ -34,9 +39,14 @@ OFD 文件
 - 人读日志；错误与 warning 直接打印到控制台；
 - SIGINT 取消与临时文件清理；
 - Node SEA 自包含可执行文件，多平台构建与发布；
+- `info` 查询加密层/用户/签名/完整性摘要，不解密、不验签；
+- `verify` 一次性完成防夹带完整性、全部签名、证书链、印章与时间戳解析；
+- 加密文档转图片：`--password` 或 `--key`（PEM/DER/PKCS#8），可选 `--key-passphrase`/`--user`；
+- `--root`（PEM/DER/CER，可重复）与 `--sm2-user-id`；
+- 终端人类可读输出清理控制字符，JSON 保留原始值；
 - Agent skill（仅仓库源文件，不安装到本机，也不随 release 打包）。
 
-### 2.2 v1 明确不做
+### 2.2 v1.3 明确不做
 
 - 多文件/目录批量、通配符、stdin/URL 输入；
 - PDF 输出、打印；
@@ -47,12 +57,14 @@ OFD 文件
 - 自动扫描系统字体；
 - 图片 DPI 元数据（PNG pHYs / JPEG density）写入；
 - 纯文本模式（不渲染图片）；
+- 独立 `decrypt` 子命令（加密文档请直接带凭据转图片；`decrypt` 固定退出 1）；
+- 明文落盘、批量验签、CRL/OCSP 吊销检查；
 - Linux musl/Alpine 产物；
 - macOS 签名/公证与 Windows 代码签名。
 
 ## 3. 与 engine 的边界
 
-CLI 只能从 `@ofdrw/ofdrw-viewer-engine` 包根导入类型与 API，禁止跨包相对路径引用 engine 内部模块。
+CLI 只能从 `@ofdrw/ofdrw-viewer-engine` 与 `@ofdrw/ofdrw-viewer-crypto` 包根导入类型与 API，禁止跨包相对路径引用内部模块。
 
 | CLI 需要的能力 | 来源 |
 | --- | --- |
@@ -63,12 +75,17 @@ CLI 只能从 `@ofdrw/ofdrw-viewer-engine` 包根导入类型与 API，禁止跨
 | 字体补充 | `OFDOpenOptions.supplementaryFonts` |
 | 图片解码插件 | `OFDOpenOptions.imageDecoders` |
 | warning/error | `onWarning`、`OFDError` |
+| 包/加密/签名摘要 | `inspect(source)`，只读，不解密不验签 |
+| 加密解密 | `openDecryptingContainer({ source, credentials })` → 明文 `VirtualContainer` |
+| 完整性+签名验证 | `verifyOfd({ source/ container, roots, sm2UserId })` → `VerificationReport` |
+| crypto warning | `CryptoWarning`；由 CLI 统一写 stderr |
 
 依赖状态：
 
 - 图片链路使用 `OFDDocument.open`、`OFDPage.getViewport` 与 `OFDPage.exportImage`；
 - 文本链路使用 `OFDPage.getTextContent`（v1.1 增量，设计见 [`docs/text-content-api.md`](./text-content-api.md)），固定 `includeChars=false`；
-- 截至本设计定稿，图片与文本链路均已落地并通过 CLI 单测、e2e 与 48 例黑盒验收；本机 Linux x64 + Node 26.10 验证。
+- 截至本设计定稿，图片/文本链路与 crypto `info`/`verify`/加密转图片均已落地并通过 CLI 单测、e2e 与 5 文件 81 例黑盒验收（含 SEA）；本机 Linux x64 + Node 26.10 验证。
+- CLI 复用 crypto 的口令/私钥解析、解密、验签与链校验，不重复实现密码学逻辑；crypto 不依赖 CLI/UI/engine。
 
 `--text` 时文本 API 不可用的行为：`OFDDocument.open` 成功后检测 `typeof page.getTextContent === 'function'`；不存在则打印 `CLI_TEXT_UNSUPPORTED` 并退出 2，不静默只导出图片。
 
@@ -103,36 +120,46 @@ packages/ofdrw-viewer-cli/
     build-sea.mjs           # SEA 打包：bundle、收集 assets、生成可执行文件
   src/
     bin.ts                  # shebang + main()
-    cli.ts                  # parseArgs、帮助、参数校验、退出码
-    convert.ts              # 打开文档、逐页导出、汇总
+    cli.ts                  # parseArgs、子命令分派、帮助、参数校验、退出码
+    convert.ts              # 打开文档（可注入解密容器）、逐页导出、汇总
+    info.ts                 # info 子命令：inspect + 文本/JSON 输出
+    verify.ts               # verify 子命令：verifyOfd + 文本/JSON 输出
+    credentials.ts          # 口令/私钥/根证书读取，组装 crypto 公共类型
+    crypto-output.ts        # crypto warning → stderr，统一净化
+    safe-text.ts            # 终端文本控制字符清理
     text.ts                 # getTextContent → text + x/y/w/h 数组
     output.ts               # 输出目录、命名、图片编码、原子写
     log.ts                  # 进度、摘要、错误与 warning 输出
-    errors.ts               # 错误到退出码映射
+    errors.ts               # 错误到退出码映射（含 crypto 4/5）
     canvas.ts               # @napi-rs/canvas 加载（普通 Node / SEA 两种来源）
     sea.ts                  # SEA 资产解压、缓存与 NAPI 路径设置
     image-decoder.ts        # Node 图片解码插件（png/jpeg/webp）
     fonts.ts                # --font-dir 递归扫描与去重
   test/
-    unit/                   # 参数、命名、字体扫描、退出码、日志、JSON 序列化
+    unit/                   # 参数、命名、字体、退出码、日志、info/verify、stderr 安全
     e2e/                    # 构建后普通 bin 的真实子进程
-    acceptance/             # 黑盒验收：真实 bin/SEA + engine 文本 oracle
+    verification/           # 独立 V-CLI 契约/文本/转换用例
+    acceptance/             # 黑盒验收：真实 bin/SEA + crypto 夹具 + engine 文本 oracle
 ```
 
 ### 4.3 约定
 
 - 子包目录、包名、命令名（`bin`）统一为 `ofdrw-viewer-cli`；
 - 参数解析使用 Node 22 的 `node:util.parseArgs`，不引入 commander/yargs；
-- 生产依赖只增加 `@napi-rs/canvas`；测试可增加 `pngjs`（校验尺寸/非空白），不进入运行时；
-- `cli.ts` 负责参数，`convert.ts` 负责流程，`text.ts` / `output.ts` / `canvas.ts` / `sea.ts` 各负责一件事；
+- 生产依赖为 `@napi-rs/canvas`、`@ofdrw/ofdrw-viewer-engine`、`@ofdrw/ofdrw-viewer-crypto`；测试可增加 `pngjs`（校验尺寸/非空白），不进入运行时；
+- `cli.ts` 负责参数/子命令，`convert.ts`/`info.ts`/`verify.ts` 各自负责一条流程，`text.ts`/`output.ts`/`canvas.ts`/`sea.ts` 各负责一件事；
 - 不导出公共库 API；测试通过内部 import 与 `spawn` 完成。
 
 ## 5. CLI 接口
 
 ### 5.1 用法
 
-```bash
-ofdrw-viewer-cli <input.ofd> [options]
+```text
+ofdrw-viewer-cli <input.ofd> [转图片选项] [加密凭据选项]
+
+ofdrw-viewer-cli info <input.ofd> [--json]
+
+ofdrw-viewer-cli verify <input.ofd> [加密凭据选项] [--root <file>]... [--sm2-user-id <id>] [--json]
 ```
 
 示例：
@@ -149,7 +176,20 @@ ofdrw-viewer-cli 发票示例.ofd -o ./out --pages 1-2,4 --format jpeg --text
 
 # 高精度 + 补充字体目录
 ofdrw-viewer-cli manual.ofd --dpi 300 --font-dir ./fonts
+
+# 只查询（加密包无需凭据）
+ofdrw-viewer-cli info encrypted.ofd --json
+
+# 配置信任根验证；无根时为 unknown
+ofdrw-viewer-cli verify signed.ofd --root root-ca.crt.pem
+
+# 加密文档转图片 / 验证
+ofdrw-viewer-cli encrypted.ofd -o ./out --password '***'
+ofdrw-viewer-cli cert-encrypted.ofd -o ./out --key encrypt.key.pem
+ofdrw-viewer-cli signed-encrypted.ofd --password '***' --root root-ca.crt.pem
 ```
+
+子命令识别：第一个位置参数严格等于 `info` 或 `verify` 时进入子命令；文件名恰为 `info`/`verify`/`decrypt` 时用 `./info`、`./verify`、`./decrypt` 规避。`decrypt` 永远不是子命令，固定用法错误（1）。
 
 ### 5.2 参数
 
@@ -162,8 +202,22 @@ ofdrw-viewer-cli manual.ofd --dpi 300 --font-dir ./fonts
 | `-p, --pages <ranges>` | 全部 | 1 起闭区间，如 `1-3,5`；重复/重叠自动去重排序；总跨度上限 100000 页 |
 | `--font-dir <dir>` | 无 | 补充字体目录；递归扫描 ttf/otf/ttc/otc |
 | `--text` | 关闭 | 每页额外导出空间文本 JSON |
+| `--user <name>` | 无 | 加密文档用户名；转图片/verify |
+| `--password <password>` | 无 | 口令用户；与 `--key` 互斥；转图片/verify |
+| `--key <path>` | 无 | SM2 私钥（PEM/DER/PKCS#8）；转图片/verify |
+| `--key-passphrase <text>` | 无 | 加密 PKCS#8 私钥口令；必须配合 `--key` |
+| `--root <file>` | 无 | 信任根证书（PEM/DER/CER，可重复）；仅 verify |
+| `--sm2-user-id <id>` | `1234567812345678` | 自定义 SM2 签名 userId；仅 verify |
+| `--json` | 关闭 | info/verify 输出固定 JSON |
 | `-h, --help` | — | 帮助 |
 | `-V, --version` | — | 版本与平台 |
+
+参数上下文：
+
+- `info` 只接受输入与 `--json`；带凭据、`--root`、`--sm2-user-id` 或转图片参数 → 用法错误（1）；
+- `verify` 接受凭据/`--root`/`--sm2-user-id`/`--json`；拒绝 `-o`/`--format`/`--dpi`/`--pages`/`--font-dir`/`--text`（1）；
+- 转图片接受凭据，但拒绝 `--root`/`--sm2-user-id`/`--json`（1）；
+- `--password` 与 `--key` 互斥；`--user` 必须与二者之一同用；`--key-passphrase` 必须与 `--key` 同用。
 
 固定行为，不提供参数：
 
@@ -218,11 +272,13 @@ ofdrw-viewer-cli manual.ofd --dpi 300 --font-dir ./fonts
 | --- | --- |
 | `0` | 全部页成功（允许 warning/文本截断） |
 | `1` | 用法错误、参数非法、输入/输出路径错误、页码越界 |
-| `2` | 文档级失败：无法打开、非 OFD、加密、`--text` 时文本 API 不可用等 |
+| `2` | 文档级失败：无法打开、非 OFD/包损坏、`--text` 时文本 API 不可用等；加密但缺凭据归 4 |
 | `3` | 页级失败：至少一页失败；全部页失败仍为 3 |
+| `4` | 加密/凭据失败：缺少凭据、用户名不存在、口令/私钥错误、解密失败 |
+| `5` | 验证未通过：verify 的 invalid/unknown/unsupported/not-applicable |
 | `130` | 用户中断（SIGINT） |
 
-一个页面成功 = 图片写出；`--text` 时还要求 JSON 也写出。任一失败即该页失败，但保留已成功的那一份。全部页失败仍返回 `3`；文档打开失败才是 `2`。
+一个页面成功 = 图片写出；`--text` 时还要求 JSON 也写出。任一失败即该页失败，但保留已成功的那一份。全部页失败仍返回 `3`；文档打开失败才是 `2`。`info` 成功固定 0；`verify` 只有 `overall=valid` 才 0，`unknown` 也 5。
 
 ### 5.5 控制台输出
 
@@ -230,8 +286,11 @@ ofdrw-viewer-cli manual.ofd --dpi 300 --font-dir ./fonts
 - 页失败：即时打印 `页面 3/12 失败 [OFD_IMAGE_DECODE]：...`，继续后续页；结束时打印 `完成：11/12 页，1 页失败 → /abs/out`；
 - 文档失败：`打开失败 [OFD_INVALID_PACKAGE]：...`；
 - warning：即时打印 `警告 [W_FONT_MISSING] 第 1 页：...`，结束时按 code 汇总计数；
+- `info`/`verify` 文本输出写 stdout；JSON（`--json`）也写 stdout，二者不混用；
+- warning 逐条写 stderr，结束时输出 `警告汇总：CODE×N、...`；
 - 正常摘要写 stdout，错误与 warning 写 stderr；
 - TTY 下显示单行进度 `[3/12]`，非 TTY 不输出逐页进度；
+- 人类可读 stderr 与 info/verify 文本会移除 ANSI CSI、替换 C0/C1/U+2028/U+2029；未知异常堆栈仍按原样输出；JSON 保留原始值；
 - 脚本化依赖退出码与输出文件。
 
 ## 6. 空间文本导出（`--text`）
@@ -317,8 +376,16 @@ if (!textOk || !imageOk) pageFailed = true;
 
 ```ts
 const source = await NodeFileByteSource.open(input);
+let container: VirtualContainer | undefined;
+if (hasCredentials) {
+  const opened = await openDecryptingContainer({ source, credentials });
+  container = opened.container;
+  reportCryptoWarnings(logger, opened.warnings);
+}
 const doc = await OFDDocument.open({
-  source: { kind: 'custom', source },
+  ...(container === undefined
+    ? { source: { kind: 'custom', source } }
+    : { container }),
   createCanvas: createCanvasLike,
   encodeImage: encodeCanvasImage,
   imageDecoders: [...nodeImageDecoders],
@@ -327,7 +394,9 @@ const doc = await OFDDocument.open({
 });
 ```
 
-- 只使用公共 API；不读取 ZIP、不解析 XML；
+- 只使用公共 API；不读取 ZIP、不解析加密 XML；
+- 有凭据时先 `openDecryptingContainer`，把明文 `VirtualContainer` 注入 engine；容器由 CLI 关闭，明文不落盘；
+- 无凭据时保持原有 `source` 直开路径；加密包由 engine 抛 `OFD_ENCRYPTED`，CLI 映射为退出 4；
 - `onWarning` 直接打印到 stderr，不改变退出码；
 - 打开失败时打印 `OFDError.code` 并退出 2；
 - `--text` 时打开后检测 `page.getTextContent` 是否存在；未加 `--text` 不检测。
@@ -520,7 +589,7 @@ LICENSE
 仓库源文件：
 
 ```text
-packages/ofdrw-viewer-cli/skills/ofdrw-viewer-cli/SKILL.md
+packages/ofdrw-viewer-cli/skills/SKILL.md
 ```
 
 skill 名：`ofdrw-viewer-cli`。skill 源文件作为 CLI 子包的一部分维护，只放仓库，不安装到 `~/.agents/skills/`，也不随 release 压缩包分发。
@@ -532,32 +601,26 @@ frontmatter：
 ```yaml
 ---
 name: ofdrw-viewer-cli
-description: Convert OFD documents into per-page PNG/JPEG/WebP images with the ofdrw-viewer-cli executable, optionally adding spatial text JSON via --text. Use when an agent needs OFD page images, text with pixel coordinates, layout inspection, or OCR-free text extraction from an OFD file.
+description: Convert OFD documents into per-page PNG/JPEG/WebP images with the ofdrw-viewer-cli executable, query package/encryption/signature metadata with info, and verify anti-smuggling integrity plus all signatures with verify. Use when an agent needs OFD page images, spatial text JSON, encrypted-document conversion, or signature/chain verification.
 ---
 ```
 
 正文必须覆盖：
 
-1. **何时使用**：需要 OFD 页面图、带坐标文本、版面定位；纯文本解析优先用 `mineru`。
+1. **何时使用**：页面图/坐标文本、加密转换、`info` 元数据查询、`verify` 验签；纯文本解析优先用 `mineru`。
 2. **定位可执行文件**：`$OFDRW_VIEWER_CLI` → `command -v ofdrw-viewer-cli` → 仓库 `dist/sea/...`；找不到时按平台下载 release 并校验 `SHA256SUMS`，不要静默安装。
-3. **命令**：
-   ```bash
-   "$CLI" input.ofd -o out
-   "$CLI" input.ofd -o out --text
-   "$CLI" input.ofd -o out --pages 1 --dpi 96
-   "$CLI" input.ofd -o out --font-dir ./fonts
-   ```
-4. **产物**：默认 `<stem>-p001.png`；`--text` 时额外 `<stem>-p001.json`；命名规则与退出码。
-5. **JSON 字段**：数组，每项只有 `{text,x,y,w,h}`；坐标原点左上、y 向下，与 PNG 对齐；不含字符/字体/quad。
-6. **Agent 工作流**：
-   - 先 `--pages 1` 预览图片；
-   - 需要文字/坐标时加 `--text`；
-   - 用 JSON 做文字搜索、区域定位、版面分析；
-   - 用 PNG 做视觉确认；
-   - 不要把 JSON 当 OCR 结果；缺字形时 `text` 仍可用，但 `glyphId` 可能为空。
-7. **错误处理**：退出码 0/1/2/3/130；`OFD_*` 错误码；不要对 `2` 盲目重试；`3` 时检查 stderr 并保留已产出文件。
-8. **字体**：`W_FONT_MISSING` 时用用户提供的字体目录；不要自动下载字体。
-9. **安全**：路径加引号；不要执行不受信任的可执行文件；下载后校验 SHA256；大页/高 DPI 注意内存。
+3. **命令**：转图片（含 `--pages/--format/--dpi/--font-dir/--text`）、`info`、`verify`、加密转图片、`--root`/`--sm2-user-id`，以及文件名恰为 `info`/`verify`/`decrypt` 时用 `./` 前缀。
+4. **参数上下文**：`info` 只接受 `--json`；`verify` 不接受转图片参数；转图片不接受 `--root`/`--sm2-user-id`/`--json`；口令与私钥互斥。
+5. **产物**：默认 `<stem>-p001.png`；`--text` 时额外 `<stem>-p001.json`；`info`/`verify` 文本与 JSON 的字段。
+6. **JSON 与文本差异**：`--json` 写 stdout 且保留原始值；文本/stderr 清理控制字符；warning 汇总规则。
+7. **Agent 工作流**：
+   - 先 `info` 判断是否加密、有哪些用户/签名；
+   - 需要信任结论时先向用户索取根证书，再 `verify`；无根 `unknown` 不得报告为通过；
+   - 转图片先 `--pages 1` 预览，需要坐标时加 `--text`；
+   - 加密文档带凭据转换，不记录/回显凭据；
+   - 缺字形时 `text` 仍可用，用 `--font-dir` 重试。
+8. **错误处理**：退出码 0/1/2/3/4/5/130；`OFD_*` 与 `CRYPTO_*` 错误码；不要对 2/4/5 盲目重试。
+9. **安全**：路径加引号；不要执行不受信任的可执行文件；下载后校验 SHA256；不提供独立 decrypt；大页/高 DPI 注意内存。
 10. **平台**：Linux glibc、macOS Gatekeeper、Windows SmartScreen 备注。
 
 ### 9.3 分发
@@ -574,13 +637,16 @@ description: Convert OFD documents into per-page PNG/JPEG/WebP images with the o
 - 文本 JSON 写盘失败（仅 `--text`）：`CLI_TEXT_WRITE_FAILED`，该页失败、保留图片，退出 3；
 - SEA 资产解压/缓存校验失败：`CLI_SEA_EXTRACT_FAILED`，退出 2，不加载未验证文件；
 - warning：即时打印 `警告 [W_XXX] 第 N 页：message`，结束时按 code 汇总；
-- warning 不改变退出码；文本截断只打印 engine warning，JSON 不含 `truncated` 字段。
+- warning 不改变退出码；文本截断只打印 engine warning，JSON 不含 `truncated` 字段；
+- 人类可读 stderr（`Logger.error/warn/pageError` 与 crypto warning 的 message/path）写前统一 `sanitizeDisplayText`：移除 ANSI CSI，替换 C0/C1/U+2028/U+2029，防止恶意 OFD 伪造 warning/错误行；
+- `Logger.info` 与 `--json` stdout 保留原始值；info 成功路径在 payload 输出后调用 `flushWarningSummary()`；
+- 错误/警告不包含口令、私钥、PEM、`EncryptedWK`。
 
 ## 11. 测试与验收
 
 ### 11.1 单元测试与 e2e
 
-默认 `pnpm -C packages/ofdrw-viewer-cli test` 运行 10 个文件、171 个用例，不包含较慢的黑盒验收：
+默认 `pnpm -C packages/ofdrw-viewer-cli test` 运行 15 个文件、258 个用例，不包含较慢的黑盒验收：
 
 - `parseArgs`：必填输入、未知参数、默认值、`--text` 开关、中文参数错误；
 - 页码解析：`1-3,5`、重复、乱序、越界、非法输入，以及单段/合并后总页数 100000 上限；
@@ -589,9 +655,12 @@ description: Convert OFD documents into per-page PNG/JPEG/WebP images with the o
 - 退出码映射、摘要、TTY/非 TTY 进度、`CLI_VERSION` 与 package.json 一致；
 - 文本 JSON：`TextItem` → `{text,x,y,w,h}`、过滤空 `text`、保持 `items` 顺序、不输出其他字段；空页 `[]`；
 - 原子写：成功替换、失败清理临时文件；
-- SEA 资产路径、`u<uid>` 缓存命名、属主/0700/0600/符号链接/摘要不符/预置目录负向校验。
+- SEA 资产路径、`u<uid>` 缓存命名、属主/0700/0600/符号链接/摘要不符/预置目录负向校验；
+- `info`/`verify`：参数上下文、文本/JSON 字段、无根 unknown、有效根 valid、篡改/夹带 invalid、加密凭据、`decrypt` 拒绝；
+- 终端安全：Logger.error/warn/pageError、crypto warning message/path、info/verify 文本对换行/ESC/C1/U+2028 的清理，JSON 原值保留；
+- 加密转换：口令/私钥、缺/错凭据、页范围/格式/文本参数。
 
-`test/e2e/cli.test.ts` 以真实 `dist/bin.js` 子进程覆盖图片与文本主路径；`test:acceptance` 额外执行黑盒验收。
+`test/e2e/cli.test.ts` 以真实 `dist/bin.js` 子进程覆盖图片与文本主路径；`test/verification` 独立覆盖 CLI 契约；`test:acceptance` 额外执行 5 文件 81 例黑盒验收（含 SEA）。
 
 ### 11.2 图片黑盒验收（CLI 42 例中的图片/参数/退出码部分）
 
@@ -657,7 +726,7 @@ description: Convert OFD documents into per-page PNG/JPEG/WebP images with the o
 
 ## 12. 分阶段与依赖
 
-截至 2026-10-22，本期 P1–P5 已完成并在本机 Linux x64（Node 26.10、glibc）验证；P6 为后续可选项。
+截至 2026-10-23，本期 P1–P5 已完成并在本机 Linux x64（Node 26.10、glibc）验证；P6 为后续可选项。
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
@@ -666,7 +735,7 @@ description: Convert OFD documents into per-page PNG/JPEG/WebP images with the o
 | P2 | 接 `OFDDocument`/`OFDPage.exportImage`，跑通图片导出；错误与取消 | 完成 |
 | P3 | 接 `OFDPage.getTextContent`，用 `--text` 跑通空间文本 JSON | 完成 |
 | P4 | SEA 构建脚本、平台矩阵（含 Windows arm64）、冒烟测试、release workflow | 完成（Linux x64 产物实测；其他平台待 CI/实机） |
-| P5 | Agent skill 编写与仓库内校验、README/发布说明 | 完成 |
+| P5 | Agent skill 编写与仓库内校验、README/发布说明 | 完成（v1.3 已同步 info/verify/加密转换） |
 | P6（可选） | 批量、并发、系统字体、PDF 输出、纯文本模式 | 未做 |
 
 已知风险与后续项：
@@ -688,14 +757,177 @@ description: Convert OFD documents into per-page PNG/JPEG/WebP images with the o
 2. 默认输出目录 `./<输入文件名>/`；
 3. 默认 DPI 96；
 4. 目标文件已存在时默认覆盖；
-5. CLI 参数为输入、输出目录、格式、DPI、页码、字体目录、`--text`；其余行为使用内部默认值；
+5. CLI 参数为输入、输出目录、格式、DPI、页码、字体目录、`--text`、加密凭据、`--root`、`--sm2-user-id`、`--json`；其余行为使用内部默认值；
 6. 默认只导出图片；`--text` 时每页额外导出空间文本 JSON；
 7. `--text` 的文本为 px 坐标、文本项级 `text + x/y/w/h`、与图片同 DPI；
-8. 发布采用 Node SEA 自包含可执行文件，Windows arm64 纳入 v1；
-9. 提供 `packages/ofdrw-viewer-cli/skills/ofdrw-viewer-cli/SKILL.md`，skill 源文件随子包维护，仅放仓库，不安装、不随 release 分发；
-10. macOS 只编译可执行文件，不签名、不公证。
+8. `info` 只查询、不解密不验签；`verify` 一次性验证完整性+全部签名；无独立 `decrypt`；
+9. 加密 OFD 用口令或 SM2 私钥解密后渲染，明文不落盘；`--root` 可重复，无根判定 `unknown`；
+10. 人类可读 stderr/文本清理控制字符，JSON 保留原始值；
+11. 发布采用 Node SEA 自包含可执行文件，Windows arm64 纳入 v1；
+12. 提供 `packages/ofdrw-viewer-cli/skills/SKILL.md`，skill 源文件随子包维护，仅放仓库，不安装、不随 release 分发；
+13. macOS 只编译可执行文件，不签名、不公证。
 
 待确认：
 
 1. JBIG2/TIFF 内置解码是否由 `OFDDocument.open` 默认启用；
 2. `windows-11-arm` runner 是否可用；不可用时是否接受用 ARM64 Node 二进制交叉注入。
+## 14. 加密文档、`info` 与 `verify`（v1.3 增量）
+
+本章记录 v1.3 新增的 CLI 契约；crypto 内部算法与报告字段细节以 [`docs/ofdrw-viewer-crypto设计方案.md`](./ofdrw-viewer-crypto设计方案.md) 第 7 章为准。
+
+### 14.1 命令总览与兼容
+
+保留既有“无子命令 = 转图片”的行为：
+
+```text
+ofdrw-viewer-cli <input.ofd> [转图片选项] [加密凭据选项]
+ofdrw-viewer-cli info <input.ofd> [--json]
+ofdrw-viewer-cli verify <input.ofd> [加密凭据选项] [--root <file>]... [--sm2-user-id <id>] [--json]
+```
+
+| 命令 | 用途 | 是否解密 | 是否验签 |
+| --- | --- | --- | --- |
+| 转图片（无子命令） | 页面图片；`--text` 时空间文本 | 提供凭据时解密 | 否 |
+| `info` | 包结构/加密层/用户/签名/完整性摘要 | 否 | 否 |
+| `verify` | 防夹带完整性 + 全部签名 + 证书链 + 印章 + 时间戳解析 | 加密输入时内部解密 | 是 |
+
+- 子命令只认第一个位置参数**严格等于** `info` 或 `verify`；文件名恰好为 `info`/`verify`/`decrypt` 时用 `./info`、`./verify`、`./decrypt` 前缀规避。
+- `decrypt` 不是子命令；出现时固定用法错误（退出 1），提示使用 `verify` 或带凭据的转图片命令。
+- 不提供“只解密”“只验完整性”“只验某个签名”等独立命令。
+
+### 14.2 `info`（只查询）
+
+语义：读取包结构、加密层、用户、签名条目与完整性存在性；**不调用** `openDecryptingContainer`/`verifyOfd`，不读取私钥、不输出 `EncryptedWK`。
+
+文本示例：
+
+```text
+文件: /abs/input.ofd
+大小: 17210 B
+OFD 版本: 未知
+加密: 是（1 层）
+用户: fixture-password-user (password)
+签名: 0
+完整性: 无
+```
+
+`info --json` 固定结构（对应 `CliInfoJson`）：
+
+```ts
+interface CliInfoJson {
+  readonly command: 'info';
+  readonly input: string;            // 绝对路径
+  readonly packageSize: number;      // byte
+  readonly ofdVersion?: string;      // 不可读时省略；文本显示“未知”
+  readonly encrypted: boolean;
+  readonly layers: readonly EncryptionLayerInfo[];
+  readonly users: readonly EncryptionUserInfo[];
+  readonly signatureCount: number;
+  readonly integrityPresent: boolean;
+  readonly warnings: readonly CryptoWarning[];
+}
+```
+
+- `layers[]` 从外到内，含 `layer/id/encryptDate?/encryptScope?/decryptSeedPath/entriesMapPath/users[]`；`users[]` 为全层按键去重后的视图，`method` 为 `password`/`certificate`/`unknown`。
+- 加密包也退出 0，无需口令；明文包 `encrypted=false`、`layers/users=[]`。
+- 包无法读取/结构非法 → 退出 2；`info` 不因未配置根或未验签失败。
+- warning 逐条写 stderr，payload 输出后调用 `flushWarningSummary()`；JSON stdout 不受影响。
+
+### 14.3 `verify`（一次性完整性 + 签名）
+
+语义：若输入加密，先用凭据在内存中解密（内部临时容器），再调用一次 `verifyOfd`，完成防夹带完整性、全部签名、证书链、印章与时间戳解析；时间戳只解析、不验证。
+
+文本示例：
+
+```text
+验证结果: valid
+完整性: 未保护
+签名 1: s001 valid（SESv4，引用 6/6，证书链 valid，印章 valid）
+  时间戳: parsed-not-verified（已解析，未验证）（2026-10-22T17:51:06.000Z）
+根证书: 已配置 1 / 链 valid
+```
+
+`verify --json` 固定结构：
+
+```ts
+interface CliVerifyJson {
+  readonly command: 'verify';
+  readonly input: string;            // 绝对路径
+  readonly report: VerificationReport;
+}
+```
+
+`VerificationReport` 关键字段：`overall`、`package`、`decryption?`、`integrity`（未保护为 `null`）、`signatures[]`、`rootsConfigured`、`warnings[]`、`startedAt`、`durationMs`。详细子状态见 crypto 设计 §3.6/§5.7。
+
+行为约定：
+
+- `overall` 取 `valid`/`invalid`/`unknown`/`unsupported`/`not-applicable`；时间戳不参与聚合。
+- 只有 `overall=valid` 退出 0；其余（含 `unknown`）退出 5。
+- **未配置 `--root` 时链状态为 `unknown`，这是预期安全状态，不是验证通过**；需要可信结论时必须配置正确根证书。
+- `--root` 可重复，支持 PEM/DER/CER；同一根以多条路径传入时，文本按实际命中的 `trustAnchor` 指纹去重计数。
+- 根证书行固定为 `根证书: 未配置 / 链 <status>` 或 `根证书: 已配置 N / 链 <status>`；多签名/完整性链状态按“签名顺序 + 完整性”去重聚合（如 `valid/incomplete`）。
+- `--sm2-user-id` 覆盖默认 SM2 userId `1234567812345678`；仅影响签名数学验证。
+- `--json` 即使 `invalid`/`unknown` 也先输出完整报告，再返回 5。
+- 签名/完整性均不存在时 `overall=not-applicable`，退出 5。
+- 口令错误/用户不匹配/私钥错误 → 退出 4；入口无法产出报告时按包结构/凭据/验证入口分别归 2/4/5。
+
+### 14.4 加密文档转图片
+
+```bash
+ofdrw-viewer-cli encrypted.ofd -o out --password '***'
+ofdrw-viewer-cli encrypted.ofd -o out --key encrypt.key.pem
+ofdrw-viewer-cli encrypted.ofd -o out --key encrypt.key.pem --key-passphrase '***'
+```
+
+- 凭据：`--password`（口令用户）或 `--key`（SM2 私钥，PEM/DER/PKCS#8）；可选用 `--user` 指定 `UserInfo@UserName`；`--key-passphrase` 仅用于加密 PKCS#8。
+- 流程：`openDecryptingContainer` → 明文 `VirtualContainer` → `OFDDocument.open({ container })` → 既有页面导出；容器由 CLI 关闭，明文不落盘。
+- 未提供凭据/凭据错误：不进入渲染、不产出页面，退出 4。
+- 明文文档不加凭据时行为、输出命名、页码、DPI、`--text`、`--font-dir` 完全兼容旧版。
+- 转图片不接受 `--root`/`--sm2-user-id`/`--json`；需要验签请使用 `verify`。
+- 页面级失败仍退出 3；文档/包错误 2；SIGINT 130。
+
+### 14.5 JSON 与文本/终端输出
+
+- `info`/`verify` 的 `--json` 都写 stdout，包含固定 `command`/`input`；文本模式写 stdout；warning/error 写 stderr；不混合。
+- JSON 保留文档原始值，便于机读；文本/错误/warning 属于人类可读通道。
+- 人类可读通道统一净化：移除 ANSI CSI，替换换行/C0/C1/U+2028/U+2029 为空格，覆盖 info UserName、verify Signature ID/parseError、crypto warning message/path、Logger.error/warn/pageError，防止恶意 OFD 伪造输出行；未知异常的堆栈不在净化范围。
+- `Logger.info` 不净化，因为 JSON 与正常摘要必须保留原值。
+- warning 逐条输出，结束时按 code 汇总；汇总不改变退出码。
+
+### 14.6 退出码与错误边界
+
+| 码 | 语义 | 适用场景 |
+| --- | --- | --- |
+| 0 | 成功 | 转图片全部成功；info 查询成功；verify `overall=valid` |
+| 1 | 用法/参数错误 | 未知参数、缺少输入、`decrypt`、info 带凭据、参数组合冲突 |
+| 2 | 文档级失败 | 非 OFD、包损坏、无法打开、SEA 资产失败 |
+| 3 | 页级失败 | 转图片至少一页失败；全部页失败仍为 3 |
+| 4 | 加密/凭据失败 | 缺少凭据、用户名不存在、口令/私钥错误、解密失败 |
+| 5 | 验证未通过 | verify 的 invalid/unknown/unsupported/not-applicable |
+| 130 | 用户中断 | SIGINT/AbortSignal |
+
+- 错误格式 `错误[CODE]：message`；warning 格式 `警告 [W_CODE] 第 N 页：message`。
+- 输出不得包含口令、私钥、PEM、`EncryptedWK`；错误消息不回显凭据。
+- 加密转换的包/解密失败为 4，文档结构为 2，页级为 3，SIGINT 为 130。
+
+### 14.7 安全与实现边界
+
+- CLI 只消费 crypto 公共 API，不重复实现 SM2/SM3/SM4、ASN.1、证书链或解密逻辑。
+- 解密只在内存中发生，不写明文临时文件；`verify` 内部的临时容器不暴露给用户。
+- 不自动下载根证书/字体/二进制；根证书由用户通过 `--root` 提供。
+- 仅对可信 OFD 运行；超大页面/高 DPI 可能占用大量内存。
+- `--password`/`--key-passphrase` 可能进入 shell 历史或进程列表，帮助与文档明确提示，不在日志中打印。
+
+### 14.8 实现与测试映射
+
+| 能力 | 实现 | 测试 |
+| --- | --- | --- |
+| 子命令/参数/退出码 | `src/cli.ts` | `test/unit/cli.test.ts`、`test/unit/crypto-cli.test.ts` |
+| info 文本/JSON | `src/info.ts` | `test/unit/crypto-cli.test.ts`、`test/verification/cli-info-verify.test.ts` |
+| verify 文本/JSON | `src/verify.ts` | 同上 + `test/acceptance/crypto.acceptance.ts` |
+| 凭据/根证书读取 | `src/credentials.ts` | `test/unit/crypto-cli.test.ts` |
+| warning 呈现/净化 | `src/crypto-output.ts`、`src/log.ts`、`src/safe-text.ts` | `test/unit/stderr-safety.test.ts` |
+| 加密转图片 | `src/convert.ts` | `test/verification/cli-convert.test.ts`、acceptance |
+| 黑盒/SEA | `dist/bin.js`、`dist/sea/...` | `test/acceptance/*.acceptance.ts` |
+
+验证命令：`pnpm -C packages/ofdrw-viewer-cli typecheck`、`test`、`build`、`test:acceptance`；acceptance 覆盖 5 文件 81 例（含 SEA）。
