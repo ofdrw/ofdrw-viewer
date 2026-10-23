@@ -1,0 +1,6 @@
+node_modules/
+.artifacts/
+dist/
+.playwright-cli/
+*.log
+target/

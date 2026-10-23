@@ -1,0 +1,134 @@
+{
+  "generatedBy": "test/verification/sign/java/JavaSignOracle.java",
+  "ofdrwVersion": "2.4.0",
+  "note": "OFDValidator/SESV4/SESV5 与 OFDIntegrityVerifier 的独立基线；由 Java 21 + ofdrw 2.4.0 生成",
+  "cases": {
+    "signed-sesv4.ofd": {
+      "signature": {
+        "valid": true
+      }
+    },
+    "signed-sesv5.ofd": {
+      "signature": {
+        "valid": true
+      }
+    },
+    "integrity.ofd": {
+      "integrity": {
+        "valid": true
+      }
+    },
+    "combined-signed-integrity.ofd": {
+      "signature": {
+        "valid": true
+      },
+      "integrity": {
+        "valid": true
+      }
+    },
+    "negative-tampered-content.ofd": {
+      "signature": {
+        "valid": false,
+        "error": "FileIntegrityException",
+        "message": "/Doc_0/Pages/Page_0/Content.xml 文件被篡改"
+      }
+    },
+    "negative-tampered-signedvalue.ofd": {
+      "signature": {
+        "valid": false,
+        "error": "IllegalArgumentException",
+        "message": "failed to construct sequence from byte[]"
+      }
+    },
+    "negative-tampered-signature.ofd": {
+      "signature": {
+        "valid": false,
+        "error": "InvalidSignedValueException",
+        "message": "电子签章数据失效：Signature.xml 文件被篡改，电子签章失效。(/Doc_0/Signs/Sign_0/Signature.xml)"
+      }
+    },
+    "negative-extra-file.ofd": {
+      "integrity": {
+        "valid": false
+      }
+    },
+    "combined-password-encrypted.ofd(decrypted)": {
+      "signature": {
+        "valid": true
+      },
+      "integrity": {
+        "valid": true
+      }
+    },
+    "security-tampered-seal.ofd": {
+      "signature": {
+        "valid": false,
+        "error": "FileIntegrityException",
+        "message": "/Doc_0/Signs/Sign_0/Seal.esl 文件被篡改"
+      }
+    },
+    "security-tampered-signature-value.ofd": {
+      "signature": {
+        "valid": false,
+        "error": "InvalidSignedValueException",
+        "message": "电子签章数据失效：电子签章数据签名值不匹配，电子签章数据失效。"
+      }
+    },
+    "security-tampered-seal-signature.ofd": {
+      "signature": {
+        "valid": false,
+        "error": "FileIntegrityException",
+        "message": "/Doc_0/Signs/Sign_0/Seal.esl 文件被篡改"
+      }
+    },
+    "security-tampered-entries.ofd": {
+      "integrity": {
+        "valid": false,
+        "error": "DocumentException",
+        "message": "Error on line 2 of document  : 元素类型 \"ofd:DocEntries\" 的结束标记必须以 '>' 分隔符结束。"
+      }
+    }
+  },
+  "seals": {
+    "signed-sesv4.ofd": {
+      "version": "v4",
+      "esId": "OFDRWFIXTURESEALV4",
+      "name": "OFDRW Viewer 测试印章 v4",
+      "typeCode": 2,
+      "createDate": "2025-01-01T00:00:00Z",
+      "validStart": "2025-01-01T00:00:00Z",
+      "validEnd": "2040-01-01T00:00:00Z",
+      "pictureType": "PNG",
+      "pictureWidthMm": 40,
+      "pictureHeightMm": 40,
+      "pictureLength": 70
+    },
+    "signed-sesv5.ofd": {
+      "version": "v5",
+      "esId": "OFDRWFIXTURESEALV5",
+      "name": "OFDRW Viewer 测试印章 v5",
+      "typeCode": 2,
+      "createDate": "2025-01-01T00:00:00Z",
+      "validStart": "2025-01-01T00:00:00Z",
+      "validEnd": "2040-01-01T00:00:00Z",
+      "pictureType": "PNG",
+      "pictureWidthMm": 40,
+      "pictureHeightMm": 40,
+      "pictureLength": 70
+    }
+  },
+  "signedValues": {
+    "signed-sesv4.ofd": {
+      "version": "v4",
+      "dataHash": "6234af394cd9228332b251abe116c36fe09d7f4439f7fe5095f943d02b046b95",
+      "signedAt": "2026-10-22T17:51:06Z",
+      "propertyInfo": "/Doc_0/Signs/Sign_0/Signature.xml"
+    },
+    "signed-sesv5.ofd": {
+      "version": "v5",
+      "dataHash": "b06a5911f6ffca22d31df28cab5ab953c431945f8c3a2a9f8f12423e1303b810",
+      "signedAt": "2026-10-22T17:51:06Z",
+      "propertyInfo": "/Doc_0/Signs/Sign_0/Signature.xml"
+    }
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "generatedBy": "ofdrw 2.4.0 OFDDecryptor (Java 21.0.2)",
+  "cases": {
+    "cert-encrypted.ofd": {
+      "Doc_0/Document.xml": {"size": 475, "sha256": "33d898067847d2666dbaf99d44166240083fb545b259cae94a79a265ec57bc56"},
+      "Doc_0/Pages/Page_0/Content.xml": {"size": 9010, "sha256": "b9d42cb64f876f0f3686d7226492e0db6bfd5833e2fc424f9976c8e24092cfdb"},
+      "Doc_0/Pages/Page_1/Content.xml": {"size": 4714, "sha256": "665052ae5459f97d3f418ed5b84ce900c60dba6a112112e11489572a54ac2bc1"},
+      "Doc_0/PublicRes.xml": {"size": 191, "sha256": "b93c082a8f6740096f8a70f2bebbb85bbfd6b253f078bcc8973044d42115c3ed"},
+      "OFD.xml": {"size": 411, "sha256": "905d45c6d5f4bd339054b3af45d5ed25bdc86a60365db4a0f5c9aa98d1c62656"}
+    },
+    "combined-password-encrypted.ofd": {
+      "Doc_0/Document.xml": {"size": 475, "sha256": "33d898067847d2666dbaf99d44166240083fb545b259cae94a79a265ec57bc56"},
+      "Doc_0/Pages/Page_0/Content.xml": {"size": 9010, "sha256": "b9d42cb64f876f0f3686d7226492e0db6bfd5833e2fc424f9976c8e24092cfdb"},
+      "Doc_0/Pages/Page_1/Content.xml": {"size": 4714, "sha256": "665052ae5459f97d3f418ed5b84ce900c60dba6a112112e11489572a54ac2bc1"},
+      "Doc_0/PublicRes.xml": {"size": 191, "sha256": "b93c082a8f6740096f8a70f2bebbb85bbfd6b253f078bcc8973044d42115c3ed"},
+      "Doc_0/Signs/Sign_0/Seal.esl": {"size": 1600, "sha256": "a9aa9e8f460a3705d9aa420845df36e5be80f42af9ea67c1e3606aaed83c5ef9"},
+      "Doc_0/Signs/Sign_0/Signature.xml": {"size": 1454, "sha256": "c5b517406f475cdd4ab98a1975d46df1c19451ad72e2eb51acc7f1ef2b8f1151"},
+      "Doc_0/Signs/Sign_0/SignedValue.dat": {"size": 4106, "sha256": "f944e4fa6a0c39afee9e0aad8a3b253ba64300b3a8c700186a774aa2ca20d109"},
+      "Doc_0/Signs/Signatures.xml": {"size": 229, "sha256": "ac4bd916aa68aaf3816660ca8afd94af039f5dbbc6095d435c33558a4393da3f"},
+      "OFD.xml": {"size": 471, "sha256": "b69affee2d014ad1ff2bfbec6cc1c4a823901a02964284dd84dac81a8b06f48c"},
+      "OFDEntries.xml": {"size": 768, "sha256": "e19c33b7d65a4f5edce970ba30ec9b2585de5ac725d21af3e10f7c38131f0e20"},
+      "signedvalue.dat": {"size": 936, "sha256": "6a7504213108c4b445925119a8a6e76519522c031a0be2002908b2344e796e6f"}
+    },
+    "combined-signed-integrity.ofd": {
+      "Doc_0/Document.xml": {"size": 475, "sha256": "33d898067847d2666dbaf99d44166240083fb545b259cae94a79a265ec57bc56"},
+      "Doc_0/Pages/Page_0/Content.xml": {"size": 9010, "sha256": "b9d42cb64f876f0f3686d7226492e0db6bfd5833e2fc424f9976c8e24092cfdb"},
+      "Doc_0/Pages/Page_1/Content.xml": {"size": 4714, "sha256": "665052ae5459f97d3f418ed5b84ce900c60dba6a112112e11489572a54ac2bc1"},
+      "Doc_0/PublicRes.xml": {"size": 191, "sha256": "b93c082a8f6740096f8a70f2bebbb85bbfd6b253f078bcc8973044d42115c3ed"},
+      "Doc_0/Signs/Sign_0/Seal.esl": {"size": 1600, "sha256": "a9aa9e8f460a3705d9aa420845df36e5be80f42af9ea67c1e3606aaed83c5ef9"},
+      "Doc_0/Signs/Sign_0/Signature.xml": {"size": 1454, "sha256": "c5b517406f475cdd4ab98a1975d46df1c19451ad72e2eb51acc7f1ef2b8f1151"},
+      "Doc_0/Signs/Sign_0/SignedValue.dat": {"size": 4106, "sha256": "f944e4fa6a0c39afee9e0aad8a3b253ba64300b3a8c700186a774aa2ca20d109"},
+      "Doc_0/Signs/Signatures.xml": {"size": 229, "sha256": "ac4bd916aa68aaf3816660ca8afd94af039f5dbbc6095d435c33558a4393da3f"},
+      "OFD.xml": {"size": 471, "sha256": "b69affee2d014ad1ff2bfbec6cc1c4a823901a02964284dd84dac81a8b06f48c"},
+      "OFDEntries.xml": {"size": 768, "sha256": "e19c33b7d65a4f5edce970ba30ec9b2585de5ac725d21af3e10f7c38131f0e20"},
+      "signedvalue.dat": {"size": 936, "sha256": "6a7504213108c4b445925119a8a6e76519522c031a0be2002908b2344e796e6f"}
+    },
+    "password-encrypted.ofd": {
+      "Doc_0/Document.xml": {"size": 475, "sha256": "33d898067847d2666dbaf99d44166240083fb545b259cae94a79a265ec57bc56"},
+      "Doc_0/Pages/Page_0/Content.xml": {"size": 9010, "sha256": "b9d42cb64f876f0f3686d7226492e0db6bfd5833e2fc424f9976c8e24092cfdb"},
+      "Doc_0/Pages/Page_1/Content.xml": {"size": 4714, "sha256": "665052ae5459f97d3f418ed5b84ce900c60dba6a112112e11489572a54ac2bc1"},
+      "Doc_0/PublicRes.xml": {"size": 191, "sha256": "b93c082a8f6740096f8a70f2bebbb85bbfd6b253f078bcc8973044d42115c3ed"},
+      "OFD.xml": {"size": 411, "sha256": "905d45c6d5f4bd339054b3af45d5ed25bdc86a60365db4a0f5c9aa98d1c62656"}
+    },
+    "plain.ofd": {
+      "Doc_0/Document.xml": {"size": 475, "sha256": "33d898067847d2666dbaf99d44166240083fb545b259cae94a79a265ec57bc56"},
+      "Doc_0/Pages/Page_0/Content.xml": {"size": 9010, "sha256": "b9d42cb64f876f0f3686d7226492e0db6bfd5833e2fc424f9976c8e24092cfdb"},
+      "Doc_0/Pages/Page_1/Content.xml": {"size": 4714, "sha256": "665052ae5459f97d3f418ed5b84ce900c60dba6a112112e11489572a54ac2bc1"},
+      "Doc_0/PublicRes.xml": {"size": 191, "sha256": "b93c082a8f6740096f8a70f2bebbb85bbfd6b253f078bcc8973044d42115c3ed"},
+      "OFD.xml": {"size": 411, "sha256": "905d45c6d5f4bd339054b3af45d5ed25bdc86a60365db4a0f5c9aa98d1c62656"}
+    }
+  }
+}

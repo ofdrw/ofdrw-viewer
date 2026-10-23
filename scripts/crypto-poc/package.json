@@ -1,0 +1,19 @@
+{
+  "name": "ofdrw-viewer-crypto-poc",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "sm-crypto 能力与 ofdrw 互操作 PoC（R0 调研）",
+  "scripts": {
+    "poc": "node sm-crypto-poc.mjs",
+    "bundle": "esbuild browser-entry.mjs --bundle --platform=browser --format=iife --target=chrome110 --outfile=.artifacts/browser-poc.js",
+    "browser": "bash run-browser-poc.sh"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2",
+    "sm-crypto": "0.5.7"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "name": "@ofdrw/ofdrw-viewer-crypto",
+  "version": "0.1.0",
+  "description": "OFD 密码能力：加密文档检测/解密、电子印章与签名验证、防夹带完整性、时间戳解析",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "ofd",
+    "ofdrw",
+    "ofd-viewer",
+    "crypto",
+    "sm2",
+    "sm3",
+    "sm4",
+    "electronic-seal"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ofdrw/ofdrw-viewer.git",
+    "directory": "packages/ofdrw-viewer-crypto"
+  },
+  "homepage": "https://github.com/ofdrw/ofdrw-viewer#readme",
+  "bugs": {
+    "url": "https://github.com/ofdrw/ofdrw-viewer/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "dependencies": {
+    "@ofdrw/ofdrw-viewer-engine": "workspace:^0.1.0",
+    "@peculiar/asn1-schema": "^2.11.0",
+    "@peculiar/asn1-x509": "^2.11.0",
+    "asn1js": "^4.0.0",
+    "fflate": "^0.8.3",
+    "saxes": "^6.0.0",
+    "sm-crypto": "^0.5.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsup": "^9.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}

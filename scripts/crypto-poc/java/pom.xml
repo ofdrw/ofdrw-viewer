@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>org.ofdrw.poc</groupId>
+    <artifactId>crypto-poc</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>ofdrw-viewer crypto PoC</name>
+    <description>R0 调研：使用 ofdrw 参考实现生成受保护样例并交叉验证</description>
+
+    <properties>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <ofdrw.version>2.4.0</ofdrw.version>
+        <bc.version>1.85</bc.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.ofdrw</groupId>
+            <artifactId>ofdrw-sign</artifactId>
+            <version>${ofdrw.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.ofdrw</groupId>
+            <artifactId>ofdrw-crypto</artifactId>
+            <version>${ofdrw.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk18on</artifactId>
+            <version>${bc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>${bc.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <configuration>
+                    <mainClass>org.ofdrw.poc.CryptoPoc</mainClass>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
