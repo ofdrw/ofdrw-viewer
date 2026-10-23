@@ -29,6 +29,8 @@ npm install @ofdrw/ofdrw-viewer-engine
 import { OFDDocument, OFDError, isOFDError, getPageViewport, WarningCollector } from '@ofdrw/ofdrw-viewer-engine';
 ```
 
+CDN 直出：`dist/ofdrw-viewer-engine.min.js`（或未压缩的 `dist/ofdrw-viewer-engine.js`）是自包含 IIFE，挂到 `window.OFDRWViewer`，无需打包器；通过 `<script>` 引入后直接使用同名 API，详见 README 的 CDN 小节。
+
 支持在浏览器（含 Web Worker）、Node.js（>= 22）、Electron/Tauri 的渲染进程或主进程、微信小程序中运行。核心不绑定 DOM/Node；宿主要能提供 Canvas 2D、图片解码、图片编码（导出时）和字体来源，具体注入方式见下一节。
 
 ## 5 分钟跑通（浏览器）
@@ -448,16 +450,19 @@ console.log(meta.pageCount, outline.length, attachments.length, signatures.lengt
 
 这些接口只返回元数据；附件内容用 `getAttachmentData(id)`，签章原始值用 `getSignedValue(id)`。引擎不做签章验签、证书解析或解密。
 
-### 补充字体
+### 缺省字体与补充字体
 
 ```ts
 const doc = await OFDDocument.open({
   source,
+  // 文档字体完全缺省时的替代字体，优先级高于 supplementaryFonts。
+  defaultFonts: [{ data: fallbackFontBytes, family: 'Noto Serif CJK SC' }],
+  // 主字体存在但缺字时逐字形补缺。
   supplementaryFonts: [{ data: fontBytes }],
 });
 ```
 
-字体优先级：内嵌 FontFile → `fontProvider` → `supplementaryFonts`。`data` 直接可用；`url` 默认走 fetch；`path`/`filePath` 需要 `loadInput`。CJK 字体由宿主提供，引擎不内置；缺字体/缺字只产生 warning，渲染继续。
+字体优先级：内嵌 FontFile → `fontProvider` → `defaultFonts` → `supplementaryFonts`；逐字形回退链为 provider 其余候选 → `defaultFonts` 其余 → `supplementaryFonts`。精确来源（内嵌/provider）命中时 `defaultFonts` 不参与主字体选择，但仍进入回退链。替代字体不可信任显式 GID（忽略 `CGTransform` 的 GID，走 cmap）。`data` 直接可用；`url` 默认走 fetch；`path`/`filePath` 需要 `loadInput`。CJK 字体由宿主提供，引擎不内置；缺字体/缺字只产生 warning，渲染继续。
 
 ## 错误与 warning
 

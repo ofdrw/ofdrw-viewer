@@ -24,7 +24,7 @@
 3. **文字绝不走 Canvas 文本 API**。统一走 `字体文件 → fontkit 解析 → 字形轮廓 → 路径 → fill/stroke`，因此不会受系统字体缺失、Canvas `fillText` 差异、小程序字体加载限制影响。
 4. **渲染分为“异步准备”和“同步绘制”两段**：先把该页需要的字体、图片、资源 XML 全部解析/解码完，再在一个同步循环里按文档顺序绘制，避免画到一半 `await` 导致 Canvas 状态被外部改写。
 5. **v1 的保真度分档**：基础路径/文字/图片、纯色、轴向渐变、路径裁剪、复合对象、模板页、页资源、**注释/签章外观**、**Gouraud/网格渐变**、**JBIG2/TIFF**、**Pattern 底纹** 为必做；**径向渐变 v1 不做**，识别到就 warning + 降级（平均色/透明），算法设计保留给 v2；重复/反射渐变、图像蒙版、边框、文字裁剪、合成粗斜体为次优先；ICC、BlendMode 不在 v1；加密文档解密与签名密码学验证不在 engine 范围，由 `@ofdrw/ofdrw-viewer-crypto` 提供。
-6. **最大风险不是解析，而是字体补充**：样例统计中约 35% 的文字对象没有内嵌字体，而浏览器/小程序无法直接读取操作系统字体轮廓。已确认方向：引擎不内置 CJK 字体，通过 `FontProvider` 或 `supplementaryFonts` 由宿主补充；包体积和授权压力留在宿主侧。
+6. **最大风险不是解析，而是字体补充**：样例统计中约 35% 的文字对象没有内嵌字体，而浏览器/小程序无法直接读取操作系统字体轮廓。已确认方向：引擎不内置 CJK 字体，通过 `FontProvider`、`defaultFonts` 或 `supplementaryFonts` 由宿主补充；包体积和授权压力留在宿主侧。
 7. **标准与实现存在若干冲突**（Alpha 默认值、MiterLimit 默认值、层顺序、负尺寸 Boundary、缺失 CTM 的图片等）。本方案在“标准优先、兼容真实文件”的原则下逐项给出明确口径；仍未定的只剩宿主字体清单、径向渐变 v2 时间和 TIFF 真实样本。
 8. **注释、复合对象、底纹共用“独立空间块”**：先在块内坐标记录显示列表，再整体映射回页面；同一红章/水印的显示列表可跨位置、跨页复用，group 合成由 renderer 内部处理。不要把注释外观写成单独的绘制循环。
 9. **绘制参数先结算、再绘制**：`DrawParam` 的 `Relative` 链、图层/对象/容器嵌套和优先级在准备阶段全部合并成 `ResolvedStyle`，绘制阶段只读最终值；同时用 `Renderer` 隔离 Canvas，渲染器可替换，**surface/scratch 不进入公开 API**。
@@ -311,7 +311,7 @@ function resolveStyle(obj: GraphicUnitBase, inherited: ResolvedStyle): ResolvedS
 | 复合对象 | 内容在 `(0,0,Width×0.3528,Height×0.3528)` 独立空间绘制成“已完成图形”，再经 `Boundary+CTM` 映射；不缩放到 `Boundary` | 业务确认 + 样本 `发票监制章-数科.ofd` |
 | 多模板页尺寸 | 按 `Template` 引用顺序取第一个带 `Area` 的模板 | 业务确认 |
 | 零尺寸 `Boundary` | 直接跳过该对象，不绘制 | 业务确认 |
-| 字体来源 | 不内置 CJK 字体；`FontProvider` 宿主注入，环境允许时可读本地字体；可选 `supplementaryFonts` | 业务确认 |
+| 字体来源 | 不内置 CJK 字体；`FontProvider` 宿主注入，环境允许时可读本地字体；可选 `defaultFonts` / `supplementaryFonts` | 业务确认 |
 | 径向渐变 | **v1 不做**：识别后 `W_RADIAL_UNSUPPORTED`，用平均色/透明降级；v2 再做软件光栅化 | 业务确认（v1 范围） |
 | 底纹 | v1 必做；`ReflectMethod` 用 Normal/Column/Row/RowAndColumn；先按 XStep/YStep 排列，再整体应用 CTM；CellContent 走独立块 | 标准图 27/28 + 表 28 + 样本 `pattern类型.ofd` |
 | `DeltaX` 压缩组 | `g <count> <value>` 先展开，再按字符位置使用 | 样本 `testPathClip.ofd` |
@@ -1129,7 +1129,7 @@ interface FontResource {
 
 ### 9.1.1 宿主补充字体与 `loadInput`（r11）
 
-- 字体来源优先级不变：内嵌 `FontFile` → 宿主 `FontProvider` → `supplementaryFonts`；后两者可返回 `data`/`url`/`path`/`filePath` 四种 `FontInput`。
+- 字体来源优先级：内嵌 `FontFile` → 宿主 `FontProvider` → `defaultFonts` → `supplementaryFonts`；后三者可返回 `data`/`url`/`path`/`filePath` 四种 `FontInput`。`defaultFonts` 仅作缺省替代（显式 GID 不可信，走 cmap），精确来源命中时不参与主字体选择但仍进入逐字形回退链。
 - `data` 直接使用；`url`/`path`/`filePath` 需要字节加载器。`OFDOpenOptions.loadInput` 可选：不传时 Web 默认 `url` 走 `fetch`，`path`/`filePath` 不支持并产生字体 warning；传了则全部非 `data` 来源交给它读取。
 - loader 返回 `null` 表示来源不可用；抛错/读取失败降级为 `W_FONT_MISSING`，不中断打开；字节上限仍由 `maxFontBytes` 控制。
 - Node CLI 注入 `node:fs` loader（`path`/`filePath` 用 `readFile`，`url` 用 fetch）。`--font-dir` 递归扫描 `.ttf/.otf/.ttc/.otc`，以 `{ path }` 加入 `supplementaryFonts`；TTC/OTC 展开全部字体面，按 fontkit 实测 family 参与评分，不只看第 0 面。
@@ -1797,13 +1797,16 @@ interface Glyph {
 
 ### 12.2 字体解析与回退
 
-字体来源分三层，但**不把某套 CJK 字体硬编码进引擎**：
+字体来源分四层，但**不把某套 CJK 字体硬编码进引擎**：
 
 1. **内嵌字体**（`FontResource.FontFile`）——最高优先级；
 2. **`FontProvider`**——由宿主提供，按 `FontName`/`FamilyName`/`Charset`/`Bold`/`Italic`/`Serif`/`FixedSize` 匹配：
    - **注入式**：宿主把字体字节/URL/路径放进 provider（Web、小程序、Electron 都可用）；
    - **本地读取**：环境允许时，Node 扫描系统字体目录，浏览器可用 `queryLocalFonts()`（需权限/用户手势）；小程序没有本地字体，只能注入；
-3. **`supplementaryFonts`（可选）**——宿主显式注入的补充字体列表，按顺序用于缺字/缺字体回退；不传就没有补充，只 warning。
+3. **`defaultFonts`（可选）**——宿主显式注入的缺省替代字体，文档字体缺省时作为主字体；优先级高于 `supplementaryFonts`，且始终进入逐字形回退链。固定按替代字体处理（`substitute: true`），显式 GID 不可信、必须走 cmap；
+4. **`supplementaryFonts`（可选）**——宿主显式注入的补充字体列表，按顺序用于缺字/缺字体回退；不传就没有补充，只 warning。
+
+主字体选择顺序为 内嵌 `FontFile` → `FontProvider` → `defaultFonts` → `supplementaryFonts`；逐字形回退链按 provider 其余候选 → `defaultFonts` 其余 → `supplementaryFonts` 依次尝试。精确来源（内嵌/provider）命中时 `defaultFonts` 不参与主字体选择，但仍进入回退链。
 
 回退是**逐字形**的，不是逐对象：
 
@@ -2371,6 +2374,7 @@ export interface CacheOptions {
 export interface OFDOpenBaseOptions {
   documentIndex?: number;              // 默认 0
   limits?: Partial<ResourceLimits>;
+  defaultFonts?: readonly FontInput[]; // 文档字体缺省时的替代字体，优先级高于 supplementaryFonts
   supplementaryFonts?: FontInput[];    // 宿主补充的字体，按需用于缺字/缺字体
   loadInput?: FontInputLoader;         // url/path/filePath 字节加载器；不传保持 Web 默认
   fontProvider?: FontProvider;         // 按需提供字体

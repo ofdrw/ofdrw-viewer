@@ -16,6 +16,40 @@
 npm install @ofdrw/ofdrw-viewer-engine
 ```
 
+### CDN（浏览器 `<script>`）
+
+构建会额外产出两个**完全自包含**的 IIFE 包，适合直接通过 CDN 或 `<script>` 引入，无需模块打包器：
+
+| 文件 | 说明 | 体积（gzip） |
+| --- | --- | --- |
+| `dist/ofdrw-viewer-engine.js` | 未压缩，便于调试 | 约 1.5 MB（354 KB） |
+| `dist/ofdrw-viewer-engine.min.js` | 压缩并带 sourcemap | 约 710 KB（260 KB） |
+
+```html
+<script src="https://cdn.jsdelivr.net/npm/@ofdrw/ofdrw-viewer-engine@0.1.0/dist/ofdrw-viewer-engine.min.js"></script>
+<script>
+  const { OFDDocument } = window.OFDRWViewer;
+
+  async function renderFirstPage(file, canvas) {
+    const doc = await OFDDocument.open({ source: { kind: 'blob', blob: file } });
+    try {
+      const page = await doc.getPage(0);
+      const viewport = page.getViewport({ dpi: 144 });
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    } finally {
+      await doc.close();
+    }
+  }
+</script>
+```
+
+- 全局变量为 `window.OFDRWViewer`，导出与包入口一致；
+- fontkit/saxes/fflate 与内置 GIF/JBIG2/TIFF 解码器均已内联，运行时不再请求其他 JS；
+- 目标语法为 ES2017，适用于现代浏览器；`ofdrw-viewer-engine.min.js.map` 也会一并发布；
+- 单独构建 CDN 产物：`pnpm -C packages/ofdrw-viewer-engine build:cdn`。
+
 ## ⚡ 快速开始
 
 **浏览器环境**接入您需要准备好一个OFD文件和一个`<canvas></canvas>` 如下所示：
@@ -38,7 +72,7 @@ async function renderFirstPage(file: File, canvas: HTMLCanvasElement) {
 }
 ```
 
-⚠️ 注意事项： 引擎**不内置 CJK 字体**，字体由宿主提供；未提供时只缺字，不会中断渲染。可用 `defaultFonts` 指定缺省替代字体（见下文），或用 `supplementaryFonts` 补齐缺字，详见[SKILL.md：补充字体](skills/SKILL.md#补充字体)。
+⚠️ 注意事项： 引擎**不内置 CJK 字体**，字体由宿主提供；未提供时只缺字，不会中断渲染。可用 `defaultFonts` 指定缺省替代字体（见下文），或用 `supplementaryFonts` 补齐缺字，详见[SKILL.md：缺省字体与补充字体](skills/SKILL.md#缺省字体与补充字体)。
 
 ### 缺省字体 defaultFonts
 
@@ -141,7 +175,8 @@ try {
 - [引擎设计](../../docs/OFD渲染引擎设计方案.md)
 - [文字位置 API](../../docs/text-content-api.md)
 - [UI 引擎 API](../../docs/ofdrw-viewer-ui-engine-api.md)
-- [Web 示例](../../examples/web/README.md)
+- [H5 示例（预置 global.js，无需包管理）](../../examples/engine-h5/README.md)
+- [Node.js 示例（逐页导出 PNG）](../../examples/engine-node/README.md)
 - [CLI 工具](../ofdrw-viewer-cli/README.md)
 - [UI 包](../ofdrw-viewer-ui/README.md)
 - [密码能力包](../ofdrw-viewer-crypto/README.md)
