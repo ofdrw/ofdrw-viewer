@@ -11,7 +11,39 @@
 export { OFDDocument } from './api/document';
 export { OFDPage } from './api/page';
 export { RenderTask } from './api/render-task';
+export { OFDEventBus } from './api/events';
 export { H5Canvas2DRenderer } from './renderer/canvas2d';
+
+// ---------------------------------------------------------------------------
+// 事件类型
+// ---------------------------------------------------------------------------
+export type {
+  DocumentCloseEndEvent,
+  DocumentCloseStartEvent,
+  DocumentOpenAbortEvent,
+  DocumentOpenEndEvent,
+  DocumentOpenErrorEvent,
+  DocumentOpenStartEvent,
+  OFDAbortCause,
+  OFDAddEventListenerOptions,
+  OFDEventBase,
+  OFDEventBusOptions,
+  OFDEventHandler,
+  OFDEventMap,
+  OFDEventName,
+  OFDOperationEventBase,
+  OFDPageEventMap,
+  OFDPageEventName,
+  OFDPageOperationEventBase,
+  PageLoadAbortEvent,
+  PageLoadEndEvent,
+  PageLoadErrorEvent,
+  PageLoadStartEvent,
+  PageRenderAbortEvent,
+  PageRenderEndEvent,
+  PageRenderErrorEvent,
+  PageRenderStartEvent,
+} from './api/events';
 
 // ---------------------------------------------------------------------------
 // 错误与 warning

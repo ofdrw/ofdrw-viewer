@@ -27,6 +27,12 @@
   --ofd-hover-bg: rgba(0, 0, 0, 0.06);
   --ofd-accent-soft: rgba(11, 102, 208, 0.12);
   --ofd-page-overlay: rgba(255, 255, 255, 0.92);
+  --ofd-loading-skeleton: rgba(0, 0, 0, 0.06);
+  --ofd-loading-skeleton-strong: rgba(0, 0, 0, 0.12);
+  --ofd-loading-spinner: var(--ofd-accent);
+  --ofd-loading-spinner-size: 20px;
+  --ofd-loading-spinner-width: 2px;
+  --ofd-loading-ring-size: 32px;
   --ofd-warning: #d97706;
   --ofd-on-accent: #ffffff;
   --ofd-focus-width: 2px;
@@ -43,6 +49,7 @@
   --ofd-z-findbar: 10;
   --ofd-z-scrim: 14;
   --ofd-z-sidebar: 15;
+  --ofd-z-loading: 20;
   --ofd-z-dialog: 30;
   --ofd-z-toast: 40;
 
@@ -56,6 +63,7 @@
     'Noto Sans CJK SC', sans-serif;
 
   color-scheme: light;
+  position: relative;
   display: grid;
   grid-template-rows: auto 1fr;
   width: 100%;
@@ -113,6 +121,9 @@
   --ofd-hover-bg: rgba(255, 255, 255, 0.08);
   --ofd-accent-soft: rgba(106, 169, 255, 0.16);
   --ofd-page-overlay: rgba(43, 43, 48, 0.92);
+  --ofd-loading-skeleton: rgba(255, 255, 255, 0.08);
+  --ofd-loading-skeleton-strong: rgba(255, 255, 255, 0.16);
+  --ofd-loading-spinner: var(--ofd-accent);
   --ofd-warning: #ffb74d;
   --ofd-on-accent: #101014;
   --ofd-scrim: rgba(0, 0, 0, 0.55);
@@ -142,6 +153,9 @@
     --ofd-hover-bg: rgba(255, 255, 255, 0.08);
     --ofd-accent-soft: rgba(106, 169, 255, 0.16);
     --ofd-page-overlay: rgba(43, 43, 48, 0.92);
+  --ofd-loading-skeleton: rgba(255, 255, 255, 0.08);
+  --ofd-loading-skeleton-strong: rgba(255, 255, 255, 0.16);
+  --ofd-loading-spinner: var(--ofd-accent);
     --ofd-warning: #ffb74d;
     --ofd-on-accent: #101014;
     --ofd-scrim: rgba(0, 0, 0, 0.55);
@@ -571,8 +585,13 @@
   background: var(--ofd-find-current);
 }
 
-.ofd-page__loading,
-.ofd-page__error {
+/*
+ * 页面加载层（设计方案 §5.3 / §6.9.3）：
+ * - 首次渲染：保持页面比例的骨架脉冲 + 20 px spinner；
+ * - 重渲染：保留旧 canvas，叠加半透明遮罩 + spinner；
+ * - 阻断该页点击与文本选择，但不拦截滚动（不设置 overflow/touch-action）。
+ */
+.ofd-page__loading {
   position: absolute;
   top: 0;
   right: 0;
@@ -588,10 +607,128 @@
   color: var(--ofd-text-secondary);
   background: var(--ofd-page-overlay);
   text-align: center;
+  cursor: progress;
+  user-select: none;
+  -webkit-user-select: none;
+  opacity: 1;
+  transition: opacity 120ms linear;
+}
+
+.ofd-page__loading[data-variant='skeleton'] {
+  background: transparent;
+}
+
+.ofd-page__loading[data-fading='true'] {
+  opacity: 0;
+}
+
+.ofd-page__loading-skeleton {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  overflow: hidden;
+  background: var(--ofd-loading-skeleton);
+  border-radius: inherit;
+}
+
+.ofd-page__loading-skeleton::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--ofd-loading-skeleton-strong);
+  opacity: 0;
+  animation: ofd-loading-skeleton-pulse 1600ms ease-in-out infinite;
+}
+
+.ofd-page__loading[data-variant='overlay'] .ofd-page__loading-skeleton {
+  display: none;
+}
+
+.ofd-page__loading-spinner {
+  position: relative;
+  z-index: 1;
+  width: var(--ofd-loading-spinner-size, 20px);
+  height: var(--ofd-loading-spinner-size, 20px);
+  border: var(--ofd-loading-spinner-width, 2px) solid var(--ofd-loading-skeleton-strong);
+  border-top-color: var(--ofd-loading-spinner);
+  border-radius: 50%;
+  animation: ofd-loading-spin 900ms linear infinite;
+}
+
+.ofd-page__loading-text {
+  margin: 0;
 }
 
 .ofd-page__error {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
   color: var(--ofd-danger);
+  background: var(--ofd-page-overlay);
+  text-align: center;
+}
+
+.ofd-page__error-code {
+  padding: 0 4px;
+  color: var(--ofd-danger);
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+.ofd-page__error-message {
+  word-break: break-word;
+}
+
+.ofd-page__retry {
+  min-height: 28px;
+  padding: 2px 12px;
+  color: var(--ofd-text);
+  background: transparent;
+  border: 1px solid var(--ofd-border);
+  border-radius: var(--ofd-radius);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ofd-page__retry:hover {
+  background: var(--ofd-hover-bg);
+}
+
+.ofd-page__retry:focus-visible {
+  outline: 2px solid var(--ofd-accent);
+  outline-offset: 1px;
+}
+
+@keyframes ofd-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ofd-loading-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0;
+  }
+
+  50% {
+    opacity: 1;
+  }
 }
 
 /* ------------------------------------------------------------------------- */
@@ -684,6 +821,132 @@
 }
 
 /* ------------------------------------------------------------------------- */
+/* 文档全屏 loading / 错误卡（设计方案 §6.9.2）                                */
+/* ------------------------------------------------------------------------- */
+
+.ofd-viewer__loading,
+.ofd-viewer__loading-error {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: var(--ofd-z-loading);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: var(--ofd-text);
+  background: var(--ofd-scrim);
+}
+
+.ofd-viewer__loading {
+  cursor: progress;
+  opacity: 1;
+  transition: opacity 150ms linear;
+}
+
+.ofd-viewer__loading[data-fading='true'] {
+  opacity: 0;
+}
+
+.ofd-viewer__loading-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(360px, 100%);
+  padding: 24px;
+  background: var(--ofd-toolbar-bg);
+  border: 1px solid var(--ofd-border);
+  border-radius: 6px;
+  box-shadow: var(--ofd-dialog-shadow);
+  text-align: center;
+}
+
+.ofd-viewer__loading-ring {
+  width: var(--ofd-loading-ring-size, 32px);
+  height: var(--ofd-loading-ring-size, 32px);
+  border: 3px solid var(--ofd-loading-skeleton-strong);
+  border-top-color: var(--ofd-loading-spinner);
+  border-radius: 50%;
+  animation: ofd-loading-spin 900ms linear infinite;
+}
+
+.ofd-viewer__loading-name {
+  margin: 0;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.ofd-viewer__loading-text {
+  margin: 0;
+  color: var(--ofd-text-secondary);
+}
+
+.ofd-viewer__loading-error-title {
+  margin: 0;
+  color: var(--ofd-danger);
+  font-weight: 600;
+}
+
+.ofd-viewer__loading-error-code {
+  margin: 0;
+  padding: 0 6px;
+  color: var(--ofd-danger);
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.ofd-viewer__loading-error-message {
+  margin: 0;
+  word-break: break-word;
+}
+
+.ofd-viewer__loading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.ofd-viewer__loading-button {
+  min-height: 32px;
+  padding: 4px 16px;
+  border: 1px solid var(--ofd-border);
+  border-radius: 4px;
+  font: inherit;
+}
+
+.ofd-viewer__loading-button--primary {
+  color: var(--ofd-on-accent);
+  background: var(--ofd-accent);
+  border-color: var(--ofd-accent);
+}
+
+.ofd-viewer__loading-button--primary:hover {
+  filter: brightness(1.08);
+}
+
+/* `prefers-reduced-motion`：关闭脉冲、旋转与淡出，保留静态骨架/圆环和文字。 */
+@media (prefers-reduced-motion: reduce) {
+  .ofd-page__loading,
+  .ofd-page__loading-skeleton::after,
+  .ofd-page__loading-spinner,
+  .ofd-viewer__loading,
+  .ofd-viewer__loading-ring {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .ofd-page__loading-skeleton::after {
+    opacity: 0;
+  }
+}
+
+/* ------------------------------------------------------------------------- */
 /* 响应式                                                                     */
 /* ------------------------------------------------------------------------- */
 
@@ -752,7 +1015,11 @@
   .ofd-viewer__sidebar,
   .ofd-viewer__findbar,
   .ofd-viewer__dialog-layer,
-  .ofd-viewer__toast-layer {
+  .ofd-viewer__toast-layer,
+  .ofd-viewer__loading,
+  .ofd-viewer__loading-error,
+  .ofd-page__loading,
+  .ofd-page__error {
     display: none !important;
   }
 

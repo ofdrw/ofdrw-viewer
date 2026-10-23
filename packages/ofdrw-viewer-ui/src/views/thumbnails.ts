@@ -3,7 +3,10 @@
  *
  * 消费核心已加载的 `PageInfo` 与引擎页渲染能力：
  * - 千页文档只给可见项 ±5 创建低分辨率 canvas，渲染任务在空闲时串行执行；
- * - 每个 canvas 独立于主视图，使用低 DPI（24–96）与 LRU 缓存，失败只显示占位；
+ * - 窗口内尚无 canvas 的项显示低对比骨架（`aria-hidden`），窗口外只显示静态页码，
+ *   避免 1000 项同时播放动画；缩略图不单独放 spinner，也不触发主页面 loading；
+ * - 每个 canvas 独立于主视图，使用低 DPI（24–96）与 LRU 缓存；失败只显示灰色占位
+ *   与页码，用户点击该项时才重试；
  * - 当前页高亮并与主视图页码同步，点击跳转、侧栏关闭时暂停队列。
  */
 
@@ -39,17 +42,34 @@ const MIN_DPI = 24;
 /** 缩略图渲染 DPI 上限。 */
 const MAX_DPI = 96;
 
-/** 缩略图状态。 */
-export type ThumbnailState = 'idle' | 'rendering' | 'rendered' | 'failed';
+/** 缩略图状态（设计方案 §6.9.4 / §7.2）。 */
+export type ThumbnailState = 'idle' | 'queued' | 'rendering' | 'rendered' | 'failed';
 
 /** 列表项。 */
 interface ThumbnailEntry {
   readonly pageNumber: number;
   readonly element: HTMLButtonElement;
   readonly wrapper: HTMLElement;
+  /** 静态页码占位：`idle` / `failed` 时显示。 */
   readonly fallback: HTMLElement;
+  /** 低对比骨架：`queued` / `rendering` 时显示，`aria-hidden`。 */
+  readonly skeleton: HTMLElement;
   canvas: HTMLCanvasElement | null;
   state: ThumbnailState;
+}
+
+/**
+ * 计算缩略图显示宽度。
+ *
+ * @param widthMm 页宽，单位 mm。
+ * @param heightMm 页高，单位 mm。
+ * @returns CSS 像素宽度，超长页按最大高度折算。
+ */
+function getDisplayWidth(widthMm: number, heightMm: number): number {
+  const ratio = heightMm / widthMm;
+  return THUMBNAIL_WIDTH * ratio > THUMBNAIL_MAX_HEIGHT
+    ? THUMBNAIL_MAX_HEIGHT / ratio
+    : THUMBNAIL_WIDTH;
 }
 
 /** 缩略图视图选项。 */
@@ -64,6 +84,19 @@ export interface ThumbnailViewOptions {
   readonly windowSize?: number;
   /** 缓存上限；默认 100。 */
   readonly cacheSize?: number;
+}
+
+/**
+ * 核心阅读器的页面渲染归属登记；最小化替身可缺省。
+ *
+ * 必须在调用 `page.render()` 前登记，核心依赖同步的 `page:render:start`
+ * 把 `operationId` 映射为缩略图用途。
+ */
+interface RenderStartTracking {
+  trackPageRenderStart(
+    pageIndex: number,
+    purpose: 'main' | 'thumbnail',
+  ): { drop(): void };
 }
 
 /** 缩略图列表。 */
@@ -176,13 +209,31 @@ export class ThumbnailView {
       element.setAttribute('aria-selected', 'false');
       element.setAttribute('aria-label', formatPageLabel(translator, pageNumber, pageCount));
 
+      const info = normalizePageInfo(this.viewer.getPageInfo(pageNumber));
+      const displayWidth = Math.round(getDisplayWidth(info.widthMm, info.heightMm));
+      // 用显式宽高而非 aspect-ratio，兼容旧版 Chromium（骨架不依赖新 CSS 语法）。
+      const displayHeight = Math.max(
+        1,
+        Math.round(displayWidth * (info.heightMm / info.widthMm)),
+      );
+
       const wrapper = doc.createElement('span');
       wrapper.className = 'ofd-thumbnail__canvas-wrapper';
+      // 窗口外的静态页码占位：不播放动画，只保留可读页码。
       const fallback = doc.createElement('span');
       fallback.className = 'ofd-thumbnail__fallback';
       fallback.textContent = translator.formatNumber(pageNumber);
-      fallback.hidden = true;
-      wrapper.append(fallback);
+      fallback.style.width = `${displayWidth}px`;
+      fallback.style.height = `${displayHeight}px`;
+      fallback.hidden = false;
+      // 窗口内尚未生成 canvas 时的低对比骨架；纯装饰，读屏忽略。
+      const skeleton = doc.createElement('span');
+      skeleton.className = 'ofd-thumbnail__skeleton';
+      skeleton.setAttribute('aria-hidden', 'true');
+      skeleton.hidden = true;
+      skeleton.style.width = `${displayWidth}px`;
+      skeleton.style.height = `${displayHeight}px`;
+      wrapper.append(fallback, skeleton);
 
       const label = doc.createElement('span');
       label.className = 'ofd-thumbnail__label';
@@ -190,14 +241,17 @@ export class ThumbnailView {
       element.append(wrapper, label);
       element.addEventListener('click', () => this.handleClick(pageNumber));
       fragment.append(element);
-      this.entries.set(pageNumber, {
+      const entry: ThumbnailEntry = {
         pageNumber,
         element,
         wrapper,
         fallback,
+        skeleton,
         canvas: null,
         state: 'idle',
-      });
+      };
+      this.entries.set(pageNumber, entry);
+      this.setEntryState(entry, 'idle');
     }
     this.root.append(fragment);
     this.observeVisibility();
@@ -304,15 +358,12 @@ export class ThumbnailView {
     }
   }
 
-  /** 用户点击失败项后重试。 */
+  /** 用户点击失败项后重试；不参与自动重试。 */
   private retry(pageNumber: number): void {
     const entry = this.entries.get(pageNumber);
     if (!entry || entry.state === 'rendering') return;
     this.releaseCanvas(entry);
-    entry.state = 'idle';
-    entry.element.dataset.state = 'idle';
-    entry.fallback.hidden = true;
-    this.queued.push(pageNumber);
+    this.setEntryState(entry, 'idle');
     this.refreshWindow();
   }
 
@@ -360,11 +411,15 @@ export class ThumbnailView {
     // 离屏渲染任务取消，避免继续占用引擎。
     if (this.activeRender && !desired.has(this.activeRender.pageNumber)) this.abortActive();
 
+    // 状态与窗口对齐：窗口内无 canvas 的项排队并播骨架，窗口外未开始的项回到 idle。
+    this.syncEntryStates();
+
     this.queued = [...desired]
       .filter((pageNumber) => {
         const entry = this.entries.get(pageNumber);
         if (!entry) return false;
         if (entry.state === 'rendered' || entry.state === 'failed') return false;
+        if (this.activeRender?.pageNumber === pageNumber) return false;
         if (this.cache.has(pageNumber)) return false;
         return true;
       })
@@ -374,6 +429,47 @@ export class ThumbnailView {
       );
     this.trimCache();
     this.pumpSoon();
+  }
+
+  /**
+   * 按渲染窗口同步每个缩略图项的状态。
+   *
+   * `queued`/`rendering` 只用于窗口内尚无 canvas 的项，因此 1000 页文档中
+   * 同一时刻只有窗口内的少量骨架在播放动画；窗口外未开始的项回退 `idle`，
+   * 只显示静态页码。已有 canvas 的 `rendered` 与等待用户重试的 `failed` 保持不变。
+   */
+  private syncEntryStates(): void {
+    const activePage = this.activeRender?.pageNumber;
+    for (const entry of this.entries.values()) {
+      if (!this.desired.has(entry.pageNumber)) {
+        if (entry.state === 'queued') this.setEntryState(entry, 'idle');
+        continue;
+      }
+      if (entry.state === 'rendered' || entry.state === 'failed') continue;
+      if (activePage === entry.pageNumber) {
+        if (entry.state !== 'rendering') this.setEntryState(entry, 'rendering');
+        continue;
+      }
+      if (entry.state !== 'queued') this.setEntryState(entry, 'queued');
+    }
+  }
+
+  /**
+   * 统一写入缩略图状态与占位可见性。
+   *
+   * - `queued` / `rendering`：显示骨架，隐藏页码占位；
+   * - `rendered`：显示 canvas，隐藏骨架与占位；
+   * - `idle` / `failed`：隐藏骨架，显示静态页码占位。
+   *
+   * @param entry 列表项。
+   * @param state 目标状态。
+   */
+  private setEntryState(entry: ThumbnailEntry, state: ThumbnailState): void {
+    entry.state = state;
+    entry.element.dataset.state = state;
+    const showSkeleton = state === 'queued' || state === 'rendering';
+    entry.skeleton.hidden = !showSkeleton;
+    entry.fallback.hidden = showSkeleton || state === 'rendered';
   }
 
   /** 空闲时启动串行渲染。 */
@@ -394,9 +490,15 @@ export class ThumbnailView {
       while (!this.destroyed && this.active) {
         const pageNumber = this.queued.shift();
         if (pageNumber === undefined) break;
-        if (!this.desired.has(pageNumber)) continue;
-        if (this.cache.has(pageNumber)) continue;
         const entry = this.entries.get(pageNumber);
+        if (!this.desired.has(pageNumber)) {
+          if (entry?.state === 'queued') this.setEntryState(entry, 'idle');
+          continue;
+        }
+        if (this.cache.has(pageNumber)) {
+          if (entry && entry.state !== 'rendered') this.setEntryState(entry, 'rendered');
+          continue;
+        }
         if (!entry || entry.state === 'failed' || entry.state === 'rendered') continue;
         await this.renderThumbnail(entry);
       }
@@ -416,8 +518,7 @@ export class ThumbnailView {
     const pageNumber = entry.pageNumber;
     const controller = new AbortController();
     this.activeRender = { pageNumber, controller, task: null };
-    entry.state = 'rendering';
-    entry.element.dataset.state = 'rendering';
+    this.setEntryState(entry, 'rendering');
     try {
       const page: NavigationPage = await this.viewer.getPage(pageNumber);
       if (controller.signal.aborted || this.destroyed) return false;
@@ -426,11 +527,7 @@ export class ThumbnailView {
         2,
         Math.max(1, this.host.ownerDocument.defaultView?.devicePixelRatio ?? 1),
       );
-      const ratio = info.heightMm / info.widthMm;
-      const displayWidth =
-        THUMBNAIL_WIDTH * ratio > THUMBNAIL_MAX_HEIGHT
-          ? THUMBNAIL_MAX_HEIGHT / ratio
-          : THUMBNAIL_WIDTH;
+      const displayWidth = getDisplayWidth(info.widthMm, info.heightMm);
       const dpi = Math.min(
         MAX_DPI,
         Math.max(MIN_DPI, (displayWidth / info.widthMm) * 25.4 * dpr),
@@ -449,33 +546,41 @@ export class ThumbnailView {
       }
       const context = canvas.getContext('2d');
       if (!context) throw new Error('当前环境不支持 Canvas 2D');
-      const task = page.render({
-        canvasContext: context,
-        viewport,
-        signal: controller.signal,
-      });
+      const tracker = this.viewer as NavigationViewer & Partial<RenderStartTracking>;
+      const pending = tracker.trackPageRenderStart?.(pageNumber - 1, 'thumbnail');
+      let task: NavigationRenderTask;
+      try {
+        task = page.render({
+          canvasContext: context,
+          viewport,
+          signal: controller.signal,
+        });
+      } catch (error) {
+        // 入口校验失败不会派发 start，必须弹出待归属项避免错配后续事件。
+        pending?.drop();
+        throw error;
+      }
+      pending?.drop();
       this.activeRender.task = task;
       await task.promise;
       if (controller.signal.aborted || this.destroyed) {
-        entry.state = 'idle';
-        entry.element.dataset.state = 'idle';
+        // 取消后不保留半成品 canvas；refreshWindow 可能已重新排队（骨架保持）。
+        this.releaseCanvas(entry);
+        if (entry.state === 'rendering') this.setEntryState(entry, 'idle');
         return false;
       }
-      entry.state = 'rendered';
-      entry.element.dataset.state = 'rendered';
-      entry.fallback.hidden = true;
+      this.setEntryState(entry, 'rendered');
       this.touchCache(pageNumber, canvas);
       return true;
     } catch (error) {
       if (controller.signal.aborted || this.destroyed) {
-        entry.state = 'idle';
-        entry.element.dataset.state = 'idle';
+        this.releaseCanvas(entry);
+        if (entry.state === 'rendering') this.setEntryState(entry, 'idle');
         return false;
       }
-      entry.state = 'failed';
-      entry.element.dataset.state = 'failed';
-      entry.fallback.hidden = false;
-      entry.fallback.textContent = this.getTranslator().formatNumber(pageNumber);
+      // 失败只保留灰色占位 + 页码，不遗留空白 canvas。
+      this.releaseCanvas(entry);
+      this.setEntryState(entry, 'failed');
       reportNavigationWarning(
         this.viewer,
         'W_THUMBNAIL',
@@ -515,9 +620,7 @@ export class ThumbnailView {
     const entry = this.entries.get(pageNumber);
     if (!entry) return;
     this.releaseCanvas(entry);
-    entry.state = 'idle';
-    entry.element.dataset.state = 'idle';
-    entry.fallback.hidden = true;
+    this.setEntryState(entry, 'idle');
   }
 
   /** 清空 canvas 像素并移除节点。 */
@@ -529,11 +632,16 @@ export class ThumbnailView {
     entry.canvas = null;
   }
 
-  /** 暂停队列并取消在途渲染。 */
+  /** 暂停队列并取消在途渲染；骨架回到静态页码。 */
   private pause(): void {
     this.cancelPump();
     this.abortActive();
     this.queued = [];
+    for (const entry of this.entries.values()) {
+      if (entry.state === 'queued' || entry.state === 'rendering') {
+        this.setEntryState(entry, 'idle');
+      }
+    }
   }
 
   /** 取消空闲调度。 */
@@ -542,12 +650,16 @@ export class ThumbnailView {
     this.pumpCancel = null;
   }
 
-  /** 取消在途渲染。 */
+  /** 取消在途渲染，丢弃半成品 canvas，并把该项同步回 idle（若已重新排队则保留骨架）。 */
   private abortActive(): void {
     const active = this.activeRender;
     if (!active) return;
     this.activeRender = null;
     active.controller.abort();
     active.task?.cancel();
+    const entry = this.entries.get(active.pageNumber);
+    if (!entry) return;
+    this.releaseCanvas(entry);
+    if (entry.state === 'rendering') this.setEntryState(entry, 'idle');
   }
 }

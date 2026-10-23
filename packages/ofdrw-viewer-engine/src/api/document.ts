@@ -51,6 +51,13 @@ import type {
   ResourceLimits,
 } from './types';
 import type { OFDPage } from './page';
+import type { PageEventContext, PageRenderOperation } from './page';
+import type {
+  OFDAbortCause,
+  OFDAddEventListenerOptions,
+  OFDEventHandler,
+  OFDEventName,
+} from './events';
 import type {
   AttachmentInfo,
   BookmarkItem,
@@ -75,6 +82,7 @@ import type { PageAreaInfo } from '../model/page-info';
 
 import { DEFAULT_CACHE_OPTIONS, DEFAULT_RESOURCE_LIMITS } from './types';
 import { OFDPage as OFDPageClass } from './page';
+import { OFDEventBus as OFDEventBusClass, OFDInternalEventDispatcher } from './events';
 import { combineAbortSignals, createAbortError, throwIfAborted, wrapError } from './render-task';
 import { DEFAULT_DPI, getPageViewport } from './viewport';
 import { openZipVirtualContainer } from './container';
@@ -84,7 +92,7 @@ import {
   createPageWarningHandler,
 } from './warnings';
 import { DisposableLruCache } from './cache';
-import { isOFDError, OFDError } from '../errors';
+import { isOFDError, OFDError, toOFDError } from '../errors';
 import { dirnameOf } from '../container/path';
 import { normalizeResourceId } from '../model/ids';
 import { parseXml } from '../xml/parser';
@@ -217,10 +225,16 @@ interface DocumentInit {
   encodeImage?: EncodeImage;
   /** 宿主字体提供者；矢量章独立打开内嵌 OFD 时继承。 */
   fontProvider?: FontProvider;
+  /** 宿主导入的默认字体；矢量章独立打开内嵌 OFD 时继承。 */
+  defaultFonts?: readonly FontInput[];
   /** 宿主补充字体；矢量章独立打开内嵌 OFD 时继承。 */
   supplementaryFonts?: readonly FontInput[];
   /** 宿主字体字节加载器；矢量章独立打开内嵌 OFD 时继承。 */
   fontInputLoader?: FontInputLoader;
+  /** 本文档使用的事件总线：注入时与宿主对象相同，否则由 engine 创建。 */
+  eventBus: OFDEventBusClass;
+  /** 内部事件派发器；与打开阶段共享同一操作号计数。 */
+  dispatcher: OFDInternalEventDispatcher;
 }
 
 /**
@@ -230,6 +244,7 @@ interface DocumentInit {
  * @param path 包内路径。
  * @param maxBytes XML 大小上限，byte。
  * @param onWarning CRC/大小不一致等 warning 回调。
+ * @param signal 打开取消信号；透传给容器读取。
  * @returns 解析后的 XML 根节点。
  */
 async function readXmlEntry(
@@ -237,8 +252,13 @@ async function readXmlEntry(
   path: string,
   maxBytes: number,
   onWarning: (warning: OFDWarning) => void,
+  signal?: AbortSignal,
 ): Promise<XmlNode> {
-  const bytes = await container.read(path, { maxBytes, onWarning });
+  const bytes = await container.read(path, {
+    maxBytes,
+    onWarning,
+    ...(signal ? { signal } : {}),
+  });
   return parseXml(bytes);
 }
 
@@ -251,6 +271,7 @@ async function readXmlEntry(
  * @param path 包内路径。
  * @param maxBytes XML 大小上限，byte。
  * @param onWarning warning 回调。
+ * @param signal 打开取消信号；透传给容器读取。
  * @returns 解析后的 XML 根节点。
  * @throws OFDError 条目缺失/容器已关闭/超限/XML 非法时。
  */
@@ -259,9 +280,10 @@ async function readRequiredXmlEntry(
   path: string,
   maxBytes: number,
   onWarning: (warning: OFDWarning) => void,
+  signal?: AbortSignal,
 ): Promise<XmlNode> {
   try {
-    return await readXmlEntry(container, path, maxBytes, onWarning);
+    return await readXmlEntry(container, path, maxBytes, onWarning, signal);
   } catch (error) {
     if (isOFDError(error) && error.code === 'OFD_ENTRY_NOT_FOUND') {
       throw new OFDError('OFD_INVALID_PACKAGE', `OFD 包缺少必需条目：${path}`, { cause: error });
@@ -350,6 +372,18 @@ const BROWSER_NATIVE_FORMATS: ReadonlySet<string> = new Set(['png', 'jpeg', 'web
 export class OFDDocument {
   /** 页数，打开后立即固定。 */
   readonly pageCount: number;
+  /**
+   * 本文档使用的事件总线。
+   *
+   * `open()` 注入 `eventBus` 时与注入对象相同；省略时由 engine 创建。
+   * `document:close:end` 之后不再派发任何事件。
+   */
+  readonly events: OFDEventBusClass;
+
+  /** 事件派发器；与打开阶段共享操作号计数。 */
+  private readonly dispatcher: OFDInternalEventDispatcher;
+  /** 已返回给宿主的页面句柄；关闭时清理页面过滤监听器。 */
+  private readonly pageHandles = new Set<OFDPage>();
 
   private container: VirtualContainer | undefined;
   /** 容器是否由 engine 拥有；借用容器在 close 时只清引用。 */
@@ -379,6 +413,8 @@ export class OFDDocument {
   private readonly encodeImage: EncodeImage | undefined;
   /** 宿主字体提供者；供矢量章嵌套文档继承。 */
   private readonly fontProvider: FontProvider | undefined;
+  /** 宿主导入的默认字体；供矢量章嵌套文档继承。 */
+  private readonly defaultFonts: readonly FontInput[] | undefined;
   /** 宿主补充字体；供矢量章嵌套文档继承。 */
   private readonly supplementaryFonts: readonly FontInput[] | undefined;
   /** 宿主字体字节加载器；未注入时为 Web 默认实现。 */
@@ -456,6 +492,8 @@ export class OFDDocument {
   private constructor(init: DocumentInit) {
     this.container = init.container;
     this.ownsContainer = init.ownsContainer;
+    this.events = init.eventBus;
+    this.dispatcher = init.dispatcher;
     this.document = init.document;
     this.metadata = init.metadata;
     this.permissions = init.permissions;
@@ -475,6 +513,7 @@ export class OFDDocument {
     this.exportCanvas = init.exportCanvas;
     this.encodeImage = init.encodeImage;
     this.fontProvider = init.fontProvider;
+    this.defaultFonts = init.defaultFonts;
     this.supplementaryFonts = init.supplementaryFonts;
     this.fontInputLoader = init.fontInputLoader ?? createFontInputLoader();
     this.pageCount = init.document.pageCount;
@@ -526,15 +565,24 @@ export class OFDDocument {
    * 重载保持「无容器时 source 必填」的既有调用类型：默认 ZIP 与容器工厂走
    * `OFDOpenOptions`，纯容器打开走 `OFDOpenFromContainerOptions`。
    *
+   * 事件语义：
+   * - 入口参数校验失败（缺少来源、container/containerFactory 互斥）不进入
+   *   操作生命周期，不派发任何事件；
+   * - `document:open:start` 在容器打开前同步派发，`document:open:end` 在
+   *   Promise resolve 前派发；
+   * - 打开失败派发 `document:open:error`，`signal` 取消派发
+   *   `document:open:abort(cause='caller')`。
+   *
    * @param options 来源/容器、资源限制、字体/图片插件、渲染器与 warning 回调。
    * @returns 文档实例。
-   * @throws OFDError 包结构/XML/资源限制/加密文档错误。
+   * @throws OFDError 包结构/XML/资源限制/加密文档/取消错误。
    */
   static open(options: OFDOpenOptions): Promise<OFDDocument>;
   static open(options: OFDOpenFromContainerOptions): Promise<OFDDocument>;
   static async open(
     options: OFDOpenOptions | OFDOpenFromContainerOptions,
   ): Promise<OFDDocument> {
+    // 入口校验失败不进入操作生命周期：不派发 start，也不派发终止事件。
     if (!options) {
       throw new OFDError('OFD_INVALID_PACKAGE', 'OFDDocument.open 缺少 source 或 container');
     }
@@ -547,39 +595,90 @@ export class OFDDocument {
         'OFDOpenOptions.container 与 containerFactory 不能同时提供',
       );
     }
+    if (!providedContainer && !providedFactory && !options.source) {
+      throw new OFDError(
+        'OFD_INVALID_PACKAGE',
+        'OFDDocument.open 缺少 source（或注入 container/containerFactory）',
+      );
+    }
+
+    const eventBus = options.eventBus ?? new OFDEventBusClass();
+    const dispatcher = new OFDInternalEventDispatcher(eventBus);
+    const operationId = dispatcher.allocateOperationId();
+    const startedAt = Date.now();
+    const signal = options.signal;
+    const viaContainer = providedContainer !== undefined || providedFactory !== undefined;
+
+    // start 必须在任何异步打开动作之前同步派发，宿主据此启动全屏 loading。
+    dispatcher.emit('document:open:start', {
+      operationId,
+      sourceKind: options.source?.kind ?? 'custom',
+      documentIndex: options.documentIndex ?? 0,
+      viaContainer,
+    });
+
     const limits: ResourceLimits = { ...DEFAULT_RESOURCE_LIMITS, ...(options.limits ?? {}) };
     const cacheOptions: CacheOptions = { ...DEFAULT_CACHE_OPTIONS, ...(options.cache ?? {}) };
     const warnings = createWarningCollector(options.onWarning);
     const onWarning = createDocumentWarningHandler(warnings);
     let openedContainer: VirtualContainer | undefined;
     let ownsContainer = false;
-    let annotationsIndexError: string | undefined;
+
     try {
-      if (providedContainer) {
-        // 宿主借用：engine 不打开 source，也不负责关闭容器。
-        openedContainer = providedContainer;
-      } else if (providedFactory) {
-        if (!options.source) {
-          throw new OFDError('OFD_INVALID_PACKAGE', 'OFDOpenOptions.containerFactory 需要提供 source');
+      // ---- 容器获取 ----
+      // 不把 signal 直接交给外部容器工厂；先等待结果，再在 catch 中统一清理，
+      // 避免取消后迟到的容器泄漏。waitForAbort 保证即使底层 I/O 不响应 signal，
+      // open() 也会及时以取消结束。
+      const acquisition = (async (): Promise<{
+        container: VirtualContainer;
+        owned: boolean;
+      }> => {
+        if (providedContainer) {
+          // 宿主借用：engine 不打开 source，也不负责关闭容器。
+          return { container: providedContainer, owned: false };
         }
-        openedContainer = await providedFactory(options.source);
-        ownsContainer = true;
-      } else {
+        if (providedFactory) {
+          if (!options.source) {
+            throw new OFDError('OFD_INVALID_PACKAGE', 'OFDOpenOptions.containerFactory 需要提供 source');
+          }
+          return { container: await providedFactory(options.source), owned: true };
+        }
         if (!options.source) {
           throw new OFDError(
             'OFD_INVALID_PACKAGE',
             'OFDDocument.open 缺少 source（或注入 container/containerFactory）',
           );
         }
-        openedContainer = await openZipVirtualContainer(
+        const container = await openZipVirtualContainer(
           options.source,
           options.limits ? { limits: options.limits } : {},
         );
-        ownsContainer = true;
+        return { container, owned: true };
+      })();
+
+      let acquired: { container: VirtualContainer; owned: boolean };
+      try {
+        acquired = await waitForAbort(acquisition, signal);
+      } catch (error) {
+        if (signal?.aborted) {
+          // 取消后底层获取可能稍后成功；engine 负责关闭该自有容器。
+          void acquisition.then(
+            async (late) => {
+              if (!late.owned) return;
+              try {
+                await late.container.close();
+              } catch {
+                // 迟到的容器关闭失败不影响取消结论。
+              }
+            },
+            () => undefined,
+          );
+          throw createAbortError(signal.reason);
+        }
+        throw error;
       }
-      if (!openedContainer) {
-        throw new OFDError('OFD_INVALID_PACKAGE', '未能构造文档容器');
-      }
+      openedContainer = acquired.container;
+      ownsContainer = acquired.owned;
       const container: VirtualContainer = openedContainer;
       if (container.encrypted) {
         throw new OFDError(
@@ -588,155 +687,200 @@ export class OFDDocument {
         );
       }
 
-      // 1) OFD.xml → DocRoot（支持多文档包）。
-      const ofdRoot = await readRequiredXmlEntry(
-        container,
-        'OFD.xml',
-        limits.maxXmlBytes,
-        onWarning,
-      );
-      const rootInfo = decodeOfdRoot(ofdRoot, { onWarning });
-      const documentIndex = options.documentIndex ?? 0;
-      let docRoot: string;
-      if (!Number.isInteger(documentIndex) || documentIndex < 0) {
-        throw new OFDError('OFD_INVALID_PACKAGE', `documentIndex 非法：${documentIndex}`);
-      }
-      if (rootInfo.docRoots.length > 0) {
-        if (documentIndex >= rootInfo.docRoots.length) {
-          throw new OFDError(
-            'OFD_INVALID_PACKAGE',
-            `documentIndex ${documentIndex} 超出文档数量 ${rootInfo.docRoots.length}`,
-          );
-        }
-        docRoot = rootInfo.docRoots[documentIndex] as string;
-      } else if (documentIndex === 0 && container.has('Document.xml')) {
-        // 少数简化包把 DocRoot 留空；Document.xml 位于包根。
-        docRoot = '';
-      } else {
-        throw new OFDError('OFD_INVALID_PACKAGE', 'OFD.xml 缺少有效 DocRoot');
-      }
+      // ---- 解析与构造 ----
+      // 单独包装为 promise，用 waitForAbort 保证取消及时生效；底层容器读取同时
+      // 透传 signal，正常情况下会尽快自行终止。
+      const build = async (): Promise<DocumentInit> => {
+        let annotationsIndexError: string | undefined;
 
-      // 2) Document.xml → 页树与 CommonData。
-      // 标准 OFD.xml 的 DocRoot 是 Document.xml 文件路径；兼容写成目录的实现/简化包。
-      const normalizedRoot = docRoot.replace(/\\/g, '/').replace(/\/+$/, '');
-      const documentPath = normalizedRoot === ''
-        ? 'Document.xml'
-        : /\.xml$/i.test(normalizedRoot)
-          ? normalizedRoot
-          : `${normalizedRoot}/Document.xml`;
-      const documentNode = await readRequiredXmlEntry(
-        container,
-        documentPath,
-        limits.maxXmlBytes,
-        onWarning,
-      );
-      let document = decodeDocument(documentNode, documentPath, { onWarning });
-
-      // 3) 文档级注释索引（DocumentModel.pageAnnotIndex）。
-      if (document.annotationsFile) {
-        try {
-          const annotationsIndexNode = await readXmlEntry(
-            container,
-            document.annotationsFile,
-            limits.maxXmlBytes,
-            onWarning,
-          );
-          const index = decodeAnnotationsIndex(
-            annotationsIndexNode,
-            dirnameOf(document.annotationsFile),
-            { onWarning },
-          );
-          document = { ...document, pageAnnotIndex: index.pageAnnotIndex };
-        } catch (error) {
-          annotationsIndexError = document.annotationsFile;
-          onWarning({
-            code: 'W_ANNOT_EMPTY',
-            message: `注释索引 ${document.annotationsFile} 解析失败：${errorMessage(error)}`,
-          });
-        }
-      }
-
-      // 4) 文档级资源索引（PublicRes + DocumentRes）。
-      const publicRes = document.commonData?.publicRes ?? [];
-      const documentRes = document.commonData?.documentRes ?? [];
-      const sets: ResourceDefinitionSet[] = [];
-      for (const path of [...publicRes, ...documentRes]) {
-        try {
-          const rootNode = await readXmlEntry(container, path, limits.maxXmlBytes, onWarning);
-          sets.push(decodePageResources(rootNode, path, { onWarning }));
-        } catch (error) {
-          onWarning({
-            code: 'W_BAD_NUMBER',
-            message: `资源文件 ${path} 解析失败：${errorMessage(error)}`,
-          });
-          sets.push(emptyResourceSet());
-        }
-      }
-      const documentResources = buildDocumentResourceIndex({
-        publicRes,
-        documentRes,
-        sets,
-        ...(document.commonData?.defaultColorSpaceId
-          ? { defaultColorSpace: document.commonData.defaultColorSpaceId }
-          : {}),
-        onWarning,
-      });
-
-      // 5) 字体库：内嵌字体按需注册，provider/default/supplementary 由宿主注入。
-      const fontInputLoader = options.loadInput ?? createFontInputLoader();
-      const fontLibrary = new FontLibrary({
-        ...(options.fontProvider ? { fontProvider: options.fontProvider } : {}),
-        ...(options.defaultFonts ? { defaultFonts: options.defaultFonts } : {}),
-        ...(options.supplementaryFonts ? { supplementaryFonts: options.supplementaryFonts } : {}),
-        loadInput: fontInputLoader,
-        onWarning: (code, message, context) => {
-          const warning: OFDWarning = { code, message };
-          if (context?.resourceId !== undefined) warning.resourceId = context.resourceId;
-          onWarning(warning);
-        },
-        maxFontBytes: limits.maxFontBytes,
-      });
-
-      const renderer: Renderer =
-        options.renderer ??
-        new H5Canvas2DRenderer(
-          options.createCanvas ? { createCanvas: options.createCanvas } : undefined,
+        // 1) OFD.xml → DocRoot（支持多文档包）。
+        const ofdRoot = await readRequiredXmlEntry(
+          container,
+          'OFD.xml',
+          limits.maxXmlBytes,
+          onWarning,
+          signal,
         );
-      // 兼容旧宿主：显式 H5 渲染器已注入的 createCanvas 继续作为矢量章工厂。
-      const createCanvas = options.createCanvas ?? createCanvasFromRenderer(renderer);
-      const signaturePath = signatureIndexCandidates(documentPath).find((path) =>
-        container.has(path),
-      );
-      const metadata: DocumentMetadata = {
-        version: rootInfo.version,
-        pageCount: document.pageCount,
-        packageSize: container.packageSize,
-        ...metadataFromDocInfo(rootInfo.docInfos[documentIndex]),
+        throwIfAborted(signal);
+        const rootInfo = decodeOfdRoot(ofdRoot, { onWarning });
+        const documentIndex = options.documentIndex ?? 0;
+        let docRoot: string;
+        if (!Number.isInteger(documentIndex) || documentIndex < 0) {
+          throw new OFDError('OFD_INVALID_PACKAGE', `documentIndex 非法：${documentIndex}`);
+        }
+        if (rootInfo.docRoots.length > 0) {
+          if (documentIndex >= rootInfo.docRoots.length) {
+            throw new OFDError(
+              'OFD_INVALID_PACKAGE',
+              `documentIndex ${documentIndex} 超出文档数量 ${rootInfo.docRoots.length}`,
+            );
+          }
+          docRoot = rootInfo.docRoots[documentIndex] as string;
+        } else if (documentIndex === 0 && container.has('Document.xml')) {
+          // 少数简化包把 DocRoot 留空；Document.xml 位于包根。
+          docRoot = '';
+        } else {
+          throw new OFDError('OFD_INVALID_PACKAGE', 'OFD.xml 缺少有效 DocRoot');
+        }
+
+        // 2) Document.xml → 页树与 CommonData。
+        // 标准 OFD.xml 的 DocRoot 是 Document.xml 文件路径；兼容写成目录的实现/简化包。
+        const normalizedRoot = docRoot.replace(/\\/g, '/').replace(/\/+$/, '');
+        const documentPath = normalizedRoot === ''
+          ? 'Document.xml'
+          : /\.xml$/i.test(normalizedRoot)
+            ? normalizedRoot
+            : `${normalizedRoot}/Document.xml`;
+        const documentNode = await readRequiredXmlEntry(
+          container,
+          documentPath,
+          limits.maxXmlBytes,
+          onWarning,
+          signal,
+        );
+        throwIfAborted(signal);
+        let document = decodeDocument(documentNode, documentPath, { onWarning });
+
+        // 3) 文档级注释索引（DocumentModel.pageAnnotIndex）。
+        if (document.annotationsFile) {
+          try {
+            const annotationsIndexNode = await readXmlEntry(
+              container,
+              document.annotationsFile,
+              limits.maxXmlBytes,
+              onWarning,
+              signal,
+            );
+            const index = decodeAnnotationsIndex(
+              annotationsIndexNode,
+              dirnameOf(document.annotationsFile),
+              { onWarning },
+            );
+            document = { ...document, pageAnnotIndex: index.pageAnnotIndex };
+          } catch (error) {
+            // 取消/关闭不得被 warning 回退吞掉。
+            const fatal = fatalReadError(error, false, signal);
+            if (fatal) throw fatal;
+            annotationsIndexError = document.annotationsFile;
+            onWarning({
+              code: 'W_ANNOT_EMPTY',
+              message: `注释索引 ${document.annotationsFile} 解析失败：${errorMessage(error)}`,
+            });
+          }
+        }
+        throwIfAborted(signal);
+
+        // 4) 文档级资源索引（PublicRes + DocumentRes）。
+        const publicRes = document.commonData?.publicRes ?? [];
+        const documentRes = document.commonData?.documentRes ?? [];
+        const sets: ResourceDefinitionSet[] = [];
+        for (const path of [...publicRes, ...documentRes]) {
+          try {
+            const rootNode = await readXmlEntry(
+              container,
+              path,
+              limits.maxXmlBytes,
+              onWarning,
+              signal,
+            );
+            sets.push(decodePageResources(rootNode, path, { onWarning }));
+          } catch (error) {
+            const fatal = fatalReadError(error, false, signal);
+            if (fatal) throw fatal;
+            onWarning({
+              code: 'W_BAD_NUMBER',
+              message: `资源文件 ${path} 解析失败：${errorMessage(error)}`,
+            });
+            sets.push(emptyResourceSet());
+          }
+          throwIfAborted(signal);
+        }
+        const documentResources = buildDocumentResourceIndex({
+          publicRes,
+          documentRes,
+          sets,
+          ...(document.commonData?.defaultColorSpaceId
+            ? { defaultColorSpace: document.commonData.defaultColorSpaceId }
+            : {}),
+          onWarning,
+        });
+
+        // 5) 字体库：内嵌字体按需注册，provider/default/supplementary 由宿主注入。
+        const fontInputLoader = options.loadInput ?? createFontInputLoader();
+        const fontLibrary = new FontLibrary({
+          ...(options.fontProvider ? { fontProvider: options.fontProvider } : {}),
+          ...(options.defaultFonts ? { defaultFonts: options.defaultFonts } : {}),
+          ...(options.supplementaryFonts
+            ? { supplementaryFonts: options.supplementaryFonts }
+            : {}),
+          loadInput: fontInputLoader,
+          onWarning: (code, message, context) => {
+            const warning: OFDWarning = { code, message };
+            if (context?.resourceId !== undefined) warning.resourceId = context.resourceId;
+            onWarning(warning);
+          },
+          maxFontBytes: limits.maxFontBytes,
+        });
+
+        const renderer: Renderer =
+          options.renderer ??
+          new H5Canvas2DRenderer(
+            options.createCanvas ? { createCanvas: options.createCanvas } : undefined,
+          );
+        // 兼容旧宿主：显式 H5 渲染器已注入的 createCanvas 继续作为矢量章工厂。
+        const createCanvas = options.createCanvas ?? createCanvasFromRenderer(renderer);
+        const signaturePath = signatureIndexCandidates(documentPath).find((path) =>
+          container.has(path),
+        );
+        const metadata: DocumentMetadata = {
+          version: rootInfo.version,
+          pageCount: document.pageCount,
+          packageSize: container.packageSize,
+          ...metadataFromDocInfo(rootInfo.docInfos[documentIndex]),
+        };
+        throwIfAborted(signal);
+        return {
+          container,
+          ownsContainer,
+          eventBus,
+          dispatcher,
+          document,
+          metadata,
+          permissions: document.permissions,
+          limits,
+          cacheOptions,
+          warnings,
+          renderer,
+          imageDecoders: options.imageDecoders ?? [],
+          strictImageCtm: options.strictImageCtm ?? true,
+          layerOrder: options.layerOrder ?? 'type',
+          documentResources,
+          fontLibrary,
+          ...(signaturePath ? { signatureIndexPath: signaturePath } : {}),
+          ...(annotationsIndexError ? { annotationsIndexError } : {}),
+          ...(createCanvas ? { createCanvas } : {}),
+          ...(options.createCanvas ? { exportCanvas: options.createCanvas } : {}),
+          ...(options.encodeImage ? { encodeImage: options.encodeImage } : {}),
+          ...(options.fontProvider ? { fontProvider: options.fontProvider } : {}),
+          ...(options.defaultFonts ? { defaultFonts: options.defaultFonts } : {}),
+          ...(options.supplementaryFonts
+            ? { supplementaryFonts: options.supplementaryFonts }
+            : {}),
+          fontInputLoader,
+        };
       };
-      return new OFDDocument({
-        container,
-        ownsContainer,
-        document,
-        metadata,
-        permissions: document.permissions,
-        limits,
-        cacheOptions,
-        warnings,
-        renderer,
-        imageDecoders: options.imageDecoders ?? [],
-        strictImageCtm: options.strictImageCtm ?? true,
-        layerOrder: options.layerOrder ?? 'type',
-        documentResources,
-        fontLibrary,
-        ...(signaturePath ? { signatureIndexPath: signaturePath } : {}),
-        ...(annotationsIndexError ? { annotationsIndexError } : {}),
-        ...(createCanvas ? { createCanvas } : {}),
-        ...(options.createCanvas ? { exportCanvas: options.createCanvas } : {}),
-        ...(options.encodeImage ? { encodeImage: options.encodeImage } : {}),
-        ...(options.fontProvider ? { fontProvider: options.fontProvider } : {}),
-        ...(options.supplementaryFonts ? { supplementaryFonts: options.supplementaryFonts } : {}),
-        fontInputLoader,
+
+      const init = await waitForAbort(build(), signal);
+      const openedDocument = new OFDDocument(init);
+      // end 在 open() Promise resolve 前同步派发；此时文档已可用。
+      dispatcher.emit('document:open:end', {
+        operationId,
+        pageCount: init.metadata.pageCount,
+        version: init.metadata.version,
+        packageSize: init.container.packageSize,
+        durationMs: Date.now() - startedAt,
       });
+      return openedDocument;
     } catch (error) {
       // 打开失败时只释放 engine 自有的容器；借用容器保持宿主所有权。
       if (openedContainer && ownsContainer) {
@@ -746,18 +890,158 @@ export class OFDDocument {
           // 容器关闭失败不覆盖打开失败原因。
         }
       }
-      throw wrapError(error, 'OFD_INVALID_PACKAGE', '打开 OFD 失败');
+      const durationMs = Date.now() - startedAt;
+      if (signal?.aborted) {
+        dispatcher.emit('document:open:abort', {
+          operationId,
+          cause: 'caller',
+          ...(signal.reason !== undefined ? { reason: signal.reason } : {}),
+          durationMs,
+        });
+        throw createAbortError(signal.reason);
+      }
+      if (isOFDError(error) && error.code === 'OFD_ABORTED') {
+        dispatcher.emit('document:open:abort', {
+          operationId,
+          cause: 'caller',
+          ...(error.cause !== undefined ? { reason: error.cause } : {}),
+          durationMs,
+        });
+        throw error;
+      }
+      const openError = wrapError(error, 'OFD_INVALID_PACKAGE', '打开 OFD 失败');
+      dispatcher.emit('document:open:error', {
+        operationId,
+        error: openError,
+        durationMs,
+      });
+      throw openError;
     }
+  }
+
+  /**
+   * 订阅文档生命周期事件。
+   *
+   * @param type 事件名。
+   * @param handler 监听器。
+   * @returns 退订函数；可重复调用。
+   */
+  on<K extends OFDEventName>(type: K, handler: OFDEventHandler<K>): () => void {
+    return this.events.on(type, handler);
+  }
+
+  /**
+   * 订阅一次文档生命周期事件。
+   *
+   * @param type 事件名。
+   * @param handler 监听器。
+   * @returns 退订函数；可重复调用。
+   */
+  once<K extends OFDEventName>(type: K, handler: OFDEventHandler<K>): () => void {
+    return this.events.once(type, handler);
+  }
+
+  /**
+   * 退订文档生命周期事件；同一回调的多次注册全部移除。
+   *
+   * @param type 事件名。
+   * @param handler 监听器。
+   */
+  off<K extends OFDEventName>(type: K, handler: OFDEventHandler<K>): void {
+    this.events.off(type, handler);
+  }
+
+  /**
+   * DOM 风格订阅文档生命周期事件；支持 `once`/`signal`。
+   *
+   * @param type 事件名。
+   * @param handler 监听器。
+   * @param options once 与 signal 选项。
+   */
+  addEventListener<K extends OFDEventName>(
+    type: K,
+    handler: OFDEventHandler<K>,
+    options: OFDAddEventListenerOptions = {},
+  ): void {
+    this.events.addEventListener(type, handler, options);
+  }
+
+  /**
+   * DOM 风格退订文档生命周期事件；与 `off` 等价。
+   *
+   * @param type 事件名。
+   * @param handler 监听器。
+   */
+  removeEventListener<K extends OFDEventName>(type: K, handler: OFDEventHandler<K>): void {
+    this.events.removeEventListener(type, handler);
+  }
+
+  /**
+   * 创建页面事件上下文；页面监听器直接挂到文档总线并按 `pageIndex` 过滤。
+   *
+   * @param pageIndex 页索引，从 0 开始。
+   * @returns 页面事件与同步入口校验运行时。
+   */
+  private createPageEventContext(pageIndex: number): PageEventContext {
+    return {
+      events: this.events,
+      dispatcher: this.dispatcher,
+      validateRender: (params) => {
+        this.assertOpen();
+        this.validateRenderParams(pageIndex, params);
+      },
+    };
+  }
+
+  /**
+   * 根据关闭/取消状态归类终止事件；真正失败返回 undefined。
+   *
+   * 文档关闭优先于调用方取消；`OFD_ABORTED` 只作为取消处理，不会被当成 error。
+   *
+   * @param signal 调用方取消信号。
+   * @param error 原始错误。
+   * @returns abort 载荷；非取消场景为 undefined。
+   */
+  private resolveAbort(
+    signal: AbortSignal | undefined,
+    error: unknown,
+  ): { cause: OFDAbortCause; reason?: unknown } | undefined {
+    if (this.closed) {
+      const reason = this.closeController.signal.reason;
+      return { cause: 'close', ...(reason !== undefined ? { reason } : {}) };
+    }
+    if (signal?.aborted) {
+      return {
+        cause: 'caller',
+        ...(signal.reason !== undefined ? { reason: signal.reason } : {}),
+      };
+    }
+    if (isOFDError(error) && error.code === 'OFD_ABORTED') {
+      return {
+        cause: 'caller',
+        ...(error.cause !== undefined ? { reason: error.cause } : {}),
+      };
+    }
+    return undefined;
   }
 
   /**
    * 按需加载指定页；索引从 0 开始。
    *
+   * 事件语义（§2.3）：入口校验失败（文档已关闭、页索引越界、signal 已中止）
+   * 不进入操作生命周期；校验通过后同步派发 `page:load:start`，页面句柄创建
+   * 完成后、Promise resolve 前派发 `page:load:end`；取消派发
+   * `page:load:abort`，真实失败派发 `page:load:error`。
+   *
    * @param pageIndex 页索引。
+   * @param options 取消信号；只影响本次等待，不中止共享页面加载。
    * @returns 页面实例（页尺寸已解析）。
-   * @throws OFDError 页码越界/文档已关闭/页面解码失败。
+   * @throws OFDError 页码越界/文档已关闭/取消/页面解码失败。
    */
-  async getPage(pageIndex: number): Promise<OFDPage> {
+  async getPage(
+    pageIndex: number,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<OFDPage> {
     this.assertOpen();
     if (!Number.isInteger(pageIndex) || pageIndex < 0 || pageIndex >= this.pageCount) {
       throw new OFDError(
@@ -765,15 +1049,71 @@ export class OFDDocument {
         `页码越界：${pageIndex}（页数 ${this.pageCount}）`,
       );
     }
-    const entry = await this.getPageEntry(pageIndex);
-    return new OFDPageClass(
-      pageIndex,
-      entry.model.size,
-      (params, signal) => this.renderPage(pageIndex, params, signal),
-      (options) => this.exportPage(pageIndex, entry.model.size, options),
-      (options) => this.preparePageIndex(pageIndex, options),
-      (options) => this.loadTextContent(pageIndex, options),
-    );
+    const signal = options.signal;
+    // 入口已取消视为校验失败，不进入操作生命周期。
+    throwIfAborted(signal);
+
+    const operationId = this.dispatcher.allocateOperationId();
+    const startedAt = Date.now();
+    this.dispatcher.emit('page:load:start', { operationId, pageIndex });
+
+    const run = (async (): Promise<OFDPage> => {
+      try {
+        const entry = await this.getPageEntry(pageIndex, signal);
+        if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭');
+        throwIfAborted(signal);
+        const page = new OFDPageClass(
+          pageIndex,
+          entry.model.size,
+          (params, taskSignal, operation) =>
+            this.renderPage(pageIndex, params, taskSignal, operation),
+          (exportOptions) => this.exportPage(pageIndex, entry.model.size, exportOptions),
+          (prepareOptions) => this.preparePageIndex(pageIndex, prepareOptions),
+          (textOptions) => this.loadTextContent(pageIndex, textOptions),
+          this.createPageEventContext(pageIndex),
+        );
+        this.pageHandles.add(page);
+        // end 在 Promise resolve 前派发，宿主可在此之前隐藏 loading。
+        this.dispatcher.emit('page:load:end', {
+          operationId,
+          pageIndex,
+          widthMm: entry.model.size.width,
+          heightMm: entry.model.size.height,
+          durationMs: Date.now() - startedAt,
+        });
+        return page;
+      } catch (error) {
+        const abort = this.resolveAbort(signal, error);
+        if (abort) {
+          this.dispatcher.emit('page:load:abort', {
+            operationId,
+            pageIndex,
+            cause: abort.cause,
+            ...(abort.reason !== undefined ? { reason: abort.reason } : {}),
+            durationMs: Date.now() - startedAt,
+          });
+          // 调用方取消统一以 OFD_ABORTED 拒绝；文档关闭保留原有 OFD_CLOSED/
+          // OFD_ABORTED 语义，但终止事件始终是 abort。
+          if (abort.cause === 'caller') throw createAbortError(signal?.reason);
+          throw error;
+        }
+        const loadError = toOFDError(
+          error,
+          'OFD_ENTRY_NOT_FOUND',
+          `第 ${pageIndex} 页加载失败`,
+        );
+        this.dispatcher.emit('page:load:error', {
+          operationId,
+          pageIndex,
+          error: loadError,
+          durationMs: Date.now() - startedAt,
+        });
+        throw loadError;
+      }
+    })();
+    // close() 需要等待 getPage 的终止事件派发完成，保证 abort 早于 close:end。
+    this.trackActiveRun(run);
+    return run;
   }
 
   /**
@@ -1201,14 +1541,16 @@ export class OFDDocument {
    */
   private trackActiveRun<T>(run: Promise<T>): void {
     this.activeRuns.add(run);
-    void run
-      .then(
-        () => undefined,
-        () => undefined,
-      )
-      .finally(() => {
+    // 直接在首个 reaction 中移除：保证调用方 await 该操作后，close() 不再把它
+    // 计入 abortedOperations（.finally 会晚一个微任务）。
+    void run.then(
+      () => {
         this.activeRuns.delete(run);
-      });
+      },
+      () => {
+        this.activeRuns.delete(run);
+      },
+    );
   }
 
   /**
@@ -1469,11 +1811,21 @@ export class OFDDocument {
   /**
    * 关闭文档并释放全部缓存与句柄；可重复调用。
    *
-   * 进行中的渲染/导出/页信息/准备/文本会先被中止；`close()` 不向调用方抛错。
+   * 事件顺序（§3.8.2）：
+   * `document:close:start` → 活动操作 `abort(cause='close')` →
+   * 等待全部活动操作 settle → 释放资源 → `document:close:end`。
+   * `close:end` 之后不再派发任何事件；第二次 `close()` 不派发事件。
+   *
+   * 进行中的渲染/导出/页信息/准备/文本/取页会先被中止；`close()` 不向调用方抛错。
    */
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    const operationId = this.dispatcher.allocateOperationId();
+    const startedAt = Date.now();
+    // 先派发 close:start，再中止活动操作；宿主据此停止 loading 计时并拒绝新操作。
+    this.dispatcher.emit('document:close:start', { operationId });
+    const abortedOperations = this.activeRuns.size;
     this.closeController.abort();
     for (const controller of this.activeControllers) controller.abort();
     // 等待已开始的渲染结束（取消后通常在下一个对象/I/O 边界退出）。
@@ -1531,6 +1883,16 @@ export class OFDDocument {
     this.templateCache.clear();
     this.resourceIndexCache.clear();
     this.annotationCache.clear();
+
+    // close:end 是本文档的最后一帧事件；随后静默并清理页面过滤监听器。
+    this.dispatcher.emit('document:close:end', {
+      operationId,
+      durationMs: Date.now() - startedAt,
+      abortedOperations,
+    });
+    this.dispatcher.mute();
+    for (const page of this.pageHandles) page.dispose();
+    this.pageHandles.clear();
   }
 
   /**
@@ -1564,18 +1926,21 @@ export class OFDDocument {
    * 校验 viewport/canvas 后进入该 Canvas 的 Promise 链：准备阶段异步加载资源，
    * 绘制阶段同步执行；取消信号同时合并宿主 signal、任务 cancel 与 close。
    *
+   * 事件：活动操作内的 `end`/`error`/`abort` 在本 Promise settle 前派发，
+   * 保证 `task.promise` resolve/reject 时宿主已收到终止事件。导出路径不传
+   * `operation`，因此不会派发 `page:render:*`。
+   *
    * @param pageIndex 页索引。
    * @param params 宿主渲染参数。
    * @param taskSignal 渲染任务取消信号。
+   * @param operation 渲染操作事件上下文；导出等内部渲染为 undefined。
    */
   private async renderPage(
     pageIndex: number,
     params: PageRenderParameters,
     taskSignal: AbortSignal,
+    operation?: PageRenderOperation,
   ): Promise<void> {
-    this.assertOpen();
-    this.validateRenderParams(pageIndex, params);
-
     const canvas = params.canvasContext.canvas;
     const previous = this.canvasChains.get(canvas) ?? Promise.resolve();
     const controller = new AbortController();
@@ -1584,6 +1949,8 @@ export class OFDDocument {
 
     const run = (async (): Promise<void> => {
       try {
+        this.assertOpen();
+        this.validateRenderParams(pageIndex, params);
         throwIfAborted(combined.signal);
         const entry = await this.getPageEntry(pageIndex, combined.signal);
         throwIfAborted(combined.signal);
@@ -1610,8 +1977,42 @@ export class OFDDocument {
           pageIndex,
         });
         throwIfAborted(combined.signal);
+        if (operation) {
+          this.dispatcher.emit('page:render:end', {
+            operationId: operation.operationId,
+            pageIndex,
+            durationMs: Date.now() - operation.startedAt,
+          });
+        }
       } catch (error) {
-        throw wrapError(error, 'OFD_RENDERER_UNSUPPORTED', `第 ${pageIndex} 页渲染失败`);
+        const renderError = wrapError(
+          error,
+          'OFD_RENDERER_UNSUPPORTED',
+          `第 ${pageIndex} 页渲染失败`,
+        );
+        if (operation) {
+          const abort = this.resolveRenderAbort(taskSignal, combined.signal, error);
+          if (abort) {
+            this.dispatcher.emit('page:render:abort', {
+              operationId: operation.operationId,
+              pageIndex,
+              cause: abort.cause,
+              ...(abort.reason !== undefined ? { reason: abort.reason } : {}),
+              durationMs: Date.now() - operation.startedAt,
+            });
+            // abort 事件与 Promise 语义保持一致：取消一律以 OFD_ABORTED 拒绝，
+            // 不把取消包装成渲染错误（error 只表示真正失败）。
+            throw createAbortError(abort.reason);
+          } else {
+            this.dispatcher.emit('page:render:error', {
+              operationId: operation.operationId,
+              pageIndex,
+              error: renderError,
+              durationMs: Date.now() - operation.startedAt,
+            });
+          }
+        }
+        throw renderError;
       } finally {
         combined.dispose();
         this.activeControllers.delete(controller);
@@ -1622,13 +2023,55 @@ export class OFDDocument {
     const chain = previous.catch(() => undefined).then(() => run);
     this.canvasChains.set(canvas, chain);
     this.activeRuns.add(chain);
-    void chain
-      .catch(() => undefined)
-      .finally(() => {
-        this.activeRuns.delete(chain);
-        if (this.canvasChains.get(canvas) === chain) this.canvasChains.delete(canvas);
-      });
+    // 在首个 reaction 中移除活动记录，close() 的 abortedOperations 不把已完成
+    // 的渲染算作被中止；同时清理该 Canvas 的链引用。
+    const releaseChain = (): void => {
+      this.activeRuns.delete(chain);
+      if (this.canvasChains.get(canvas) === chain) this.canvasChains.delete(canvas);
+    };
+    void chain.then(releaseChain, releaseChain);
     await chain;
+  }
+
+  /**
+   * 归类渲染中止来源；真正失败返回 undefined。
+   *
+   * `taskSignal` 包含宿主 signal 与 `RenderTask.cancel()`；文档关闭则统一
+   * 归类为 `cause='close'`，即使渲染内部先抛出 `OFD_ABORTED`。
+   *
+   * @param taskSignal 渲染任务取消信号。
+   * @param workSignal 合并后的内部工作信号。
+   * @param error 原始错误。
+   * @returns abort 载荷；非取消场景为 undefined。
+   */
+  private resolveRenderAbort(
+    taskSignal: AbortSignal,
+    workSignal: AbortSignal,
+    error: unknown,
+  ): { cause: OFDAbortCause; reason?: unknown } | undefined {
+    if (this.closed) {
+      const reason = this.closeController.signal.reason;
+      return { cause: 'close', ...(reason !== undefined ? { reason } : {}) };
+    }
+    if (taskSignal.aborted) {
+      return {
+        cause: 'caller',
+        ...(taskSignal.reason !== undefined ? { reason: taskSignal.reason } : {}),
+      };
+    }
+    if (workSignal.aborted) {
+      return {
+        cause: 'caller',
+        ...(workSignal.reason !== undefined ? { reason: workSignal.reason } : {}),
+      };
+    }
+    if (isOFDError(error) && error.code === 'OFD_ABORTED') {
+      return {
+        cause: 'caller',
+        ...(error.cause !== undefined ? { reason: error.cause } : {}),
+      };
+    }
+    return undefined;
   }
 
   /**
@@ -2485,6 +2928,7 @@ export class OFDDocument {
       limits: this.limits,
       onWarning: this.documentWarningHandler,
       ...(this.fontProvider ? { fontProvider: this.fontProvider } : {}),
+      ...(this.defaultFonts ? { defaultFonts: [...this.defaultFonts] } : {}),
       ...(this.supplementaryFonts ? { supplementaryFonts: [...this.supplementaryFonts] } : {}),
       loadInput: this.fontInputLoader,
     });
@@ -2544,7 +2988,7 @@ export class OFDDocument {
   }
 
   /**
-   * 加载字体面集合：内嵌字体 → FontProvider → supplementaryFonts。
+   * 加载字体面集合：内嵌字体 → FontProvider → defaultFonts → supplementaryFonts。
    *
    * 单字体失败只 warning，不影响整页。
    *

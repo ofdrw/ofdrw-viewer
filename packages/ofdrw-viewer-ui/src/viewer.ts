@@ -8,11 +8,19 @@
 
 import type {
   DocumentPermissions,
+  DocumentOpenAbortEvent,
+  DocumentOpenErrorEvent,
+  DocumentOpenStartEvent,
   PageImageFormat,
   PageInfo,
+  PageRenderAbortEvent,
+  PageRenderEndEvent,
+  PageRenderErrorEvent,
+  PageRenderStartEvent,
   SignatureEntryInfo,
   VirtualContainer,
 } from '@ofdrw/ofdrw-viewer-engine';
+import * as engineApi from '@ofdrw/ofdrw-viewer-engine';
 import type {
   CertificateSummary,
   VerificationReport,
@@ -42,6 +50,7 @@ import type {
   ViewerFeatures,
 } from './features';
 import { ViewerHistory, type ViewerHashState } from './history';
+import { createTranslator, type Translator } from './i18n';
 import { KeyboardController } from './keyboard';
 import {
   DEFAULT_MOBILE_RENDER_CONCURRENCY,
@@ -195,7 +204,8 @@ type ViewportMode = 'desktop' | 'compact' | 'mobile' | 'narrow';
 function isAbort(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
   const name = (error as { name?: unknown }).name;
-  return name === 'AbortError' || name === 'OFD_ABORTED';
+  if (name === 'AbortError' || name === 'OFD_ABORTED') return true;
+  return (error as { code?: unknown }).code === 'OFD_ABORTED';
 }
 
 /** 创建取消错误。 */
@@ -246,6 +256,23 @@ function createServices(): ViewerServices {
   return {};
 }
 
+/** 页面渲染用途；用于把共享总线上的事件路由到主页面或缩略图。 */
+export type PageRenderPurpose = 'main' | 'thumbnail';
+
+/** 一次 `page.render()` 发起前的用途登记。 */
+interface PendingPageRenderStart {
+  /** 页索引，0-based。 */
+  readonly pageIndex: number;
+  /** 渲染用途。 */
+  readonly purpose: PageRenderPurpose;
+}
+
+/** `trackPageRenderStart` 返回的登记句柄。 */
+export interface PageRenderStartHandle {
+  /** 移除尚未消费的登记；重复调用无副作用。 */
+  drop(): void;
+}
+
 /**
  * 阅读器核心实例。
  *
@@ -275,6 +302,23 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private readonly pageViews: PageView[] = [];
   private readonly renderOrder: number[] = [];
   private readonly ownerDocument: Document;
+  /** 引擎事件总线；每个 viewer 独立，打开文档时注入。测试替身未导出总线时为 null。 */
+  private readonly engineEvents: InstanceType<typeof engineApi.OFDEventBus> | null;
+  /** `page.render()` 前的用途登记；按页索引分组，start 事件同步消费。 */
+  private readonly pendingStarts = new Map<number, PendingPageRenderStart[]>();
+  /** 已映射的页面操作：`operationId` → 用途与页索引。 */
+  private readonly pageOperations = new Map<
+    number,
+    { readonly purpose: PageRenderPurpose; readonly pageIndex: number }
+  >();
+  /** 当前 UI 打开流程的引擎 `operationId`；用于过滤旧文档的迟到事件。 */
+  private documentOpenOperationId = 0;
+  /** `close()` 是否正在执行；防止引擎 abort 事件重入关闭流程。 */
+  private closing = false;
+  /** 文档全屏 loading / 错误卡控制器。 */
+  private readonly documentLoading: DocumentLoadingOverlay;
+  /** 当前语言的翻译器；加载文案与页面文案共用。 */
+  private translator: Translator;
   private resizeObserver: ResizeObserver | null = null;
   private state: ViewerState;
   private pageInfos: readonly PageInfo[] = [];
@@ -283,6 +327,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private sidebarLayout: 'inline' | 'overlay' | 'drawer' = 'inline';
   private openToken = 0;
   private openAbort: AbortController | null = null;
+  /** 最近一次 `open()` 的来源；全屏错误卡的“重试”使用。 */
+  private lastOpenSource: ViewerSource | null = null;
   /** UI 持有的解密容器；关闭文档后由 UI 关闭，engine 只借用。 */
   private decryptedContainer: VirtualContainer | null = null;
   /** 最近一次打开准备结果；用于自动验证与错误映射。 */
@@ -350,13 +396,49 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.elements.main.style.padding = '0';
     this.elements.sidebar.hidden = true;
     this.elements.sidebarMask.hidden = true;
+    this.translator = createTranslator(this.options.locale);
+    this.documentLoading = new DocumentLoadingOverlay({
+      root: this.root,
+      ownerDocument: this.ownerDocument,
+      translator: this.translator,
+      onCancel: () => this.cancelDocumentOpen(),
+      onRetry: () => this.retryOpen(),
+      onClose: () => void this.close(),
+    });
 
     this.eventBus = new EventBus<ViewerEventMap>({
       onListenerError: (error, event) => {
         this.warn('W_UI_LISTENER', `事件 ${event} 的监听器抛出异常：${String(error)}`);
       },
     });
+    // 引擎模块可能被测试替身替换（未导出总线）；此时降级为 Promise 驱动的计时。
+    let EngineEventBus: typeof engineApi.OFDEventBus | undefined;
+    try {
+      EngineEventBus = engineApi.OFDEventBus;
+    } catch {
+      EngineEventBus = undefined;
+    }
+    this.engineEvents =
+      typeof EngineEventBus === 'function'
+        ? new EngineEventBus({
+            onListenerError: (error, type) => {
+              this.warn(
+                'W_ENGINE_EVENT',
+                `引擎事件 ${type} 的监听器抛出异常：${String(error)}`,
+              );
+            },
+          })
+        : null;
+    this.bindEngineEvents();
     this.controller = new DocumentController({
+      openDocument: (openOptions) => {
+        const signal = this.openAbort?.signal;
+        return engineApi.OFDDocument.open({
+          ...openOptions,
+          ...(this.engineEvents ? { eventBus: this.engineEvents } : {}),
+          ...(signal ? { signal } : {}),
+        }) as unknown as Promise<EngineDocument>;
+      },
       ...(this.options.requestInit ? { requestInit: this.options.requestInit } : {}),
       onWarning: (warning) => this.reportWarning(warning),
     });
@@ -597,6 +679,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
    */
   async open(source: ViewerSource = this.options.source): Promise<void> {
     this.assertNotDisposed();
+    this.lastOpenSource = source;
     const previousSource = this.state.document.source;
     this.openToken += 1;
     const token = this.openToken;
@@ -606,6 +689,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.queue.cancelAll();
     this.patchDocument({ status: 'opening', source: null });
     this.commit();
+    // 正常由 `document:open:start` 启动 150ms 计时；引擎事件不可用时在此降级。
+    if (!this.engineEvents) this.documentLoading.begin(source);
     /** 尚未移交给阅读器的解密容器；取消/失败时必须关闭。 */
     let pendingContainer: VirtualContainer | null = null;
     try {
@@ -668,20 +753,46 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       await this.applyAvailability(token);
       this.commit();
       this.emit('documentopen', { pageCount: opened.pageCount });
+      // 全屏 loading 的结束点是 UI `documentopen`（页壳与初始滚动已就绪）。
+      this.documentLoading.finish();
       this.emit('pagesloaded', { pageCount: opened.pageCount });
       this.renderVisible(true);
       void this.loadSideData(token);
       this.syncHash();
       this.maybeAutoVerify();
     } catch (error) {
-      if (token !== this.openToken || isAbort(error)) {
+      if (token !== this.openToken) {
+        // 已有更新的 open 接管 loading，旧操作只做容器清理。
         if (pendingContainer) {
           await closeContainer(pendingContainer);
           pendingContainer = null;
         }
         return;
       }
+      if (isAbort(error)) {
+        if (pendingContainer) {
+          await closeContainer(pendingContainer);
+          pendingContainer = null;
+        }
+        // 用户取消：立即隐藏全屏 loading，回到空态并清理可能已打开的引擎文档。
+        this.documentLoading.cancel();
+        this.queue.cancelAll();
+        this.destroyPages();
+        await this.controller.close();
+        await this.releaseDecryptedContainer();
+        this.pageInfos = [];
+        this.patchDocument({
+          status: 'closed',
+          source: null,
+          pageCount: 0,
+          pageInfos: [],
+          signaturesSummary: [],
+        });
+        this.commit();
+        return;
+      }
       if (isOFDViewerError(error) && error.code === 'OFD_CRYPTO_CANCELLED') {
+        this.documentLoading.cancel();
         this.patchDocument({
           status: this.controller.isOpen ? 'ready' : 'closed',
           source: previousSource,
@@ -691,6 +802,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       }
       const mapped = this.mapOpenFailure(error);
       const info = this.toErrorInfo(mapped, 'OFD_OPEN_FAILED', '打开文档失败');
+      this.documentLoading.fail(info);
       this.patchDocument({ status: 'error' });
       this.reportError(info);
       this.commit();
@@ -702,35 +814,188 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
 
   /** 关闭文档，保留阅读器实例。 */
   async close(): Promise<void> {
-    if (this.disposed) return;
-    this.openToken += 1;
-    this.openAbort?.abort();
-    this.openAbort = null;
-    this.queue.cancelAll();
-    this.destroyPages();
-    await this.controller.close();
-    await this.releaseDecryptedContainer();
-    this.cryptoPreparation = null;
-    this.cryptoService.reset();
-    this.pageInfos = [];
-    this.patchDocument({
-      status: 'closed',
-      source: null,
-      pageCount: 0,
-      pageInfos: [],
-      signaturesSummary: [],
-      metadata: undefined,
-      outline: undefined,
-      bookmarks: undefined,
+    if (this.disposed || this.closing) return;
+    this.closing = true;
+    try {
+      this.openToken += 1;
+      this.openAbort?.abort();
+      this.openAbort = null;
+      // 关闭后不能残留全屏 loading / 错误卡。
+      this.documentLoading.close();
+      this.clearRenderTracking();
+      this.queue.cancelAll();
+      this.destroyPages();
+      await this.controller.close();
+      await this.releaseDecryptedContainer();
+      this.cryptoPreparation = null;
+      this.cryptoService.reset();
+      this.pageInfos = [];
+      this.patchDocument({
+        status: 'closed',
+        source: null,
+        pageCount: 0,
+        pageInfos: [],
+        signaturesSummary: [],
+        metadata: undefined,
+        outline: undefined,
+        bookmarks: undefined,
+      });
+      this.patchView({
+        pageNumber: 1,
+        visiblePageRange: { start: 0, end: -1 },
+        selectedText: '',
+        findState: {
+          ...this.state.view.findState,
+          query: '',
+          current: 0,
+          total: 0,
+          searching: false,
+        },
+      });
+      this.commit();
+      this.emit('documentclose', {});
+    } finally {
+      this.closing = false;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 引擎事件与加载归属
+  // -------------------------------------------------------------------------
+
+  /**
+   * 订阅引擎文档/页面事件。
+   *
+   * 总线缺失（测试替身或旧引擎）时不订阅，加载计时退回 Promise 驱动。
+   */
+  private bindEngineEvents(): void {
+    const events = this.engineEvents;
+    if (!events) return;
+    events.on('document:open:start', (event) => this.handleDocumentOpenStart(event));
+    events.on('document:open:error', (event) => this.handleDocumentOpenError(event));
+    events.on('document:open:abort', (event) => this.handleDocumentOpenAbort(event));
+    events.on('document:close:start', () => this.handleDocumentCloseStart());
+    events.on('page:render:start', (event) => this.handlePageRenderStart(event));
+    events.on('page:render:end', (event) => this.handlePageRenderEnd(event));
+    events.on('page:render:error', (event) => this.handlePageRenderError(event));
+    events.on('page:render:abort', (event) => this.handlePageRenderAbort(event));
+  }
+
+  /**
+   * 登记一次即将发起的 `page.render()` 用途。
+   *
+   * 同步的 `page:render:start` 会消费登记并把 `operationId` 映射到用途；
+   * 缩略图视图通过结构化扩展调用，不新增公开事件或配置。
+   *
+   * @param pageIndex 页索引，0-based。
+   * @param purpose 渲染用途：主页面或缩略图。
+   * @returns 登记句柄；用于入口抛错或未派发 start 时回滚。
+   * @internal
+   */
+  trackPageRenderStart(pageIndex: number, purpose: PageRenderPurpose): PageRenderStartHandle {
+    if (!this.engineEvents || pageIndex < 0) return { drop: () => undefined };
+    const pending: PendingPageRenderStart = { pageIndex, purpose };
+    const queue = this.pendingStarts.get(pageIndex);
+    if (queue) queue.push(pending);
+    else this.pendingStarts.set(pageIndex, [pending]);
+    return { drop: () => this.dropPendingStart(pageIndex, pending) };
+  }
+
+  /** 移除一条尚未消费的用途登记。 */
+  private dropPendingStart(pageIndex: number, pending: PendingPageRenderStart): void {
+    const queue = this.pendingStarts.get(pageIndex);
+    if (!queue) return;
+    const index = queue.indexOf(pending);
+    if (index >= 0) queue.splice(index, 1);
+    if (queue.length === 0) this.pendingStarts.delete(pageIndex);
+  }
+
+  /** 消费指定 `operationId` 的页面操作映射；未登记时返回 null。 */
+  private takePageOperation(
+    operationId: number,
+  ): { readonly purpose: PageRenderPurpose; readonly pageIndex: number } | null {
+    const operation = this.pageOperations.get(operationId);
+    if (!operation) return null;
+    this.pageOperations.delete(operationId);
+    return operation;
+  }
+
+  /** `document:open:start`：启动全屏 loading 计时。 */
+  private handleDocumentOpenStart(event: DocumentOpenStartEvent): void {
+    this.documentOpenOperationId = event.operationId;
+    this.documentLoading.begin(this.lastOpenSource ?? this.options.source);
+  }
+
+  /** `document:open:error`：立即切换全屏错误卡（不等 150ms）。 */
+  private handleDocumentOpenError(event: DocumentOpenErrorEvent): void {
+    if (event.operationId !== this.documentOpenOperationId) return;
+    this.documentLoading.fail(
+      this.toErrorInfo(event.error, 'OFD_OPEN_FAILED', '打开文档失败'),
+    );
+  }
+
+  /** `document:open:abort`：回空态；若文档已打开但 UI 未完成布局则清理。 */
+  private handleDocumentOpenAbort(event: DocumentOpenAbortEvent): void {
+    if (event.operationId !== this.documentOpenOperationId) return;
+    this.documentLoading.cancel();
+    if (this.controller.isOpen && this.state.document.status === 'opening') {
+      void this.close();
+    }
+  }
+
+  /** `document:close:start`：清理全屏覆盖层、页面计时器与 operation 映射。 */
+  private handleDocumentCloseStart(): void {
+    this.documentLoading.close();
+    this.clearRenderTracking();
+  }
+
+  /** `page:render:start`：消费用途登记，主页面启动 150ms 计时。 */
+  private handlePageRenderStart(event: PageRenderStartEvent): void {
+    const queue = this.pendingStarts.get(event.pageIndex);
+    const pending = queue?.shift();
+    if (queue && queue.length === 0) this.pendingStarts.delete(event.pageIndex);
+    if (!pending) return;
+    this.pageOperations.set(event.operationId, {
+      purpose: pending.purpose,
+      pageIndex: event.pageIndex,
     });
-    this.patchView({
-      pageNumber: 1,
-      visiblePageRange: { start: 0, end: -1 },
-      selectedText: '',
-      findState: { ...this.state.view.findState, query: '', current: 0, total: 0, searching: false },
-    });
-    this.commit();
-    this.emit('documentclose', {});
+    if (pending.purpose === 'thumbnail') return;
+    this.pageViews[event.pageIndex]?.beginLoading(String(event.operationId));
+  }
+
+  /** `page:render:end`：主页面满足最短展示后隐藏；pagerendered 仍等 task.promise。 */
+  private handlePageRenderEnd(event: PageRenderEndEvent): void {
+    const operation = this.takePageOperation(event.operationId);
+    if (!operation || operation.purpose === 'thumbnail') return;
+    this.pageViews[operation.pageIndex]?.finishLoading(String(event.operationId));
+  }
+
+  /** `page:render:error`：主页面立即隐藏 loading 并显示页内错误卡。 */
+  private handlePageRenderError(event: PageRenderErrorEvent): void {
+    const operation = this.takePageOperation(event.operationId);
+    if (!operation || operation.purpose === 'thumbnail') return;
+    const info = this.toErrorInfo(
+      event.error,
+      'OFD_RENDER_FAILED',
+      '页面渲染失败',
+      event.pageIndex,
+    );
+    this.pageViews[operation.pageIndex]?.failLoading(String(event.operationId), info);
+  }
+
+  /** `page:render:abort`：主页面静默隐藏 loading，不显示错误。 */
+  private handlePageRenderAbort(event: PageRenderAbortEvent): void {
+    const operation = this.takePageOperation(event.operationId);
+    if (!operation || operation.purpose === 'thumbnail') return;
+    this.pageViews[operation.pageIndex]?.cancelLoading(String(event.operationId));
+  }
+
+  /** 清理全部页面 loading 计时器、覆盖层与 operation 映射。 */
+  private clearRenderTracking(): void {
+    this.documentOpenOperationId = 0;
+    this.pendingStarts.clear();
+    this.pageOperations.clear();
+    for (const pageView of this.pageViews) pageView.cancelLoading();
   }
 
   /** 销毁阅读器，释放 DOM、渲染任务、监听与扩展。 */
@@ -740,6 +1005,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.openToken += 1;
     this.openAbort?.abort();
     this.openAbort = null;
+    this.documentLoading.destroy();
+    this.clearRenderTracking();
     this.queue.dispose();
     this.destroyPages();
     this.keyboard.destroy();
@@ -759,6 +1026,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.cryptoService.destroy();
     this.root.remove();
     activeViewers.delete(this);
+    this.engineEvents?.removeAllListeners();
     this.eventBus.removeAllListeners();
   }
 
@@ -1024,6 +1292,9 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   setLocale(locale: string): void {
     this.root.lang = locale;
     this.patchUI({ locale });
+    this.translator = createTranslator(locale);
+    this.documentLoading.setLocale(this.translator.locale);
+    for (const pageView of this.pageViews) pageView.setTranslator(this.translator);
     this.commit();
   }
 
@@ -1381,6 +1652,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         pageInfo: info,
         totalPages: total,
         ownerDocument: this.ownerDocument,
+        translator: this.translator,
+        eventDrivenLoading: this.engineEvents !== null,
         onRetry: (pageNumber) => this.renderPage(pageNumber - 1, true),
       });
       this.pageViews.push(pageView);
@@ -1388,6 +1661,20 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     }
     this.reflow();
     this.applyFeatureStates();
+  }
+
+  /** 全屏 loading 的“取消”：中止本次打开并立即隐藏遮罩。 */
+  private cancelDocumentOpen(): void {
+    this.documentLoading.cancel();
+    this.openAbort?.abort();
+  }
+
+  /** 全屏错误卡的“重试”：用最近一次来源重新打开。 */
+  private retryOpen(): void {
+    const source = this.lastOpenSource ?? this.options.source;
+    void this.open(source).catch(() => {
+      // 重试失败已切换到全屏错误卡，这里只吞掉 rejection。
+    });
   }
 
   /** 销毁全部页视图。 */
@@ -1544,11 +1831,20 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         if (!context) throw new OFDViewerError('OFD_UNSUPPORTED', '当前环境不支持 Canvas 2D');
         pageView.markRendering(generation);
         const viewport = page.getViewport({ dpi: size.dpi });
-        const task = page.render({
-          canvasContext: context,
-          viewport,
-          signal,
-        });
+        const pending = this.trackPageRenderStart(index, 'main');
+        let task: ReturnType<EnginePage['render']>;
+        try {
+          task = page.render({
+            canvasContext: context,
+            viewport,
+            signal,
+          });
+        } catch (error) {
+          pending.drop();
+          throw error;
+        }
+        // 引擎未派发 start（测试替身或旧引擎）时保留 beginRender 的代次号计时。
+        pending.drop();
         await task.promise;
         if (signal.aborted) throw createAbortError();
         pageView.completeRender(generation, key);
@@ -2218,8 +2514,13 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     message: string,
     pageIndex?: number,
   ): ViewerErrorInfo {
+    const causeCode =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? (error as { code?: unknown }).code
+        : undefined;
     return {
-      code,
+      // 优先保留引擎/UI 错误码；普通 Error 才退回默认码。
+      code: typeof causeCode === 'string' && causeCode.length > 0 ? causeCode : code,
       message: error instanceof Error ? error.message : message,
       ...(pageIndex === undefined ? {} : { pageIndex }),
       cause: error,
@@ -2293,6 +2594,336 @@ function resolveContainer(container: HTMLElement | string): HTMLElement {
   }
   if (!container) throw new OFDViewerError('OFD_INVALID_OPTION', 'container 不能为空');
   return container;
+}
+
+/** 文档全屏 loading 延迟显示时长，单位毫秒（设计方案 §5.5 / §6.9.2）。 */
+const DOCUMENT_LOADING_DELAY_MS = 150;
+/** 文档全屏 loading 显示后的最短展示时长，单位毫秒。 */
+const DOCUMENT_LOADING_MIN_VISIBLE_MS = 300;
+/** 文档全屏 loading 淡出时长，单位毫秒。 */
+const DOCUMENT_LOADING_FADE_MS = 150;
+
+/** 全屏 loading 控制器选项。 */
+interface DocumentLoadingOverlayOptions {
+  /** 阅读器根节点。 */
+  readonly root: HTMLElement;
+  /** 宿主文档；默认全局 document。 */
+  readonly ownerDocument: Document;
+  /** 当前语言翻译器。 */
+  readonly translator: Translator;
+  /** 点击“取消”。 */
+  readonly onCancel: () => void;
+  /** 点击“重试”。 */
+  readonly onRetry: () => void;
+  /** 点击“关闭”。 */
+  readonly onClose: () => void;
+}
+
+/**
+ * 文档全屏 loading / 错误卡（设计方案 §6.9.2）。
+ *
+ * 只负责视觉、ARIA 与计时：150 ms 延迟显示、最短 300 ms、150 ms 淡出；
+ * 取消/错误/关闭立即隐藏。何时开始/结束由 `OFDViewer` 的打开流程
+ * （后续为引擎 `document:open:*` 事件）调用。
+ */
+class DocumentLoadingOverlay {
+  private readonly status: HTMLElement;
+  private readonly statusName: HTMLElement;
+  private readonly statusText: HTMLElement;
+  private readonly cancelButton: HTMLButtonElement;
+  private readonly error: HTMLElement;
+  private readonly errorTitle: HTMLElement;
+  private readonly errorCode: HTMLElement;
+  private readonly errorMessage: HTMLElement;
+  private readonly retryButton: HTMLButtonElement;
+  private readonly closeButton: HTMLButtonElement;
+  private readonly root: HTMLElement;
+  private readonly doc: Document;
+  private readonly callbacks: Pick<DocumentLoadingOverlayOptions, 'onCancel' | 'onRetry' | 'onClose'>;
+  private translator: Translator;
+  private delayTimer: ReturnType<typeof setTimeout> | null = null;
+  private hideTimer: ReturnType<typeof setTimeout> | null = null;
+  private fadeTimer: ReturnType<typeof setTimeout> | null = null;
+  private visible = false;
+  private shownAt = 0;
+  private cancelling = false;
+  private currentSource: ViewerSource | null = null;
+
+  /**
+   * @param options 根节点、宿主文档、翻译器与按钮回调。
+   */
+  constructor(options: DocumentLoadingOverlayOptions) {
+    this.root = options.root;
+    this.doc = options.ownerDocument;
+    this.translator = options.translator;
+    this.callbacks = options;
+    const create = <K extends keyof HTMLElementTagNameMap>(
+      tag: K,
+      className: string,
+    ): HTMLElementTagNameMap[K] => {
+      const element = this.doc.createElement(tag);
+      element.className = className;
+      return element;
+    };
+
+    this.status = create('div', 'ofd-viewer__loading');
+    this.status.setAttribute('role', 'status');
+    this.status.setAttribute('aria-live', 'polite');
+    this.status.setAttribute('aria-busy', 'true');
+    this.status.hidden = true;
+    const statusPanel = create('div', 'ofd-viewer__loading-panel');
+    const ring = create('div', 'ofd-viewer__loading-ring');
+    ring.setAttribute('aria-hidden', 'true');
+    this.statusName = create('p', 'ofd-viewer__loading-name');
+    this.statusText = create('p', 'ofd-viewer__loading-text');
+    this.cancelButton = create('button', 'ofd-button ofd-viewer__loading-button');
+    this.cancelButton.type = 'button';
+    this.cancelButton.addEventListener('click', () => this.handleCancel());
+    statusPanel.append(ring, this.statusName, this.statusText, this.cancelButton);
+    this.status.appendChild(statusPanel);
+
+    this.error = create('div', 'ofd-viewer__loading-error');
+    this.error.setAttribute('role', 'alert');
+    this.error.hidden = true;
+    const errorPanel = create('div', 'ofd-viewer__loading-panel');
+    this.errorTitle = create('p', 'ofd-viewer__loading-error-title');
+    this.errorCode = create('p', 'ofd-viewer__loading-error-code');
+    this.errorMessage = create('p', 'ofd-viewer__loading-error-message');
+    const actions = create('div', 'ofd-viewer__loading-actions');
+    this.retryButton = create(
+      'button',
+      'ofd-button ofd-viewer__loading-button ofd-viewer__loading-button--primary',
+    );
+    this.retryButton.type = 'button';
+    this.retryButton.addEventListener('click', () => {
+      this.hideAll();
+      this.callbacks.onRetry();
+    });
+    this.closeButton = create('button', 'ofd-button ofd-viewer__loading-button');
+    this.closeButton.type = 'button';
+    this.closeButton.addEventListener('click', () => {
+      this.hideAll();
+      this.callbacks.onClose();
+    });
+    actions.append(this.retryButton, this.closeButton);
+    errorPanel.append(this.errorTitle, this.errorCode, this.errorMessage, actions);
+    this.error.appendChild(errorPanel);
+
+    this.root.append(this.status, this.error);
+    this.updateTexts();
+  }
+
+  /**
+   * 开始一次打开：记录文档名并启动 150 ms 显示计时。
+   *
+   * @param source 本次打开来源；用于展示文件名。
+   */
+  begin(source: ViewerSource): void {
+    this.currentSource = source;
+    this.cancelling = false;
+    this.cancelButton.disabled = false;
+    this.cancelButton.textContent = this.translator.t('loading.cancel');
+    this.updateName();
+    this.hideError();
+    this.clearTimers();
+    this.status.removeAttribute('data-fading');
+    if (this.visible) return;
+    this.delayTimer = setTimeout(() => {
+      this.delayTimer = null;
+      this.show();
+    }, DOCUMENT_LOADING_DELAY_MS);
+  }
+
+  /** 打开完成（UI `documentopen`）：满足最短展示后淡出。 */
+  finish(): void {
+    this.clearTimers();
+    if (!this.visible) return;
+    const elapsed = Date.now() - this.shownAt;
+    const remaining = Math.max(0, DOCUMENT_LOADING_MIN_VISIBLE_MS - elapsed);
+    this.hideTimer = setTimeout(() => {
+      this.hideTimer = null;
+      this.fadeOut();
+    }, remaining);
+  }
+
+  /**
+   * 打开失败：立即切换为全屏错误卡，不等延迟/最短展示。
+   *
+   * @param info 错误码与可读消息。
+   */
+  fail(info: ViewerErrorInfo): void {
+    this.clearTimers();
+    this.visible = false;
+    this.status.hidden = true;
+    this.status.removeAttribute('data-fading');
+    this.errorCode.textContent = info.code;
+    this.errorMessage.textContent = info.message;
+    this.error.hidden = false;
+  }
+
+  /** 取消：立即隐藏 loading 与错误卡。 */
+  cancel(): void {
+    this.hideAll();
+  }
+
+  /** 关闭文档：立即隐藏 loading 与错误卡。 */
+  close(): void {
+    this.hideAll();
+  }
+
+  /**
+   * 切换语言；静态文案立即更新。
+   *
+   * @param locale 语言标签。
+   */
+  setLocale(locale: string): void {
+    this.translator = createTranslator(locale);
+    this.updateTexts();
+    this.updateName();
+  }
+
+  /** 销毁并移除 DOM。 */
+  destroy(): void {
+    this.hideAll();
+    this.status.remove();
+    this.error.remove();
+  }
+
+  /** 显示全屏 loading。 */
+  private show(): void {
+    if (this.visible) return;
+    this.visible = true;
+    this.shownAt = Date.now();
+    this.status.hidden = false;
+    this.status.removeAttribute('data-fading');
+  }
+
+  /** 按最短展示与 reduced-motion 设置淡出。 */
+  private fadeOut(): void {
+    if (!this.visible) return;
+    if (this.prefersReducedMotion()) {
+      this.hideAll();
+      return;
+    }
+    this.status.setAttribute('data-fading', 'true');
+    this.fadeTimer = setTimeout(() => {
+      this.fadeTimer = null;
+      this.hideAll();
+    }, DOCUMENT_LOADING_FADE_MS);
+  }
+
+  /** 立即隐藏 loading 与错误卡并清理计时器。 */
+  private hideAll(): void {
+    this.clearTimers();
+    this.visible = false;
+    this.status.hidden = true;
+    this.status.removeAttribute('data-fading');
+    this.hideError();
+  }
+
+  /** “取消”按钮：切换为“正在取消…”并禁用，随后交给宿主中止打开。 */
+  private handleCancel(): void {
+    if (this.cancelling) return;
+    this.cancelling = true;
+    this.cancelButton.disabled = true;
+    this.cancelButton.textContent = this.translator.t('loading.cancelling');
+    this.callbacks.onCancel();
+  }
+
+  /** 隐藏错误卡。 */
+  private hideError(): void {
+    this.error.hidden = true;
+  }
+
+  /** 刷新错误卡/按钮文案。 */
+  private updateTexts(): void {
+    this.errorTitle.textContent = this.translator.t('loading.openFailed');
+    this.retryButton.textContent = this.translator.t('common.retry');
+    this.closeButton.textContent = this.translator.t('common.close');
+    if (!this.cancelling) this.cancelButton.textContent = this.translator.t('loading.cancel');
+    this.statusText.textContent = this.translator.t('loading.document');
+  }
+
+  /** 刷新文档文件名；来源没有名称时显示“文档”。 */
+  private updateName(): void {
+    this.statusName.textContent = this.currentSource
+      ? resolveDocumentName(this.currentSource, this.translator)
+      : this.translator.t('loading.untitled');
+  }
+
+  /** 清理所有计时器。 */
+  private clearTimers(): void {
+    if (this.delayTimer !== null) {
+      clearTimeout(this.delayTimer);
+      this.delayTimer = null;
+    }
+    if (this.hideTimer !== null) {
+      clearTimeout(this.hideTimer);
+      this.hideTimer = null;
+    }
+    if (this.fadeTimer !== null) {
+      clearTimeout(this.fadeTimer);
+      this.fadeTimer = null;
+    }
+  }
+
+  /** 当前环境是否要求减少动效。 */
+  private prefersReducedMotion(): boolean {
+    const view = this.doc.defaultView;
+    if (!view || typeof view.matchMedia !== 'function') return false;
+    try {
+      return view.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * 解析全屏 loading 展示的文档名。
+ *
+ * @param source 打开来源。
+ * @param translator 当前翻译器。
+ * @returns 文件名、URL basename 或“文档”。
+ */
+function resolveDocumentName(source: ViewerSource, translator: Translator): string {
+  const named = source as { name?: unknown };
+  if (typeof named.name === 'string' && named.name.trim().length > 0) {
+    return named.name.trim();
+  }
+  let url: string | null = null;
+  if (typeof source === 'string') {
+    url = source;
+  } else if (
+    typeof source === 'object' &&
+    source !== null &&
+    'url' in source &&
+    typeof (source as { url?: unknown }).url === 'string'
+  ) {
+    url = (source as { url: string }).url;
+  }
+  if (url) {
+    const basename = sourceBasename(url);
+    if (basename) return basename;
+  }
+  return translator.t('loading.untitled');
+}
+
+/**
+ * 读取 URL 路径最后一段，单位无。
+ *
+ * @param url URL 或相对路径。
+ * @returns 解码后的文件名；无路径段时返回空字符串。
+ */
+function sourceBasename(url: string): string {
+  const path = url.split('#')[0]!.split('?')[0]!;
+  const segment = path.split('/').filter((part) => part.length > 0).pop();
+  if (!segment) return '';
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
 }
 
 /** 创建阅读器结构；UI 外壳会复用这些元素。 */

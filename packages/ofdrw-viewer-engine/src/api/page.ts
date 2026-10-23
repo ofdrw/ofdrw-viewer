@@ -3,6 +3,9 @@
  *
  * `OFDPage` 持有页尺寸与文档注入的渲染/导出/准备驱动：`getSize`/`getViewport`
  * 是纯计算，`render` 创建 `RenderTask` 并交由 `OFDDocument` 执行真正的准备/绘制。
+ *
+ * 事件：页面监听器是文档总线的按 `pageIndex` 过滤视图；`page:render:start` 在
+ * `render()` 返回前同步派发，终止事件由文档在绘制结束/失败/取消时派发。
  */
 
 import type { PageSize } from '../model/types';
@@ -19,21 +22,45 @@ import type {
   TextContent,
   TextContentOptions,
 } from './ui-types';
-import { OFDError } from '../errors';
-import { createRenderTask } from './render-task';
+import type {
+  OFDAddEventListenerOptions,
+  OFDEventBus,
+  OFDEventHandler,
+  OFDEventName,
+  OFDEventMap,
+  OFDInternalEventDispatcher,
+  OFDPageEventMap,
+  OFDPageEventName,
+} from './events';
+import { OFDError, toOFDError } from '../errors';
+import { createAbortError, createRenderTask } from './render-task';
 import type { RenderTask } from './render-task';
 import { getPageViewport } from './viewport';
+
+/**
+ * 一次页面渲染操作的事件上下文。
+ *
+ * 由 `OFDPage.render()` 在入口校验通过后创建；`startedAt` 用于计算耗时。
+ */
+export interface PageRenderOperation {
+  /** 操作 ID，与 `page:render:*` 事件的 `operationId` 相同。 */
+  readonly operationId: number;
+  /** 操作开始时间，Unix 毫秒。 */
+  readonly startedAt: number;
+}
 
 /**
  * 页面渲染驱动；由 `OFDDocument` 注入，负责串行锁、校验与准备/绘制编排。
  *
  * @param params 宿主渲染参数。
  * @param signal 合并后的取消信号。
+ * @param operation 事件上下文；未进入操作生命周期时为 undefined。
  * @returns 渲染完成时 resolve。
  */
 export type PageRenderDriver = (
   params: PageRenderParameters,
   signal: AbortSignal,
+  operation?: PageRenderOperation,
 ) => Promise<void>;
 
 /**
@@ -60,6 +87,34 @@ export type PagePrepareDriver = (options: PagePrepareOptions) => Promise<void>;
  */
 export type PageTextDriver = (options: TextContentOptions) => Promise<TextContent>;
 
+/**
+ * 页面事件与入口校验运行时；由 `OFDDocument` 注入。
+ *
+ * 页面监听器直接挂到文档总线并按 `pageIndex` 过滤，因此离开文档后无法单独
+ * 构造可用的事件视图。
+ */
+export interface PageEventContext {
+  /** 文档事件总线。 */
+  readonly events: OFDEventBus;
+  /** 引擎内部派发器；负责 operationId/sequence/timestamp。 */
+  readonly dispatcher: OFDInternalEventDispatcher;
+  /**
+   * 同步校验渲染入口（文档状态、viewport、Canvas 尺寸）。
+   *
+   * @param params 宿主渲染参数。
+   * @throws OFDError 校验失败；调用方不得派生任何事件。
+   */
+  validateRender(params: PageRenderParameters): void;
+}
+
+/** 页面监听器绑定；`handler` 用于精确退订，`detach` 释放总线与 signal 绑定。 */
+interface PageListenerBinding {
+  /** 原始回调。 */
+  handler: (event: never) => void;
+  /** 移除当前绑定；幂等。 */
+  detach: () => void;
+}
+
 /** OFD 页面；渲染只画页面内容，不设置 canvas 尺寸、不清屏。 */
 export class OFDPage {
   /** 页索引，从 0 开始。 */
@@ -74,6 +129,10 @@ export class OFDPage {
   private readonly prepareDriver: PagePrepareDriver | undefined;
   /** 页面文本内容驱动；由文档实例注入。 */
   private readonly textDriver: PageTextDriver | undefined;
+  /** 事件与校验上下文；宿主手工构造页面时为 undefined。 */
+  private readonly eventContext: PageEventContext | undefined;
+  /** 页面监听器绑定，按事件名分组。 */
+  private readonly listenerBindings = new Map<OFDPageEventName, PageListenerBinding[]>();
 
   /**
    * 创建页面句柄；由 `OFDDocument.getPage()` 返回，宿主不应直接构造。
@@ -84,6 +143,7 @@ export class OFDPage {
    * @param exportDriver 可选图片导出驱动；未注入时 exportImage 报不支持。
    * @param prepareDriver 可选页面准备驱动；未注入时 prepare 报不支持。
    * @param textDriver 可选页面文本内容驱动；未注入时 getTextContent 报不支持。
+   * @param eventContext 可选事件与入口校验上下文；文档创建的页面始终提供。
    */
   constructor(
     index: number,
@@ -92,6 +152,7 @@ export class OFDPage {
     exportDriver?: PageExportDriver,
     prepareDriver?: PagePrepareDriver,
     textDriver?: PageTextDriver,
+    eventContext?: PageEventContext,
   ) {
     this.index = index;
     this.pageSize = { width: pageSize.width, height: pageSize.height };
@@ -99,6 +160,7 @@ export class OFDPage {
     this.exportDriver = exportDriver;
     this.prepareDriver = prepareDriver;
     this.textDriver = textDriver;
+    this.eventContext = eventContext;
   }
 
   /**
@@ -132,14 +194,118 @@ export class OFDPage {
    * 会以 `M_page` 重置变换（覆盖预置 CTM），但不会设置 canvas 宽高或清屏。
    * canvas 尺寸不足、像素超限等错误通过 `task.promise` 以 `OFDError` 拒绝。
    *
+   * 事件时序：入口校验失败不派发任何事件且直接返回拒绝的任务；
+   * 校验通过后在 `render()` 返回前同步派发 `page:render:start`，`end` /
+   * `error` / `abort` 由文档在 `task.promise` settle 前派发。
+   *
    * @param params canvas 上下文、viewport 与可选取消信号。
    * @returns 渲染任务句柄。
    */
   render(params: PageRenderParameters): RenderTask {
+    const context = this.eventContext;
+    if (!context) {
+      // 宿主手工构造的页面没有事件上下文，保持旧行为：只交给驱动；
+      // 取消（含预取消）统一以 OFD_ABORTED 拒绝。
+      return createRenderTask(async (signal) => {
+        try {
+          await this.driver(params, signal);
+        } catch (error) {
+          if (signal.aborted) throw createAbortError(error);
+          throw error;
+        }
+      });
+    }
+
+    try {
+      // 入口校验必须同步完成，失败时不进入操作生命周期。
+      context.validateRender(params);
+    } catch (error) {
+      const failure = toOFDError(
+        error,
+        'OFD_RENDERER_UNSUPPORTED',
+        `第 ${this.index} 页渲染参数非法`,
+      );
+      return createRenderTask(async () => {
+        throw failure;
+      });
+    }
+
+    const operationId = context.dispatcher.allocateOperationId();
+    const operation: PageRenderOperation = { operationId, startedAt: Date.now() };
+    const viewport = params.viewport;
+    context.dispatcher.emit('page:render:start', {
+      operationId,
+      pageIndex: this.index,
+      dpi: viewport.dpi,
+      width: viewport.width,
+      height: viewport.height,
+    });
     return createRenderTask(
-      (signal) => this.driver(params, signal),
+      (signal) => this.driver(params, signal, operation),
       params?.signal,
+      operationId,
     );
+  }
+
+  /**
+   * 订阅本页事件；只接收 `pageIndex` 与当前页一致的事件。
+   *
+   * @param type 页面事件名。
+   * @param handler 监听器。
+   * @returns 退订函数；可重复调用。
+   */
+  on<K extends OFDPageEventName>(type: K, handler: OFDEventHandler<K>): () => void {
+    return this.addPageListener(type, handler, false);
+  }
+
+  /**
+   * 订阅一次本页事件。
+   *
+   * @param type 页面事件名。
+   * @param handler 监听器。
+   * @returns 退订函数；可重复调用。
+   */
+  once<K extends OFDPageEventName>(type: K, handler: OFDEventHandler<K>): () => void {
+    return this.addPageListener(type, handler, true);
+  }
+
+  /**
+   * 退订本页事件；同一回调的多次注册全部移除。
+   *
+   * @param type 页面事件名。
+   * @param handler 监听器。
+   */
+  off<K extends OFDPageEventName>(type: K, handler: OFDEventHandler<K>): void {
+    const bindings = this.listenerBindings.get(type);
+    if (!bindings) return;
+    for (const binding of [...bindings]) {
+      if (binding.handler === (handler as (event: never) => void)) binding.detach();
+    }
+  }
+
+  /**
+   * DOM 风格订阅本页事件；支持 `once`/`signal`。
+   *
+   * @param type 页面事件名。
+   * @param handler 监听器。
+   * @param options once 与 signal 选项。
+   */
+  addEventListener<K extends OFDPageEventName>(
+    type: K,
+    handler: OFDEventHandler<K>,
+    options: OFDAddEventListenerOptions = {},
+  ): void {
+    this.addPageListener(type, handler, options.once === true, options.signal);
+  }
+
+  /**
+   * DOM 风格退订本页事件；与 `off` 等价。
+   *
+   * @param type 页面事件名。
+   * @param handler 监听器。
+   */
+  removeEventListener<K extends OFDPageEventName>(type: K, handler: OFDEventHandler<K>): void {
+    this.off(type, handler);
   }
 
   /**
@@ -191,6 +357,92 @@ export class OFDPage {
       throw new OFDError('OFD_RENDERER_UNSUPPORTED', '当前页面未绑定准备驱动');
     }
     return this.prepareDriver(options ?? {});
+  }
+
+  /**
+   * 清理本页全部监听器；文档关闭时由引擎调用。
+   *
+   * @internal
+   */
+  dispose(): void {
+    for (const bindings of this.listenerBindings.values()) {
+      for (const binding of [...bindings]) binding.detach();
+    }
+    this.listenerBindings.clear();
+  }
+
+  /**
+   * 添加按页过滤的监听器。
+   *
+   * @param type 页面事件名。
+   * @param handler 监听器。
+   * @param once 是否只触发一次。
+   * @param signal 绑定生命周期。
+   * @returns 退订函数。
+   */
+  private addPageListener<K extends OFDPageEventName>(
+    type: K,
+    handler: OFDEventHandler<K>,
+    once: boolean,
+    signal?: AbortSignal,
+  ): () => void {
+    const events = this.eventContext?.events;
+    // 注册时已中止则不注册，与 OFDEventBus.addEventListener 一致。
+    if (!events || signal?.aborted) return () => undefined;
+
+    let offBus: (() => void) | undefined;
+    let onAbort: (() => void) | undefined;
+    let removed = false;
+    const binding: PageListenerBinding = {
+      handler: handler as (event: never) => void,
+      detach: () => {
+        remove();
+      },
+    };
+    const remove = (): void => {
+      if (removed) return;
+      removed = true;
+      offBus?.();
+      if (onAbort && signal) signal.removeEventListener('abort', onAbort);
+      this.forgetBinding(type, binding);
+    };
+    const wrapper = (event: OFDPageEventMap[K]): void => {
+      if (event.pageIndex !== this.index) return;
+      // once 必须在调用前移除，监听器抛错也不会再次触发。
+      if (once) remove();
+      (handler as (value: OFDPageEventMap[K]) => void)(event);
+    };
+    offBus = events.on(
+      type as OFDEventName,
+      wrapper as (event: OFDEventMap[OFDEventName]) => void,
+    );
+
+    let bindings = this.listenerBindings.get(type);
+    if (!bindings) {
+      bindings = [];
+      this.listenerBindings.set(type, bindings);
+    }
+    bindings.push(binding);
+
+    if (signal) {
+      onAbort = () => remove();
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+    return remove;
+  }
+
+  /**
+   * 从分组表中移除绑定。
+   *
+   * @param type 页面事件名。
+   * @param binding 监听器绑定。
+   */
+  private forgetBinding(type: OFDPageEventName, binding: PageListenerBinding): void {
+    const bindings = this.listenerBindings.get(type);
+    if (!bindings) return;
+    const index = bindings.indexOf(binding);
+    if (index >= 0) bindings.splice(index, 1);
+    if (bindings.length === 0) this.listenerBindings.delete(type);
   }
 }
 

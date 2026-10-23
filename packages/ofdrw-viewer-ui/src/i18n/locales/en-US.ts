@@ -14,6 +14,14 @@ export const enUS: MessageDictionary = {
   'common.retry': 'Retry',
   'common.more': 'More',
 
+  'loading.document': 'Opening document…',
+  'loading.untitled': 'Document',
+  'loading.openFailed': 'Failed to open document',
+  'loading.cancel': 'Cancel',
+  'loading.cancelling': 'Cancelling…',
+  'loading.page': 'Rendering page…',
+  'loading.pageNumber': 'Rendering page {page}…',
+
   'toolbar.label': 'Toolbar',
   'toolbar.groupSidebar': 'Sidebar',
   'toolbar.groupNavigation': 'Page navigation',

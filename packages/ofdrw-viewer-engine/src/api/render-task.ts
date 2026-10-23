@@ -14,6 +14,12 @@ import type { OFDErrorCode } from '../errors';
  * 由 `OFDPage.render()` 创建，宿主不应直接构造。
  */
 export class RenderTask {
+  /**
+   * 本次渲染的操作 ID；与 `page:render:*` 事件的 `operationId` 相同。
+   *
+   * 入口校验失败、未进入操作生命周期时为 0（此时不会派发任何事件）。
+   */
+  readonly id: number;
   /** 渲染完成/失败/取消的 promise。 */
   readonly promise: Promise<void>;
   private readonly cancelHandler?: () => void;
@@ -24,8 +30,10 @@ export class RenderTask {
    *
    * @param promise 实际渲染 promise。
    * @param cancelHandler 取消回调；缺省时只标记取消状态。
+   * @param id 本次渲染的操作 ID；入口校验失败时由调用方传 0。
    */
-  constructor(promise: Promise<void>, cancelHandler?: () => void) {
+  constructor(promise: Promise<void>, cancelHandler?: () => void, id = 0) {
+    this.id = id;
     this.promise = promise;
     this.cancelHandler = cancelHandler;
   }
@@ -94,16 +102,18 @@ export function combineAbortSignals(
  * 创建渲染任务。
  *
  * - 内部 AbortController 与宿主 `externalSignal` 合并；
- * - `run` 任意阶段抛出的错误都会原样 reject，取消则统一转成 `OFD_ABORTED`；
+ * - `run` 的 resolve/reject 原样传递；取消的错误分类由页面/文档按操作生命周期完成；
  * - 任务结束后自动移除外部信号监听。
  *
  * @param run 实际渲染逻辑，接收合并后的取消信号。
  * @param externalSignal 宿主传入的 `AbortSignal`。
+ * @param id 本次渲染的操作 ID；入口校验失败时由调用方传 0。
  * @returns 渲染任务句柄。
  */
 export function createRenderTask(
   run: (signal: AbortSignal) => Promise<void>,
   externalSignal?: AbortSignal,
+  id = 0,
 ): RenderTask {
   const controller = new AbortController();
   const onExternalAbort = (): void => controller.abort(externalSignal?.reason);
@@ -114,19 +124,15 @@ export function createRenderTask(
 
   const promise = (async (): Promise<void> => {
     try {
-      if (controller.signal.aborted) throw createAbortError(controller.signal.reason);
+      // 即使 controller 在调用前已中止也调用 run：页面渲染驱动需要在既定的
+      // 操作生命周期内派发终止事件（abort），不能因预取消而跳过。
       await run(controller.signal);
-      // 绘制阶段可能正常返回但期间已收到取消；此时仍以 OFD_ABORTED 结束。
-      if (controller.signal.aborted) throw createAbortError(controller.signal.reason);
-    } catch (error) {
-      if (controller.signal.aborted) throw createAbortError(error);
-      throw error;
     } finally {
       externalSignal?.removeEventListener('abort', onExternalAbort);
     }
   })();
 
-  return new RenderTask(promise, () => controller.abort());
+  return new RenderTask(promise, () => controller.abort(), id);
 }
 
 /**

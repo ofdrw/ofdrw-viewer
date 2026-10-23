@@ -65,7 +65,6 @@ export function makePageInfos(count: number): PageInfo[] {
 
 /** 创建内存页面。 */
 function makePage(index: number, options: FakeDocumentOptions): unknown {
-  const fail = options.failRenderPages?.includes(index) ?? false;
   return {
     index,
     getSize: () => ({ width: 210, height: 297 }),
@@ -83,7 +82,8 @@ function makePage(index: number, options: FakeDocumentOptions): unknown {
       } catch {
         // 伪上下文允许不支持。
       }
-      if (fail) {
+      // 每次渲染时读取失败配置，便于用例在失败后恢复引擎再验证点击重试。
+      if (options.failRenderPages?.includes(index)) {
         return {
           promise: Promise.reject(new Error(`render failed: ${index}`)),
           cancel: vi.fn(),

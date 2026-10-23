@@ -13,6 +13,14 @@ export const zhCN = {
   'common.retry': '重试',
   'common.more': '更多',
 
+  'loading.document': '正在打开文档…',
+  'loading.untitled': '文档',
+  'loading.openFailed': '打开文档失败',
+  'loading.cancel': '取消',
+  'loading.cancelling': '正在取消…',
+  'loading.page': '正在渲染页面…',
+  'loading.pageNumber': '第 {page} 页正在渲染…',
+
   'toolbar.label': '工具栏',
   'toolbar.groupSidebar': '侧栏',
   'toolbar.groupNavigation': '页面导航',

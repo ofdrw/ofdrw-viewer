@@ -10,8 +10,16 @@
  */
 
 import type { CanvasRenderingContext2DLike, PageInfo } from '@ofdrw/ofdrw-viewer-engine';
+import type { Translator } from './i18n';
 import type { PageBox } from './page-layout';
 import type { Rotation, ViewerErrorInfo } from './state';
+
+/** 页面 loading 延迟显示时长，单位毫秒（设计方案 §5.5 / §6.9.3）。 */
+const PAGE_LOADING_DELAY_MS = 150;
+/** 页面 loading 显示后的最短展示时长，单位毫秒。 */
+const PAGE_LOADING_MIN_VISIBLE_MS = 200;
+/** 页面 loading 淡出时长，单位毫秒。 */
+const PAGE_LOADING_FADE_MS = 120;
 
 /** 单页生命周期状态。 */
 export type PageRenderState =
@@ -46,6 +54,15 @@ export interface PageViewOptions {
   readonly totalPages: number;
   /** 宿主文档；默认全局 document。 */
   readonly ownerDocument?: Document;
+  /** 翻译器；用于加载文案与错误卡按钮。 */
+  readonly translator?: Translator;
+  /**
+   * 是否由引擎 `page:render:start` 事件启动 loading。
+   *
+   * 默认 false：`beginRender` 按代次号兜底计时；核心阅读器接入引擎事件后传
+   * true，避免排队阶段提前显示。
+   */
+  readonly eventDrivenLoading?: boolean;
   /**
    * 重试回调；错误卡片按钮触发。
    *
@@ -84,8 +101,16 @@ export class PageView {
   private readonly options: PageViewOptions;
   private readonly doc: Document;
   private readonly loading: HTMLElement;
+  private readonly loadingSkeleton: HTMLElement;
+  private readonly loadingSpinner: HTMLElement;
+  private readonly loadingText: HTMLElement;
   private readonly errorLayer: HTMLElement;
+  private readonly errorCode: HTMLElement;
   private readonly errorMessage: HTMLElement;
+  private readonly retryButton: HTMLButtonElement;
+  private translator: Translator | null;
+  /** 是否由引擎事件启动 loading；false 时由 `beginRender` 兜底。 */
+  private readonly eventDrivenLoading: boolean;
   private canvasElement: HTMLCanvasElement | null = null;
   private stateValue: PageRenderState = 'empty';
   private generationValue = 0;
@@ -93,6 +118,17 @@ export class PageView {
   private currentRotation: Rotation = 0;
   private currentScale = 1;
   private destroyed = false;
+  /** 是否已经完成过至少一次绘制；用于区分首次骨架与重渲染遮罩。 */
+  private painted = false;
+  /** 当前页面 loading 归属的操作标识；同一页以最新一次为准。 */
+  private loadingOperationId: string | null = null;
+  /** loading 是否已显示。 */
+  private loadingVisible = false;
+  /** loading 显示时刻，单位毫秒；用于最短展示计时。 */
+  private loadingShownAt = 0;
+  private loadingShowTimer: ReturnType<typeof setTimeout> | null = null;
+  private loadingHideTimer: ReturnType<typeof setTimeout> | null = null;
+  private loadingFadeTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * @param options 页码、页信息、总页数与重试回调。
@@ -102,6 +138,8 @@ export class PageView {
     this.pageNumber = options.pageNumber;
     this.pageIndex = options.pageIndex;
     this.doc = options.ownerDocument ?? document;
+    this.translator = options.translator ?? null;
+    this.eventDrivenLoading = options.eventDrivenLoading ?? false;
     this.element = this.createElement('div', 'ofd-page');
     this.element.dataset.pageNumber = String(this.pageNumber);
     this.element.dataset.pageIndex = String(this.pageIndex);
@@ -147,23 +185,33 @@ export class PageView {
     } satisfies Partial<CSSStyleDeclaration>);
     this.surface.appendChild(this.signatureLayer);
 
+    // 页面加载层：骨架/spinner 只做视觉占位，状态由 `.ofd-page[aria-busy]`
+    // 与隐藏文案共同表达，避免逐页创建 aria-live。
     this.loading = this.createElement('div', 'ofd-page__loading');
-    this.loading.setAttribute('aria-hidden', 'true');
     this.loading.hidden = true;
+    this.loading.dataset.variant = 'skeleton';
+    this.loadingSkeleton = this.createElement('div', 'ofd-page__loading-skeleton');
+    this.loadingSkeleton.setAttribute('aria-hidden', 'true');
+    this.loadingSpinner = this.createElement('div', 'ofd-page__loading-spinner');
+    this.loadingSpinner.setAttribute('aria-hidden', 'true');
+    this.loadingText = this.createElement('span', 'ofd-page__loading-text ofd-sr-only');
+    this.loading.append(this.loadingSkeleton, this.loadingSpinner, this.loadingText);
     this.element.appendChild(this.loading);
 
     this.errorLayer = this.createElement('div', 'ofd-page__error');
     this.errorLayer.setAttribute('role', 'alert');
     this.errorLayer.hidden = true;
+    this.errorCode = this.createElement('span', 'ofd-page__error-code');
+    this.errorCode.hidden = true;
     this.errorMessage = this.createElement('span', 'ofd-page__error-message');
-    const retry = this.createElement('button', 'ofd-page__retry');
-    retry.type = 'button';
-    retry.textContent = '重试';
-    retry.addEventListener('click', () => {
+    this.retryButton = this.createElement('button', 'ofd-page__retry');
+    this.retryButton.type = 'button';
+    this.retryButton.addEventListener('click', () => {
       if (!this.destroyed) this.options.onRetry?.(this.pageNumber);
     });
-    this.errorLayer.append(this.errorMessage, retry);
+    this.errorLayer.append(this.errorCode, this.errorMessage, this.retryButton);
     this.element.appendChild(this.errorLayer);
+    this.updateLoadingText();
   }
 
   /** 当前生命周期状态。 */
@@ -189,6 +237,88 @@ export class PageView {
   /** 是否已销毁。 */
   get isDestroyed(): boolean {
     return this.destroyed;
+  }
+
+  /**
+   * 更新翻译器；用于语言切换后刷新加载文案与错误卡按钮。
+   *
+   * @param translator 新的翻译器。
+   */
+  setTranslator(translator: Translator): void {
+    this.translator = translator;
+    this.updateLoadingText();
+    this.retryButton.textContent = translator.t('common.retry');
+  }
+
+  /**
+   * 开始一次页面 loading 计时。
+   *
+   * 150 ms 内结束不显示；同一页以最后一次 `operationId` 为准，旧操作晚到的
+   * 结束/取消事件不会关闭新操作的 loading。
+   *
+   * @param operationId 本次渲染操作标识（可为引擎 `operationId` 或内部代次号）。
+   */
+  beginLoading(operationId: string): void {
+    if (this.destroyed) return;
+    this.loadingOperationId = operationId;
+    this.clearLoadingTimers();
+    this.element.setAttribute('aria-busy', 'true');
+    this.errorLayer.hidden = true;
+    if (this.loadingVisible) {
+      this.loading.removeAttribute('data-fading');
+      this.updateLoadingVariant();
+      return;
+    }
+    this.loadingShowTimer = setTimeout(() => {
+      this.loadingShowTimer = null;
+      if (this.loadingOperationId === operationId) this.showLoading();
+    }, PAGE_LOADING_DELAY_MS);
+  }
+
+  /**
+   * 结束一次页面 loading；loading 已显示时满足最短展示后淡出。
+   *
+   * @param operationId 本次渲染操作标识。
+   */
+  finishLoading(operationId: string): void {
+    if (this.loadingOperationId !== operationId) return;
+    this.loadingOperationId = null;
+    this.clearLoadingTimers();
+    this.element.removeAttribute('aria-busy');
+    if (!this.loadingVisible) {
+      this.hideLoadingNow();
+      return;
+    }
+    const elapsed = Date.now() - this.loadingShownAt;
+    const remaining = Math.max(0, PAGE_LOADING_MIN_VISIBLE_MS - elapsed);
+    this.loadingHideTimer = setTimeout(() => {
+      this.loadingHideTimer = null;
+      this.fadeOutLoading();
+    }, remaining);
+  }
+
+  /**
+   * 页面渲染失败；立即隐藏 loading 并显示页内错误卡。
+   *
+   * @param operationId 本次渲染操作标识。
+   * @param info 错误信息（错误码 + 可读消息）。
+   */
+  failLoading(operationId: string, info: ViewerErrorInfo): void {
+    if (this.loadingOperationId !== operationId) return;
+    this.loadingOperationId = null;
+    this.hideLoadingNow();
+    this.showError(info);
+  }
+
+  /**
+   * 取消/关闭页面 loading；静默隐藏，不显示错误卡。
+   *
+   * @param operationId 本次渲染操作标识；省略时强制隐藏。
+   */
+  cancelLoading(operationId?: string): void {
+    if (operationId !== undefined && this.loadingOperationId !== operationId) return;
+    this.loadingOperationId = null;
+    this.hideLoadingNow();
   }
 
   /**
@@ -242,6 +372,9 @@ export class PageView {
   /**
    * 开始一次渲染；递增 generation，旧任务结果会被丢弃。
    *
+   * 默认按代次号启动 150ms 计时作为兜底；`eventDrivenLoading` 为 true 时由
+   * 引擎 `page:render:start` 以 `operationId` 启动。
+   *
    * @param renderKey 渲染参数键（scale/rotation/dpr）。
    * @returns 本次渲染代次号。
    */
@@ -251,9 +384,9 @@ export class PageView {
     this.stateValue = 'queued';
     this.element.dataset.pageState = 'queued';
     this.errorLayer.hidden = true;
-    if (!this.canvasElement) this.loading.hidden = false;
     if (this.canvasElement) this.canvasElement.dataset.stale = 'true';
     this.element.dataset.renderKey = renderKey;
+    if (!this.eventDrivenLoading) this.beginLoading(String(this.generationValue));
     return this.generationValue;
   }
 
@@ -324,7 +457,8 @@ export class PageView {
    */
   cancelRender(generation: number): void {
     if (!this.isCurrent(generation)) return;
-    this.loading.hidden = true;
+    // 当前代次已终止；无论 loading 归属哪个 operationId 都应静默隐藏。
+    this.cancelLoading();
     this.errorLayer.hidden = true;
     this.stateValue = this.canvasElement ? 'rendered' : 'empty';
     this.element.dataset.pageState = this.stateValue;
@@ -340,7 +474,8 @@ export class PageView {
     if (!this.isCurrent(generation)) return;
     this.stateValue = 'rendered';
     this.renderedKeyValue = renderKey;
-    this.loading.hidden = true;
+    this.painted = true;
+    this.finishLoading(String(generation));
     this.errorLayer.hidden = true;
     this.element.dataset.pageState = 'rendered';
     this.element.dataset.renderedScale = String(this.currentScale);
@@ -360,16 +495,17 @@ export class PageView {
   failRender(generation: number, info: ViewerErrorInfo): void {
     if (!this.isCurrent(generation)) return;
     this.stateValue = 'error';
-    this.loading.hidden = true;
-    this.errorLayer.hidden = false;
-    this.errorMessage.textContent = info.message;
+    this.cancelLoading();
+    this.showError(info);
     this.element.dataset.pageState = 'error';
-    this.element.dataset.errorCode = info.code;
     this.canvasWrapper.hidden = true;
   }
 
   /** 释放 canvas；用于 LRU 淘汰与关闭。 */
   releaseCanvas(): void {
+    this.cancelLoading();
+    this.errorLayer.hidden = true;
+    this.painted = false;
     const canvas = this.canvasElement;
     if (!canvas) {
       this.stateValue = 'empty';
@@ -384,7 +520,6 @@ export class PageView {
     this.stateValue = 'empty';
     this.element.dataset.pageState = 'empty';
     this.canvasWrapper.hidden = true;
-    this.loading.hidden = true;
     delete this.element.dataset.canvasWidth;
     delete this.element.dataset.canvasHeight;
     delete this.element.dataset.renderKey;
@@ -411,6 +546,7 @@ export class PageView {
   /** 销毁页视图并释放 canvas。 */
   destroy(): void {
     if (this.destroyed) return;
+    this.hideLoadingNow();
     this.destroyed = true;
     this.generationValue += 1;
     if (this.canvasElement) {
@@ -422,6 +558,93 @@ export class PageView {
     this.element.remove();
     this.textLayer.replaceChildren();
     this.signatureLayer.replaceChildren();
+  }
+
+  /** 显示 loading 层：首次渲染用骨架，重渲染用半透明遮罩。 */
+  private showLoading(): void {
+    this.loadingVisible = true;
+    this.loadingShownAt = Date.now();
+    this.loading.hidden = false;
+    this.loading.removeAttribute('data-fading');
+    this.updateLoadingVariant();
+  }
+
+  /** 按最短展示与 reduced-motion 设置淡出并清理 loading。 */
+  private fadeOutLoading(): void {
+    if (!this.loadingVisible) return;
+    if (this.prefersReducedMotion()) {
+      this.hideLoadingNow();
+      return;
+    }
+    this.loading.setAttribute('data-fading', 'true');
+    this.loadingFadeTimer = setTimeout(() => {
+      this.loadingFadeTimer = null;
+      this.hideLoadingNow();
+    }, PAGE_LOADING_FADE_MS);
+  }
+
+  /** 立即隐藏 loading 并清理所有计时器。 */
+  private hideLoadingNow(): void {
+    this.clearLoadingTimers();
+    this.loadingVisible = false;
+    this.loading.hidden = true;
+    this.loading.removeAttribute('data-fading');
+    this.element.removeAttribute('aria-busy');
+  }
+
+  /** 根据是否已有绘制内容切换骨架/遮罩。 */
+  private updateLoadingVariant(): void {
+    this.loading.dataset.variant = this.painted ? 'overlay' : 'skeleton';
+  }
+
+  /** 刷新 loading 的隐藏文案；保证“骨架/spinner 不是唯一状态表达”。 */
+  private updateLoadingText(): void {
+    this.loadingText.textContent = this.translator
+      ? this.translator.t('loading.pageNumber', {
+          page: this.translator.formatNumber(this.pageNumber),
+        })
+      : `第 ${this.pageNumber} 页正在渲染…`;
+    this.retryButton.textContent = this.translator?.t('common.retry') ?? '重试';
+  }
+
+  /**
+   * 显示页内错误卡。
+   *
+   * @param info 错误信息。
+   */
+  private showError(info: ViewerErrorInfo): void {
+    this.errorCode.textContent = info.code;
+    this.errorCode.hidden = info.code.length === 0;
+    this.errorMessage.textContent = info.message;
+    this.errorLayer.hidden = false;
+    this.element.dataset.errorCode = info.code;
+  }
+
+  /** 清理 loading 相关计时器。 */
+  private clearLoadingTimers(): void {
+    if (this.loadingShowTimer !== null) {
+      clearTimeout(this.loadingShowTimer);
+      this.loadingShowTimer = null;
+    }
+    if (this.loadingHideTimer !== null) {
+      clearTimeout(this.loadingHideTimer);
+      this.loadingHideTimer = null;
+    }
+    if (this.loadingFadeTimer !== null) {
+      clearTimeout(this.loadingFadeTimer);
+      this.loadingFadeTimer = null;
+    }
+  }
+
+  /** 当前环境是否要求减少动效。 */
+  private prefersReducedMotion(): boolean {
+    const view = this.doc.defaultView;
+    if (!view || typeof view.matchMedia !== 'function') return false;
+    try {
+      return view.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    } catch {
+      return false;
+    }
   }
 
   /**

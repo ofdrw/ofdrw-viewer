@@ -347,23 +347,51 @@ const NAVIGATION_CSS = `
 .ofd-thumbnails { margin: 0; padding: 0; }
 .ofd-nav__empty { margin: 0; padding: 16px 8px; color: var(--ofd-text-secondary, #5b616b); text-align: center; }
 .ofd-nav__empty--unsupported { color: var(--ofd-warning, #d97706); }
-.ofd-thumbnail[data-state='rendering'] .ofd-thumbnail__canvas-wrapper { opacity: 0.72; }
+.ofd-thumbnail__canvas-wrapper { position: relative; }
+.ofd-thumbnail__skeleton {
+  display: block;
+  max-width: 100%;
+  border-radius: var(--ofd-radius, 2px);
+  background-color: var(--ofd-loading-skeleton, rgba(127, 127, 127, 0.18));
+  background-image: linear-gradient(
+    100deg,
+    transparent 25%,
+    var(--ofd-loading-skeleton-strong, rgba(127, 127, 127, 0.32)) 50%,
+    transparent 75%
+  );
+  background-repeat: no-repeat;
+  background-size: 200% 100%;
+  animation: ofd-nav-skeleton-pulse 1.6s ease-in-out infinite;
+}
+.ofd-thumbnail__skeleton[hidden] { display: none; }
+@keyframes ofd-nav-skeleton-pulse {
+  from { background-position: 150% 0; }
+  to { background-position: -50% 0; }
+}
 .ofd-thumbnail[data-state='failed'] .ofd-thumbnail__canvas-wrapper {
   background: var(--ofd-hover-bg, rgba(0, 0, 0, 0.06));
   border: 1px dashed var(--ofd-border, #d8dbe0);
 }
 .ofd-thumbnail__fallback {
-  display: block;
-  padding: 8px 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  padding: 4px;
   color: var(--ofd-text-secondary, #5b616b);
   font-size: 12px;
   text-align: center;
 }
 .ofd-thumbnail__fallback[hidden] { display: none; }
-.ofd-thumbnail__canvas-wrapper { position: relative; }
-.ofd-thumbnails[data-rotation='90'] .ofd-thumbnail__canvas-wrapper canvas { transform: rotate(90deg); }
-.ofd-thumbnails[data-rotation='180'] .ofd-thumbnail__canvas-wrapper canvas { transform: rotate(180deg); }
-.ofd-thumbnails[data-rotation='270'] .ofd-thumbnail__canvas-wrapper canvas { transform: rotate(270deg); }
+.ofd-thumbnails[data-rotation='90'] .ofd-thumbnail__canvas-wrapper canvas,
+.ofd-thumbnails[data-rotation='90'] .ofd-thumbnail__skeleton { transform: rotate(90deg); }
+.ofd-thumbnails[data-rotation='180'] .ofd-thumbnail__canvas-wrapper canvas,
+.ofd-thumbnails[data-rotation='180'] .ofd-thumbnail__skeleton { transform: rotate(180deg); }
+.ofd-thumbnails[data-rotation='270'] .ofd-thumbnail__canvas-wrapper canvas,
+.ofd-thumbnails[data-rotation='270'] .ofd-thumbnail__skeleton { transform: rotate(270deg); }
+@media (prefers-reduced-motion: reduce) {
+  .ofd-thumbnail__skeleton { animation: none; }
+}
 .ofd-outline__title {
   flex: 1 1 auto;
   min-width: 0;

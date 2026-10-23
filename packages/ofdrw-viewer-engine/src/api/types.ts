@@ -14,6 +14,7 @@ import type { OFDSource } from '../platform/source';
 import type { Canvas2DLike, CanvasRenderingContext2DLike, Renderer } from '../renderer/types';
 import type { OFDWarning } from '../warnings';
 import type { Viewport } from '../common/types';
+import type { OFDEventBus } from './events';
 
 export type { FontInput } from '../platform/font-provider';
 export type { FontInputLoader } from '../font/provider';
@@ -224,6 +225,15 @@ export interface OFDOpenBaseOptions {
   encodeImage?: EncodeImage;
   /** 页面渲染器扩展点；不传时由 engine 内部创建 H5Canvas2DRenderer。自定义 renderer 只接管 render，exportImage 仍用 createCanvas。 */
   renderer?: Renderer;
+  /**
+   * 打开阶段与后续文档生命周期使用的事件总线。
+   *
+   * 需要在 open 完成前监听 `document:open:*` 时传入；省略时由引擎创建，
+   * 并通过 `document.events` 访问。一个总线只对应一个文档实例。
+   */
+  eventBus?: OFDEventBus;
+  /** 打开取消信号；中止时 open 以 OFD_ABORTED 拒绝并派发 `document:open:abort`。 */
+  signal?: AbortSignal;
 }
 
 /**
