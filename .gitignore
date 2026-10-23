@@ -25,6 +25,9 @@ release-notes.md
 /references/
 /src_material/
 
+# 本地 GitHub Actions 操作笔记，不纳入版本管理
+/docs/GitHub-Actions-配置指南.md
+
 # AgentTeams / 浏览器调试运行状态，不纳入版本管理
 /.agent-teams/
 /.playwright-cli/
