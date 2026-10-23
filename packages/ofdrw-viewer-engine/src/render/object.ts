@@ -36,6 +36,7 @@ import type {
 import type { ResolvedStyle } from '../style/types';
 import type { PreparedPageBundle } from './prepare';
 import type { PaintBinder } from './paint';
+import { mapPaintToObjectSpace } from './paint';
 import { applyClips } from './clip';
 import { DisplayListBuilder, replayDisplayList } from './display-list';
 import { drawImageObject } from './image';
@@ -396,6 +397,30 @@ function negativeBoundaryTextAnchor(
 }
 
 /**
+ * 把样式中的 Paint 坐标换算到对象空间（CTM 之前）。
+ *
+ * 仅轴向渐变需要换算：OFD 的 Shading 坐标位于对象外层空间，而渲染器在对象空间
+ * 使用它们；颜色/底纹/网格渐变的坐标语义不变。返回新样式时保持其余字段引用不变。
+ *
+ * @param style 已结算样式。
+ * @param ctm 当前对象 CTM。
+ * @returns 可供 path/text 直接消费的样式。
+ */
+function objectSpaceStyle(style: ResolvedStyle, ctm: Matrix | undefined): ResolvedStyle {
+  if (!ctm) return style;
+  const fillPaint = style.fillPaint ? mapPaintToObjectSpace(style.fillPaint, ctm) : undefined;
+  const strokePaint = style.strokePaint
+    ? mapPaintToObjectSpace(style.strokePaint, ctm)
+    : undefined;
+  if (fillPaint === style.fillPaint && strokePaint === style.strokePaint) return style;
+  return {
+    ...style,
+    ...(fillPaint ? { fillPaint } : {}),
+    ...(strokePaint ? { strokePaint } : {}),
+  };
+}
+
+/**
  * 绘制单个对象/块。
  *
  * @param context 绘制上下文。
@@ -464,6 +489,12 @@ export function drawObject(
     }
     context.setObjectMatrix?.(objectMatrix);
 
+    // 路径/文字轮廓在对象空间绘制，轴向渐变坐标需要先从对象外层空间换回对象空间。
+    const objectStyle =
+      object.kind === 'path' || object.kind === 'text'
+        ? objectSpaceStyle(style, object.ctm)
+        : style;
+
     switch (object.kind) {
       case 'path':
         drawPathObject(
@@ -474,11 +505,11 @@ export function drawObject(
             ...(context.pageIndex !== undefined ? { pageIndex: context.pageIndex } : {}),
           },
           object,
-          style,
+          objectStyle,
         );
         break;
       case 'text':
-        drawText(context, object, style);
+        drawText(context, object, objectStyle);
         break;
       case 'image':
         drawImage(context, object, style);

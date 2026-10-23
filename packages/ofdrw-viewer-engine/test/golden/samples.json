@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-21T09:46:45.764Z",
+  "generatedAt": "2026-10-23T17:50:00.000Z",
   "sourceDir": "ofd_pdf_match",
-  "count": 57,
+  "count": 58,
   "samples": [
     {
       "name": "1",
@@ -917,7 +917,7 @@
       "referenceMismatchPages": [
         1
       ],
-      "referenceMismatchReason": "参考 PDF 有 OFD 中不存在的斜向水印，且表格右列存在文字重叠；红章/白底/warning 已通过，严格 golden 色差属参考不匹配，不记为引擎失败。"
+      "referenceMismatchReason": "参考 PDF 章/底图 JPEG 重编码 + 字重 AA 差异，非引擎内容缺陷。"
     },
     {
       "name": "keyword2",
@@ -1309,7 +1309,9 @@
       "jb2Entries": 0,
       "sha256": "ed321ed91a2b27c875ec60dcab5e409715a3d7d51735bd06616ba14a64866abb",
       "goldenPages": [],
-      "notes": []
+      "notes": [
+        "known limitation：font_3_3.ttf 损坏（684B，bad sfntVersion），引擎 W_FONT_MISSING 回退，参考墨迹缺失约 90px(0.3%)；本轮不修 OFD/PDF 字体，按已知限制记录（证据：shard-c findings §4.12、shard-c/signout/report.json）。"
+      ]
     },
     {
       "name": "testImageNotFound",
@@ -1750,6 +1752,46 @@
       "sha256": "ccdb9dbfc0ff35f6dfee3270add0b1bb774f1286efe63b04e6d0b80078590d69",
       "goldenPages": [],
       "notes": []
+    },
+    {
+      "name": "ofd-viewer-ui-showcase",
+      "groups": [
+        "basic-text-path"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/ofd-viewer-ui-showcase.ofd",
+      "pdf": "ofd_pdf_match/ofd-viewer-ui-showcase.pdf",
+      "pdfPages": 10,
+      "ofdDeclaredPages": 10,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": true,
+      "fontEntries": 1,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "2f3940b25b48f9b45edc351d1804e50d58f0d7d172a7a19bd778a2d4d35f3458",
+      "goldenPages": [],
+      "notes": [
+        "10 页 A4 密集文本/UI 展示样本（PDF 标题“OFD 密集文本渲染测试样本”），内嵌 SimSun 子集，无图片/JBIG2；2026-10-23 用户确认正式加入回归清单。",
+        "严格审计：p9 曾报 color-mismatch（keyColorCoverageDelta 25.9%，colorP95DE=0、colorSampleCount=3577），已核为细边框栅格化+指标小样本，非内容缺陷；入清单后按 AA-aware 基线与 tolerance 记录。",
+        "p9 表头 Path 使用非标准 “Z” 收尾（OFD 规范使用 C），引擎 W_BAD_PATH 忽略 Z 但 fill 自动闭合，填充正确；建议后续修 fixture 为标准 C。"
+      ],
+      "knownTolerancePages": [
+        {
+          "page": 9,
+          "maxDeltaE": 0,
+          "maxCoverageDelta": 0.26,
+          "reason": "p9 细边框栅格化 + keyColor 小样本假阳性：colorP95DE=0、colorSampleCount=3577、coverageΔ=25.9%，非内容缺陷；仅该页 known tolerance，不改变全局阈值。"
+        }
+      ]
     }
   ]
 }

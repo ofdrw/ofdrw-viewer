@@ -1,0 +1,4832 @@
+{
+  "schemaVersion": 1,
+  "kind": "strict-audit-baseline",
+  "generatedAt": "2026-10-23T11:22:24.870Z",
+  "command": "pnpm -C packages/ofdrw-viewer-engine test:audit",
+  "dpi": 96,
+  "reportCreatedAt": "2026-10-23T10:48:04.971Z",
+  "sampleCount": 58,
+  "pageCount": 169,
+  "summary": {
+    "statusPassPages": 156,
+    "knownPages": 45,
+    "nonPassPages": 13
+  },
+  "strict": {
+    "usesLegacyExemptions": false,
+    "note": "不沿用 referenceMismatchPages/knownTolerancePages/negativeSample 作为结论；已知差异在 pages[].expectation/bugIds/reason 显式登记。"
+  },
+  "metricTolerance": {
+    "layoutDeltaMm": 0.01,
+    "colorP95DE": 0.25,
+    "colorP95DEAll": 0.25,
+    "blockColorP95DE": 0.5,
+    "keyColorCoverageDelta": 0.005,
+    "inkDiffRatio": 0.002,
+    "contentDiffRatio": 0.002,
+    "pixelDiffRatio": 1e-7
+  },
+  "knownClasses": [
+    {
+      "id": "BUG-20261023-04",
+      "class": "product-expected",
+      "samples": [
+        "1-1"
+      ],
+      "pages": [
+        "1-1/2"
+      ],
+      "note": "用户裁决保留标题裁切；不按引擎失败处理。"
+    },
+    {
+      "id": "BUG-20261023-02",
+      "class": "known-engine-defect",
+      "samples": [
+        "testPathClip",
+        "intro-数科"
+      ],
+      "pages": [
+        "testPathClip/1",
+        "intro-数科/40"
+      ],
+      "note": "RadialShd 降级平均色；待 engine 修复。"
+    },
+    {
+      "id": "BUG-20261023-03",
+      "class": "known-engine-defect",
+      "samples": [
+        "intro-数科"
+      ],
+      "pages": [
+        "intro-数科/8",
+        "intro-数科/9"
+      ],
+      "note": "渐变描边降级（W_UNSUPPORTED_PAINT）。"
+    },
+    {
+      "id": "BUG-20261023-05",
+      "class": "known-tolerance",
+      "samples": [
+        "intro-数科"
+      ],
+      "pages": [
+        "intro-数科/2",
+        "intro-数科/6",
+        "intro-数科/11",
+        "intro-数科/12",
+        "intro-数科/13",
+        "intro-数科/14",
+        "intro-数科/15",
+        "intro-数科/16",
+        "intro-数科/17",
+        "intro-数科/18",
+        "intro-数科/19",
+        "intro-数科/20",
+        "intro-数科/24",
+        "intro-数科/25",
+        "intro-数科/26",
+        "intro-数科/27"
+      ],
+      "note": "末行 1 设备像素白边。"
+    },
+    {
+      "id": "BUG-20261023-22",
+      "class": "known-engine-defect",
+      "samples": [
+        "zsbk"
+      ],
+      "pages": [
+        "zsbk/2"
+      ],
+      "note": "CFF 子集解析失败回退。"
+    },
+    {
+      "id": "BUG-20261023-11",
+      "class": "reference-mismatch",
+      "samples": [
+        "intro-数科"
+      ],
+      "pages": [
+        "intro-数科/4",
+        "intro-数科/14",
+        "intro-数科/15",
+        "intro-数科/16",
+        "intro-数科/17",
+        "intro-数科/18",
+        "intro-数科/19"
+      ],
+      "note": "参考配对不一致。"
+    },
+    {
+      "id": "BUG-20261023-12",
+      "class": "reference-reencoding",
+      "samples": [
+        "keyword",
+        "20240531141733",
+        "invoice-seal-shuke",
+        "v4signed",
+        "h",
+        "V4RideRight",
+        "SESV4SignDoc",
+        "SignScaleError"
+      ],
+      "pages": [],
+      "note": "参考 PDF 章/水印/底图 JPEG 重编码。"
+    },
+    {
+      "id": "BUG-20261023-13",
+      "class": "reference-mismatch",
+      "samples": [
+        "z"
+      ],
+      "pages": [
+        "z/3"
+      ],
+      "note": "参考 .notdef 伪影。"
+    },
+    {
+      "id": "BUG-20261023-14",
+      "class": "known-limitation",
+      "samples": [
+        "signout",
+        "DigitalSign",
+        "SignScaleError",
+        "keyword"
+      ],
+      "pages": [
+        "signout/1",
+        "DigitalSign/1",
+        "SignScaleError/1",
+        "keyword/1"
+      ],
+      "note": "样本数据缺陷/说明失真；不改样本资产。"
+    },
+    {
+      "id": "BUG-20261023-15",
+      "class": "expected-negative",
+      "samples": [
+        "testImageNotFound"
+      ],
+      "pages": [
+        "testImageNotFound/1"
+      ],
+      "note": "缺图负样本行为正确。"
+    },
+    {
+      "id": "BUG-20261023-16",
+      "class": "known-tolerance",
+      "samples": [
+        "hello",
+        "doc1File",
+        "helloworld",
+        "chineseDir",
+        "文字横向-数科",
+        "containsJPEG",
+        "AddWatermarkAnnot",
+        "h",
+        "V4RideRight",
+        "keyword2",
+        "invoice-seal-shuke",
+        "manual",
+        "不规范资源路径"
+      ],
+      "pages": [
+        "AddWatermarkAnnot/3",
+        "manual/1",
+        "不规范资源路径/1"
+      ],
+      "note": "字重/AA/图像重采样/1px 基线/细边框栅格化；不改变全局阈值。"
+    },
+    {
+      "id": "SHOWCASE-01",
+      "class": "known-tolerance",
+      "samples": [
+        "ofd-viewer-ui-showcase"
+      ],
+      "pages": [
+        "ofd-viewer-ui-showcase/9"
+      ],
+      "note": "p9 细边框栅格化 + keyColor 小样本假阳性。"
+    }
+  ],
+  "fonts": {
+    "supplementaryFontEnv": null,
+    "systemFontsPath": "packages/ofdrw-viewer-engine/test/golden/lib/system-fonts.ts",
+    "systemFontsSha256": "02698299671206e86f661373a23712c4cdb6706e1c05b2b0af426a45fc3f4bb6",
+    "candidateFamilies": [
+      "Noto Sans CJK SC",
+      "Droid Sans Fallback",
+      "WenQuanYi Micro Hei",
+      "PingFang SC",
+      "SimSun",
+      "Nimbus Roman",
+      "Noto Serif CJK SC",
+      "FangSong",
+      "小标宋体",
+      "Times New Roman",
+      "KaiTi",
+      "STKaiti",
+      "Tahoma",
+      "Courier New"
+    ],
+    "note": "未设置 GOLDEN_SUPPLEMENTARY_FONT 时使用 systemFontsSha256 对应的宿主候选组；CI/复跑需固定同一字体集，设置 override 可锁定单字体。"
+  },
+  "freeze": {
+    "commit": "2210666b544545652590eb622f37a33edab1f320",
+    "status": [
+      "M README.md",
+      " M \"docs/\\345\\233\\236\\345\\275\\222\\346\\212\\245\\345\\221\\212.md\"",
+      " M \"docs/\\346\\265\\213\\350\\257\\225\\346\\226\\271\\346\\241\\210.md\"",
+      " M packages/ofdrw-viewer-cli/docs/img/demo.gif",
+      " M packages/ofdrw-viewer-cli/docs/img/demo.tape",
+      " M packages/ofdrw-viewer-cli/skills/SKILL.md",
+      " M packages/ofdrw-viewer-cli/src/cli.ts",
+      " M packages/ofdrw-viewer-cli/src/convert.ts",
+      " M packages/ofdrw-viewer-cli/test/e2e/cli.test.ts",
+      " M packages/ofdrw-viewer-cli/test/unit/cli.test.ts",
+      " M packages/ofdrw-viewer-cli/test/unit/convert.test.ts",
+      " M packages/ofdrw-viewer-engine/README.md",
+      " M packages/ofdrw-viewer-engine/package.json",
+      " M packages/ofdrw-viewer-engine/src/font/face.ts",
+      " M packages/ofdrw-viewer-engine/src/font/glyph.ts",
+      " M packages/ofdrw-viewer-engine/src/font/types.ts",
+      " M packages/ofdrw-viewer-engine/src/render/object.ts",
+      " M packages/ofdrw-viewer-engine/src/render/paint.ts",
+      " M packages/ofdrw-viewer-engine/src/render/text.ts",
+      " M packages/ofdrw-viewer-engine/test/golden/samples.json",
+      " M packages/ofdrw-viewer-engine/test/golden/samples.test.ts",
+      " M packages/ofdrw-viewer-engine/tsconfig.json",
+      "?? packages/ofdrw-viewer-engine/scripts/audit-strict.mjs"
+    ],
+    "note": "回归包含未提交的无关改动；status 为冻结时 git status --short 快照（已排除 test/.artifacts/）。"
+  },
+  "samples": [
+    {
+      "name": "1",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 530,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 51.20767985997323,
+            "blockColorP95DE": 70.94565946315129,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.42515991471215353,
+            "contentDiffRatio": 0.568260120585702,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "1-1",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 52.329087909390864,
+            "blockColorP95DE": 58.6221602944224,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.4396135265700483,
+            "contentDiffRatio": 0.4819855884707766,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "layout-mismatch",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.79375,
+            "colorP95DE": 0,
+            "colorP95DEAll": 27.43327389014388,
+            "blockColorP95DE": 34.71082042483302,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.1059672592853371,
+            "contentDiffRatio": 0.15793357933579336,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "product-expected",
+          "bugIds": [
+            "BUG-20261023-04"
+          ],
+          "reason": "用户裁决：p2 标题字体/内容正确，参考标题边缘墨迹多约 1px；保留裁切，不按引擎失败处理。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/shard-a/findings.md"
+          ]
+        },
+        {
+          "page": 3,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 0,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0,
+            "contentDiffRatio": 0,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "20240531141733",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 530,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 46.675930175282815,
+            "blockColorP95DE": 53.044005424613395,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.37736518868259433,
+            "contentDiffRatio": 0.4961653451189393,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "reference-reencoding",
+          "bugIds": [
+            "BUG-20261023-07",
+            "BUG-20261023-12"
+          ],
+          "reason": "参考 PDF 章/水印重编码，另登记水印 alpha/BlendMode 未决项。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-c/findings.md#4.9"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "999",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 530,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 46.126933837233985,
+            "blockColorP95DE": 65.48529049379918,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.38200694167152993,
+            "contentDiffRatio": 0.552242102937928,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 56.68065096490426,
+            "blockColorP95DE": 65.27621294625503,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.38741572065570945,
+            "contentDiffRatio": 0.6317188764304704,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 3,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 56.68065096490426,
+            "blockColorP95DE": 65.27621294625503,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.38896598842795227,
+            "contentDiffRatio": 0.6312186216339571,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 4,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 56.68065096490426,
+            "blockColorP95DE": 65.27621294625503,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.38907157499145884,
+            "contentDiffRatio": 0.630176161061542,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 5,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 56.68065096490426,
+            "blockColorP95DE": 65.27621294625503,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.388355028510416,
+            "contentDiffRatio": 0.6436951957515129,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "AddAttachment",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 70.76054704507223,
+            "blockColorP95DE": 81.15624816828937,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.4504388781845429,
+            "contentDiffRatio": 0.571604938271605,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "AddAttachment_relativepathversion",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 70.76054704507223,
+            "blockColorP95DE": 81.15624816828937,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.4504388781845429,
+            "contentDiffRatio": 0.571604938271605,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "AddWatermarkAnnot",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 1.4736084062214727,
+            "colorP95DEAll": 48.443041681411955,
+            "blockColorP95DE": 55.073154042415965,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.2800840411443138,
+            "contentDiffRatio": 0.42774667599720084,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 50.52320170087719,
+            "blockColorP95DE": 54.33549545500608,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.29331766629202005,
+            "contentDiffRatio": 0.48839037927844586,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 3,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 1.7998346371086882,
+            "colorP95DEAll": 49.80384204280876,
+            "blockColorP95DE": 55.073154042415965,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.2793369647559612,
+            "contentDiffRatio": 0.4515121565526784,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 4,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 51.05897946297831,
+            "blockColorP95DE": 55.5335289702853,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.29424906388647065,
+            "contentDiffRatio": 0.48956752655538693,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 5,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 1.6065606177063345,
+            "colorP95DEAll": 49.24776071633247,
+            "blockColorP95DE": 56.896489276523425,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.2790587721850451,
+            "contentDiffRatio": 0.434920762609605,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 6,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 50.90709966141382,
+            "blockColorP95DE": 54.33549545500608,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.2949581698378618,
+            "contentDiffRatio": 0.473188454551571,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "DigitalSign",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 61.517921870768646,
+            "blockColorP95DE": 61.517921870768646,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.5509259259259259,
+            "contentDiffRatio": 0.5486725663716814,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "known-limitation",
+          "bugIds": [
+            "BUG-20261023-14"
+          ],
+          "reason": "SignedValue.dat 仅 70B，样本签章数据缺陷；按已知限制记录。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-c/digital-sign/report.json"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Page5",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 29.73555480376106,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.00606536574111049,
+            "contentDiffRatio": 0.02993143695959614,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 29.73555480376106,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.00830823238780419,
+            "contentDiffRatio": 0.02597357075256756,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 3,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 29.73555480376106,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.004857915749736881,
+            "contentDiffRatio": 0.029356027373223372,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 4,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 29.73555480376106,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.007318111420057784,
+            "contentDiffRatio": 0.02787991877503979,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 5,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 27.31848626493308,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.0036967287438097233,
+            "contentDiffRatio": 0.026138279932546374,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "SESV4SignDoc",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0.2096605738510844,
+            "colorP95DEAll": 36.70856917863912,
+            "blockColorP95DE": 37.32434561231628,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.25718896713615025,
+            "contentDiffRatio": 0.2743637492240844,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "reference-reencoding",
+          "bugIds": [
+            "BUG-20261023-12"
+          ],
+          "reason": "参考 PDF 章/印章/底图为 JPEG 或 index+smask 重编码，非引擎内容缺陷。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-c/findings.md#C-03"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "SignScaleError",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 530,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 46.200569720527255,
+            "blockColorP95DE": 46.200569720527255,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.5406483790523691,
+            "contentDiffRatio": 0.6186558663460322,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "known-limitation",
+          "bugIds": [
+            "BUG-20261023-14"
+          ],
+          "reason": "Document.xml 页引用悬空（StampAnnot PageRef=2），比较页内容完整；按覆盖边界记录。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-c/sign-scale-error/report.json"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "V4RideRight",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 29.73555480376106,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.006788608555942019,
+            "contentDiffRatio": 0.030771422465987606,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "reference-reencoding",
+          "bugIds": [
+            "BUG-20261023-12"
+          ],
+          "reason": "参考 PDF 章/印章/底图为 JPEG 或 index+smask 重编码，非引擎内容缺陷。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-c/findings.md#C-03"
+          ]
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 29.73555480376106,
+            "keyColorCoverageDelta": 4.157313804320495e-8,
+            "inkDiffRatio": 0.009038704639293125,
+            "contentDiffRatio": 0.02685067257532669,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "reference-reencoding",
+          "bugIds": [
+            "BUG-20261023-12"
+          ],
+          "reason": "参考 PDF 章/印章/底图为 JPEG 或 index+smask 重编码，非引擎内容缺陷。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-c/findings.md#C-03"
+          ]
+        },
+        {
+          "page": 3,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 29.73555480376106,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.0058784148580066945,
+            "contentDiffRatio": 0.030474099628874603,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "reference-reencoding",
+          "bugIds": [
+            "BUG-20261023-12"
+          ],
+          "reason": "参考 PDF 章/印章/底图为 JPEG 或 index+smask 重编码，非引擎内容缺陷。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-c/findings.md#C-03"
+          ]
+        },
+        {
+          "page": 4,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 29.73555480376106,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.00807661971830986,
+            "contentDiffRatio": 0.02879766997360517,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "reference-reencoding",
+          "bugIds": [
+            "BUG-20261023-12"
+          ],
+          "reason": "参考 PDF 章/印章/底图为 JPEG 或 index+smask 重编码，非引擎内容缺陷。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-c/findings.md#C-03"
+          ]
+        },
+        {
+          "page": 5,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0.2096605738510844,
+            "blockColorP95DE": 31.50528818633622,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.010969473331096947,
+            "contentDiffRatio": 0.036366094362579426,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "reference-reencoding",
+          "bugIds": [
+            "BUG-20261023-12"
+          ],
+          "reason": "参考 PDF 章/印章/底图为 JPEG 或 index+smask 重编码，非引擎内容缺陷。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-c/findings.md#C-03"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "VPage7",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 29.73555480376106,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.00606536574111049,
+            "contentDiffRatio": 0.02993143695959614,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 29.73555480376106,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.00830823238780419,
+            "contentDiffRatio": 0.02597357075256756,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 3,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 29.73555480376106,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.004857915749736881,
+            "contentDiffRatio": 0.029356027373223372,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 4,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 29.73555480376106,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.007318111420057784,
+            "contentDiffRatio": 0.02787991877503979,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 5,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 27.31848626493308,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.0036967287438097233,
+            "contentDiffRatio": 0.026138279932546374,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "allprotected",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0.2096605738510844,
+            "colorP95DEAll": 36.70856917863912,
+            "blockColorP95DE": 37.32434561231628,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.25718896713615025,
+            "contentDiffRatio": 0.2743637492240844,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "ano",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0.5369137079703993,
+            "colorP95DEAll": 17.729893487916485,
+            "blockColorP95DE": 51.804040688560896,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.2881218603143737,
+            "contentDiffRatio": 0.07796245366495277,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 25.043939269679562,
+            "blockColorP95DE": 29.73180606777519,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.29276979189015234,
+            "contentDiffRatio": 0.2941084544460072,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "areaholder_fields",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 33.98200262677559,
+            "blockColorP95DE": 33.98200262677559,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.23791682278006743,
+            "contentDiffRatio": 0.29434697855750486,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "chineseDir",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 61.517921870768646,
+            "blockColorP95DE": 61.517921870768646,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.5509259259259259,
+            "contentDiffRatio": 0.5486725663716814,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "containsJPEG",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0.9767940846369279,
+            "colorP95DEAll": 2.617046134878857,
+            "blockColorP95DE": 5.522436268966179,
+            "keyColorCoverageDelta": 0.004003113264680787,
+            "inkDiffRatio": 0.009913308011535485,
+            "contentDiffRatio": 0.008684907325684025,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0.9767940846369279,
+            "colorP95DEAll": 2.617046134878857,
+            "blockColorP95DE": 5.522436268966179,
+            "keyColorCoverageDelta": 0.004003113264680787,
+            "inkDiffRatio": 0.009913308011535485,
+            "contentDiffRatio": 0.008684907325684025,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "dense-text-perf",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 19.878521325875592,
+            "blockColorP95DE": 22.264492927353274,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.49992807591471194,
+            "contentDiffRatio": 0.2780067957983338,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 19.354570722835874,
+            "blockColorP95DE": 21.17879433815411,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.48128432774057633,
+            "contentDiffRatio": 0.26601516370295575,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "doc1File",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1122,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 31.238935895455313,
+            "blockColorP95DE": 34.2530542766502,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.3498863149569974,
+            "contentDiffRatio": 0.3624859392575928,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1122,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 32.374465624326106,
+            "blockColorP95DE": 42.855555454970904,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.3518524327885309,
+            "contentDiffRatio": 0.37131082159000267,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 3,
+          "status": "pass",
+          "width": 794,
+          "height": 1122,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 32.222340760166325,
+            "blockColorP95DE": 38.627585116979326,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.3488486036256737,
+            "contentDiffRatio": 0.35964432284541725,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 4,
+          "status": "pass",
+          "width": 794,
+          "height": 1122,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 29.48215508246973,
+            "blockColorP95DE": 36.200487755523234,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.308670327841571,
+            "contentDiffRatio": 0.32872066205399536,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 5,
+          "status": "pass",
+          "width": 794,
+          "height": 1122,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 33.52656585292275,
+            "blockColorP95DE": 40.68749087168495,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.3702117370729854,
+            "contentDiffRatio": 0.38800599700149924,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 6,
+          "status": "pass",
+          "width": 794,
+          "height": 1122,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 31.85929130639403,
+            "blockColorP95DE": 37.390273227759316,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.3524361798626409,
+            "contentDiffRatio": 0.3482265603519384,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 7,
+          "status": "pass",
+          "width": 794,
+          "height": 1122,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 32.22353364098196,
+            "blockColorP95DE": 37.393348229215015,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.34489319092122833,
+            "contentDiffRatio": 0.3631371444663475,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 8,
+          "status": "pass",
+          "width": 794,
+          "height": 1122,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 31.510345548492612,
+            "blockColorP95DE": 36.146885169346355,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.35059338114688193,
+            "contentDiffRatio": 0.38677084736629397,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 9,
+          "status": "pass",
+          "width": 794,
+          "height": 1122,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 30.291500239720758,
+            "blockColorP95DE": 33.168783046773775,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.34614905284147557,
+            "contentDiffRatio": 0.35795232512700276,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 10,
+          "status": "pass",
+          "width": 794,
+          "height": 1122,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 34.178654047288745,
+            "blockColorP95DE": 42.15567567383836,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.3705926936486282,
+            "contentDiffRatio": 0.3871829105473965,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 11,
+          "status": "pass",
+          "width": 794,
+          "height": 1122,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 30.175430251459193,
+            "blockColorP95DE": 32.78460315801266,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.3233277746896424,
+            "contentDiffRatio": 0.34611239414934564,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "draw_param_ref",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 530,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 48.446254673515384,
+            "blockColorP95DE": 72.40612426084786,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.49873081804545977,
+            "contentDiffRatio": 0.6061102018548827,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 53.64732227465405,
+            "blockColorP95DE": 61.373283060589884,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.4475112705860705,
+            "contentDiffRatio": 0.6857032357870311,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 3,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 53.4440412207424,
+            "blockColorP95DE": 61.373283060589884,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.44884150092269837,
+            "contentDiffRatio": 0.6861295257521672,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 4,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 53.37740500610286,
+            "blockColorP95DE": 61.373283060589884,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.44852790491153766,
+            "contentDiffRatio": 0.6817717641051826,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 5,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 53.43410072543646,
+            "blockColorP95DE": 61.373283060589884,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.44478093098226934,
+            "contentDiffRatio": 0.6899849706244022,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "fptpl",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 530,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 47.56951991985162,
+            "blockColorP95DE": 65.48529049379918,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.3835571675979479,
+            "contentDiffRatio": 0.5599242065371862,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "h",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0.20785207644382367,
+            "blockColorP95DE": 32.336757653252604,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.00971983742311287,
+            "contentDiffRatio": 0.03408672476372499,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "reference-reencoding",
+          "bugIds": [
+            "BUG-20261023-12"
+          ],
+          "reason": "参考 PDF 章/印章/底图为 JPEG 或 index+smask 重编码，非引擎内容缺陷。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-c/findings.md#C-03"
+          ]
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 29.73555480376106,
+            "keyColorCoverageDelta": 4.157313804320495e-8,
+            "inkDiffRatio": 0.008892858529765834,
+            "contentDiffRatio": 0.02693179836036979,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "reference-reencoding",
+          "bugIds": [
+            "BUG-20261023-12"
+          ],
+          "reason": "参考 PDF 章/印章/底图为 JPEG 或 index+smask 重编码，非引擎内容缺陷。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-c/findings.md#C-03"
+          ]
+        },
+        {
+          "page": 3,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 29.73555480376106,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.005684395125933541,
+            "contentDiffRatio": 0.03039963764328769,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "reference-reencoding",
+          "bugIds": [
+            "BUG-20261023-12"
+          ],
+          "reason": "参考 PDF 章/印章/底图为 JPEG 或 index+smask 重编码，非引擎内容缺陷。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-c/findings.md#C-03"
+          ]
+        },
+        {
+          "page": 4,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 29.73555480376106,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.008049468626903073,
+            "contentDiffRatio": 0.028775276195329706,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "reference-reencoding",
+          "bugIds": [
+            "BUG-20261023-12"
+          ],
+          "reason": "参考 PDF 章/印章/底图为 JPEG 或 index+smask 重编码，非引擎内容缺陷。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-c/findings.md#C-03"
+          ]
+        },
+        {
+          "page": 5,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0.2096605738510844,
+            "blockColorP95DE": 29.28250986135674,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.010034567238312583,
+            "contentDiffRatio": 0.037122030237581,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "reference-reencoding",
+          "bugIds": [
+            "BUG-20261023-12"
+          ],
+          "reason": "参考 PDF 章/印章/底图为 JPEG 或 index+smask 重编码，非引擎内容缺陷。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-c/findings.md#C-03"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "hello",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 44.817662581118,
+            "blockColorP95DE": 49.97561344140053,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.3619747023120048,
+            "contentDiffRatio": 0.5296956198960653,
+            "pixelDiffRatio": 0.000004486004786567107
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 47.598585038504915,
+            "blockColorP95DE": 55.520984578873176,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.3743237838634306,
+            "contentDiffRatio": 0.5533666568656278,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "hello-integrity",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 44.817662581118,
+            "blockColorP95DE": 49.97561344140053,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.3619747023120048,
+            "contentDiffRatio": 0.5296956198960653,
+            "pixelDiffRatio": 0.000004486004786567107
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 47.598585038504915,
+            "blockColorP95DE": 55.520984578873176,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.3743237838634306,
+            "contentDiffRatio": 0.5533666568656278,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "hello_watermark",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 4.549255321871345,
+            "blockColorP95DE": 19.469871438161025,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.6867305061559508,
+            "contentDiffRatio": 0.00910604131988642,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "helloworld",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 61.517921870768646,
+            "blockColorP95DE": 61.517921870768646,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.5509259259259259,
+            "contentDiffRatio": 0.5486725663716814,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "helloworld_with_pageblock",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 61.517921870768646,
+            "blockColorP95DE": 61.517921870768646,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.5509259259259259,
+            "contentDiffRatio": 0.5486725663716814,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "intro-数科",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 9.5878952749058,
+            "blockColorP95DE": 11.168864885388457,
+            "keyColorCoverageDelta": 0.002788299534983052,
+            "inkDiffRatio": 0.06508465167915625,
+            "contentDiffRatio": 0.0365599545368441,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 0,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.0011013215859030838,
+            "contentDiffRatio": 0,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "known-tolerance",
+          "bugIds": [
+            "BUG-20261023-05"
+          ],
+          "reason": "全出血页末行 1 设备像素白边（≈0.2646mm），已知亚像素栅格化差异。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-05"
+          ]
+        },
+        {
+          "page": 3,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 0,
+            "keyColorCoverageDelta": 0.0001332075851854242,
+            "inkDiffRatio": 0.001904975141726113,
+            "contentDiffRatio": 0.0017440152739021883,
+            "pixelDiffRatio": 0.0000018203662576910475
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 4,
+          "status": "color-mismatch",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 2.0336101437874397,
+            "keyColorCoverageDelta": 0.995209726470282,
+            "inkDiffRatio": 0.0016815147303424548,
+            "contentDiffRatio": 0.005909745384292927,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "reference-mismatch",
+          "bugIds": [
+            "BUG-20261023-11"
+          ],
+          "reason": "OFD 该页为图片版式，PDF 参考为文字版式，参考配对不一致。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/shard-b/findings.json"
+          ]
+        },
+        {
+          "page": 5,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 2.541328828653108,
+            "blockColorP95DE": 17.357786857074732,
+            "keyColorCoverageDelta": 0.0000010800399274923933,
+            "inkDiffRatio": 0.008247799915838776,
+            "contentDiffRatio": 0.02800319671195342,
+            "pixelDiffRatio": 0.000003640732515382095
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 6,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0.04785544826056171,
+            "blockColorP95DE": 9.884746678987202,
+            "keyColorCoverageDelta": 0.000011374645105366454,
+            "inkDiffRatio": 0.006237289126204194,
+            "contentDiffRatio": 0.01643795607113683,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "known-tolerance",
+          "bugIds": [
+            "BUG-20261023-05"
+          ],
+          "reason": "全出血页末行 1 设备像素白边（≈0.2646mm），已知亚像素栅格化差异。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-05"
+          ]
+        },
+        {
+          "page": 7,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0.8293282177368123,
+            "blockColorP95DE": 6.9064162649961895,
+            "keyColorCoverageDelta": 0.000013565913381641259,
+            "inkDiffRatio": 0.0021239397437198006,
+            "contentDiffRatio": 0.009228912688726465,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 8,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 9.598614951190099,
+            "keyColorCoverageDelta": 0.0000019507492478032518,
+            "inkDiffRatio": 0.0039481703277776305,
+            "contentDiffRatio": 0.012807634354595681,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "known-engine-defect",
+          "bugIds": [
+            "BUG-20261023-03"
+          ],
+          "reason": "渐变/底纹描边降级为平均色（W_UNSUPPORTED_PAINT），已知引擎缺陷。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-03"
+          ]
+        },
+        {
+          "page": 9,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 6.440899454135132,
+            "keyColorCoverageDelta": 0.000003828656066295899,
+            "inkDiffRatio": 0.0038733079988335284,
+            "contentDiffRatio": 0.011894752234550074,
+            "pixelDiffRatio": 9.101831288455237e-7
+          },
+          "expectation": "known-engine-defect",
+          "bugIds": [
+            "BUG-20261023-03"
+          ],
+          "reason": "渐变/底纹描边降级为平均色（W_UNSUPPORTED_PAINT），已知引擎缺陷。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-03"
+          ]
+        },
+        {
+          "page": 10,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 0,
+            "keyColorCoverageDelta": 0.000008267294491104415,
+            "inkDiffRatio": 0,
+            "contentDiffRatio": 0.0002050169936308054,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 11,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 0,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.002262480711253645,
+            "contentDiffRatio": 0.0008289975084273779,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "known-tolerance",
+          "bugIds": [
+            "BUG-20261023-05"
+          ],
+          "reason": "全出血页末行 1 设备像素白边（≈0.2646mm），已知亚像素栅格化差异。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-05"
+          ]
+        },
+        {
+          "page": 12,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 1.335915763319767,
+            "colorP95DEAll": 5.4779095638161035,
+            "blockColorP95DE": 8.461914171180787,
+            "keyColorCoverageDelta": 0.001090425336374476,
+            "inkDiffRatio": 0.0224169427945336,
+            "contentDiffRatio": 0.01806429459695232,
+            "pixelDiffRatio": 0.000023664761349983616
+          },
+          "expectation": "known-tolerance",
+          "bugIds": [
+            "BUG-20261023-05"
+          ],
+          "reason": "全出血页末行 1 设备像素白边（≈0.2646mm），已知亚像素栅格化差异。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-05"
+          ]
+        },
+        {
+          "page": 13,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0.09243802197159362,
+            "blockColorP95DE": 7.667011294134232,
+            "keyColorCoverageDelta": 0.00003210823278687602,
+            "inkDiffRatio": 0.0037636826973698016,
+            "contentDiffRatio": 0.01317825564994317,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "known-tolerance",
+          "bugIds": [
+            "BUG-20261023-05"
+          ],
+          "reason": "全出血页末行 1 设备像素白边（≈0.2646mm），已知亚像素栅格化差异。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-05"
+          ]
+        },
+        {
+          "page": 14,
+          "status": "color-mismatch",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 45.107328978065155,
+            "colorP95DEAll": 44.96438026147988,
+            "blockColorP95DE": 47.34140915671264,
+            "keyColorCoverageDelta": 0.9558176831937206,
+            "inkDiffRatio": 0.0033548139938978506,
+            "contentDiffRatio": 0.8832014401637547,
+            "pixelDiffRatio": 0.63999526704773
+          },
+          "expectation": "reference-mismatch",
+          "bugIds": [
+            "BUG-20261023-11",
+            "BUG-20261023-05"
+          ],
+          "reason": "p14–p19 参考配对不一致（OFD 图片版 vs PDF 黑底文字版），不计引擎内容缺陷。；全出血页末行 1 设备像素白边（≈0.2646mm），已知亚像素栅格化差异。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/t7-verify/intro19/report.json",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-05"
+          ]
+        },
+        {
+          "page": 15,
+          "status": "color-mismatch",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 46.223595201919466,
+            "colorP95DEAll": 45.82283622431161,
+            "blockColorP95DE": 46.26408987941065,
+            "keyColorCoverageDelta": 0.9750872292176721,
+            "inkDiffRatio": 0.004571071387121861,
+            "contentDiffRatio": 0.885420056187757,
+            "pixelDiffRatio": 0.15989369061055084
+          },
+          "expectation": "reference-mismatch",
+          "bugIds": [
+            "BUG-20261023-11",
+            "BUG-20261023-05"
+          ],
+          "reason": "p14–p19 参考配对不一致（OFD 图片版 vs PDF 黑底文字版），不计引擎内容缺陷。；全出血页末行 1 设备像素白边（≈0.2646mm），已知亚像素栅格化差异。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/t7-verify/intro19/report.json",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-05"
+          ]
+        },
+        {
+          "page": 16,
+          "status": "color-mismatch",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 49.8593755922558,
+            "colorP95DEAll": 49.8593755922558,
+            "blockColorP95DE": 49.8593755922558,
+            "keyColorCoverageDelta": 0.9827142911815632,
+            "inkDiffRatio": 0.0054865430113134215,
+            "contentDiffRatio": 0.9579907502569374,
+            "pixelDiffRatio": 0.7723386245312557
+          },
+          "expectation": "reference-mismatch",
+          "bugIds": [
+            "BUG-20261023-11",
+            "BUG-20261023-05"
+          ],
+          "reason": "p14–p19 参考配对不一致（OFD 图片版 vs PDF 黑底文字版），不计引擎内容缺陷。；全出血页末行 1 设备像素白边（≈0.2646mm），已知亚像素栅格化差异。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/t7-verify/intro19/report.json",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-05"
+          ]
+        },
+        {
+          "page": 17,
+          "status": "color-mismatch",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 24.415971008096534,
+            "colorP95DEAll": 29.397405887350484,
+            "blockColorP95DE": 39.174640571928116,
+            "keyColorCoverageDelta": 0.6820424960373959,
+            "inkDiffRatio": 0.0036637773388925464,
+            "contentDiffRatio": 0.2735128543660835,
+            "pixelDiffRatio": 0.17922598026722977
+          },
+          "expectation": "reference-mismatch",
+          "bugIds": [
+            "BUG-20261023-11",
+            "BUG-20261023-05"
+          ],
+          "reason": "p14–p19 参考配对不一致（OFD 图片版 vs PDF 黑底文字版），不计引擎内容缺陷。；全出血页末行 1 设备像素白边（≈0.2646mm），已知亚像素栅格化差异。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/t7-verify/intro19/report.json",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-05"
+          ]
+        },
+        {
+          "page": 18,
+          "status": "color-mismatch",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 43.7193493804697,
+            "colorP95DEAll": 43.7193493804697,
+            "blockColorP95DE": 44.11283353230707,
+            "keyColorCoverageDelta": 0.9666142488823338,
+            "inkDiffRatio": 0.002688850748730999,
+            "contentDiffRatio": 0.963477530602744,
+            "pixelDiffRatio": 0.7932682855790585
+          },
+          "expectation": "reference-mismatch",
+          "bugIds": [
+            "BUG-20261023-11",
+            "BUG-20261023-05"
+          ],
+          "reason": "p14–p19 参考配对不一致（OFD 图片版 vs PDF 黑底文字版），不计引擎内容缺陷。；全出血页末行 1 设备像素白边（≈0.2646mm），已知亚像素栅格化差异。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/t7-verify/intro19/report.json",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-05"
+          ]
+        },
+        {
+          "page": 19,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 43.03243219874556,
+            "colorP95DEAll": 42.78338550853151,
+            "blockColorP95DE": 46.785367346595116,
+            "keyColorCoverageDelta": 0.18292711285034235,
+            "inkDiffRatio": 0.003667206069052632,
+            "contentDiffRatio": 0.1942083194249473,
+            "pixelDiffRatio": 0.13066862052644992
+          },
+          "expectation": "reference-mismatch",
+          "bugIds": [
+            "BUG-20261023-11",
+            "BUG-20261023-05"
+          ],
+          "reason": "p14–p19 参考配对不一致（OFD 图片版 vs PDF 黑底文字版），不计引擎内容缺陷。；全出血页末行 1 设备像素白边（≈0.2646mm），已知亚像素栅格化差异。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/t7-verify/intro19/report.json",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-05"
+          ]
+        },
+        {
+          "page": 20,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 0,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.0011013215859030838,
+            "contentDiffRatio": 0.0006287187804678032,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "known-tolerance",
+          "bugIds": [
+            "BUG-20261023-05"
+          ],
+          "reason": "全出血页末行 1 设备像素白边（≈0.2646mm），已知亚像素栅格化差异。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-05"
+          ]
+        },
+        {
+          "page": 21,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 0,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.0010486087388945923,
+            "contentDiffRatio": 0.0008743459571799368,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 22,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 9.633077355939035,
+            "keyColorCoverageDelta": 0.000001951126610832965,
+            "inkDiffRatio": 0.002738747103160388,
+            "contentDiffRatio": 0.007212692144198994,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 23,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0.5241128405854899,
+            "colorP95DEAll": 1.6798085796674431,
+            "blockColorP95DE": 2.010717947284536,
+            "keyColorCoverageDelta": 0.006125875744227367,
+            "inkDiffRatio": 0.0008374041746283848,
+            "contentDiffRatio": 0.004615160323289019,
+            "pixelDiffRatio": 0.00009920996104416209
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 24,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 1.7661486504802213,
+            "blockColorP95DE": 4.560740777615378,
+            "keyColorCoverageDelta": 0.001382927773218931,
+            "inkDiffRatio": 0.0019560209309713024,
+            "contentDiffRatio": 0.005931825015717969,
+            "pixelDiffRatio": 0.000006371281901918666
+          },
+          "expectation": "known-tolerance",
+          "bugIds": [
+            "BUG-20261023-05"
+          ],
+          "reason": "全出血页末行 1 设备像素白边（≈0.2646mm），已知亚像素栅格化差异。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-05"
+          ]
+        },
+        {
+          "page": 25,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 1.6957422197282388,
+            "blockColorP95DE": 7.0485791472420285,
+            "keyColorCoverageDelta": 0.0001263006006635022,
+            "inkDiffRatio": 0.008360211348495291,
+            "contentDiffRatio": 0.0225781957569825,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "known-tolerance",
+          "bugIds": [
+            "BUG-20261023-05"
+          ],
+          "reason": "全出血页末行 1 设备像素白边（≈0.2646mm），已知亚像素栅格化差异。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-05"
+          ]
+        },
+        {
+          "page": 26,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0.660831054160938,
+            "blockColorP95DE": 8.510904653250124,
+            "keyColorCoverageDelta": 0.00022394811123759928,
+            "inkDiffRatio": 0.004340432082362837,
+            "contentDiffRatio": 0.014681273260970948,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "known-tolerance",
+          "bugIds": [
+            "BUG-20261023-05"
+          ],
+          "reason": "全出血页末行 1 设备像素白边（≈0.2646mm），已知亚像素栅格化差异。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-05"
+          ]
+        },
+        {
+          "page": 27,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 1.9776678025970922,
+            "blockColorP95DE": 7.657666907949016,
+            "keyColorCoverageDelta": 0.000819932925810507,
+            "inkDiffRatio": 0.0062900288212133,
+            "contentDiffRatio": 0.015825311321360728,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "known-tolerance",
+          "bugIds": [
+            "BUG-20261023-05"
+          ],
+          "reason": "全出血页末行 1 设备像素白边（≈0.2646mm），已知亚像素栅格化差异。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-05"
+          ]
+        },
+        {
+          "page": 28,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0.6854393281757027,
+            "blockColorP95DE": 13.962932995547153,
+            "keyColorCoverageDelta": 0.0003179285689823841,
+            "inkDiffRatio": 0.00294557284797327,
+            "contentDiffRatio": 0.01892679628682114,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 29,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0.7417015208020071,
+            "blockColorP95DE": 13.962932995547153,
+            "keyColorCoverageDelta": 0.0007560124701219903,
+            "inkDiffRatio": 0.004654026597574454,
+            "contentDiffRatio": 0.020895071891120623,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 30,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 0,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0,
+            "contentDiffRatio": 0,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 31,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 0,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.001754406870235305,
+            "contentDiffRatio": 0.0014252652322357417,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 32,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 1.7583404986483537,
+            "colorP95DEAll": 19.47064381343704,
+            "blockColorP95DE": 25.310624543923293,
+            "keyColorCoverageDelta": 0.006863083009635285,
+            "inkDiffRatio": 0.04853922527288945,
+            "contentDiffRatio": 0.15197328307743474,
+            "pixelDiffRatio": 0.000011832380674991808
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 33,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 1.6448177442273446,
+            "colorP95DEAll": 13.420378944871528,
+            "blockColorP95DE": 21.006655764392832,
+            "keyColorCoverageDelta": 0.0016012484182933856,
+            "inkDiffRatio": 0.0390766104756171,
+            "contentDiffRatio": 0.079298323280394,
+            "pixelDiffRatio": 0.00004732952269996723
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 34,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 1.3017957215828109,
+            "colorP95DEAll": 14.681217204654041,
+            "blockColorP95DE": 17.970183935429365,
+            "keyColorCoverageDelta": 0.0035032834517242095,
+            "inkDiffRatio": 0.03637310508770003,
+            "contentDiffRatio": 0.0873634086592717,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 35,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 2.165090322295934,
+            "colorP95DEAll": 17.635073063524352,
+            "blockColorP95DE": 28.789726914523474,
+            "keyColorCoverageDelta": 0.005108775997669707,
+            "inkDiffRatio": 0.048174095028643386,
+            "contentDiffRatio": 0.10666351738127657,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 36,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 0,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0,
+            "contentDiffRatio": 0.00010023053021950487,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 37,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 0,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.0008443427208143745,
+            "contentDiffRatio": 0.0010971579038798246,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 38,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 5.56496084521946,
+            "keyColorCoverageDelta": 0.000007923855358527021,
+            "inkDiffRatio": 0.0008264462809917355,
+            "contentDiffRatio": 0.003184597301065177,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 39,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0.9516990032163714,
+            "colorP95DEAll": 30.044129320531987,
+            "blockColorP95DE": 43.885382027622526,
+            "keyColorCoverageDelta": 0.04897294951540576,
+            "inkDiffRatio": 0.17515954128880573,
+            "contentDiffRatio": 0.2537506745817593,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 40,
+          "status": "color-mismatch",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0.8182715915826136,
+            "colorP95DEAll": 25.025934410816348,
+            "blockColorP95DE": 34.61282302487051,
+            "keyColorCoverageDelta": 0.04529827546811299,
+            "inkDiffRatio": 0.15347721822541965,
+            "contentDiffRatio": 0.2154624464911143,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "known-engine-defect",
+          "bugIds": [
+            "BUG-20261023-02"
+          ],
+          "reason": "RadialShd 径向渐变降级为平均色（W_RADIAL_UNSUPPORTED），已知引擎缺陷。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-02"
+          ]
+        },
+        {
+          "page": 41,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 0,
+            "keyColorCoverageDelta": 0.0004326608307926305,
+            "inkDiffRatio": 0,
+            "contentDiffRatio": 0.00475183831904289,
+            "pixelDiffRatio": 0.000020934211963447045
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 42,
+          "status": "pass",
+          "width": 1210,
+          "height": 908,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 46.28623188272192,
+            "blockColorP95DE": 78.38571987534107,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.17913359343468316,
+            "contentDiffRatio": 0.2225495447241564,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "keyword",
+      "pages": [
+        {
+          "page": 1,
+          "status": "color-mismatch",
+          "width": 1070,
+          "height": 741,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0.8083101886680787,
+            "colorP95DEAll": 9.171485760729105,
+            "blockColorP95DE": 21.900466707288277,
+            "keyColorCoverageDelta": 0.8434271089408109,
+            "inkDiffRatio": 0.36224395984260654,
+            "contentDiffRatio": 0.04784466881619513,
+            "pixelDiffRatio": 0.000005044963234830426
+          },
+          "expectation": "reference-reencoding",
+          "bugIds": [
+            "BUG-20261023-12",
+            "BUG-20261023-14"
+          ],
+          "reason": "参考 PDF 章/底图 JPEG 重编码 + 字重 AA；已改写 samples.json reason。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-c/keyword/report.json",
+            "test/.artifacts/audit-20261023/shard-c/findings.md#C-03"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "keyword2",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 50.68788803667814,
+            "blockColorP95DE": 61.517921870768646,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.46738572162300973,
+            "contentDiffRatio": 0.48179271708683474,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 50.68788803667814,
+            "blockColorP95DE": 61.517921870768646,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.4671120246659815,
+            "contentDiffRatio": 0.48179271708683474,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "manual",
+      "pages": [
+        {
+          "page": 1,
+          "status": "color-mismatch",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0.3010169027551144,
+            "colorP95DEAll": 0.6772932350753824,
+            "blockColorP95DE": 5.518902279609968,
+            "keyColorCoverageDelta": 0.6110212795309062,
+            "inkDiffRatio": 0.005164649430820277,
+            "contentDiffRatio": 0.006872209271161499,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "known-tolerance",
+          "bugIds": [
+            "BUG-20261023-16"
+          ],
+          "reason": "manual p1 已知字重/AA/图像重采样容差差异，保留样本豁免说明但不沿用旧阈值。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-d/findings.json"
+          ]
+        },
+        {
+          "page": 23,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0.298304104554736,
+            "colorP95DEAll": 16.856900425110155,
+            "blockColorP95DE": 27.301310325712308,
+            "keyColorCoverageDelta": 0.06358887945450528,
+            "inkDiffRatio": 0.10566332693810844,
+            "contentDiffRatio": 0.09375775318811096,
+            "pixelDiffRatio": 0.0000011215011966417768
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 45,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0.48575398147864535,
+            "colorP95DEAll": 21.039921523542667,
+            "blockColorP95DE": 40.63159818771377,
+            "keyColorCoverageDelta": 0.022314684804829996,
+            "inkDiffRatio": 0.1711190966405361,
+            "contentDiffRatio": 0.13407802600866955,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 67,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0.20870207593543108,
+            "colorP95DEAll": 4.637818504222432,
+            "blockColorP95DE": 26.084071731463247,
+            "keyColorCoverageDelta": 0.010155633266690101,
+            "inkDiffRatio": 0.4052927024859663,
+            "contentDiffRatio": 0.02608767213474516,
+            "pixelDiffRatio": 0.000010093510769775992
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 89,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 34.58291311749439,
+            "blockColorP95DE": 41.01223534796361,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.30711557504597536,
+            "contentDiffRatio": 0.42077464788732394,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "multiKeywordInTextCode",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 30.532485699425717,
+            "blockColorP95DE": 30.544554971695106,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.28394332939787487,
+            "contentDiffRatio": 0.39436619718309857,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "n",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.5291666666666667,
+            "colorP95DE": 0,
+            "colorP95DEAll": 53.73855122111356,
+            "blockColorP95DE": 62.27666187809508,
+            "keyColorCoverageDelta": 0.037634408602150504,
+            "inkDiffRatio": 0.4363648594107359,
+            "contentDiffRatio": 0.5289414011218523,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 74.76237434731549,
+            "blockColorP95DE": 74.76237434731549,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.4428489920121719,
+            "contentDiffRatio": 0.5546711353162966,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "namespace_no_std",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 61.517921870768646,
+            "blockColorP95DE": 61.517921870768646,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.5509259259259259,
+            "contentDiffRatio": 0.5486725663716814,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "no_page_container",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 530,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 43.013836231255716,
+            "blockColorP95DE": 63.94774532787541,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.5137609004885892,
+            "contentDiffRatio": 0.5334040296924708,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "page1",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 0,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.0028240571837799128,
+            "contentDiffRatio": 0.005404675043912985,
+            "pixelDiffRatio": 0.0000022430023932835537
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "page2",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 33.45408776864146,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.0035896811876368947,
+            "contentDiffRatio": 0.016231647634584012,
+            "pixelDiffRatio": 0.0000022430023932835537
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "page3",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 0,
+            "blockColorP95DE": 0,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.0065255494135095056,
+            "contentDiffRatio": 0.006166662158872691,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "path_unstd",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 48.375752824207225,
+            "blockColorP95DE": 69.66311560229843,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.3938281318297054,
+            "contentDiffRatio": 0.45948522402287895,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 37.668881045289744,
+            "blockColorP95DE": 64.98831710975607,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.30208647020864704,
+            "contentDiffRatio": 0.39482599322451495,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "pattern类型",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 52.370500178183285,
+            "blockColorP95DE": 66.78333432590053,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.2252575857831553,
+            "contentDiffRatio": 0.23790951638065522,
+            "pixelDiffRatio": 0.0031929139068391384
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "signedFile",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 530,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 50.74679787064589,
+            "blockColorP95DE": 73.38748273026809,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.4239538162760382,
+            "contentDiffRatio": 0.5401203610832498,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "signout",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 52.370500178183285,
+            "blockColorP95DE": 52.370500178183285,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.16048391275063467,
+            "contentDiffRatio": 0.42794440380395027,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "known-limitation",
+          "bugIds": [
+            "BUG-20261023-14"
+          ],
+          "reason": "font_3_3.ttf 损坏（684B，bad sfntVersion），引擎 W_FONT_MISSING 回退；本轮不修 OFD/PDF 字体。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-c/signout/report.json",
+            "test/.artifacts/audit-20261023/shard-c/findings.md#4.12"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "testImageNotFound",
+      "pages": [
+        {
+          "page": 1,
+          "status": "color-mismatch",
+          "width": 1384,
+          "height": 983,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0.2712850564709113,
+            "colorP95DEAll": 37.96494791960203,
+            "blockColorP95DE": 50.31726094431223,
+            "keyColorCoverageDelta": 0.9842824645474919,
+            "inkDiffRatio": 0.22181274744534685,
+            "contentDiffRatio": 0.5201000763294038,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "expected-negative",
+          "bugIds": [
+            "BUG-20261023-15"
+          ],
+          "reason": "负样本：缺 image_135.PNG，期望 W_IMAGE_DECODE 且页面继续，参考为全透明水印。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-d/findings.json"
+          ]
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 1384,
+          "height": 983,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 57.4156391825045,
+            "blockColorP95DE": 61.683348369813096,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.3090623543827555,
+            "contentDiffRatio": 0.5391394504924831,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "testImageOverridePage",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 1396,
+          "height": 979,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0.772736718310434,
+            "colorP95DEAll": 9.494321996795836,
+            "blockColorP95DE": 13.410766991818377,
+            "keyColorCoverageDelta": 0.022652770617633433,
+            "inkDiffRatio": 0.316328074250069,
+            "contentDiffRatio": 0.04692787398444682,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "testPathClip",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 1588,
+          "height": 1115,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0.9952038844814283,
+            "colorP95DEAll": 8.665392689967684,
+            "blockColorP95DE": 19.547824614818076,
+            "keyColorCoverageDelta": 0.055861130182350616,
+            "inkDiffRatio": 0.16356115664141024,
+            "contentDiffRatio": 0.04425251921928287,
+            "pixelDiffRatio": 0.0000045181913679953915
+          },
+          "expectation": "known-engine-defect",
+          "bugIds": [
+            "BUG-20261023-02"
+          ],
+          "reason": "RadialShd 径向渐变降级为平均色（W_RADIAL_UNSUPPORTED）。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/shard-b/findings.json#F-B-02"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "testPathFillOpacity",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0.2889951349593212,
+            "colorP95DEAll": 32.11498579128266,
+            "blockColorP95DE": 50.29765598748623,
+            "keyColorCoverageDelta": 0.07379403602425183,
+            "inkDiffRatio": 0.19474605954465848,
+            "contentDiffRatio": 0.27346403210867554,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "v4signed",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 530,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 49.24776071633247,
+            "blockColorP95DE": 70.3828174547102,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.4349310672383251,
+            "contentDiffRatio": 0.557431769094836,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "reference-reencoding",
+          "bugIds": [
+            "BUG-20261023-12"
+          ],
+          "reason": "参考 PDF 章/印章/底图为 JPEG 或 index+smask 重编码，非引擎内容缺陷。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-c/findings.md#C-03"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "y",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 772,
+          "height": 998,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 1.1009578826595112,
+            "colorP95DEAll": 26.339213917228296,
+            "blockColorP95DE": 32.186530661311345,
+            "keyColorCoverageDelta": 0.11961783955955478,
+            "inkDiffRatio": 0.30309606192123845,
+            "contentDiffRatio": 0.23622047244094488,
+            "pixelDiffRatio": 0.0000025958653057410156
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 772,
+          "height": 998,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.5291666666666667,
+            "colorP95DE": 0,
+            "colorP95DEAll": 29.017875666371168,
+            "blockColorP95DE": 29.628028917387848,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.41848914156465394,
+            "contentDiffRatio": 0.43841021363957144,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 3,
+          "status": "pass",
+          "width": 772,
+          "height": 998,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0.6702997910766243,
+            "colorP95DEAll": 27.876224273305986,
+            "blockColorP95DE": 31.73908612770778,
+            "keyColorCoverageDelta": 0.019602482739263342,
+            "inkDiffRatio": 0.3292841317136527,
+            "contentDiffRatio": 0.3403703266894681,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "z",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 46.310282837044866,
+            "blockColorP95DE": 66.05574421728727,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.40966612508295386,
+            "contentDiffRatio": 0.5280390107976315,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 25.87925010528062,
+            "blockColorP95DE": 51.10817873764326,
+            "keyColorCoverageDelta": 0.026651646336469277,
+            "inkDiffRatio": 0.20787444188878365,
+            "contentDiffRatio": 0.23191236413043478,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 3,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0.20870207593543108,
+            "colorP95DEAll": 31.108453425873986,
+            "blockColorP95DE": 69.24226563765977,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.43465570874457543,
+            "contentDiffRatio": 0.22838257115877514,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "reference-mismatch",
+          "bugIds": [
+            "BUG-20261023-13"
+          ],
+          "reason": "参考 PDF 泰文位置为 .notdef 十字框伪影（Tahoma 未嵌入），非引擎缺陷。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/shard-e/findings.json"
+          ]
+        },
+        {
+          "page": 4,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 33.45877247742353,
+            "blockColorP95DE": 62.4851936142352,
+            "keyColorCoverageDelta": 0.02875964716209145,
+            "inkDiffRatio": 0.2895413380075957,
+            "contentDiffRatio": 0.23588945114830673,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "zsbk",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 1123,
+          "height": 794,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 1.5744738618220302,
+            "colorP95DEAll": 9.288198819924988,
+            "blockColorP95DE": 19.069766759950223,
+            "keyColorCoverageDelta": 0.031139460796057505,
+            "inkDiffRatio": 0.41930577779186007,
+            "contentDiffRatio": 0.04817604859516008,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 1.2527846161116007,
+            "colorP95DEAll": 4.531661009793206,
+            "blockColorP95DE": 13.88638085655268,
+            "keyColorCoverageDelta": 0.02829143300198289,
+            "inkDiffRatio": 0.5745636682846226,
+            "contentDiffRatio": 0.03643192285004573,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "known-engine-defect",
+          "bugIds": [
+            "BUG-20261023-22"
+          ],
+          "reason": "内嵌 AdobeSongStd-Light CFF 子集解析失败，回退渲染脚注。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md",
+            "test/.artifacts/audit-20261023/shard-d/findings.json"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "不规范资源路径",
+      "pages": [
+        {
+          "page": 1,
+          "status": "color-mismatch",
+          "width": 1536,
+          "height": 864,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 1.9694784514275212,
+            "colorP95DEAll": 4.3073261516779855,
+            "blockColorP95DE": 29.033980523904578,
+            "keyColorCoverageDelta": 0.6891823410416664,
+            "inkDiffRatio": 0.28229370054465114,
+            "contentDiffRatio": 0.027936679395700527,
+            "pixelDiffRatio": 7.535204475308642e-7
+          },
+          "expectation": "known-tolerance",
+          "bugIds": [
+            "BUG-20261023-16"
+          ],
+          "reason": "样本资源路径不规范，参考重编码/AA 差异已由分片 D 登记。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/shard-d/findings.json"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "发票监制章-数科",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 813,
+          "height": 526,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 27.073249544298754,
+            "blockColorP95DE": 33.490118520831224,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.41305340027384757,
+            "contentDiffRatio": 0.2120241236336223,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "发票示例",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 530,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 46.675930175282815,
+            "blockColorP95DE": 53.044005424613395,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.37736518868259433,
+            "contentDiffRatio": 0.4961653451189393,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "拿来主义_page6",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 44.817662581118,
+            "blockColorP95DE": 49.97561344140053,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.3619747023120048,
+            "contentDiffRatio": 0.5296956198960653,
+            "pixelDiffRatio": 0.000004486004786567107
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 47.598585038504915,
+            "blockColorP95DE": 55.520984578873176,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.3743237838634306,
+            "contentDiffRatio": 0.5533666568656278,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "文字横向-数科",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0,
+            "colorP95DE": 0,
+            "colorP95DEAll": 9.321981268833323,
+            "blockColorP95DE": 41.41725582248442,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.13646702047005307,
+            "contentDiffRatio": 0.04349662162162162,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "透明度文字",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 17.740295022412237,
+            "blockColorP95DE": 46.481370419795276,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.5509259259259259,
+            "contentDiffRatio": 0.07069555302166476,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "name": "ofd-viewer-ui-showcase",
+      "pages": [
+        {
+          "page": 1,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 29.17676117457061,
+            "blockColorP95DE": 31.440824826964896,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.41346991985312836,
+            "contentDiffRatio": 0.3690956802583771,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 2,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 29.267976752755718,
+            "blockColorP95DE": 33.6899252088833,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.4189363314805457,
+            "contentDiffRatio": 0.3653109713487072,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 3,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 29.45066149248786,
+            "blockColorP95DE": 35.53711570006544,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.4273028264733559,
+            "contentDiffRatio": 0.37266057327613006,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 4,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 30.87651834950743,
+            "blockColorP95DE": 36.88742225504481,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.4356643635132713,
+            "contentDiffRatio": 0.3883993801195484,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 5,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 29.267976752755718,
+            "blockColorP95DE": 33.6899252088833,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.41870029122472313,
+            "contentDiffRatio": 0.36541849604295423,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 6,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 24.55029558959931,
+            "blockColorP95DE": 31.127355927929113,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.4510104184185602,
+            "contentDiffRatio": 0.3243079337899543,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 7,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 28.66782899502976,
+            "blockColorP95DE": 32.14434938907755,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.42243349837668626,
+            "contentDiffRatio": 0.35922032860495967,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 8,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 20.56738541605605,
+            "blockColorP95DE": 36.98269271050307,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.43150123051681705,
+            "contentDiffRatio": 0.14466153938834114,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        },
+        {
+          "page": 9,
+          "status": "color-mismatch",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 27.990080937462842,
+            "blockColorP95DE": 39.944575368853556,
+            "keyColorCoverageDelta": 0.258829315758652,
+            "inkDiffRatio": 0.4344490628048191,
+            "contentDiffRatio": 0.32121272168829884,
+            "pixelDiffRatio": 0.0000033645035899253305
+          },
+          "expectation": "known-tolerance",
+          "bugIds": [
+            "SHOWCASE-01"
+          ],
+          "reason": "p9 细边框栅格化 + keyColor 小样本假阳性（colorP95DE=0、coverageΔ=25.7%）。",
+          "evidence": [
+            "test/.artifacts/audit-20261023/bug-ledger.md#4.1",
+            "test/.artifacts/audit-20261023/showcase/report.json"
+          ]
+        },
+        {
+          "page": 10,
+          "status": "pass",
+          "width": 794,
+          "height": 1123,
+          "metrics": {
+            "sizeDeltaPx": {
+              "width": 0,
+              "height": 0
+            },
+            "layoutDeltaMm": 0.26458333333333334,
+            "colorP95DE": 0,
+            "colorP95DEAll": 24.525534908675056,
+            "blockColorP95DE": 29.62016570586805,
+            "keyColorCoverageDelta": 0,
+            "inkDiffRatio": 0.43272529336557086,
+            "contentDiffRatio": 0.3159771754636234,
+            "pixelDiffRatio": 0
+          },
+          "expectation": "pass",
+          "bugIds": [],
+          "reason": "",
+          "evidence": []
+        }
+      ]
+    }
+  ]
+}

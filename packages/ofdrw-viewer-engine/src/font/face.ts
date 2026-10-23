@@ -52,14 +52,20 @@ interface FaceRecord {
 const FACE_RECORDS = new WeakMap<FontFace, FaceRecord>();
 
 /**
- * 全局字形缓存：按 (face.key, gid) 计数，上限 20,000。
+ * 全局字形缓存：按 (字体面实例, gid) 计数，上限 20,000。
  *
  * 与设计方案 12.7 一致，跨字体面共享预算，避免 TTC 多字体面各自缓存造成内存膨胀。
+ * 键使用字体面实例序号而不是调用方给定的 `face.key`：`face.key` 只由资源元数据
+ * （FontFile/FontName/字号）构成，不同文档中同名同路径的字体子集字节可能不同，
+ * 若共用缓存键会把 A 文档的字形轮廓串给 B 文档。
  */
 const FACE_GLYPH_CACHE = new LruCache<string, Glyph | null>(20_000);
 
 /** 未显式提供缓存键时的序号，保证不同字体文件不会共用轮廓缓存键。 */
 let faceSequence = 0;
+
+/** 字体面实例序号；字形缓存按实例隔离，跨文档不复用轮廓。 */
+let faceInstanceSequence = 0;
 
 /**
  * 安全读取字体属性；剥离字体可能缺少 name/OS2 表并使 getter 抛错。
@@ -253,6 +259,9 @@ function wrapFontFace(
     typeof rawUnitsPerEm === 'number' && rawUnitsPerEm > 0 ? rawUnitsPerEm : 1000;
   const numGlyphs = Math.max(0, safeRead(() => font.numGlyphs) ?? 0);
   const key = `${options.key ?? baseKey}#${index}`;
+  // 字形缓存按“字体面实例”隔离：face.key 仅用于回退链去重/诊断/内嵌判定，
+  // 不能假设相同 face.key 的两个字体面字节一致（跨文档同名子集场景）。
+  const cacheKeyPrefix = `${key}#${(faceInstanceSequence += 1)}`;
   const wantedNames = expandFontNames(
     [options.fontName, options.familyName],
     options.aliases,
@@ -302,7 +311,7 @@ function wrapFontFace(
     font,
     glyph(gid: number): Glyph | null {
       if (!Number.isInteger(gid) || gid < 0 || gid >= numGlyphs) return null;
-      const cacheKey = `${key}#${gid}`;
+      const cacheKey = `${cacheKeyPrefix}#${gid}`;
       const cached = FACE_GLYPH_CACHE.get(cacheKey);
       if (cached !== undefined) return cached;
       const glyph = convertGlyph(font, gid);

@@ -114,16 +114,35 @@ export class LruCache<K, V> {
 /**
  * 字形轮廓缓存（字体单位，y 向上）。
  *
- * 键为 `face.key + '#' + glyphId`；容量默认 20,000，符合设计方案 12.7。
+ * 键为 `字体面实例身份 + '#' + glyphId`；容量默认 20,000，符合设计方案 12.7。
+ * 身份按 FontFace 对象在缓存内分配，不使用 `face.key`：`face.key` 只描述资源元数据，
+ * 不同文档同名同路径的字体子集字节可能不同，共用键会把 A 文档的轮廓串给 B 文档。
  */
 export class GlyphOutlineCache {
   private readonly cache: LruCache<string, PathCommand[] | null>;
+  /** FontFace 对象 → 缓存身份；同一字体面对象稳定，跨文档对象不复用。 */
+  private readonly identities = new WeakMap<FontFace, number>();
+  private identitySequence = 0;
 
   /**
    * @param maxEntries 条目上限，默认 20,000。
    */
   constructor(maxEntries = 20_000) {
     this.cache = new LruCache<string, PathCommand[] | null>(maxEntries);
+  }
+
+  /**
+   * 取字体面的缓存身份；首次调用时分配。
+   *
+   * @param face 字体面对象。
+   * @returns 大于 0 的实例身份。
+   */
+  private identity(face: FontFace): number {
+    const known = this.identities.get(face);
+    if (known !== undefined) return known;
+    this.identitySequence += 1;
+    this.identities.set(face, this.identitySequence);
+    return this.identitySequence;
   }
 
   /**
@@ -134,7 +153,7 @@ export class GlyphOutlineCache {
    * @returns 轮廓；字体缺失字形时返回 null。
    */
   get(face: FontFace, glyphId: number): PathCommand[] | null {
-    const key = `${face.key}#${glyphId}`;
+    const key = `${this.identity(face)}#${glyphId}`;
     const cached = this.cache.get(key);
     if (cached !== undefined) return cached;
     let path: PathCommand[] | null = null;

@@ -22,7 +22,13 @@ import type {
 } from '../common/types';
 import type { DisplayList } from '../common/display-list';
 import type { Renderer } from '../renderer/types';
-import { IDENTITY_MATRIX, invertMatrix, translateMatrix } from '../common/matrix';
+import {
+  IDENTITY_MATRIX,
+  invertMatrix,
+  isIdentityMatrix,
+  transformPoint,
+  translateMatrix,
+} from '../common/matrix';
 
 /** 渐变 stop 上限；超过后截断并 warning（设计方案 13.2）。 */
 export const MAX_GRADIENT_STOPS = 512;
@@ -388,6 +394,49 @@ export function getAveragePaintColor(paint: ResolvedPaint): Rgba {
       return colors.length > 0 ? averageColor(colors.map((color) => ({ position: 0, color }))) : { r: 0, g: 0, b: 0, a: 255 };
     }
   }
+}
+
+/**
+ * 把轴向渐变坐标从对象外层空间换回对象空间（CTM 之前的图元空间）。
+ *
+ * OFD 的 Shading 坐标（StartPoint/EndPoint/MapUnit）位于对象外层空间：坐标原点与
+ * `Boundary` 左上角重合、单位为对象外层单位，等价于已经乘过对象 `CTM` 的图元坐标；
+ * 而路径点与文字轮廓仍在 `CTM` 之前的对象空间。渲染器把渐变坐标当作当前用户空间
+ * 坐标使用，因此非单位 `CTM` 时必须先用 `CTM` 的逆矩阵换算回对象空间，否则渐变
+ * 轴线会被放大后的图元坐标完全包住的一小段，整块图元退化为近似起始色。
+ *
+ * 该换算与具体对象/样本无关；`CTM` 缺省或不可逆时保持原样。
+ *
+ * @param paint 样式层 PaintSpec。
+ * @param ctm 当前对象 CTM（对象外层空间 → 对象空间）。
+ * @returns 轴向渐变坐标已换算的 PaintSpec；其他 Paint 原样返回。
+ */
+export function mapPaintToObjectSpace(
+  paint: PaintSpec,
+  ctm: Matrix | null | undefined,
+): PaintSpec {
+  if (paint.kind !== 'gradient' || paint.spec.kind !== 'axial' || !ctm) return paint;
+  const inverse = invertMatrix(ctm);
+  if (!inverse || isIdentityMatrix(inverse)) return paint;
+  const spec = paint.spec;
+  const start = transformPoint(inverse, spec.start);
+  const end = transformPoint(inverse, spec.end);
+  const axisLength = Math.hypot(spec.end.x - spec.start.x, spec.end.y - spec.start.y);
+  const mappedAxisLength = Math.hypot(end.x - start.x, end.y - start.y);
+  // MapUnit 是沿渐变轴的长度；换空间后按轴向量长度比同步缩放。
+  const mapUnit =
+    spec.mapUnit !== undefined && axisLength > 1e-12 && Number.isFinite(mappedAxisLength)
+      ? spec.mapUnit * (mappedAxisLength / axisLength)
+      : spec.mapUnit;
+  return {
+    ...paint,
+    spec: {
+      ...spec,
+      start,
+      end,
+      ...(mapUnit !== undefined ? { mapUnit } : {}),
+    },
+  };
 }
 
 /**

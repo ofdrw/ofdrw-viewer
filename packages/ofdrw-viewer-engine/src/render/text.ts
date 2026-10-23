@@ -287,7 +287,7 @@ function buildGlyphRun(
       state,
       'warnedGlyph',
       'W_GLYPH_MISSING',
-      `字符 U+${codePoint.toString(16).toUpperCase()} 无可用字形`,
+      `字符 U+${codePoint.toString(16).toUpperCase().padStart(4, '0')} 无可用字形`,
     );
     return null;
   }

@@ -45,6 +45,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:golden": "vitest run test/golden --passWithNoTests",
+    "test:audit": "node scripts/audit-strict.mjs",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
   },
   "dependencies": {

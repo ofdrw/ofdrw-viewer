@@ -1,5 +1,5 @@
 /**
- * 回归样本清单完整性：57 对（55 基准 + manual + dense-text-perf）、19.3 分组、页数/尺寸/字体/JBIG2 标注。
+ * 回归样本清单完整性：58 条（56 对基准 + manual + dense-text-perf）、19.3 分组、页数/尺寸/字体/JBIG2 标注。
  */
 
 import { existsSync } from 'node:fs';
@@ -16,7 +16,7 @@ import {
 
 /** 设计方案 19.3 明确点名的样本与分组（独立于脚本实现，用于交叉校验）。 */
 const EXPECTED_GROUP_SAMPLES: Record<string, string[]> = {
-  'basic-text-path': ['hello', 'helloworld', '1', '1-1'],
+  'basic-text-path': ['hello', 'helloworld', '1', '1-1', 'ofd-viewer-ui-showcase'],
   'horizontal-delta': ['文字横向-数科', 'chineseDir', 'multiKeywordInTextCode'],
   'transparency-blend': ['透明度文字', 'testPathFillOpacity'],
   image: ['containsJPEG', 'testImageNotFound', 'testImageOverridePage'],
@@ -37,15 +37,16 @@ const EXPECTED_GROUP_SAMPLES: Record<string, string[]> = {
 describe('回归样本清单', () => {
   const manifest = loadSampleManifest();
 
-  it('包含 57 对且名称唯一', () => {
+  it('包含 58 对且名称唯一', () => {
     expect(manifest.schemaVersion).toBe(1);
     expect(manifest.sourceDir).toBe('ofd_pdf_match');
-    expect(manifest.count).toBe(57);
-    expect(manifest.samples).toHaveLength(57);
+    expect(manifest.count).toBe(58);
+    expect(manifest.samples).toHaveLength(58);
     const names = new Set(manifest.samples.map((sample) => sample.name));
-    expect(names.size).toBe(57);
+    expect(names.size).toBe(58);
     expect(names.has('manual')).toBe(true);
     expect(names.has('dense-text-perf')).toBe(true);
+    expect(names.has('ofd-viewer-ui-showcase')).toBe(true);
   });
 
   it('19.3 分组完整，重复列出的样本属于多个分组', () => {
@@ -168,17 +169,44 @@ describe('回归样本清单', () => {
     expect(manual.knownTolerancePages![0]!.reason).toContain('不改变全局阈值');
   });
 
-  it('keyword 页 1 标为参考不匹配，AddWatermark p3 标为 known tolerance', () => {
+  it('keyword 页 1 reason 指向参考重编码，AddWatermark p3 标为 known tolerance', () => {
     const keyword = manifest.samples.find((sample) => sample.name === 'keyword')!;
     expect(keyword.referenceMismatchPages).toEqual([1]);
-    expect(keyword.referenceMismatchReason).toContain('斜向水印');
-    expect(keyword.referenceMismatchReason).toContain('表格');
+    expect(keyword.referenceMismatchReason).toContain('JPEG 重编码');
+    expect(keyword.referenceMismatchReason).toContain('字重 AA');
 
     const watermark = manifest.samples.find((sample) => sample.name === 'AddWatermarkAnnot')!;
     expect(watermark.knownTolerancePages).toHaveLength(1);
     expect(watermark.knownTolerancePages![0]!.page).toBe(3);
     expect(watermark.knownTolerancePages![0]!.maxDeltaE).toBeCloseTo(6.7545, 4);
     expect(watermark.knownTolerancePages![0]!.reason).toContain('不改变全局阈值');
+  });
+
+  it('showcase 为第 58 条：10 页、basic-text-path/P0、内嵌 SimSun 子集', () => {
+    const showcase = manifest.samples.find((sample) => sample.name === 'ofd-viewer-ui-showcase')!;
+    expect(showcase.groups).toEqual(['basic-text-path']);
+    expect(showcase.priority).toBe('P0');
+    expect(showcase.optional).toBe(false);
+    expect(showcase.pdfPages).toBe(10);
+    expect(showcase.ofdDeclaredPages).toBe(10);
+    expect(showcase.sizeMm).toEqual({ width: 210, height: 297 });
+    expect(showcase.embeddedFonts).toBe(true);
+    expect(showcase.fontEntries).toBe(1);
+    expect(showcase.imageEntries).toBe(0);
+    expect(showcase.jb2Entries).toBe(0);
+    expect(showcase.sha256).toBe('2f3940b25b48f9b45edc351d1804e50d58f0d7d172a7a19bd778a2d4d35f3458');
+    expect(showcase.goldenPages).toEqual([]);
+    expect(showcase.knownTolerancePages).toHaveLength(1);
+    expect(showcase.knownTolerancePages![0]!.page).toBe(9);
+    expect(showcase.knownTolerancePages![0]!.maxCoverageDelta).toBeCloseTo(0.26, 2);
+    expect(showcase.knownTolerancePages![0]!.reason).toContain('细边框栅格化');
+  });
+
+  it('signout 字体损坏登记为 known limitation，不改样本资产', () => {
+    const signout = manifest.samples.find((sample) => sample.name === 'signout')!;
+    expect(signout.notes.join('\n')).toContain('known limitation');
+    expect(signout.notes.join('\n')).toContain('font_3_3.ttf 损坏');
+    expect(signout.referenceMismatchPages).toBeUndefined();
   });
 
   it('本地样本存在时：PDF/OFD 页数一致、尺寸换算正确、文件可访问', () => {
