@@ -38,6 +38,7 @@ export type {
   FontInput,
   FontInputLoader,
   OFDDocumentInfo,
+  OFDOpenFromContainerOptions,
   OFDOpenOptions,
   OFDPageSize,
   OFDSource,
@@ -86,8 +87,20 @@ export { DEFAULT_DPI, MM_PER_INCH, getPageTransform, getPageViewport } from './a
 // 平台接口
 // ---------------------------------------------------------------------------
 export type { ByteSource } from './platform/byte-source';
+export type {
+  VirtualContainer,
+  VirtualContainerFactory,
+  VirtualFileMeta,
+  VirtualReadOptions,
+} from './platform/virtual-container';
 export type { ImageDecoder, ImageDecoderPlugin } from './platform/image-decoder';
 export type { FontMatchRequest, FontProvider } from './platform/font-provider';
+
+// ---------------------------------------------------------------------------
+// 容器基础能力
+// ---------------------------------------------------------------------------
+export { openZipVirtualContainer } from './api/container';
+export type { OpenZipVirtualContainerOptions } from './api/container';
 
 // ---------------------------------------------------------------------------
 // 渲染器扩展点

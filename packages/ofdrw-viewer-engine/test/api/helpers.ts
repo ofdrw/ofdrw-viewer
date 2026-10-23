@@ -82,12 +82,13 @@ export async function openTestDocument(
   bytes: Uint8Array,
   overrides: Partial<OFDOpenOptions> = {},
 ): Promise<OFDDocument> {
+  // 展开 Partial 会把 source 拓宽为可选；基础 source 始终存在，故按 OFDOpenOptions 收窄。
   return OFDDocument.open({
     source: { kind: 'arraybuffer', data: bytes },
     renderer: createTestRenderer(),
     imageDecoders: [...nodeImageDecoders],
     ...overrides,
-  });
+  } as OFDOpenOptions);
 }
 
 /**

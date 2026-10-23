@@ -6,16 +6,18 @@
  */
 
 import type { ResourceId, PageSize } from '../model/types';
-import type { ByteSource } from '../platform/byte-source';
 import type { FontInput, FontProvider } from '../platform/font-provider';
 import type { FontInputLoader } from '../font/provider';
 import type { ImageDecoderPlugin } from '../platform/image-decoder';
+import type { VirtualContainer, VirtualContainerFactory } from '../platform/virtual-container';
+import type { OFDSource } from '../platform/source';
 import type { Canvas2DLike, CanvasRenderingContext2DLike, Renderer } from '../renderer/types';
 import type { OFDWarning } from '../warnings';
 import type { Viewport } from '../common/types';
 
 export type { FontInput } from '../platform/font-provider';
 export type { FontInputLoader } from '../font/provider';
+export type { OFDSource } from '../platform/source';
 export type { OFDWarning } from '../warnings';
 export type { PageSize } from '../model/types';
 export type { Viewport } from '../common/types';
@@ -83,15 +85,6 @@ export const DEFAULT_CACHE_OPTIONS: Readonly<CacheOptions> = Object.freeze({
   pageModels: 8,
   textPages: 4,
 });
-
-/** 文档字节来源；Node/微信来源本轮只保留类型，Web 实现 arraybuffer/blob/url/custom。 */
-export type OFDSource =
-  | { kind: 'arraybuffer'; data: ArrayBuffer | Uint8Array }
-  | { kind: 'blob'; blob: Blob }
-  | { kind: 'url'; url: string; headers?: Record<string, string> }
-  | { kind: 'node-file'; path: string }
-  | { kind: 'wechat-file'; filePath: string }
-  | { kind: 'custom'; source: ByteSource };
 
 /** Viewport 选项。 */
 export interface ViewportOptions {
@@ -178,10 +171,8 @@ export type EncodeImage = (
   quality: number,
 ) => Promise<Uint8Array>;
 
-/** 打开文档参数。 */
-export interface OFDOpenOptions {
-  /** 文档字节来源。 */
-  source: OFDSource;
+/** 打开文档的公共选项（不含 source/container/containerFactory）。 */
+export interface OFDOpenBaseOptions {
   /** 多文档包时的文档索引，默认 0。 */
   documentIndex?: number;
   /** 资源限制覆盖；未提供的字段使用 DEFAULT_RESOURCE_LIMITS。 */
@@ -224,6 +215,58 @@ export interface OFDOpenOptions {
   encodeImage?: EncodeImage;
   /** 页面渲染器扩展点；不传时由 engine 内部创建 H5Canvas2DRenderer。自定义 renderer 只接管 render，exportImage 仍用 createCanvas。 */
   renderer?: Renderer;
+}
+
+/**
+ * 默认 ZIP / 容器工厂打开参数。
+ *
+ * `source` 必填，保持既有调用方（UI/CLI 等）的类型兼容；只以已构造容器打开
+ * 时改用 `OFDOpenFromContainerOptions`。
+ */
+export interface OFDOpenOptions extends OFDOpenBaseOptions {
+  /**
+   * 文档字节来源。
+   *
+   * 走默认 ZIP 容器或 `containerFactory` 时必填；提供 `container` 时 engine
+   * 不打开该来源，仅作为宿主上下文。
+   */
+  source: OFDSource;
+  /**
+   * 已构造好的明文容器；与 `containerFactory` 互斥。
+   *
+   * 容器必须 `encrypted=false` 且 `read()` 返回明文；engine 对
+   * `encrypted=true` 的容器抛 `OFD_ENCRYPTED`。
+   *
+   * 宿主借用语义：engine 不关闭该容器，宿主必须在 `doc.close()` 后自行
+   * `await container.close()`；同一容器可被多个文档复用。
+   */
+  container?: VirtualContainer;
+  /**
+   * 由 engine 调用并拥有的容器工厂；与 `container` 互斥，`source` 作为工厂输入。
+   *
+   * 工厂返回的容器在打开失败或 `doc.close()` 时由 engine 关闭；来源所有权
+   * 随工厂/容器。
+   */
+  containerFactory?: VirtualContainerFactory;
+}
+
+/**
+ * 纯容器打开参数：直接注入已构造好的明文容器，不需要 `source`。
+ *
+ * `source` 可选，仅作为宿主上下文，engine 不打开、不关闭；纯容器模式不提供
+ * 容器工厂，需要工厂时使用 `OFDOpenOptions`。
+ */
+export interface OFDOpenFromContainerOptions extends OFDOpenBaseOptions {
+  /**
+   * 已构造好的明文容器；必须 `encrypted=false` 且 `read()` 返回明文。
+   *
+   * 宿主借用语义：engine 不关闭该容器，宿主在 `doc.close()` 后自行关闭。
+   */
+  container: VirtualContainer;
+  /** 可选宿主上下文来源；engine 不打开、不关闭。 */
+  source?: OFDSource;
+  /** 纯容器模式不支持容器工厂；需要工厂时使用 `OFDOpenOptions`。 */
+  containerFactory?: never;
 }
 
 /** 文档模型的最小公开视图（用于 API 层内部与测试断言）。 */

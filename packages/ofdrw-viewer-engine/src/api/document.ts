@@ -9,12 +9,14 @@
  * - XML / 字体字节 / 解码图片 / 页面模型分别按 `CacheOptions` 预算 LRU；
  * - 同 key 的加载用 `Map<key, Promise>` 去重，避免并发重复解析；
  * - 同一 Canvas 的渲染通过 Promise 链串行，不同 Canvas 互不阻塞；
- * - `close()` 幂等：先中止进行中的渲染，再释放渲染器、字体、图片句柄与文件句柄。
+ * - 所有包内内容都经 `VirtualContainer` 读取（默认 ZIP 容器或宿主注入的明文容器）；
+ * - `close()` 幂等：先中止渲染/读取并等待，再关闭自有容器，最后释放渲染器、
+ *   字体与图片句柄；宿主借用的容器不由 engine 关闭。
  */
 
-import type { ByteSource } from '../platform/byte-source';
 import type { FontInput, FontProvider } from '../platform/font-provider';
 import type { ImageDecoderPlugin } from '../platform/image-decoder';
+import type { VirtualContainer } from '../platform/virtual-container';
 import type { Box, DecodedImage, Viewport } from '../common/types';
 import type {
   Annotation,
@@ -39,8 +41,8 @@ import type {
   CacheOptions,
   CanvasImageEncodeSource,
   EncodeImage,
+  OFDOpenFromContainerOptions,
   OFDOpenOptions,
-  OFDSource,
   PageImageExportOptions,
   PageImageFormat,
   PageImageMime,
@@ -75,7 +77,7 @@ import { DEFAULT_CACHE_OPTIONS, DEFAULT_RESOURCE_LIMITS } from './types';
 import { OFDPage as OFDPageClass } from './page';
 import { combineAbortSignals, createAbortError, throwIfAborted, wrapError } from './render-task';
 import { DEFAULT_DPI, getPageViewport } from './viewport';
-import { openByteSource } from './source';
+import { openZipVirtualContainer } from './container';
 import {
   createWarningCollector,
   createDocumentWarningHandler,
@@ -83,8 +85,6 @@ import {
 } from './warnings';
 import { DisposableLruCache } from './cache';
 import { isOFDError, OFDError } from '../errors';
-import { ZipReader } from '../container/zip-reader';
-import type { ZipLimits } from '../container/zip-reader';
 import { dirnameOf } from '../container/path';
 import { normalizeResourceId } from '../model/ids';
 import { parseXml } from '../xml/parser';
@@ -187,8 +187,10 @@ interface XmlCacheEntry {
 
 /** `OFDDocument` 构造输入（仅内部使用）。 */
 interface DocumentInit {
-  source: ByteSource;
-  zip: ZipReader;
+  /** 文档内容容器；所有包内读取统一经此接口。 */
+  container: VirtualContainer;
+  /** 容器是否由 engine 拥有；借用容器在 close 时只清引用。 */
+  ownsContainer: boolean;
   document: DocumentModel;
   /** 打开时解析的文档属性缓存；close 后不可再取。 */
   metadata: DocumentMetadata;
@@ -222,53 +224,49 @@ interface DocumentInit {
 }
 
 /**
- * 把 `ResourceLimits` 中与 ZIP 相关的字段映射为 `ZipLimits`。
- *
- * @param limits 资源限制。
- * @returns ZIP 打开限制。
- */
-function toZipLimits(limits: ResourceLimits): ZipLimits {
-  return {
-    maxPackageBytes: limits.maxPackageBytes,
-    maxEntries: limits.maxEntries,
-    maxEntryBytes: limits.maxEntryBytes,
-    maxTotalUncompressedBytes: limits.maxTotalUncompressedBytes,
-    maxCompressionRatio: limits.maxCompressionRatio,
-  };
-}
-
-/**
  * 读取并解析一个 XML 条目。
  *
- * @param zip ZIP 读取器。
+ * @param container 文档容器。
  * @param path 包内路径。
  * @param maxBytes XML 大小上限，byte。
  * @param onWarning CRC/大小不一致等 warning 回调。
  * @returns 解析后的 XML 根节点。
  */
 async function readXmlEntry(
-  zip: ZipReader,
+  container: VirtualContainer,
   path: string,
   maxBytes: number,
   onWarning: (warning: OFDWarning) => void,
 ): Promise<XmlNode> {
-  const bytes = await zip.readEntry(path, { maxBytes, onWarning });
+  const bytes = await container.read(path, { maxBytes, onWarning });
   return parseXml(bytes);
 }
 
 /**
- * 静默关闭字节源（若实现提供 close）。
+ * 读取打开阶段必需的 XML；条目缺失映射为 `OFD_INVALID_PACKAGE`。
  *
- * @param source 字节源。
+ * 容器已关闭等错误保持原错误码（`OFD_CLOSED`/`OFD_LIMIT_EXCEEDED` 等）。
+ *
+ * @param container 文档容器。
+ * @param path 包内路径。
+ * @param maxBytes XML 大小上限，byte。
+ * @param onWarning warning 回调。
+ * @returns 解析后的 XML 根节点。
+ * @throws OFDError 条目缺失/容器已关闭/超限/XML 非法时。
  */
-async function closeByteSource(source: ByteSource | undefined): Promise<void> {
-  if (!source) return;
-  const close = (source as ByteSource & { close?: () => Promise<void> | void }).close;
-  if (typeof close !== 'function') return;
+async function readRequiredXmlEntry(
+  container: VirtualContainer,
+  path: string,
+  maxBytes: number,
+  onWarning: (warning: OFDWarning) => void,
+): Promise<XmlNode> {
   try {
-    await close.call(source);
-  } catch {
-    // 关闭失败不覆盖调用方结论。
+    return await readXmlEntry(container, path, maxBytes, onWarning);
+  } catch (error) {
+    if (isOFDError(error) && error.code === 'OFD_ENTRY_NOT_FOUND') {
+      throw new OFDError('OFD_INVALID_PACKAGE', `OFD 包缺少必需条目：${path}`, { cause: error });
+    }
+    throw error;
   }
 }
 
@@ -353,8 +351,9 @@ export class OFDDocument {
   /** 页数，打开后立即固定。 */
   readonly pageCount: number;
 
-  private readonly source: ByteSource;
-  private readonly zip: ZipReader;
+  private container: VirtualContainer | undefined;
+  /** 容器是否由 engine 拥有；借用容器在 close 时只清引用。 */
+  private readonly ownsContainer: boolean;
   private readonly document: DocumentModel;
   private readonly metadata: DocumentMetadata;
   private readonly permissions: DocumentPermissions;
@@ -390,25 +389,25 @@ export class OFDDocument {
   /** 已解析 XML 的 LRU（键：包内路径）。 */
   private readonly xmlCache: DisposableLruCache<string, XmlCacheEntry>;
   /** 并发 XML 读取去重。 */
-  private readonly xmlPending = new Map<string, Promise<XmlNode>>();
+  private readonly xmlPending = new Map<string, SharedLoad<XmlNode>>();
   /** 字体字节 LRU。 */
   private readonly fontBytesCache: DisposableLruCache<string, Uint8Array>;
   /** 并发字体读取去重。 */
-  private readonly fontBytesPending = new Map<string, Promise<Uint8Array>>();
+  private readonly fontBytesPending = new Map<string, SharedLoad<Uint8Array>>();
   /** 解码图片 LRU；淘汰/关闭时释放 ImageBitmap。 */
   private readonly imageCache: DisposableLruCache<string, DecodedImage>;
   /** 并发图片解码去重。 */
-  private readonly imagePending = new Map<string, Promise<DecodedImage>>();
+  private readonly imagePending = new Map<string, SharedLoad<DecodedImage>>();
   /** 页面模型缓存；值包含资源作用域，条目数受 `cache.pageModels` 限制。 */
-  private readonly pageCache: DisposableLruCache<number, Promise<PageEntry>>;
+  private readonly pageCache: DisposableLruCache<number, SharedLoad<PageEntry>>;
   /** 并发页面加载去重。 */
-  private readonly pagePending = new Map<number, Promise<PageEntry>>();
+  private readonly pagePending = new Map<number, SharedLoad<PageEntry>>();
   /** getPageInfos 页尺寸缓存；按页索引。 */
   private readonly pageInfoCache = new Map<number, PageInfo>();
   /** getPageInfos 并发去重。 */
-  private readonly pageInfoPending = new Map<number, Promise<PageInfo>>();
+  private readonly pageInfoPending = new Map<number, SharedLoad<PageInfo>>();
   /** 模板页 Area 缓存（键：Content.xml 包内路径）；只用于页尺寸回退。 */
-  private readonly templateAreaCache = new Map<string, Promise<Box | undefined>>();
+  private readonly templateAreaCache = new Map<string, SharedLoad<Box | undefined>>();
   /** prepare 已完成的 bundle；当前每页保留一个 DPI。 */
   private readonly preparedBundles = new Map<number, { dpi: number; bundle: PreparedPageBundle }>();
   /** prepare 并发去重。 */
@@ -418,17 +417,17 @@ export class OFDDocument {
   /** 文本构建并发去重。 */
   private readonly textPending = new Map<string, TextPending>();
   /** 模板页模型缓存（键：Content.xml 包内路径）。 */
-  private readonly templateCache = new Map<string, Promise<PageModel>>();
+  private readonly templateCache = new Map<string, SharedLoad<PageModel>>();
   /** 页资源索引缓存（键：资源 XML 包内路径）。 */
-  private readonly resourceIndexCache = new Map<string, Promise<ResourceIndex>>();
+  private readonly resourceIndexCache = new Map<string, SharedLoad<ResourceIndex>>();
   /** 注释文件缓存（键：PageAnnot 包内路径）。 */
-  private readonly annotationCache = new Map<string, Promise<readonly Annotation[]>>();
+  private readonly annotationCache = new Map<string, SharedLoad<readonly Annotation[]>>();
   /** 文档级签章集合缓存；无 Signatures.xml 时为已解析的 undefined。 */
-  private signatureBundlePromise: Promise<SignatureBundle | undefined> | undefined;
+  private signatureBundlePromise: SharedLoad<SignatureBundle | undefined> | undefined;
   /** 公开签章 XML 条目缓存；只含 XML 元数据，不读取 Seal/SignedValue。 */
   private signatureEntriesCache: readonly SignatureEntryInfo[] | undefined;
   /** 公开签章条目并发加载去重。 */
-  private signatureEntriesPending: Promise<readonly SignatureEntryInfo[]> | undefined;
+  private signatureEntriesPending: SharedLoad<readonly SignatureEntryInfo[]> | undefined;
   /** 按 SealImage.cacheKey（缺省实例）缓存印章解码结果，避免骑缝章逐页重复解码。 */
   private readonly signatureSealPromises = new Map<string | SealImage, Promise<DecodedImage>>();
   /** 本文档解码出的印章图片，关闭时释放 ImageBitmap。 */
@@ -438,7 +437,7 @@ export class OFDDocument {
   /** 公开附件元信息缓存；与 attachmentsCache 对应。 */
   private attachmentsInfoCache: readonly AttachmentInfo[] | undefined;
   /** 公开附件并发加载去重。 */
-  private attachmentsPending: Promise<readonly AttachmentModel[]> | undefined;
+  private attachmentsPending: SharedLoad<readonly AttachmentModel[]> | undefined;
 
   /** 每个 Canvas 的渲染 Promise 链；同一 Canvas 串行。 */
   private readonly canvasChains = new WeakMap<Canvas2DLike, Promise<void>>();
@@ -455,8 +454,8 @@ export class OFDDocument {
    * @param init 已完成的打开结果与运行时依赖。
    */
   private constructor(init: DocumentInit) {
-    this.source = init.source;
-    this.zip = init.zip;
+    this.container = init.container;
+    this.ownsContainer = init.ownsContainer;
     this.document = init.document;
     this.metadata = init.metadata;
     this.permissions = init.permissions;
@@ -501,7 +500,7 @@ export class OFDDocument {
         }
       },
     });
-    this.pageCache = new DisposableLruCache<number, Promise<PageEntry>>({
+    this.pageCache = new DisposableLruCache<number, SharedLoad<PageEntry>>({
       maxEntries: init.cacheOptions.pageModels,
       sizeOf: () => 1,
     });
@@ -518,28 +517,84 @@ export class OFDDocument {
   /**
    * 打开 OFD 文档。
    *
-   * @param options 来源、资源限制、字体/图片插件、渲染器与 warning 回调。
+   * 来源/容器规则：
+   * - 未注入容器时 `source` 必填，engine 创建并拥有默认 ZIP 容器；
+   * - `container` 为宿主借用，engine 只读取、不关闭；
+   * - `containerFactory` 由 engine 调用并拥有返回的容器，需要 `source`；
+   * - 容器取出的内容按明文处理，`encrypted=true` 时提示使用 crypto 解密。
+   *
+   * 重载保持「无容器时 source 必填」的既有调用类型：默认 ZIP 与容器工厂走
+   * `OFDOpenOptions`，纯容器打开走 `OFDOpenFromContainerOptions`。
+   *
+   * @param options 来源/容器、资源限制、字体/图片插件、渲染器与 warning 回调。
    * @returns 文档实例。
-   * @throws OFDError 包结构/XML/资源限制错误。
+   * @throws OFDError 包结构/XML/资源限制/加密文档错误。
    */
-  static async open(options: OFDOpenOptions): Promise<OFDDocument> {
-    const limits: ResourceLimits = { ...DEFAULT_RESOURCE_LIMITS, ...(options?.limits ?? {}) };
-    const cacheOptions: CacheOptions = { ...DEFAULT_CACHE_OPTIONS, ...(options?.cache ?? {}) };
-    const warnings = createWarningCollector(options?.onWarning);
+  static open(options: OFDOpenOptions): Promise<OFDDocument>;
+  static open(options: OFDOpenFromContainerOptions): Promise<OFDDocument>;
+  static async open(
+    options: OFDOpenOptions | OFDOpenFromContainerOptions,
+  ): Promise<OFDDocument> {
+    if (!options) {
+      throw new OFDError('OFD_INVALID_PACKAGE', 'OFDDocument.open 缺少 source 或 container');
+    }
+    const providedContainer = options.container;
+    const providedFactory =
+      'containerFactory' in options ? options.containerFactory : undefined;
+    if (providedContainer !== undefined && providedFactory !== undefined) {
+      throw new OFDError(
+        'OFD_INVALID_PACKAGE',
+        'OFDOpenOptions.container 与 containerFactory 不能同时提供',
+      );
+    }
+    const limits: ResourceLimits = { ...DEFAULT_RESOURCE_LIMITS, ...(options.limits ?? {}) };
+    const cacheOptions: CacheOptions = { ...DEFAULT_CACHE_OPTIONS, ...(options.cache ?? {}) };
+    const warnings = createWarningCollector(options.onWarning);
     const onWarning = createDocumentWarningHandler(warnings);
-    let source: ByteSource | undefined;
-    let zip: ZipReader | undefined;
+    let openedContainer: VirtualContainer | undefined;
+    let ownsContainer = false;
     let annotationsIndexError: string | undefined;
     try {
-      if (!options || !options.source) {
-        throw new OFDError('OFD_INVALID_PACKAGE', 'OFDDocument.open 缺少 source');
+      if (providedContainer) {
+        // 宿主借用：engine 不打开 source，也不负责关闭容器。
+        openedContainer = providedContainer;
+      } else if (providedFactory) {
+        if (!options.source) {
+          throw new OFDError('OFD_INVALID_PACKAGE', 'OFDOpenOptions.containerFactory 需要提供 source');
+        }
+        openedContainer = await providedFactory(options.source);
+        ownsContainer = true;
+      } else {
+        if (!options.source) {
+          throw new OFDError(
+            'OFD_INVALID_PACKAGE',
+            'OFDDocument.open 缺少 source（或注入 container/containerFactory）',
+          );
+        }
+        openedContainer = await openZipVirtualContainer(
+          options.source,
+          options.limits ? { limits: options.limits } : {},
+        );
+        ownsContainer = true;
       }
-      const requestedSource: OFDSource = options.source;
-      source = await openByteSource(requestedSource);
-      zip = await ZipReader.open(source, toZipLimits(limits));
+      if (!openedContainer) {
+        throw new OFDError('OFD_INVALID_PACKAGE', '未能构造文档容器');
+      }
+      const container: VirtualContainer = openedContainer;
+      if (container.encrypted) {
+        throw new OFDError(
+          'OFD_ENCRYPTED',
+          '文档已加密，请先使用 @ofdrw/ofdrw-viewer-crypto 解密并以明文容器打开',
+        );
+      }
 
       // 1) OFD.xml → DocRoot（支持多文档包）。
-      const ofdRoot = await readXmlEntry(zip, 'OFD.xml', limits.maxXmlBytes, onWarning);
+      const ofdRoot = await readRequiredXmlEntry(
+        container,
+        'OFD.xml',
+        limits.maxXmlBytes,
+        onWarning,
+      );
       const rootInfo = decodeOfdRoot(ofdRoot, { onWarning });
       const documentIndex = options.documentIndex ?? 0;
       let docRoot: string;
@@ -554,7 +609,7 @@ export class OFDDocument {
           );
         }
         docRoot = rootInfo.docRoots[documentIndex] as string;
-      } else if (documentIndex === 0 && zip.hasEntry('Document.xml')) {
+      } else if (documentIndex === 0 && container.has('Document.xml')) {
         // 少数简化包把 DocRoot 留空；Document.xml 位于包根。
         docRoot = '';
       } else {
@@ -569,14 +624,19 @@ export class OFDDocument {
         : /\.xml$/i.test(normalizedRoot)
           ? normalizedRoot
           : `${normalizedRoot}/Document.xml`;
-      const documentNode = await readXmlEntry(zip, documentPath, limits.maxXmlBytes, onWarning);
+      const documentNode = await readRequiredXmlEntry(
+        container,
+        documentPath,
+        limits.maxXmlBytes,
+        onWarning,
+      );
       let document = decodeDocument(documentNode, documentPath, { onWarning });
 
       // 3) 文档级注释索引（DocumentModel.pageAnnotIndex）。
       if (document.annotationsFile) {
         try {
           const annotationsIndexNode = await readXmlEntry(
-            zip,
+            container,
             document.annotationsFile,
             limits.maxXmlBytes,
             onWarning,
@@ -602,7 +662,7 @@ export class OFDDocument {
       const sets: ResourceDefinitionSet[] = [];
       for (const path of [...publicRes, ...documentRes]) {
         try {
-          const rootNode = await readXmlEntry(zip, path, limits.maxXmlBytes, onWarning);
+          const rootNode = await readXmlEntry(container, path, limits.maxXmlBytes, onWarning);
           sets.push(decodePageResources(rootNode, path, { onWarning }));
         } catch (error) {
           onWarning({
@@ -644,17 +704,17 @@ export class OFDDocument {
       // 兼容旧宿主：显式 H5 渲染器已注入的 createCanvas 继续作为矢量章工厂。
       const createCanvas = options.createCanvas ?? createCanvasFromRenderer(renderer);
       const signaturePath = signatureIndexCandidates(documentPath).find((path) =>
-        zip?.hasEntry(path),
+        container.has(path),
       );
       const metadata: DocumentMetadata = {
         version: rootInfo.version,
         pageCount: document.pageCount,
-        packageSize: source.size,
+        packageSize: container.packageSize,
         ...metadataFromDocInfo(rootInfo.docInfos[documentIndex]),
       };
       return new OFDDocument({
-        source,
-        zip,
+        container,
+        ownsContainer,
         document,
         metadata,
         permissions: document.permissions,
@@ -677,9 +737,14 @@ export class OFDDocument {
         fontInputLoader,
       });
     } catch (error) {
-      // 打开失败时释放已获得的 ZIP/文件句柄。
-      zip?.close();
-      await closeByteSource(source);
+      // 打开失败时只释放 engine 自有的容器；借用容器保持宿主所有权。
+      if (openedContainer && ownsContainer) {
+        try {
+          await openedContainer.close();
+        } catch {
+          // 容器关闭失败不覆盖打开失败原因。
+        }
+      }
       throw wrapError(error, 'OFD_INVALID_PACKAGE', '打开 OFD 失败');
     }
   }
@@ -745,7 +810,9 @@ export class OFDDocument {
           this.assertInfoActive(combined.signal);
           const to = Math.min(end, from + batchSize);
           const batch = await Promise.all(
-            Array.from({ length: to - from }, (_, offset) => this.getPageInfo(from + offset)),
+            Array.from({ length: to - from }, (_, offset) =>
+              this.getPageInfo(from + offset, combined.signal),
+            ),
           );
           this.assertInfoActive(combined.signal);
           infos.push(...batch);
@@ -820,7 +887,7 @@ export class OFDDocument {
     const run = (async (): Promise<PreparedPageBundle> => {
       try {
         throwIfAborted(combined.signal);
-        const entry = await this.getPageEntry(pageIndex);
+        const entry = await this.getPageEntry(pageIndex, combined.signal);
         throwIfAborted(combined.signal);
         const pageWarning = createPageWarningHandler(this.warnings, pageIndex);
         const bundle = await preparePage({
@@ -984,32 +1051,36 @@ export class OFDDocument {
    * 读取单页尺寸信息；按页缓存并合并并发请求。
    *
    * @param pageIndex 页索引。
+   * @param signal 取消信号；共享加载只影响本次等待。
    * @returns 页信息。
    */
-  private getPageInfo(pageIndex: number): Promise<PageInfo> {
+  private getPageInfo(pageIndex: number, signal?: AbortSignal): Promise<PageInfo> {
     const cached = this.pageInfoCache.get(pageIndex);
     if (cached) return Promise.resolve(cached);
     const pending = this.pageInfoPending.get(pageIndex);
-    if (pending) return pending;
-    const promise = this.loadPageInfo(pageIndex)
-      .then((info) => {
-        this.pageInfoCache.set(pageIndex, info);
-        return info;
-      })
-      .finally(() => {
-        this.pageInfoPending.delete(pageIndex);
-      });
-    this.pageInfoPending.set(pageIndex, promise);
-    return promise;
+    if (pending) return pending.wait(signal);
+    const load = new SharedLoad<PageInfo>(this.closeController.signal, (loadSignal) =>
+      this.loadPageInfo(pageIndex, loadSignal)
+        .then((info) => {
+          this.pageInfoCache.set(pageIndex, info);
+          return info;
+        })
+        .finally(() => {
+          this.pageInfoPending.delete(pageIndex);
+        }),
+    );
+    this.pageInfoPending.set(pageIndex, load);
+    return load.wait(signal);
   }
 
   /**
    * 轻量解码页尺寸：只读 Page.xml 的 Area 与模板引用。
    *
    * @param pageIndex 页索引。
+   * @param signal 取消信号；透传给容器读取。
    * @returns 页信息；缺页/非法 Area 时 warning 并使用回退尺寸。
    */
-  private async loadPageInfo(pageIndex: number): Promise<PageInfo> {
+  private async loadPageInfo(pageIndex: number, signal?: AbortSignal): Promise<PageInfo> {
     const pageWarning = createPageWarningHandler(this.warnings, pageIndex);
     const ref = this.document.pages[pageIndex];
     let areaInfo: PageAreaInfo = { templates: [] };
@@ -1020,12 +1091,15 @@ export class OFDDocument {
       });
     } else {
       try {
-        const bytes = await this.zip.readEntry(ref.loc, {
+        const bytes = await this.containerOrThrow().read(ref.loc, {
           maxBytes: this.limits.maxXmlBytes,
           onWarning: pageWarning,
+          ...(signal ? { signal } : {}),
         });
         areaInfo = decodePageAreaXml(bytes, ref.id, pageWarning);
       } catch (error) {
+        const fatal = fatalReadError(error, this.closed, signal);
+        if (fatal) throw fatal;
         pageWarning({
           code: 'W_BAD_PATH',
           message: `第 ${pageIndex} 页 Content.xml 读取失败：${errorMessage(error)}`,
@@ -1038,7 +1112,7 @@ export class OFDDocument {
       const template = this.withTemplateLoc(reference);
       let area: Box | undefined;
       if (template.loc) {
-        area = await this.loadTemplateArea(template.loc);
+        area = await this.loadTemplateArea(template.loc, signal);
       }
       if (!area) {
         pageWarning({
@@ -1066,6 +1140,7 @@ export class OFDDocument {
         : resolution.source === 'template'
           ? 'template'
           : 'default';
+    throwIfAborted(signal);
     return {
       index: pageIndex,
       widthMm: resolution.size.width,
@@ -1080,17 +1155,31 @@ export class OFDDocument {
    * 只读取模板页 Area；按模板 Content.xml 路径缓存。
    *
    * @param loc 模板 Content.xml 包内路径。
+   * @param signal 取消信号；透传给容器读取。
    * @returns Area；读取/解析失败时为 undefined。
    */
-  private loadTemplateArea(loc: string): Promise<Box | undefined> {
+  private loadTemplateArea(loc: string, signal?: AbortSignal): Promise<Box | undefined> {
     const cached = this.templateAreaCache.get(loc);
-    if (cached) return cached;
-    const promise = this.zip
-      .readEntry(loc, { maxBytes: this.limits.maxXmlBytes, onWarning: this.documentWarningHandler })
-      .then((bytes) => decodePageAreaXml(bytes, '').area)
-      .catch(() => undefined);
-    this.templateAreaCache.set(loc, promise);
-    return promise;
+    if (cached) return cached.wait(signal);
+    const load = new SharedLoad<Box | undefined>(this.closeController.signal, (loadSignal) =>
+      this.containerOrThrow()
+        .read(loc, {
+          maxBytes: this.limits.maxXmlBytes,
+          onWarning: this.documentWarningHandler,
+          signal: loadSignal,
+        })
+        .then((bytes) => decodePageAreaXml(bytes, '').area)
+        .catch((error: unknown) => {
+          const fatal = fatalReadError(error, this.closed, loadSignal);
+          if (fatal) {
+            this.templateAreaCache.delete(loc);
+            throw fatal;
+          }
+          return undefined;
+        }),
+    );
+    this.templateAreaCache.set(loc, load);
+    return load.wait(signal);
   }
 
   /**
@@ -1248,9 +1337,10 @@ export class OFDDocument {
         throwIfAborted(combined.signal);
         let bytes: Uint8Array;
         try {
-          bytes = await this.zip.readEntry(path, {
+          bytes = await this.containerOrThrow().read(path, {
             maxBytes: this.limits.maxEntryBytes,
             onWarning: this.documentWarningHandler,
+            signal: combined.signal,
           });
         } catch (error) {
           if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭', { cause: error });
@@ -1298,10 +1388,13 @@ export class OFDDocument {
     }
     let pending = this.signatureEntriesPending;
     if (!pending) {
-      pending = this.loadSignatureEntries();
+      pending = new SharedLoad<readonly SignatureEntryInfo[]>(
+        this.closeController.signal,
+        (loadSignal) => this.loadSignatureEntries(loadSignal),
+      );
       this.signatureEntriesPending = pending;
-      this.trackActiveRun(pending);
-      void pending
+      this.trackActiveRun(pending.promise);
+      void pending.promise
         .then(
           () => undefined,
           () => undefined,
@@ -1310,7 +1403,7 @@ export class OFDDocument {
           if (this.signatureEntriesPending === pending) this.signatureEntriesPending = undefined;
         });
     }
-    return waitForAbort(pending, options.signal);
+    return pending.wait(options.signal);
   }
 
   /**
@@ -1343,7 +1436,7 @@ export class OFDDocument {
         throwIfAborted(combined.signal);
         let bytes: Uint8Array;
         try {
-          bytes = await this.readSignatureFile(path);
+          bytes = await this.readSignatureFile(path, combined.signal);
         } catch (error) {
           if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭', { cause: error });
           if (combined.signal.aborted) throw createAbortError();
@@ -1385,6 +1478,16 @@ export class OFDDocument {
     // 等待已开始的渲染结束（取消后通常在下一个对象/I/O 边界退出）。
     await Promise.allSettled([...this.activeRuns]);
 
+    // 关闭顺序：先容器，再渲染器/字体/图片；借用容器只清引用。
+    const container = this.container;
+    this.container = undefined;
+    if (this.ownsContainer && container) {
+      try {
+        await container.close();
+      } catch {
+        // 容器关闭失败不阻塞后续释放。
+      }
+    }
     try {
       this.renderer.close();
     } catch {
@@ -1427,8 +1530,6 @@ export class OFDDocument {
     this.templateCache.clear();
     this.resourceIndexCache.clear();
     this.annotationCache.clear();
-    this.zip.close();
-    await closeByteSource(this.source);
   }
 
   /**
@@ -1438,6 +1539,22 @@ export class OFDDocument {
    */
   private assertOpen(): void {
     if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭');
+  }
+
+  /**
+   * 取当前容器；关闭后统一抛 `OFD_CLOSED`。
+   *
+   * `close()` 会清空 `container` 引用；读取路径先经本方法取非空容器，避免
+   * 借用容器在关闭后仍被文档对象持有。
+   *
+   * @returns 当前虚拟容器。
+   * @throws OFDError OFD_CLOSED 文档已关闭或容器已释放时。
+   */
+  private containerOrThrow(): VirtualContainer {
+    this.assertOpen();
+    const container = this.container;
+    if (!container) throw new OFDError('OFD_CLOSED', '文档已关闭');
+    return container;
   }
 
   /**
@@ -1467,7 +1584,7 @@ export class OFDDocument {
     const run = (async (): Promise<void> => {
       try {
         throwIfAborted(combined.signal);
-        const entry = await this.getPageEntry(pageIndex);
+        const entry = await this.getPageEntry(pageIndex, combined.signal);
         throwIfAborted(combined.signal);
         const pageWarning = createPageWarningHandler(this.warnings, pageIndex);
         const prepared = this.preparedBundles.get(pageIndex);
@@ -1822,22 +1939,22 @@ export class OFDDocument {
       },
       decodeImage: async (resource) => {
         throwIfAborted(signal);
-        return this.decodeImage(resource);
+        return this.decodeImage(resource, signal);
       },
       loadTemplatePage: async (ref) => {
         throwIfAborted(signal);
-        return this.loadTemplatePageModel(ref);
+        return this.loadTemplatePageModel(ref, signal);
       },
       loadAnnotations: async (page) => {
         throwIfAborted(signal);
-        return this.loadAnnotations(page);
+        return this.loadAnnotations(page, signal);
       },
       ...(this.signatureIndexPath && this.signatureLoading
         ? {
             loadSignatureStamps: async (page: PageModel) => {
               throwIfAborted(signal);
               void page;
-              return this.loadSignatureStamps(pageIndex);
+              return this.loadSignatureStamps(pageIndex, signal);
             },
             decodeSeal: async (seal: SealImage) => {
               throwIfAborted(signal);
@@ -1852,40 +1969,44 @@ export class OFDDocument {
    * 加载页级资源作用域与模板页。
    *
    * @param pageIndex 页索引。
+   * @param signal 取消信号；共享加载只影响本次等待。
    * @returns 页面运行时。
    */
-  private async getPageEntry(pageIndex: number): Promise<PageEntry> {
+  private async getPageEntry(pageIndex: number, signal?: AbortSignal): Promise<PageEntry> {
     const cached = this.pageCache.get(pageIndex);
-    if (cached) return cached;
+    if (cached) return cached.wait(signal);
     const pending = this.pagePending.get(pageIndex);
-    if (pending) return pending;
+    if (pending) return pending.wait(signal);
 
-    const promise = this.loadPageEntry(pageIndex)
-      .catch((error: unknown) => {
-        this.pageCache.delete(pageIndex);
-        throw wrapError(error, 'OFD_ENTRY_NOT_FOUND', `第 ${pageIndex} 页加载失败`);
-      })
-      .finally(() => {
-        this.pagePending.delete(pageIndex);
-      });
-    this.pagePending.set(pageIndex, promise);
-    this.pageCache.set(pageIndex, promise);
-    return promise;
+    const load = new SharedLoad<PageEntry>(this.closeController.signal, (loadSignal) =>
+      this.loadPageEntry(pageIndex, loadSignal)
+        .catch((error: unknown) => {
+          this.pageCache.delete(pageIndex);
+          throw wrapError(error, 'OFD_ENTRY_NOT_FOUND', `第 ${pageIndex} 页加载失败`);
+        })
+        .finally(() => {
+          this.pagePending.delete(pageIndex);
+        }),
+    );
+    this.pagePending.set(pageIndex, load);
+    this.pageCache.set(pageIndex, load);
+    return load.wait(signal);
   }
 
   /**
    * 解码单个页面模型、解析页尺寸并合并资源作用域。
    *
    * @param pageIndex 页索引。
+   * @param signal 取消信号；透传给容器读取。
    * @returns 页面运行时。
    */
-  private async loadPageEntry(pageIndex: number): Promise<PageEntry> {
+  private async loadPageEntry(pageIndex: number, signal?: AbortSignal): Promise<PageEntry> {
     const ref = this.document.pages[pageIndex];
     if (!ref || !ref.loc) {
       throw new OFDError('OFD_ENTRY_NOT_FOUND', `第 ${pageIndex} 页缺少 Content 文件`);
     }
     const pageWarning = createPageWarningHandler(this.warnings, pageIndex);
-    const root = await this.readXml(ref.loc, pageWarning);
+    const root = await this.readXml(ref.loc, pageWarning, signal);
     let model = decodePageContent(root, ref.id, ref.loc, this.decodeOptions(pageWarning));
 
     // 用文档模板表补齐 TemplateRef.loc；模板页按引用顺序解码。
@@ -1894,10 +2015,12 @@ export class OFDDocument {
     const templateAreas: PageAreaCandidate[] = [];
     for (const template of model.templates) {
       try {
-        const decoded = await this.loadTemplatePageModel(template);
+        const decoded = await this.loadTemplatePageModel(template, signal);
         decodedTemplates.push(decoded);
         templateAreas.push({ id: template.id, area: decoded.area });
       } catch (error) {
+        const fatal = fatalReadError(error, this.closed, signal);
+        if (fatal) throw fatal;
         templateAreas.push({ id: template.id });
         pageWarning({
           code: 'W_UNSUPPORTED_PAINT',
@@ -1931,12 +2054,12 @@ export class OFDDocument {
 
     // 页资源与模板资源（均按 XML/引用顺序）。
     const pageResources = await Promise.all(
-      model.pageRes.map((path) => this.loadResourceIndex(path, pageWarning)),
+      model.pageRes.map((path) => this.loadResourceIndex(path, pageWarning, signal)),
     );
     const templateResources: ResourceIndex[] = [];
     for (const template of decodedTemplates) {
       for (const path of template.pageRes) {
-        templateResources.push(await this.loadResourceIndex(path, pageWarning));
+        templateResources.push(await this.loadResourceIndex(path, pageWarning, signal));
       }
     }
     const resources = this.resourceStore.createPageScope({
@@ -1965,7 +2088,8 @@ export class OFDDocument {
     const normalized = baseLoc.replace(/\/+$/, '');
     if (/\.xml$/i.test(normalized)) return normalized;
     const candidate = normalized ? `${normalized}/Content.xml` : 'Content.xml';
-    if (this.zip.hasEntry(normalized) && !this.zip.hasEntry(candidate)) return normalized;
+    const container = this.containerOrThrow();
+    if (container.has(normalized) && !container.has(candidate)) return normalized;
     return candidate;
   }
 
@@ -1985,10 +2109,11 @@ export class OFDDocument {
    * 解码模板页 Content.xml；按路径缓存。
    *
    * @param ref 模板引用。
+   * @param signal 取消信号；透传给容器读取。
    * @returns 模板页模型。
    * @throws OFD_ENTRY_NOT_FOUND 模板文件缺失/路径无法解析。
    */
-  private loadTemplatePageModel(ref: TemplateRef): Promise<PageModel> {
+  private loadTemplatePageModel(ref: TemplateRef, signal?: AbortSignal): Promise<PageModel> {
     const loc = this.templateContentLoc(ref);
     if (!loc) {
       return Promise.reject(
@@ -1996,17 +2121,19 @@ export class OFDDocument {
       );
     }
     const cached = this.templateCache.get(loc);
-    if (cached) return cached;
-    const promise = (async (): Promise<PageModel> => {
-      const root = await this.readXml(loc, this.documentWarningHandler);
-      const model = decodePageContent(root, ref.id, loc, this.decodeOptions(this.documentWarningHandler));
-      return { ...model, templates: model.templates.map((template) => this.withTemplateLoc(template)) };
-    })().catch((error: unknown) => {
-      this.templateCache.delete(loc);
-      throw wrapError(error, 'OFD_ENTRY_NOT_FOUND', `模板页 ${ref.id} 解析失败`);
-    });
-    this.templateCache.set(loc, promise);
-    return promise;
+    if (cached) return cached.wait(signal);
+    const load = new SharedLoad<PageModel>(this.closeController.signal, (loadSignal) =>
+      (async (): Promise<PageModel> => {
+        const root = await this.readXml(loc, this.documentWarningHandler, loadSignal);
+        const model = decodePageContent(root, ref.id, loc, this.decodeOptions(this.documentWarningHandler));
+        return { ...model, templates: model.templates.map((template) => this.withTemplateLoc(template)) };
+      })().catch((error: unknown) => {
+        this.templateCache.delete(loc);
+        throw wrapError(error, 'OFD_ENTRY_NOT_FOUND', `模板页 ${ref.id} 解析失败`);
+      }),
+    );
+    this.templateCache.set(loc, load);
+    return load.wait(signal);
   }
 
   /**
@@ -2014,47 +2141,54 @@ export class OFDDocument {
    *
    * @param path 资源 XML 包内路径。
    * @param onWarning warning 回调。
+   * @param signal 取消信号；透传给容器读取。
    * @returns 资源索引。
    */
   private loadResourceIndex(
     path: string,
     onWarning: (warning: OFDWarning) => void,
+    signal?: AbortSignal,
   ): Promise<ResourceIndex> {
     const cached = this.resourceIndexCache.get(path);
-    if (cached) return cached;
-    const promise = (async (): Promise<ResourceIndex> => {
-      const root = await this.readXml(path, onWarning);
-      const set = decodePageResources(root, path, this.decodeOptions(onWarning));
-      return resourceSetToIndex(set);
-    })().catch((error: unknown) => {
-      this.resourceIndexCache.delete(path);
-      throw wrapError(error, 'OFD_ENTRY_NOT_FOUND', `资源文件 ${path} 解析失败`);
-    });
-    this.resourceIndexCache.set(path, promise);
-    return promise;
+    if (cached) return cached.wait(signal);
+    const load = new SharedLoad<ResourceIndex>(this.closeController.signal, (loadSignal) =>
+      (async (): Promise<ResourceIndex> => {
+        const root = await this.readXml(path, onWarning, loadSignal);
+        const set = decodePageResources(root, path, this.decodeOptions(onWarning));
+        return resourceSetToIndex(set);
+      })().catch((error: unknown) => {
+        this.resourceIndexCache.delete(path);
+        throw wrapError(error, 'OFD_ENTRY_NOT_FOUND', `资源文件 ${path} 解析失败`);
+      }),
+    );
+    this.resourceIndexCache.set(path, load);
+    return load.wait(signal);
   }
 
   /**
    * 加载页面注释（PageAnnot）；按文件路径缓存。
    *
    * @param page 页面模型。
+   * @param signal 取消信号；透传给容器读取。
    * @returns 注释数组；无注释时为空。
    */
-  private loadAnnotations(page: PageModel): Promise<readonly Annotation[]> {
+  private loadAnnotations(page: PageModel, signal?: AbortSignal): Promise<readonly Annotation[]> {
     const path = page.annotationFile;
     if (!path) return Promise.resolve([]);
     const cached = this.annotationCache.get(path);
-    if (cached) return cached;
+    if (cached) return cached.wait(signal);
     const pageIds = this.document.pages.map((ref) => ref.id);
-    const promise = (async (): Promise<readonly Annotation[]> => {
-      const root = await this.readXml(path, this.documentWarningHandler);
-      return decodeAnnotations(root, pageIds, this.decodeOptions(this.documentWarningHandler));
-    })().catch((error: unknown) => {
-      this.annotationCache.delete(path);
-      throw wrapError(error, 'OFD_ENTRY_NOT_FOUND', `注释文件 ${path} 解析失败`);
-    });
-    this.annotationCache.set(path, promise);
-    return promise;
+    const load = new SharedLoad<readonly Annotation[]>(this.closeController.signal, (loadSignal) =>
+      (async (): Promise<readonly Annotation[]> => {
+        const root = await this.readXml(path, this.documentWarningHandler, loadSignal);
+        return decodeAnnotations(root, pageIds, this.decodeOptions(this.documentWarningHandler));
+      })().catch((error: unknown) => {
+        this.annotationCache.delete(path);
+        throw wrapError(error, 'OFD_ENTRY_NOT_FOUND', `注释文件 ${path} 解析失败`);
+      }),
+    );
+    this.annotationCache.set(path, load);
+    return load.wait(signal);
   }
 
   /**
@@ -2075,10 +2209,12 @@ export class OFDDocument {
     }
     let pending = this.attachmentsPending;
     if (!pending) {
-      pending = this.loadAttachments();
+      pending = new SharedLoad<readonly AttachmentModel[]>(this.closeController.signal, (loadSignal) =>
+        this.loadAttachments(loadSignal),
+      );
       this.attachmentsPending = pending;
-      this.trackActiveRun(pending);
-      void pending
+      this.trackActiveRun(pending.promise);
+      void pending.promise
         .then(
           () => undefined,
           () => undefined,
@@ -2087,23 +2223,25 @@ export class OFDDocument {
           if (this.attachmentsPending === pending) this.attachmentsPending = undefined;
         });
     }
-    return waitForAbort(pending, signal);
+    return pending.wait(signal);
   }
 
   /**
    * 读取并解析 Attachments.xml；索引缺失/损坏只 warning 并返回空数组。
    *
+   * @param signal 取消信号；透传给容器读取。
    * @returns 附件模型；无附件或读取失败时为空数组。
-   * @throws OFDError OFD_CLOSED。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED。
    */
-  private async loadAttachments(): Promise<readonly AttachmentModel[]> {
+  private async loadAttachments(signal?: AbortSignal): Promise<readonly AttachmentModel[]> {
     const path = this.document.attachmentsFile;
     if (!path) return [];
     let root: XmlNode;
     try {
-      root = await this.readXml(path, this.documentWarningHandler);
+      root = await this.readXml(path, this.documentWarningHandler, signal);
     } catch (error) {
-      if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭', { cause: error });
+      const fatal = fatalReadError(error, this.closed, signal);
+      if (fatal) throw fatal;
       this.documentWarningHandler({
         code: 'W_ATTACHMENT_RESOURCE',
         message: `附件索引 ${path} 加载失败：${errorMessage(error)}`,
@@ -2126,18 +2264,20 @@ export class OFDDocument {
    * 索引读取失败时 warning 后返回空；单条 Signature.xml 失败时跳过该条。
    * 结果在成功时写入 `signatureEntriesCache`，由 close 清理。
    *
+   * @param signal 取消信号；透传给容器读取。
    * @returns 按 Signatures.xml 顺序的签章条目。
-   * @throws OFDError OFD_CLOSED。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED。
    */
-  private async loadSignatureEntries(): Promise<readonly SignatureEntryInfo[]> {
+  private async loadSignatureEntries(signal?: AbortSignal): Promise<readonly SignatureEntryInfo[]> {
     const indexFilePath = this.signatureIndexPath;
     if (!indexFilePath) return [];
     this.assertOpen();
     let indexRoot: XmlNode;
     try {
-      indexRoot = await this.readXml(indexFilePath, this.documentWarningHandler);
+      indexRoot = await this.readXml(indexFilePath, this.documentWarningHandler, signal);
     } catch (error) {
-      if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭', { cause: error });
+      const fatal = fatalReadError(error, this.closed, signal);
+      if (fatal) throw fatal;
       this.documentWarningHandler({
         code: 'W_BAD_NUMBER',
         message: `签章索引 ${indexFilePath} 加载失败：${errorMessage(error)}`,
@@ -2156,7 +2296,7 @@ export class OFDDocument {
       this.assertOpen();
       let model: SignatureModel;
       try {
-        const bytes = await this.readSignatureFile(entry.baseLoc);
+        const bytes = await this.readSignatureFile(entry.baseLoc, signal);
         this.assertOpen();
         model = decodeSignature(parseXml(bytes), entry.baseLoc, {
           id: entry.id,
@@ -2165,7 +2305,8 @@ export class OFDDocument {
           onWarning: this.documentWarningHandler,
         });
       } catch (error) {
-        if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭', { cause: error });
+        const fatal = fatalReadError(error, this.closed, signal);
+        if (fatal) throw fatal;
         this.documentWarningHandler({
           code: 'W_BAD_NUMBER',
           message: `Signature ${entry.id} 读取/解析失败：${errorMessage(error)}`,
@@ -2206,46 +2347,58 @@ export class OFDDocument {
    *
    * 索引/Signature 损坏只 warning 并返回 undefined，不阻断页面打开或渲染。
    *
+   * @param signal 取消信号；透传给容器读取。
    * @returns 签章集合；无签章或加载失败时为 undefined。
    */
-  private getSignatureBundle(): Promise<SignatureBundle | undefined> {
+  private getSignatureBundle(signal?: AbortSignal): Promise<SignatureBundle | undefined> {
     if (!this.signatureIndexPath || !this.signatureLoading) return Promise.resolve(undefined);
-    if (this.signatureBundlePromise) return this.signatureBundlePromise;
+    if (this.signatureBundlePromise) return this.signatureBundlePromise.wait(signal);
     const indexFilePath = this.signatureIndexPath;
     const pageIds = this.document.pages.map((ref) => ref.id);
-    const promise = (async (): Promise<SignatureBundle> => {
-      const root = await this.readXml(indexFilePath, this.documentWarningHandler);
-      return decodeSignatureBundle(
-        {
-          index: root,
-          indexFilePath,
-          pageIds,
-          readFile: (path) => this.readSignatureFile(path),
-        },
-        { onWarning: this.documentWarningHandler, pageIds },
-      );
-    })().catch((error: unknown) => {
-      this.documentWarningHandler({
-        code: 'W_BAD_NUMBER',
-        message: `签章索引 ${indexFilePath} 加载失败：${errorMessage(error)}`,
-      });
-      return undefined;
-    });
-    this.signatureBundlePromise = promise;
-    return promise;
+    const load = new SharedLoad<SignatureBundle | undefined>(
+      this.closeController.signal,
+      (loadSignal) =>
+        (async (): Promise<SignatureBundle> => {
+          const root = await this.readXml(indexFilePath, this.documentWarningHandler, loadSignal);
+          return decodeSignatureBundle(
+            {
+              index: root,
+              indexFilePath,
+              pageIds,
+              readFile: (path) => this.readSignatureFile(path, loadSignal),
+            },
+            { onWarning: this.documentWarningHandler, pageIds },
+          );
+        })().catch((error: unknown) => {
+          const fatal = fatalReadError(error, this.closed, loadSignal);
+          if (fatal) {
+            this.signatureBundlePromise = undefined;
+            throw fatal;
+          }
+          this.documentWarningHandler({
+            code: 'W_BAD_NUMBER',
+            message: `签章索引 ${indexFilePath} 加载失败：${errorMessage(error)}`,
+          });
+          return undefined;
+        }),
+    );
+    this.signatureBundlePromise = load;
+    return load.wait(signal);
   }
 
   /**
    * 读取签章相关条目：Signature.xml 受 XML 上限约束，Seal.esl 受条目上限约束。
    *
    * @param path 包内路径。
+   * @param signal 取消信号；透传给容器读取。
    * @returns 条目字节。
    */
-  private readSignatureFile(path: string): Promise<Uint8Array> {
+  private readSignatureFile(path: string, signal?: AbortSignal): Promise<Uint8Array> {
     const maxBytes = /\.xml$/i.test(path) ? this.limits.maxXmlBytes : this.limits.maxEntryBytes;
-    return this.zip.readEntry(path, {
+    return this.containerOrThrow().read(path, {
       maxBytes,
       onWarning: this.documentWarningHandler,
+      ...(signal ? { signal } : {}),
     });
   }
 
@@ -2255,10 +2408,14 @@ export class OFDDocument {
    * 只读取已缓存的文档签章集合，不重复解析 XML/Seal.esl。
    *
    * @param pageIndex 页索引。
+   * @param signal 取消信号；透传给容器读取。
    * @returns 当前页签章戳记；无签章时为 []。
    */
-  private async loadSignatureStamps(pageIndex: number): Promise<readonly SignatureStampSource[]> {
-    const bundle = await this.getSignatureBundle();
+  private async loadSignatureStamps(
+    pageIndex: number,
+    signal?: AbortSignal,
+  ): Promise<readonly SignatureStampSource[]> {
+    const bundle = await this.getSignatureBundle(signal);
     if (!bundle) return [];
     const result: SignatureStampSource[] = [];
     for (const signature of bundle.signatures) {
@@ -2410,7 +2567,7 @@ export class OFDDocument {
           const faces = await this.fontLibrary.resolve(font);
           if (faces) result.set(font.id, faces);
         } catch (error) {
-          if (signal.aborted) return;
+          if (signal.aborted) throw createAbortError(signal.reason);
           this.documentWarningHandler({
             code: 'W_FONT_MISSING',
             message: `字体 ${font.id}（${font.fontName}）加载失败：${errorMessage(error)}`,
@@ -2432,23 +2589,29 @@ export class OFDDocument {
   private async loadFontBytes(path: string, signal: AbortSignal): Promise<Uint8Array | null> {
     const cached = this.fontBytesCache.get(path);
     if (cached) return cached;
-    const pending = this.fontBytesPending.get(path);
-    if (pending) return pending;
-    const promise = (async (): Promise<Uint8Array> => {
-      throwIfAborted(signal);
-      const bytes = await this.zip.readEntry(path, {
-        maxBytes: this.limits.maxFontBytes,
-        onWarning: this.documentWarningHandler,
+    let load = this.fontBytesPending.get(path);
+    if (!load) {
+      load = new SharedLoad<Uint8Array>(this.closeController.signal, (loadSignal) => (async (): Promise<Uint8Array> => {
+        throwIfAborted(loadSignal);
+        const bytes = await this.containerOrThrow().read(path, {
+          maxBytes: this.limits.maxFontBytes,
+          onWarning: this.documentWarningHandler,
+          signal: loadSignal,
+        });
+        throwIfAborted(loadSignal);
+        this.fontBytesCache.set(path, bytes);
+        return bytes;
+      })());
+      this.fontBytesPending.set(path, load);
+      void load.promise.then(
+        () => undefined,
+        () => undefined,
+      ).finally(() => {
+        this.fontBytesPending.delete(path);
       });
-      throwIfAborted(signal);
-      this.fontBytesCache.set(path, bytes);
-      return bytes;
-    })().finally(() => {
-      this.fontBytesPending.delete(path);
-    });
-    this.fontBytesPending.set(path, promise);
+    }
     try {
-      return await promise;
+      return await load.wait(signal);
     } catch (error) {
       if (error instanceof OFDError && error.code === 'OFD_ABORTED') throw error;
       return null;
@@ -2459,19 +2622,21 @@ export class OFDDocument {
    * 解码图片资源；按包内路径 LRU + Promise 去重。
    *
    * @param resource 图片资源元数据。
+   * @param signal 取消信号；透传给容器读取。
    * @returns 解码结果。
    * @throws OFDError 读取/解码失败或超限时（prepare 捕获后 warning 跳过）。
    */
-  private async decodeImage(resource: ImageResource): Promise<DecodedImage> {
+  private async decodeImage(resource: ImageResource, signal?: AbortSignal): Promise<DecodedImage> {
     this.assertOpen();
     const cached = this.imageCache.get(resource.mediaFile);
     if (cached) return cached;
     const pending = this.imagePending.get(resource.mediaFile);
-    if (pending) return pending;
-    const promise = (async (): Promise<DecodedImage> => {
-      const bytes = await this.zip.readEntry(resource.mediaFile, {
+    if (pending) return pending.wait(signal);
+    const load = new SharedLoad<DecodedImage>(this.closeController.signal, (loadSignal) => (async (): Promise<DecodedImage> => {
+      const bytes = await this.containerOrThrow().read(resource.mediaFile, {
         maxBytes: this.limits.maxEntryBytes,
         onWarning: this.documentWarningHandler,
+        signal: loadSignal,
       });
       const format =
         resource.format !== 'unknown'
@@ -2480,11 +2645,15 @@ export class OFDDocument {
       const decoded = await this.decodeImageBytes(bytes, format);
       this.imageCache.set(resource.mediaFile, decoded);
       return decoded;
-    })().finally(() => {
+    })());
+    this.imagePending.set(resource.mediaFile, load);
+    void load.promise.then(
+      () => undefined,
+      () => undefined,
+    ).finally(() => {
       this.imagePending.delete(resource.mediaFile);
     });
-    this.imagePending.set(resource.mediaFile, promise);
-    return promise;
+    return load.wait(signal);
   }
 
   /**
@@ -2577,29 +2746,36 @@ export class OFDDocument {
    *
    * @param path 包内路径。
    * @param onWarning CRC/大小不一致 warning 回调。
+   * @param signal 取消信号；透传给容器读取。
    * @returns XML 根节点。
    */
   private async readXml(
     path: string,
     onWarning: (warning: OFDWarning) => void,
+    signal?: AbortSignal,
   ): Promise<XmlNode> {
     const cached = this.xmlCache.get(path);
     if (cached) return cached.node;
     const pending = this.xmlPending.get(path);
-    if (pending) return pending;
-    const promise = (async (): Promise<XmlNode> => {
-      const bytes = await this.zip.readEntry(path, {
+    if (pending) return pending.wait(signal);
+    const load = new SharedLoad<XmlNode>(this.closeController.signal, (loadSignal) => (async (): Promise<XmlNode> => {
+      const bytes = await this.containerOrThrow().read(path, {
         maxBytes: this.limits.maxXmlBytes,
         onWarning,
+        signal: loadSignal,
       });
       const node = parseXml(bytes);
       this.xmlCache.set(path, { node, bytes: bytes.byteLength * 2 });
       return node;
-    })().finally(() => {
+    })());
+    this.xmlPending.set(path, load);
+    void load.promise.then(
+      () => undefined,
+      () => undefined,
+    ).finally(() => {
       this.xmlPending.delete(path);
     });
-    this.xmlPending.set(path, promise);
-    return promise;
+    return load.wait(signal);
   }
 
   /**
@@ -2715,6 +2891,88 @@ function normalizeInfoCount(count: number | undefined, remaining: number): numbe
   if (remaining <= 0) return 0;
   if (count === undefined || !Number.isFinite(count)) return remaining;
   return Math.min(Math.max(0, Math.trunc(count)), remaining);
+}
+
+/**
+ * 共享加载：底层读取只受 close/内部 controller 控制，调用方 signal 只影响本次等待。
+ *
+ * 多个调用方共享同一 promise；仅当最后一个等待方取消且加载尚未完成时，才中止
+ * 底层读取，避免单个调用方取消误伤其他调用方。
+ */
+class SharedLoad<T> {
+  /** 内部取消控制器；只由 close 或“最后一个等待方取消”触发。 */
+  readonly controller = new AbortController();
+  private waiters = 0;
+  private settled = false;
+  /** 底层加载 promise（共享）。 */
+  readonly promise: Promise<T>;
+
+  /**
+   * @param closeSignal 文档关闭信号。
+   * @param start 启动底层加载；接收内部 signal，不得使用调用方 signal。
+   */
+  constructor(closeSignal: AbortSignal, start: (signal: AbortSignal) => Promise<T>) {
+    const onClose = (): void => this.controller.abort(closeSignal.reason);
+    if (closeSignal.aborted) this.controller.abort(closeSignal.reason);
+    else closeSignal.addEventListener('abort', onClose, { once: true });
+    this.promise = start(this.controller.signal).finally(() => {
+      this.settled = true;
+      closeSignal.removeEventListener('abort', onClose);
+    });
+  }
+
+  /**
+   * 等待本次加载；调用方 signal 只取消本次等待。
+   *
+   * @param signal 调用方取消信号。
+   * @returns 加载结果。
+   * @throws OFDError 取消时 OFD_ABORTED；加载失败时原始错误。
+   */
+  wait(signal?: AbortSignal): Promise<T> {
+    this.waiters += 1;
+    let released = false;
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      this.waiters -= 1;
+      if (this.waiters === 0 && !this.settled) this.controller.abort();
+    };
+    if (signal) {
+      if (signal.aborted) {
+        release();
+      } else {
+        signal.addEventListener('abort', release, { once: true });
+      }
+    }
+    return waitForAbort(this.promise, signal).finally(() => {
+      signal?.removeEventListener('abort', release);
+      release();
+    });
+  }
+}
+
+/**
+ * 判断读取错误是否为取消/关闭等“终止性”错误。
+ *
+ * 页面尺寸、模板、附件、签章等路径会在读取失败时 warning 后回退；但取消与
+ * 关闭必须上抛，不能被回退逻辑吞掉。返回非 undefined 时调用方应抛出该错误。
+ *
+ * @param error 原始错误。
+ * @param closed 文档是否已关闭。
+ * @param signal 本次读取的取消信号。
+ * @returns 应上抛的 OFDError；可回退时为 undefined。
+ */
+function fatalReadError(
+  error: unknown,
+  closed: boolean,
+  signal?: AbortSignal,
+): OFDError | undefined {
+  if (closed) return new OFDError('OFD_CLOSED', '文档已关闭', { cause: error });
+  if (signal?.aborted) return createAbortError(signal.reason);
+  if (isOFDError(error) && (error.code === 'OFD_ABORTED' || error.code === 'OFD_CLOSED')) {
+    return error;
+  }
+  return undefined;
 }
 
 /**

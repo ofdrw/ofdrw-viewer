@@ -73,4 +73,50 @@ describe('package import boundaries', () => {
     }
     expect(violations).toEqual([]);
   });
+
+  it('api 层不直接 import ZipReader（所有读取经 VirtualContainer）', () => {
+    const violations: string[] = [];
+    for (const file of listFiles(path.join(srcRoot, 'api'))) {
+      for (const specifier of importSpecifiers(file)) {
+        // api 只能通过 VirtualContainer 读取；默认容器由 api/container.ts 组合，
+        // ZipReader 属于容器内部实现，不得成为 api 的直读旁路。
+        if (/container\/zip-reader$/.test(specifier)) {
+          violations.push(`${path.relative(srcRoot, file)} -> ${specifier}`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it('platform 不反向 import api（工厂类型定义在 api/types，保持依赖单向）', () => {
+    const violations: string[] = [];
+    for (const file of listFiles(path.join(srcRoot, 'platform'))) {
+      for (const specifier of importSpecifiers(file)) {
+        if (/(^|\/)\.\.\/api(\/|$)/.test(specifier)) {
+          violations.push(`${path.relative(srcRoot, file)} -> ${specifier}`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it('engine 不依赖 crypto（源码与 package.json）', () => {
+    const violations: string[] = [];
+    for (const file of listFiles(srcRoot)) {
+      for (const specifier of importSpecifiers(file)) {
+        if (/^(@ofdrw\/)?ofdrw-viewer-crypto(\/|$)/.test(specifier)) {
+          violations.push(`${path.relative(srcRoot, file)} -> ${specifier}`);
+        }
+      }
+    }
+    const pkg = JSON.parse(
+      readFileSync(fileURLToPath(new URL('../../package.json', import.meta.url)), 'utf8'),
+    ) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+    const declared = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
+    expect(
+      declared.filter((name) => /^(@ofdrw\/)?ofdrw-viewer-crypto$/.test(name)),
+      'engine 不得声明 crypto 依赖',
+    ).toEqual([]);
+    expect(violations).toEqual([]);
+  });
 });
