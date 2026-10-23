@@ -1,13 +1,13 @@
 ---
 name: ofdrw-viewer-crypto
-description: Add OFD encryption inspection, decryption, electronic-seal/signature verification, anti-smuggling integrity and timestamp parsing to JavaScript/TypeScript. Use this skill whenever a task involves encrypted OFD files, password or SM2 private-key credentials, `@ofdrw/ofdrw-viewer-crypto`, `inspect`, `openDecryptingContainer`, `verifyOfd`, SES v1/v4/v5 signatures, `SignedValue.dat`/`Seal.esl`, trust roots, certificate chains, integrity `OFDEntries.xml`/`signedvalue.dat`, or OFD timestamp display. Covers Node 22/browser setup, engine `VirtualContainer` handoff, error/warning handling, and the security rules “timestamp parsed not verified”, “no roots = unknown” and “integrity null = not protected”. See the bundled 公开API.md for exact signatures and report fields.
+description: Add OFD encryption inspection, decryption, electronic-seal/signature verification, anti-smuggling integrity and timestamp parsing to JavaScript/TypeScript. Use this skill whenever a task involves encrypted OFD files, password or SM2 private-key credentials, `@ofdrw/ofdrw-viewer-crypto`, `inspect`, `openDecryptingContainer`, `verifyOfd`, SES v1/v4/v5 signatures, `SignedValue.dat`/`Seal.esl`, trust roots, certificate chains, integrity `OFDEntries.xml`/`signedvalue.dat`, or OFD timestamp display. Covers Node 22/browser setup, engine `VirtualContainer` handoff, error/warning handling, and the security rules “timestamp parsed not verified”, “no roots = unknown” and “integrity null = not protected”. See the bundled API.md for exact signatures and report fields.
 ---
 
 # OFD 密码能力（@ofdrw/ofdrw-viewer-crypto）
 
 本包把 OFD 的加密元数据、签章结构和完整性清单解析为可用的 TypeScript 对象，并生成可注入 engine 的**明文** `VirtualContainer`。它不做页面渲染，也不提供独立 CLI `decrypt` 命令。
 
-**先查参数**：完整签名、返回值、默认值与错误码见 [公开API.md](./公开API.md)。本文件讲接入流程、凭据、根证书和常见坑。
+**先查参数**：完整签名、返回值、默认值与错误码见 [API.md](./API.md)。本文件讲接入流程、凭据、根证书和常见坑。
 
 ## 什么时候用
 
@@ -245,7 +245,7 @@ try {
 | `CRYPTO_TRUST_ROOT_INVALID` | 根证书输入非法 |
 | `CRYPTO_ASN1_INVALID` / `CRYPTO_UNSUPPORTED_SES_VERSION` | 签章/时间戳结构不支持 |
 
-warning 码与触发场景见 [公开API.md](./公开API.md) 和 README。
+warning 码与触发场景见 [API.md](./API.md) 和 README。
 
 ## 浏览器 / Node 注意事项
 
@@ -279,7 +279,7 @@ warning 码与触发场景见 [公开API.md](./公开API.md) 和 README。
 
 ## 参考
 
-- [公开 API](./公开API.md)
+- [公开 API](./API.md)
 - [包 README](../README.md)
 - [设计方案](../../../docs/ofdrw-viewer-crypto设计方案.md)
 - [CONTRACTS 第 13 章](../../../docs/CONTRACTS.md)

@@ -2540,7 +2540,7 @@ export class OFDDocument {
 
 ### 15.1.2 阅读器 UI API（r9/r10）
 
-面向 `@ofdrw/ofdrw-viewer-ui` 的 P0/P1/P2 数据读取接口；完整字段/单位/错误见 `packages/ofdrw-viewer-engine/skills/公开API.md` §3/§4 与 `docs/ofdrw-viewer-ui-engine-api.md`。
+面向 `@ofdrw/ofdrw-viewer-ui` 的 P0/P1/P2 数据读取接口；完整字段/单位/错误见 `packages/ofdrw-viewer-engine/skills/API.md` §3/§4 与 `docs/ofdrw-viewer-ui-engine-api.md`。
 
 | 优先级 | API | 说明 |
 | --- | --- | --- |

@@ -93,7 +93,7 @@ packages/ofdrw-viewer-crypto/
     fixtures/crypto/           # 已提交的 12 case 夹具
   skills/
     SKILL.md
-    公开API.md
+    API.md
   README.md
 ```
 
@@ -1670,11 +1670,11 @@ ofdrw-viewer-cli encrypted.ofd -o out --user fixture-cert-user --key certs/encry
 4. `## ⚡ 快速开始`：`inspect` → `openDecryptingContainer` → `OFDDocument.open({container})` → `verifyOfd`；
 5. `### 支持的平台`：浏览器/Node 22/小程序限制；
 6. `## 📚 文档`：engine/UI/CLI/设计/CONTRACTS；
-7. `## 🤖 Agent Skill 与 API 参考`：`skills/SKILL.md`、`skills/公开API.md`；
+7. `## 🤖 Agent Skill 与 API 参考`：`skills/SKILL.md`、`skills/API.md`；
 8. `## 🛠️ 开发`：typecheck/test/build；
 9. `## 📄 许可证`：MIT。
 
-同结构新增 `packages/ofdrw-viewer-crypto/skills/SKILL.md` 与 `skills/公开API.md`。
+同结构新增 `packages/ofdrw-viewer-crypto/skills/SKILL.md` 与 `skills/API.md`。
 
 ### 9.2 根 README
 
@@ -1691,9 +1691,9 @@ ofdrw-viewer-cli encrypted.ofd -o out --user fixture-cert-user --key certs/encry
 | `docs/密码学PoC验证报告.md` | 增加“R1 设计/实现映射”链接；R0 结论不变；SES v1、加密 PKCS#8、过期证书裁决指向本文 §0.1 |
 | `packages/ofdrw-viewer-crypto/README.md` | 新建，按 9.1 |
 | `packages/ofdrw-viewer-crypto/skills/SKILL.md` | 新建：解密/验证/根证书/错误处理示例 |
-| `packages/ofdrw-viewer-crypto/skills/公开API.md` | 新建：完整 API/类型/错误码 |
+| `packages/ofdrw-viewer-crypto/skills/API.md` | 新建：完整 API/类型/错误码 |
 | `packages/ofdrw-viewer-engine/README.md` | 新增 VirtualContainer 注入、`OFD_ENCRYPTED`、crypto 链接；默认行为不变 |
-| `packages/ofdrw-viewer-engine/skills/公开API.md` | 导出 `VirtualContainer`/`VirtualFileMeta`/`VirtualReadOptions`/`VirtualContainerFactory`/`OFDOpenOptions` 新字段 |
+| `packages/ofdrw-viewer-engine/skills/API.md` | 导出 `VirtualContainer`/`VirtualFileMeta`/`VirtualReadOptions`/`VirtualContainerFactory`/`OFDOpenOptions` 新字段 |
 | `packages/ofdrw-viewer-engine/skills/SKILL.md` | 增加“加密文档用 crypto 解密后注入容器”示例 |
 | `docs/OFD渲染引擎设计方案.md` | 新增容器抽象/注入/生命周期/OFD_ENCRYPTED 章节 |
 | `packages/ofdrw-viewer-ui/README.md` | 新增 `crypto` 选项、打开流程、验证面板、印章点击、根证书配置、错误码 |

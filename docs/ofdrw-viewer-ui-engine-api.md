@@ -839,4 +839,4 @@ interface PageImageExportOptions {
 | `exportImage.rotation` | 已实现（P2） | 0/90/180/270；仅导出方向；90/270 宽高互换；非法值 `W_BAD_NUMBER` 回退 0 |
 | `renderRegion` | **暂不实现/无排期** | 不导出、不在 `OFDPage` 上；UI 不得依赖 |
 
-边界复核：引擎不新增 ASN.1/X.509/CMS 依赖；`Seal.esl` 不进入 engine 公开 API；`SignedValue.dat` 只作为原始字节返回。电子印章、解密和验签由 `@ofdrw/ofdrw-viewer-crypto` 负责，公开文档以 `packages/ofdrw-viewer-engine/skills/公开API.md`、`packages/ofdrw-viewer-crypto/skills/公开API.md` 和 `src/index.ts` 为准。
+边界复核：引擎不新增 ASN.1/X.509/CMS 依赖；`Seal.esl` 不进入 engine 公开 API；`SignedValue.dat` 只作为原始字节返回。电子印章、解密和验签由 `@ofdrw/ofdrw-viewer-crypto` 负责，公开文档以 `packages/ofdrw-viewer-engine/skills/API.md`、`packages/ofdrw-viewer-crypto/skills/API.md` 和 `src/index.ts` 为准。

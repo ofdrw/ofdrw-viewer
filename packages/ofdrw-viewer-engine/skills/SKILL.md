@@ -1,13 +1,13 @@
 ---
 name: ofdrw-viewer-engine
-description: Render OFD documents to Canvas with @ofdrw/ofdrw-viewer-engine. Use this skill whenever a task involves opening, previewing, rendering, or exporting .ofd pages in JavaScript/TypeScript, including browser pages, Web Workers/OffscreenCanvas, Node.js tools, Electron/Tauri, or WeChat Mini Programs. Covers page rendering, thumbnails, PNG/JPEG/WebP export, searchable text layers with pixel coordinates, outlines/metadata/attachments/signatures, DPI/canvas sizing, virtual container/encrypted-document injection, platform hooks (createCanvas, encodeImage, imageDecoders, loadInput, fontProvider), cancellation, and debugging warnings such as missing fonts or images. Also use for OFD 预览、OFD 转图片、文字层坐标, or when wiring a custom Canvas host. See the bundled 公开API.md for exact signatures and defaults.
+description: Render OFD documents to Canvas with @ofdrw/ofdrw-viewer-engine. Use this skill whenever a task involves opening, previewing, rendering, or exporting .ofd pages in JavaScript/TypeScript, including browser pages, Web Workers/OffscreenCanvas, Node.js tools, Electron/Tauri, or WeChat Mini Programs. Covers page rendering, thumbnails, PNG/JPEG/WebP export, searchable text layers with pixel coordinates, outlines/metadata/attachments/signatures, DPI/canvas sizing, virtual container/encrypted-document injection, platform hooks (createCanvas, encodeImage, imageDecoders, loadInput, fontProvider), cancellation, and debugging warnings such as missing fonts or images. Also use for OFD 预览、OFD 转图片、文字层坐标, or when wiring a custom Canvas host. See the bundled API.md for exact signatures and defaults.
 ---
 
 # OFD 页面渲染引擎（@ofdrw/ofdrw-viewer-engine）
 
 把 OFD 包解析为页面模型，再绘制到宿主提供的 Canvas 2D 上下文。引擎只负责“页面内容 → Canvas”，不负责阅读器缩放/滚动、页面背景、打印、DRM 或签章密码学验签。
 
-**先查参数**：完整签名、默认值、返回结构和错误码见 [公开API.md](./公开API.md)。本文件讲怎么接入、怎么调用，以及各环境的可运行示例。
+**先查参数**：完整签名、默认值、返回结构和错误码见 [API.md](./API.md)。本文件讲怎么接入、怎么调用，以及各环境的可运行示例。
 
 ## 什么时候用
 
@@ -86,11 +86,11 @@ try {
 - `OFDOpenOptions`：`source` 必填，可带 `container`（借用）或 `containerFactory`（engine 拥有），二者互斥。
 - `openZipVirtualContainer` 返回 **raw package container**：明文包 `encrypted=false` 可直接注入；加密包 `encrypted=true` 的 `read()` 可能是密文，`OFDDocument.open` 会抛 `OFD_ENCRYPTED`。加密文档先用 [`@ofdrw/ofdrw-viewer-crypto`](../../ofdrw-viewer-crypto/skills/SKILL.md) 解出明文容器，再注入 engine。
 - `VirtualContainer.read` 的 `signal` 只取消本次读取/等待；engine 合并 close signal，共享加载不会被单个调用方取消。
-- 容器读取/所有权/错误码见 [公开API.md](./公开API.md)，业务背景见 [密码能力设计](../../../docs/ofdrw-viewer-crypto设计方案.md)。
+- 容器读取/所有权/错误码见 [API.md](./API.md)，业务背景见 [密码能力设计](../../../docs/ofdrw-viewer-crypto设计方案.md)。
 
 ## 环境适配
 
-先判断宿主能提供什么，再决定注入哪些钩子。完整类型见 [公开API.md](./公开API.md)。
+先判断宿主能提供什么，再决定注入哪些钩子。完整类型见 [API.md](./API.md)。
 
 | 环境 | 必须注入 | 说明 |
 | --- | --- | --- |
@@ -480,7 +480,7 @@ try {
 }
 ```
 
-常见 `code`：`OFD_INVALID_PACKAGE`、`OFD_PAGE_NOT_FOUND`、`OFD_CANVAS_SIZE_MISMATCH`、`OFD_CANVAS_TOO_LARGE`、`OFD_RENDERER_UNSUPPORTED`、`OFD_ABORTED`、`OFD_CLOSED`。完整列表和触发条件见 [公开API.md](./公开API.md)。
+常见 `code`：`OFD_INVALID_PACKAGE`、`OFD_PAGE_NOT_FOUND`、`OFD_CANVAS_SIZE_MISMATCH`、`OFD_CANVAS_TOO_LARGE`、`OFD_RENDERER_UNSUPPORTED`、`OFD_ABORTED`、`OFD_CLOSED`。完整列表和触发条件见 [API.md](./API.md)。
 
 warning 不中断渲染，默认不打印；`onWarning` 按 `(code,pageIndex,objectId)` 去重。优先关注：
 
@@ -515,4 +515,4 @@ warning 不中断渲染，默认不打印；`onWarning` 按 `(code,pageIndex,obj
 
 ## 参考
 
-- 完整 API（签名、默认值、返回结构）：[公开API.md](./公开API.md)
+- 完整 API（签名、默认值、返回结构）：[API.md](./API.md)

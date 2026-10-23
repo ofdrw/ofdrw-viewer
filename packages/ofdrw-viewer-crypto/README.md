@@ -391,7 +391,7 @@ warning 不中断流程，通过 `onWarning` 接收；同一 warning 由 `Warnin
 | `CryptoError` / `isCryptoError` | class / type guard | 统一错误处理 |
 | `DEFAULT_CRYPTO_LIMITS` / `CRYPTO_ERROR_CODES` / `CRYPTO_WARNING_CODES` | 常量 | 限制与码表 |
 
-完整签名、字段、默认值、报告结构、错误触发条件与全部导出见 [`skills/公开API.md`](skills/公开API.md)。
+完整签名、字段、默认值、报告结构、错误触发条件与全部导出见 [`skills/API.md`](skills/API.md)。
 
 ## 📚 文档
 
@@ -407,7 +407,7 @@ warning 不中断流程，通过 `onWarning` 接收；同一 warning 由 `Warnin
 ## 🤖 Agent Skill 与 API 参考
 
 - [Agent Skill（SKILL.md）](skills/SKILL.md)
-- [公开 API 参考](skills/公开API.md)
+- [公开 API 参考](skills/API.md)
 
 ## 🛠️ 开发
 

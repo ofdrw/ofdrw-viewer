@@ -1473,7 +1473,7 @@ packages/ofdrw-viewer-ui/
 - [OFD 渲染引擎设计方案](./OFD渲染引擎设计方案.md)
 - [密码能力总体设计](./ofdrw-viewer-crypto设计方案.md)
 - [跨模块契约](./CONTRACTS.md)
-- [crypto 公开 API](../packages/ofdrw-viewer-crypto/skills/公开API.md)
+- [crypto API](../packages/ofdrw-viewer-crypto/skills/API.md)
 - [crypto README](../packages/ofdrw-viewer-crypto/README.md)
 - [v1.1 文本内容 API 设计](./text-content-api.md)
 - [引擎页面 API](../packages/ofdrw-viewer-engine/src/api/page.ts)

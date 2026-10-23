@@ -2,7 +2,7 @@
  * 公开 API 文档同步检查。
  *
  * 读取包根 `src/index.ts` 的全部导出名，断言每个名字都出现在
- * `packages/ofdrw-viewer-engine/skills/公开API.md` 附录中；防止新增/改名导出后文档漏更。
+ * `packages/ofdrw-viewer-engine/skills/API.md` 附录中；防止新增/改名导出后文档漏更。
  */
 
 import { readFileSync } from 'node:fs';
@@ -24,12 +24,12 @@ function exportedNames(source: string): string[] {
 }
 
 describe('公开 API 文档同步', () => {
-  it('src/index.ts 的每个导出都出现在 skills/公开API.md', () => {
+  it('src/index.ts 的每个导出都出现在 skills/API.md', () => {
     const indexPath = fileURLToPath(
       new URL('../../packages/ofdrw-viewer-engine/src/index.ts', import.meta.url),
     );
     const docPath = fileURLToPath(
-      new URL('../../packages/ofdrw-viewer-engine/skills/公开API.md', import.meta.url),
+      new URL('../../packages/ofdrw-viewer-engine/skills/API.md', import.meta.url),
     );
     const names = exportedNames(readFileSync(indexPath, 'utf8'));
     const doc = readFileSync(docPath, 'utf8');

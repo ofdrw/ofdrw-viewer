@@ -156,7 +156,7 @@ try {
 - `OFDOpenOptions`：`source` 必填；可选 `container`（借用）或 `containerFactory`（engine 拥有，二者互斥）。
 - **raw / 明文容器**：`openZipVirtualContainer` 返回 raw package container；`encrypted=false` 的明文包可直接注入，`encrypted=true` 的加密包 `read()` 可能是密文，`OFDDocument.open` 会抛 `OFD_ENCRYPTED`；先用 [`@ofdrw/ofdrw-viewer-crypto`](../ofdrw-viewer-crypto/README.md) 解密，再注入返回的明文容器。
 - **取消**：`VirtualContainer.read` 支持 `signal`；engine 高层读取合并宿主/close signal，单个等待方取消只影响本次等待，不中止其他调用方的共享加载。
-- 完整类型、限制、所有权与错误码见 [公开 API](skills/公开API.md) 和 [引擎设计](../../docs/OFD渲染引擎设计方案.md#1514-虚拟容器与加密文档v20-r1)。
+- 完整类型、限制、所有权与错误码见 [公开 API](skills/API.md) 和 [引擎设计](../../docs/OFD渲染引擎设计方案.md#1514-虚拟容器与加密文档v20-r1)。
 
 ### 支持的平台
 
@@ -167,7 +167,7 @@ try {
 - [**Electron / Tauri**](skills/SKILL.md#electron--tauri)。
 - [**微信小程序**](skills/SKILL.md#微信小程序)。
 
-各环境所需钩子的对照见 [环境适配](skills/SKILL.md#环境适配)，接口签名与默认值见 [公开 API](skills/公开API.md)。
+各环境所需钩子的对照见 [环境适配](skills/SKILL.md#环境适配)，接口签名与默认值见 [公开 API](skills/API.md)。
 
 
 ## 📚 文档
@@ -185,7 +185,7 @@ try {
 ## 🤖 Agent Skill 与 API 参考
 
 - [Agent Skill（SKILL.md）](skills/SKILL.md)
-- [公开 API 参考](skills/公开API.md)
+- [公开 API 参考](skills/API.md)
 
 ## 🛠️ 开发
 
