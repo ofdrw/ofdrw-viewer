@@ -42,7 +42,7 @@ try {
 }
 ```
 
-完整参数、错误码与使用边界见 [SKILL.md](skills/SKILL.md)，逐项 API 见 [API.md](skills/API.md)。
+接入流程、凭据与安全边界见 [SKILL.md](skills/SKILL.md)，完整参数、错误码与报告字段见 [API.md](skills/API.md)。
 
 各环境与场景示例：
 
