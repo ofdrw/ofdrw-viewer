@@ -31,6 +31,7 @@ import type { EngineDocument } from '../document-controller';
 import { createFeatureDisabledError, OFDViewerError, isOFDViewerError } from '../errors';
 import type { ViewerFeature } from '../features';
 import type { CertificateSource, CryptoViewerOptions } from '../options';
+import type { SignatureDetail, ViewerSource } from '../types';
 import type { UIShellHost } from '../ui';
 import { getUIShell } from '../ui';
 import { CredentialDialog } from './credentials-dialog';
@@ -87,6 +88,12 @@ export interface CryptoServiceHost extends UIShellHost {
   getDocument(): EngineDocument | null;
   /** 功能是否可用。 */
   isFeatureEnabled(feature: ViewerFeature): boolean;
+  /**
+   * 读取签章详情（含 SignedValue 内嵌印章图片字节）。
+   *
+   * 面板只读复用签章服务已解析的数据，不新增第二套验签路径。
+   */
+  getSignatureDetail?(signatureId: string): Promise<SignatureDetail>;
   /** 上报密码能力 warning。 */
   warnCrypto(code: string, message: string): void;
   /** 触发一次验证；由阅读器实现状态与事件。 */
@@ -114,6 +121,14 @@ export interface CryptoVerificationState {
   readonly error?: OFDViewerError;
 }
 
+/** 本次打开实际发生的加解密情况；用于面板隐藏明文文档的无关行。 */
+export interface OpenEncryptionInfo {
+  /** 原始来源是否为加密包。 */
+  readonly encrypted: boolean;
+  /** 打开过程中是否执行了解密。 */
+  readonly decrypted: boolean;
+}
+
 /**
  * 密码能力服务。
  */
@@ -128,6 +143,8 @@ export class CryptoService {
   private report: VerificationReport | undefined;
   private verificationError: OFDViewerError | undefined;
   private loading = false;
+  /** 本次打开的实际加解密情况；关闭/重新打开时更新。 */
+  private openEncryptionInfo: OpenEncryptionInfo | undefined;
 
   private rootItems: TrustRootItem[] = [];
   private rootsPromise: Promise<void> | null = null;
@@ -194,6 +211,18 @@ export class CryptoService {
     return this.loading;
   }
 
+  /**
+   * 本次打开的实际加解密情况。
+   *
+   * 容器内部报告对“已解密文档”仍可能显示 encrypted=false/decrypted=false，
+   * 面板展示必须使用打开阶段记录的值，避免把加密文档误标为明文。
+   *
+   * @returns 加解密信息；尚未打开时为 undefined。
+   */
+  getOpenEncryptionInfo(): OpenEncryptionInfo | undefined {
+    return this.openEncryptionInfo;
+  }
+
   /** 当前根证书条目。 */
   getRootItems(): readonly TrustRootItem[] {
     return this.rootItems;
@@ -215,6 +244,7 @@ export class CryptoService {
     this.report = undefined;
     this.verificationError = undefined;
     this.loading = false;
+    if (!target) this.openEncryptionInfo = undefined;
   }
 
   /** 文档关闭时清理报告与面板。 */
@@ -253,6 +283,7 @@ export class CryptoService {
    * @returns 打开准备结果。
    */
   async prepareOpen(source: OFDSource, signal: AbortSignal): Promise<CryptoOpenPreparation> {
+    this.openEncryptionInfo = undefined;
     if (!this.enabled) return { kind: 'plain' };
     await this.ensureRoots();
     const cryptoSource = toCryptoSource(source);
@@ -283,7 +314,10 @@ export class CryptoService {
       );
     }
 
-    if (!inspection.encrypted) return { kind: 'plain', source: cryptoSource, inspection };
+    if (!inspection.encrypted) {
+      this.openEncryptionInfo = { encrypted: false, decrypted: false };
+      return { kind: 'plain', source: cryptoSource, inspection };
+    }
 
     const credentials = this.options.credentials;
     if (credentials !== undefined) {
@@ -658,6 +692,7 @@ export class CryptoService {
         ...this.cryptoOptions(),
       });
       this.forwardWarnings(result.warnings);
+      this.openEncryptionInfo = { encrypted: true, decrypted: true };
       return {
         kind: 'decrypted',
         source,
@@ -941,8 +976,22 @@ function toCryptoSource(source: OFDSource): CryptoSource | null {
       // UI 的 HttpByteSource 交给 crypto 按需读取；crypto 会隔离为不转发 close
       // 的视图，因此关闭 crypto 容器不会误关 UI 的字节源。
       return { kind: 'byte-source', source: source.source };
-    default:
+    default: {
+      // engine 新 API 已移除 url 变体；保留运行期兼容，旧调用方仍可传 URL。
+      const legacy = source as {
+        readonly kind?: unknown;
+        readonly url?: unknown;
+        readonly headers?: Record<string, string>;
+      };
+      if (legacy.kind === 'url' && typeof legacy.url === 'string') {
+        return {
+          kind: 'url',
+          url: legacy.url,
+          ...(legacy.headers ? { headers: legacy.headers } : {}),
+        };
+      }
       return null;
+    }
   }
 }
 

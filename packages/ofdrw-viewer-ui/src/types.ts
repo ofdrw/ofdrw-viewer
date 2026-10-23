@@ -235,7 +235,7 @@ export interface CertificateInfo {
   readonly publicKeyAlgorithm?: AlgorithmInfo;
 }
 
-/** 印章图片元信息；不暴露原始字节。 */
+/** 印章图片元信息与可渲染的原始字节。 */
 export interface SealImageInfo {
   /** 图片格式，例如 `png`/`jpg`。 */
   readonly format: string;
@@ -243,6 +243,13 @@ export interface SealImageInfo {
   readonly widthMm: number;
   /** 图片高，mm。 */
   readonly heightMm: number;
+  /**
+   * 图片原始字节（来自 SignedValue.dat 内嵌 SESeal 的 picture.data）。
+   *
+   * 仅用于 UI 以 Blob URL 渲染；不进入 state、不写日志、不上传。缺失时 UI
+   * 显示明确降级文案，不能伪造图片。
+   */
+  readonly data?: Uint8Array;
 }
 
 /** 印章信息（来自 `SignedValue.dat` 的 `TBS_Sign.eseal`）。 */

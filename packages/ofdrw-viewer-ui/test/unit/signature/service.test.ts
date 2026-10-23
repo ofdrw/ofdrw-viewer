@@ -26,6 +26,7 @@ vi.mock('@ofdrw/ofdrw-viewer-engine', () => ({
 import { OFDViewer } from '../../../src/viewer';
 import { attachUIShell, getUIShell } from '../../../src/ui';
 import '../../../src/views/signatures';
+import { captureDownloads } from '../../helpers/environment';
 import {
   corruptSignedValue,
   readSignedValueFixture,
@@ -242,11 +243,39 @@ describe('SignatureService 覆盖层与详情', () => {
 
     const detail = await viewer.getSignatureDetail('s1');
     expect(detail.seal?.name).toBe('OFD R&W 测试用印章');
+    expect(detail.seal?.image?.data?.byteLength).toBeGreaterThan(0);
     expect(detail.signer?.certificate?.subjectAttributes?.cn).toBe('Test Certificate');
     expect(detail.validation).toEqual({
       status: 'not-verified',
       note: '本面板仅展示签章信息，未进行签名验证/证书链校验。',
     });
+  });
+
+  it('签章详情用真实 picture.data 渲染图片，并在关闭时释放 Blob URL', async () => {
+    viewer = await createViewer();
+    const capture = captureDownloads();
+    try {
+      await viewer.showSignature('s1');
+      await vi.waitFor(() => {
+        const dialog = document.querySelector<HTMLElement>('.ofd-dialog');
+        expect(dialog).not.toBeNull();
+        expect(dialog!.querySelector('.ofd-seal-image img')).not.toBeNull();
+      });
+      const dialog = document.querySelector<HTMLElement>('.ofd-dialog')!;
+      const img = dialog.querySelector<HTMLImageElement>('.ofd-seal-image img')!;
+      expect(img.alt).toContain('OFD R&W 测试用印章');
+      expect(img.getAttribute('src')).toMatch(/^blob:/);
+      expect(dialog.querySelector('.ofd-seal-image__caption')?.textContent).toContain('mm');
+      expect(dialog.querySelector<HTMLElement>('.ofd-signature-badge')?.dataset.status).toBe(
+        'not-verified',
+      );
+      expect(dialog.textContent).toContain('时间戳未包含');
+
+      document.querySelector<HTMLButtonElement>('.ofd-dialog__close')!.click();
+      await vi.waitFor(() => expect(capture.revoked.length).toBeGreaterThan(0));
+    } finally {
+      capture.restore();
+    }
   });
 
   it('SignedValue.dat 缺失/损坏时条目仍展示，详情降级为“签章信息不完整”', async () => {
@@ -329,6 +358,11 @@ describe('SignatureService 侧栏列表', () => {
         (element) => element.textContent,
       );
       expect(badges).toEqual(['未验证', '未验证', '未验证', '未验证', '未验证']);
+      expect(
+        [...panel!.querySelectorAll<HTMLElement>('.ofd-signature-badge')].map(
+          (element) => element.dataset.status,
+        ),
+      ).toEqual(['not-verified', 'not-verified', 'not-verified', 'not-verified', 'not-verified']);
 
       await vi.waitFor(() => {
         expect(panel!.textContent).toContain('OFD R&W 测试用印章');

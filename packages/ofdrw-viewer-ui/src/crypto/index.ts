@@ -10,6 +10,7 @@ export type {
   CryptoServiceHost,
   CryptoVerificationState,
   CryptoVerifyOptions,
+  OpenEncryptionInfo,
   TrustRootItem,
   VerificationTarget,
 } from './service';

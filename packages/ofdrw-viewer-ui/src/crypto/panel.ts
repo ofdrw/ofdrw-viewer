@@ -15,7 +15,10 @@ import type {
 import { OFDViewerError, isOFDViewerError } from '../errors';
 import type { UIShell } from '../ui/ui-shell';
 import type { CryptoService, CryptoServiceHost } from './service';
+import { createSealImageElement } from './seal-image';
+import type { SealImageHandle } from './seal-image';
 import type { CryptoText } from './text';
+import { formatShanghaiDateTime } from './time';
 
 /** 面板实例序号，用于生成跨实例唯一的控件 id。 */
 let verificationPanelSequence = 0;
@@ -28,6 +31,10 @@ export class VerificationPanel {
   private body: HTMLElement | null = null;
   private isOpen = false;
   private destroyed = false;
+  /** 渲染代次；异步图片加载完成时用于丢弃过期结果。 */
+  private renderGeneration = 0;
+  /** 按签名 ID 保存图片句柄，重新渲染/关闭时释放 Blob URL。 */
+  private readonly sealImageHandles = new Map<string, SealImageHandle>();
 
   /**
    * @param host 阅读器宿主。
@@ -64,6 +71,7 @@ export class VerificationPanel {
         this.isOpen = false;
         this.body = null;
         this.liveRegion = null;
+        this.disposeSealImages();
       },
     });
     this.render();
@@ -74,6 +82,7 @@ export class VerificationPanel {
     this.isOpen = false;
     this.body = null;
     this.liveRegion = null;
+    this.disposeSealImages();
     if (this.shell.dialogs.currentName === 'verification') {
       this.shell.closeDialog(restoreFocus);
     }
@@ -82,6 +91,8 @@ export class VerificationPanel {
   /** 重新渲染；面板未打开时无操作。 */
   render(): void {
     if (this.destroyed || !this.isOpen || !this.body) return;
+    this.renderGeneration += 1;
+    this.disposeSealImages();
     const active = this.doc.activeElement;
     const focusedControl =
       active instanceof HTMLElement && this.body.contains(active)
@@ -168,8 +179,11 @@ export class VerificationPanel {
       return nodes;
     }
 
+    const guidance = this.buildGuidance(report);
+    if (guidance) nodes.push(guidance);
     nodes.push(this.buildPackage(report));
-    nodes.push(this.buildIntegrity(report));
+    const integrity = this.buildIntegrity(report);
+    if (integrity) nodes.push(integrity);
     for (const signature of report.signatures) {
       nodes.push(this.buildSignature(signature));
     }
@@ -191,27 +205,28 @@ export class VerificationPanel {
   private buildPackage(report: VerificationReport): HTMLElement {
     const { text } = this;
     const card = this.createCard('ofd-verification-package', text.packageInfo);
-    this.appendPairs(card, [
-      [text.packageEncrypted, report.package.encrypted ? text.present : text.absent],
-      [text.packageDecrypted, report.package.decrypted ? text.present : text.absent],
+    const openInfo = this.service.getOpenEncryptionInfo();
+    const encrypted = openInfo?.encrypted ?? report.package.encrypted;
+    const decrypted = openInfo?.decrypted ?? report.package.decrypted;
+    const rows: [string, string][] = [];
+    // 明文文档不展示“是否加密/是否已解密”这类恒为否的无关行。
+    if (encrypted) rows.push([text.packageEncrypted, text.present]);
+    if (decrypted) rows.push([text.packageDecrypted, text.present]);
+    rows.push(
       [text.packagePages, String(this.host.getState().document.pageCount)],
       [text.packageSignatures, String(report.package.signatureCount)],
       [text.packageIntegrity, report.package.integrityPresent ? text.present : text.absent],
-    ]);
+    );
+    this.appendPairs(card, rows);
     return card;
   }
 
-  /** 完整性卡片。 */
-  private buildIntegrity(report: VerificationReport): HTMLElement {
+  /** 完整性卡片；无完整性保护时整块不渲染。 */
+  private buildIntegrity(report: VerificationReport): HTMLElement | null {
     const { text } = this;
-    const card = this.createCard('ofd-verification-integrity', text.integrity);
     const integrity = report.integrity;
-    if (!integrity) {
-      card.appendChild(
-        this.createText('p', 'ofd-verification-muted', `${text.packageIntegrity}：${text.absent}`),
-      );
-      return card;
-    }
+    if (!integrity) return null;
+    const card = this.createCard('ofd-verification-integrity', text.integrity);
     card.dataset.status = integrity.status;
     card.appendChild(this.statusBadge(integrity.status, ''));
     this.appendPairs(card, [
@@ -223,6 +238,41 @@ export class VerificationPanel {
     ]);
     this.appendIssues(card, integrity.issues);
     return card;
+  }
+
+  /**
+   * 信任根缺失/不匹配时的解释性引导。
+   *
+   * 只解释报告已有状态，不改变 overall，也不提供“忽略证书链”操作。
+   */
+  private buildGuidance(report: VerificationReport): HTMLElement | null {
+    const { text } = this;
+    const chainUnknown =
+      report.overall === 'unknown' &&
+      !report.rootsConfigured &&
+      report.signatures.some((signature) => signature.certificate.status === 'unknown');
+    const mismatch = report.signatures.some((signature) =>
+      signature.certificate.issues.some((issue) => issue.code === 'CHAIN_SIGNATURE_INVALID'),
+    );
+    if (!chainUnknown && !mismatch) return null;
+
+    const box = this.doc.createElement('div');
+    box.className = 'ofd-verification-guidance';
+    box.dataset.status = mismatch ? 'invalid' : 'unknown';
+    box.setAttribute('role', 'note');
+    const title = this.createText(
+      'p',
+      'ofd-verification-guidance__title',
+      mismatch ? text.trustRootMismatch : text.trustRootMissing,
+    );
+    const math = this.createText('p', 'ofd-verification-guidance__note', text.signatureMathNotTrust);
+    const guidance = this.createText(
+      'p',
+      'ofd-verification-guidance__note',
+      mismatch ? text.trustRootMismatchGuidance : text.trustRootGuidance,
+    );
+    box.append(title, math, guidance);
+    return box;
   }
 
   /** 单个签名卡片。 */
@@ -257,6 +307,14 @@ export class VerificationPanel {
       ],
     ]);
 
+    if (signature.seal) {
+      const sealImage = this.doc.createElement('div');
+      sealImage.className = 'ofd-verification-signature__seal';
+      sealImage.dataset.ofdControl = 'verification-signature-seal-image';
+      card.appendChild(sealImage);
+      void this.loadSignatureSeal(signature, sealImage, this.renderGeneration);
+    }
+
     if (signature.references.failures.length > 0) {
       const failures = this.doc.createElement('ul');
       failures.className = 'ofd-verification-failures';
@@ -271,30 +329,84 @@ export class VerificationPanel {
     const timestamp = this.doc.createElement('p');
     timestamp.className = 'ofd-verification-timestamp';
     if (signature.timestamp.status === 'parsed-not-verified') {
-      // 固定文案：只解析、不验证，不参与 overall。
-      timestamp.textContent = `${text.timestamp}：${text.timestampParsedNotVerified}`;
+      // 固定文案：只解析、不验证，不参与 overall；时间固定按 UTC+8 展示。
+      timestamp.textContent = `${text.timestamp}：${text.timestampParsedNotVerified}（${text.timestampNotInOverall}）`;
       timestamp.dataset.status = 'parsed-not-verified';
-      for (const [label, value] of [
-        ['genTime', signature.timestamp.genTime],
-        ['TSA', signature.timestamp.tsa?.subject],
-        ['policy', signature.timestamp.policy],
-        ['serial', signature.timestamp.serialNumber],
-      ] as const) {
+      const timestampValue = signature.timestamp;
+      const rows: readonly (readonly [string, string])[] = [
+        [
+          text.timestampGenTime,
+          formatShanghaiDateTime(timestampValue.genTime) ?? text.timestampUnparsable,
+        ],
+        [text.timestampTsa, timestampValue.tsa?.subject ?? text.none],
+        [text.timestampSerial, timestampValue.serialNumber ?? text.none],
+        ...(timestampValue.policy
+          ? ([[text.timestampPolicy, timestampValue.policy]] as const)
+          : []),
+      ];
+      for (const [label, value] of rows) {
         const line = this.doc.createElement('span');
         line.className = 'ofd-verification-timestamp__field';
-        line.textContent = `${label}：${value ?? text.none}`;
+        line.textContent = `${label}：${value}`;
         timestamp.appendChild(line);
       }
     } else if (signature.timestamp.status === 'parse-error') {
-      timestamp.textContent = `${text.timestamp}：${text.timestampUnparsable}`;
+      const detail = signature.timestamp.parseError?.message;
+      timestamp.textContent = `${text.timestamp}：${text.timestampUnparsable}${
+        detail ? `（${detail}）` : ''
+      }`;
       timestamp.dataset.status = 'parse-error';
     } else {
-      timestamp.textContent = `${text.timestamp}：${text.none}`;
+      timestamp.textContent = `${text.timestamp}：${text.timestampMissing}`;
       timestamp.dataset.status = 'not-present';
     }
     card.appendChild(timestamp);
     this.appendIssues(card, signature.issues);
     return card;
+  }
+
+  /**
+   * 异步加载签章详情中的印章图片。
+   *
+   * 复用签章服务的 `getSignatureDetail`，只读取 SignedValue 内嵌 `picture.data`；
+   * 过期渲染或节点已移除时丢弃结果，避免把图片挂到旧面板。
+   */
+  private async loadSignatureSeal(
+    signature: SignatureVerification,
+    container: HTMLElement,
+    generation: number,
+  ): Promise<void> {
+    const getDetail = this.host.getSignatureDetail;
+    if (!getDetail) {
+      container.remove();
+      return;
+    }
+    try {
+      const detail = await getDetail.call(this.host, signature.id);
+      if (generation !== this.renderGeneration || !container.isConnected) return;
+      const handle = createSealImageElement(this.doc, detail.seal?.image, {
+        label:
+          signature.seal?.name ??
+          detail.seal?.name ??
+          signature.seal?.esId ??
+          signature.id,
+      });
+      if (!handle) {
+        container.remove();
+        return;
+      }
+      this.sealImageHandles.get(signature.id)?.revoke();
+      this.sealImageHandles.set(signature.id, handle);
+      container.replaceChildren(handle.element);
+    } catch {
+      if (generation === this.renderGeneration) container.remove();
+    }
+  }
+
+  /** 释放全部印章图片 Blob URL；面板重建/关闭时调用。 */
+  private disposeSealImages(): void {
+    for (const handle of this.sealImageHandles.values()) handle.revoke();
+    this.sealImageHandles.clear();
   }
 
   /** 根证书区。 */

@@ -137,6 +137,28 @@ export interface CryptoText {
   readonly notVerified: string;
   /** 已解析，未验证。 */
   readonly timestampParsedNotVerified: string;
+  /** 时间戳不参与总体状态。 */
+  readonly timestampNotInOverall: string;
+  /** 生成时间（UTC+8）。 */
+  readonly timestampGenTime: string;
+  /** TSA 主体。 */
+  readonly timestampTsa: string;
+  /** 时间戳序列号。 */
+  readonly timestampSerial: string;
+  /** 时间戳策略。 */
+  readonly timestampPolicy: string;
+  /** 未包含时间戳。 */
+  readonly timestampMissing: string;
+  /** 未配置与签章链匹配的信任根。 */
+  readonly trustRootMissing: string;
+  /** 导入根证书引导。 */
+  readonly trustRootGuidance: string;
+  /** 信任根与签章链不匹配。 */
+  readonly trustRootMismatch: string;
+  /** 不匹配根的处理引导。 */
+  readonly trustRootMismatchGuidance: string;
+  /** 数学签名有效不等于总体有效。 */
+  readonly signatureMathNotTrust: string;
   /** 时间戳不可解析。 */
   readonly timestampUnparsable: string;
   /** 签名者。 */
@@ -233,6 +255,18 @@ const ZH: CryptoText = {
   close: '关闭',
   notVerified: '未验证',
   timestampParsedNotVerified: '已解析，未验证',
+  timestampNotInOverall: '不参与总体状态',
+  timestampGenTime: '生成时间（UTC+8）',
+  timestampTsa: 'TSA',
+  timestampSerial: '序列号',
+  timestampPolicy: '策略',
+  timestampMissing: '未包含',
+  trustRootMissing: '未配置与签章链匹配的信任根，证书链无法验证',
+  trustRootGuidance: '请向签发方获取签发该文档的根证书，在“信任根”中导入后重新验证。',
+  trustRootMismatch: '当前信任根与签章链不匹配（CHAIN_SIGNATURE_INVALID）',
+  trustRootMismatchGuidance: '请改用签发方根证书；不要将签名数学有效解释为总体有效。',
+  signatureMathNotTrust:
+    '签名数学、数据哈希与引用完整性可能为有效，但证书链未建立信任，总体状态仍为“未知/无效”。',
   timestampUnparsable: '不可解析',
   signer: '签名者',
   overallValid: '有效',
@@ -321,6 +355,20 @@ const EN: CryptoText = {
   close: 'Close',
   notVerified: 'Not verified',
   timestampParsedNotVerified: 'Parsed, not verified',
+  timestampNotInOverall: 'not part of the overall status',
+  timestampGenTime: 'Generation time (UTC+8)',
+  timestampTsa: 'TSA',
+  timestampSerial: 'Serial number',
+  timestampPolicy: 'Policy',
+  timestampMissing: 'Not present',
+  trustRootMissing: 'No trust root matching this signature chain is configured; the chain cannot be verified',
+  trustRootGuidance:
+    'Obtain the issuer root certificate from the signer and import it under Trust roots, then verify again.',
+  trustRootMismatch: 'The configured trust root does not match this signature chain (CHAIN_SIGNATURE_INVALID)',
+  trustRootMismatchGuidance:
+    'Use the issuer root certificate; do not treat a mathematically valid signature as an overall valid result.',
+  signatureMathNotTrust:
+    'Signature math, data hash and references may be valid, but the chain is untrusted, so the overall status remains unknown or invalid.',
   timestampUnparsable: 'Unparsable',
   signer: 'Signer',
   overallValid: 'Valid',

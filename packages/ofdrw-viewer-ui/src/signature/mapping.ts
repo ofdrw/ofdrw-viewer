@@ -131,6 +131,7 @@ export function toSealInfo(parsed: ParsedSeal | undefined): SealInfo | undefined
             format: parsed.picture.type,
             widthMm: parsed.picture.widthMm,
             heightMm: parsed.picture.heightMm,
+            data: parsed.picture.data,
           },
         }
       : {}),

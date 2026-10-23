@@ -49,7 +49,7 @@ import type {
 } from '@ofdrw/ofdrw-viewer-crypto';
 import { OFDViewer } from '../../src/index';
 import { OFDViewerError } from '../../src/errors';
-import { installDomEnvironment } from '../helpers/environment';
+import { captureDownloads, installDomEnvironment } from '../helpers/environment';
 import { createMockDocument } from '../helpers/document';
 import { createSignatureEntry } from '../helpers/signature';
 
@@ -1220,5 +1220,170 @@ describe('t51 修复回归', () => {
     });
     expect(popover.textContent).toContain('不可解析');
     expect(popover.textContent).not.toContain('时间戳：无');
+  });
+});
+
+describe('t5 签章/验证 UI 修复', () => {
+  /** 打开一个明文签章文档，返回已就绪的阅读器。 */
+  async function plainSignedViewer(): Promise<OFDViewer> {
+    cryptoMocks.inspect.mockResolvedValue(signedInspection());
+    engineMocks.open.mockResolvedValue(
+      createMockDocument({
+        pageCount: 1,
+        signatures: [
+          createSignatureEntry({
+            id: 's001',
+            stamps: [
+              {
+                id: 'stamp-1',
+                pageId: 'page-1',
+                pageIndex: 0,
+                boundary: { x: 10, y: 12, w: 40, h: 30 },
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+    const viewer = new OFDViewer({
+      container: document.body,
+      source: new ArrayBuffer(8),
+      crypto: { autoVerify: false },
+    });
+    await viewer.ready;
+    return viewer;
+  }
+
+  it('明文文档隐藏加解密行；无完整性整块隐藏；时间戳显示 UTC+8 具体时间与 TSA/序列号', async () => {
+    const viewer = await plainSignedViewer();
+    const parsed = report('unknown');
+    const timestamp = parsed.signatures[0]!.timestamp as unknown as {
+      genTime: string;
+      serialNumber: string;
+      tsa: CertificateSummary;
+    };
+    timestamp.genTime = '2026-10-23T07:59:26.000Z';
+    timestamp.serialNumber = '01a167c59e2f';
+    timestamp.tsa = {
+      ...ROOT_SUMMARY,
+      subject: 'CN=OFD Test TSA,O=ofdrw,C=CN',
+    };
+    cryptoMocks.verify.mockResolvedValue(parsed);
+    await viewer.verify();
+    viewer.openVerificationPanel();
+    const panel = await vi.waitFor(() => {
+      const element = document.querySelector<HTMLElement>('.ofd-verification-panel');
+      expect(element).not.toBeNull();
+      return element!;
+    });
+
+    // 明文打开：打开阶段 openInfo 覆盖容器报告，不显示恒为否的加解密行。
+    expect(panel.textContent).not.toContain('是否加密');
+    expect(panel.textContent).not.toContain('是否已解密');
+    expect(document.querySelector('.ofd-verification-integrity')).toBeNull();
+    expect(panel.textContent).toContain('页数');
+    expect(panel.textContent).toContain('签名数');
+
+    const timestampBox = panel.querySelector<HTMLElement>('.ofd-verification-timestamp')!;
+    expect(timestampBox.textContent).toContain('已解析，未验证（不参与总体状态）');
+    expect(timestampBox.textContent).toContain('生成时间（UTC+8）：2026-10-23 15:59:26');
+    expect(timestampBox.textContent).toContain('TSA：CN=OFD Test TSA,O=ofdrw,C=CN');
+    expect(timestampBox.textContent).toContain('序列号：01a167c59e2f');
+    expect(timestampBox.textContent).not.toContain('genTime');
+
+    const guidance = document.querySelector<HTMLElement>('.ofd-verification-guidance')!;
+    expect(guidance.dataset.status).toBe('unknown');
+    expect(guidance.textContent).toContain('未配置与签章链匹配的信任根');
+    expect(guidance.textContent).toContain('总体状态仍为“未知/无效”');
+    expect(viewer.getVerificationReport()?.overall).toBe('unknown');
+  });
+
+  it('加密且含完整性时仍显示加解密行与完整性卡片', async () => {
+    cryptoMocks.inspect.mockResolvedValue(encryptedInspection());
+    cryptoMocks.open.mockResolvedValue({
+      container: makeContainer(async () => undefined),
+      inspection: encryptedInspection(),
+      plaintext: true,
+      layers: [],
+      warnings: [],
+    });
+    const base = report('valid');
+    const integrity: NonNullable<VerificationReport['integrity']> = {
+      status: 'valid',
+      entriesPath: 'OFDEntries.xml',
+      signedValuePath: 'signedvalue.dat',
+      fileListCount: 3,
+      actualFileCount: 3,
+      missingFiles: [],
+      extraFiles: [],
+      authenticatedAttributes: true,
+      signature: { status: 'valid', sm2UserId: '1234567812345678' },
+      certificate: base.signatures[0]!.certificate,
+      issues: [],
+    };
+    const parsed: VerificationReport = { ...base, integrity };
+    cryptoMocks.verify.mockResolvedValue(parsed);
+    const viewer = new OFDViewer({
+      container: document.body,
+      source: new ArrayBuffer(8),
+      crypto: {
+        credentials: { kind: 'password', userName: USER, password: PASSWORD },
+        autoVerify: false,
+      },
+    });
+    await viewer.ready;
+    await viewer.verify();
+    viewer.openVerificationPanel();
+    const panel = document.querySelector<HTMLElement>('.ofd-verification-panel')!;
+    expect(panel.textContent).toContain('是否加密');
+    expect(panel.textContent).toContain('是否已解密');
+    expect(panel.textContent).toContain('防夹带完整性');
+    expect(panel.textContent).toContain('清单文件数');
+    expect(document.querySelector('.ofd-verification-integrity')?.textContent).toContain(
+      '清单文件数',
+    );
+  });
+
+  it('验证面板从签章详情渲染真实印章图片，关闭对话框后释放 Blob URL', async () => {
+    const viewer = await plainSignedViewer();
+    cryptoMocks.verify.mockResolvedValue(report('valid'));
+    await viewer.verify();
+    vi.spyOn(viewer, 'getSignatureDetail').mockResolvedValue({
+      entry: createSignatureEntry({ id: 's001' }),
+      seal: {
+        version: 'v4',
+        name: '图片测试章',
+        esId: 'seal-image-1',
+        image: {
+          format: 'PNG',
+          widthMm: 40,
+          heightMm: 40,
+          data: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+        },
+      },
+      validation: { status: 'not-verified', note: '未验证' },
+    });
+    const capture = captureDownloads();
+    try {
+      viewer.openVerificationPanel();
+      const image = await vi.waitFor(() => {
+        const img = document.querySelector<HTMLImageElement>(
+          '[data-ofd-control="verification-signature-seal-image"] img',
+        );
+        expect(img).not.toBeNull();
+        return img!;
+      });
+      expect(image.alt).toBe('印章图片：测试印章');
+      expect(image.getAttribute('src')).toMatch(/^blob:/);
+      expect(
+        document.querySelector('[data-ofd-control="verification-signature-seal-image"] figcaption')
+          ?.textContent,
+      ).toContain('40 × 40 mm');
+
+      document.querySelector<HTMLButtonElement>('.ofd-dialog__close')!.click();
+      await vi.waitFor(() => expect(capture.revoked.length).toBeGreaterThan(0));
+    } finally {
+      capture.restore();
+    }
   });
 });

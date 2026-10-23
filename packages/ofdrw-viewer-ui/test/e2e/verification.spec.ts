@@ -4,7 +4,8 @@
  * 本文件只使用公共阅读器 API 与真实 crypto 夹具，不复制产品实现；所有断言
  * 都落在浏览器 DOM/状态/验证报告上。
  */
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
 import { expect, expectNoPageErrors, test } from './fixtures';
@@ -13,6 +14,10 @@ import { eventCount, FIXTURES, openViewer, viewerUrl } from './support';
 const PASSWORD = 'FixturePass123';
 const CERT_USER = 'fixture-cert-user';
 const ROOT_SUBJECT = 'CN=OFDRW Viewer Crypto Fixtures Root CA';
+/** showcase 样本：外部测试根签发，仓库根不匹配。 */
+const SHOWCASE = '/ofd_pdf_match/ofd-viewer-ui-showcase.ofd';
+/** 验收产物目录。 */
+const ARTIFACTS = resolve(process.cwd(), '../../test/.artifacts/ui-bugfix-20261023/t5');
 
 const CRYPTO_DIR = fileURLToPath(
   new URL('../../../ofdrw-viewer-crypto/test/fixtures/crypto/', import.meta.url),
@@ -36,6 +41,49 @@ async function waitForReport(page: Page): Promise<void> {
     null,
     { timeout: 45_000 },
   );
+}
+
+/** 解析 `rgb()`/`rgba()` 颜色。 */
+function parseCssColor(value: string): [number, number, number] {
+  const match = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(value);
+  if (!match) throw new Error(`无法解析颜色：${value}`);
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+/** WCAG 相对亮度。 */
+function relativeLuminance([r, g, b]: [number, number, number]): number {
+  const linear = [r, g, b].map((channel) => {
+    const value = channel / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
+}
+
+/** 两色对比度。 */
+function contrastRatio(foreground: string, background: string): number {
+  const a = relativeLuminance(parseCssColor(foreground));
+  const b = relativeLuminance(parseCssColor(background));
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
+/** 读取状态徽标的计算色与有效背景色。 */
+async function badgeColors(
+  page: Page,
+  status: string,
+): Promise<{ foreground: string; background: string }> {
+  return page.evaluate((targetStatus) => {
+    const badge = document.querySelector<HTMLElement>(
+      `.ofd-verification-badge[data-status="${targetStatus}"]`,
+    );
+    if (!badge) throw new Error(`找不到状态徽标：${targetStatus}`);
+    let node: HTMLElement | null = badge;
+    let background = 'rgba(0, 0, 0, 0)';
+    while (node && background === 'rgba(0, 0, 0, 0)') {
+      background = getComputedStyle(node).backgroundColor;
+      node = node.parentElement;
+    }
+    return { foreground: getComputedStyle(badge).color, background };
+  }, status);
 }
 
 /** 断言页面、storage 与状态快照里没有凭据。 */
@@ -292,11 +340,13 @@ test('验证面板与印章浮层：完整性/签名/链/时间戳信息完整�
   await expect.poll(() => overall(page)).toBe('valid');
   const report = await page.evaluate(() => window.__viewer!.getVerificationReport()!);
   expect(report.signatures).toHaveLength(1);
+  expect(report.integrity).toBeNull();
   expect(report.signatures[0]!.timestamp.status).toBe('parsed-not-verified');
 
   const summary = page.locator('.ofd-signature-summary-item').first();
   await expect(summary).toBeVisible();
   await expect(summary.locator('.ofd-signature-badge')).toHaveText('验证有效');
+  await expect(summary.locator('.ofd-signature-badge')).toHaveAttribute('data-status', 'valid');
   const overlay = page.locator('.ofd-signature-box[data-signature-id]').first();
   await expect(overlay).toBeVisible();
   await expect(overlay).toHaveAttribute('aria-label', /验证有效/);
@@ -307,6 +357,15 @@ test('验证面板与印章浮层：完整性/签名/链/时间戳信息完整�
   await expect(popover).toBeVisible();
   await expect(popover).toContainText('有效');
   await expect(popover).toContainText('已解析，未验证');
+  await expect(popover).toContainText('生成时间（UTC+8）');
+  await expect(popover.locator('dt', { hasText: 'TSA' })).toBeVisible();
+  await expect(popover.locator('dt', { hasText: '序列号' })).toBeVisible();
+  await expect(popover).not.toContainText('genTime');
+  const popoverSeal = popover.locator('.ofd-signature-popover__seal img');
+  await expect(popoverSeal).toBeVisible();
+  await expect
+    .poll(() => popoverSeal.evaluate((element: HTMLImageElement) => element.naturalWidth))
+    .toBeGreaterThan(0);
   await expect(popover.locator('dt', { hasText: '证书链' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(popover).toBeHidden();
@@ -322,12 +381,21 @@ test('验证面板与印章浮层：完整性/签名/链/时间戳信息完整�
     await expect(panel).toContainText(text);
   }
   await expect(panel).toContainText('已解析，未验证');
-  await expect(panel).toContainText('genTime');
+  // 无防夹带完整性（report.integrity===null）：整块隐藏，而不是显示空卡片。
+  await expect(panel.locator('.ofd-verification-integrity')).toHaveCount(0);
+  await expect(panel).toContainText('生成时间（UTC+8）');
   await expect(panel).toContainText('TSA');
+  await expect(panel).toContainText('序列号');
   await expect(panel.locator('.ofd-verification-timestamp')).toHaveAttribute(
     'data-status',
     'parsed-not-verified',
   );
+  const timestampText = await panel.locator('.ofd-verification-timestamp').first().textContent();
+  expect(timestampText).toMatch(/生成时间（UTC\+8）：\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/);
+  expect(timestampText).toContain('不参与总体状态');
+  expect(timestampText).not.toContain('genTime');
+  await expect(panel).not.toContainText('是否加密');
+  await expect(panel).not.toContainText('是否已解密');
   const panelText = await panel.textContent();
   expect(panelText).not.toMatch(/时间戳验证通过|时间戳有效/);
   await expectNoPageErrors(page, issues);
@@ -507,4 +575,141 @@ test('凭据弹窗：口令与私钥字段必须具有程序化可访问名称',
   const certificateFields = await unnamedFields();
 
   expect([...passwordFields, ...certificateFields]).toEqual([]);
+});
+
+test('showcase：overall=unknown 可解释，印章图片/时间戳具体，隐藏无关区块', async ({
+  page,
+  issues,
+}) => {
+  test.setTimeout(180_000);
+  mkdirSync(ARTIFACTS, { recursive: true });
+  await openViewer(page, SHOWCASE, { waitForRender: false });
+  await page.waitForFunction(() => window.__viewer!.getVerificationReport() !== undefined, null, {
+    timeout: 120_000,
+  });
+  const report = await page.evaluate(() => window.__viewer!.getVerificationReport()!);
+  expect(report.overall).toBe('unknown');
+  expect(report.rootsConfigured).toBe(false);
+  expect(report.package.encrypted).toBe(false);
+  expect(report.integrity).not.toBeNull();
+  expect(report.integrity?.status).toBe('unknown');
+  expect(report.integrity?.fileListCount).toBe(18);
+  expect(report.signatures.length).toBeGreaterThan(0);
+  expect(report.signatures.every((signature) => signature.certificate.status === 'unknown')).toBe(
+    true,
+  );
+  expect(report.signatures.some((signature) => signature.signature.status === 'valid')).toBe(true);
+  expect(report.signatures.some((signature) => signature.dataHash.status === 'valid')).toBe(true);
+
+  await page.locator('[data-ofd-control="verification"]').click();
+  const panel = page.locator('.ofd-verification-panel');
+  await expect(panel).toBeVisible();
+  await expect(panel.locator('.ofd-verification-badge[data-status="unknown"]').first()).toContainText(
+    '未知',
+  );
+  await expect(panel).toContainText('未配置与签章链匹配的信任根');
+  await expect(panel).toContainText('数学签名有效');
+  await expect(panel).toContainText('dataHash有效');
+  await expect(panel).toContainText('签名数学、数据哈希与引用完整性可能为有效');
+  // 明文：加解密行不渲染；完整性存在（report.integrity 非 null）时保留卡片。
+  await expect(panel).not.toContainText('是否加密');
+  await expect(panel).not.toContainText('是否已解密');
+  const integrity = panel.locator('.ofd-verification-integrity');
+  await expect(integrity).toBeVisible();
+  await expect(integrity).toHaveAttribute('data-status', 'unknown');
+  await expect(integrity).toContainText('清单文件数');
+  await expect(integrity).toContainText('18');
+
+  const timestamp = panel
+    .locator('.ofd-verification-timestamp[data-status="parsed-not-verified"]')
+    .first();
+  await expect(timestamp).toContainText('生成时间（UTC+8）：2026-10-23 15:59:26');
+  await expect(timestamp).toContainText('TSA：');
+  await expect(timestamp).toContainText('序列号：01a167c59e2f');
+  await expect(timestamp).toContainText('不参与总体状态');
+  await expect(timestamp).not.toContainText('genTime');
+
+  const sealImage = panel.locator('.ofd-verification-signature__seal img').first();
+  await expect(sealImage).toBeVisible();
+  await expect(sealImage).toHaveAttribute('alt', /印章图片：.+/);
+  await expect
+    .poll(() => sealImage.evaluate((element: HTMLImageElement) => element.naturalWidth), {
+      timeout: 20_000,
+    })
+    .toBeGreaterThan(0);
+  // 等浏览器完成解码，避免截图时只拿到布局占位而没有像素。
+  await sealImage.evaluate(async (element) => {
+    await (element as HTMLImageElement).decode();
+  });
+  await expect
+    .poll(() => panel.locator('.ofd-verification-signature__seal img').count())
+    .toBeGreaterThan(0);
+
+  await page.screenshot({
+    path: resolve(ARTIFACTS, 'showcase-verification-unknown.png'),
+    fullPage: false,
+  });
+  // 滚动到时间戳/印章区域，截图同时覆盖具体 UTC+8 时间与真实印章图片。
+  await sealImage.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: resolve(ARTIFACTS, 'showcase-verification-timestamp-seal.png'),
+    fullPage: false,
+  });
+  await expectNoPageErrors(page, issues);
+});
+
+test('验证结果配色：light/dark 的 valid/unknown/invalid 以颜色+文字区分且对比度 ≥4.5', async ({
+  page,
+  issues,
+}) => {
+  test.setTimeout(180_000);
+  mkdirSync(ARTIFACTS, { recursive: true });
+
+  await openViewer(page, FIXTURES.cryptoSigned, {
+    rootCertificate: FIXTURES.cryptoRoot,
+    waitForRender: false,
+  });
+  await expect.poll(() => overall(page)).toBe('valid');
+  await page.locator('[data-ofd-control="verification"]').click();
+  const validBadge = page.locator('.ofd-verification-badge[data-status="valid"]').first();
+  await expect(validBadge).toContainText('有效');
+  const lightValid = await badgeColors(page, 'valid');
+  await page.screenshot({ path: resolve(ARTIFACTS, 'verification-colors-light-valid.png') });
+
+  // dark：同一状态在暗色主题下重新计算前景/背景对比度。
+  await page.evaluate(() => window.__viewer!.setTheme('dark'));
+  await expect(page.locator('.ofd-viewer')).toHaveAttribute('data-theme', 'dark');
+  const darkValid = await badgeColors(page, 'valid');
+  expect(contrastRatio(lightValid.foreground, lightValid.background)).toBeGreaterThanOrEqual(4.5);
+  expect(contrastRatio(darkValid.foreground, darkValid.background)).toBeGreaterThanOrEqual(4.5);
+  expect(lightValid.foreground).not.toBe(darkValid.foreground);
+  await page.screenshot({ path: resolve(ARTIFACTS, 'verification-colors-dark-valid.png') });
+
+  // unknown：明文签章、无信任根。
+  await openViewer(page, FIXTURES.cryptoSigned, { waitForRender: false });
+  await expect.poll(() => overall(page)).toBe('unknown');
+  await page.locator('[data-ofd-control="verification"]').click();
+  const unknownBadge = page.locator('.ofd-verification-badge[data-status="unknown"]').first();
+  await expect(unknownBadge).toContainText('未知');
+  const unknown = await badgeColors(page, 'unknown');
+  expect(contrastRatio(unknown.foreground, unknown.background)).toBeGreaterThanOrEqual(4.5);
+  expect(unknown.foreground).not.toBe(lightValid.foreground);
+
+  // invalid：showcase 配置仓库根（签发根不匹配）→ CHAIN_SIGNATURE_INVALID。
+  await openViewer(page, SHOWCASE, {
+    rootCertificate: FIXTURES.cryptoRoot,
+    waitForRender: false,
+  });
+  await expect.poll(() => overall(page), { timeout: 120_000 }).toBe('invalid');
+  await page.locator('[data-ofd-control="verification"]').click();
+  const invalidBadge = page.locator('.ofd-verification-badge[data-status="invalid"]').first();
+  await expect(invalidBadge).toContainText('无效');
+  await expect(page.locator('.ofd-verification-guidance')).toContainText(
+    '当前信任根与签章链不匹配',
+  );
+  const invalid = await badgeColors(page, 'invalid');
+  expect(contrastRatio(invalid.foreground, invalid.background)).toBeGreaterThanOrEqual(4.5);
+  expect(invalid.foreground).not.toBe(unknown.foreground);
+  await page.screenshot({ path: resolve(ARTIFACTS, 'verification-colors-invalid-root.png') });
+  await expectNoPageErrors(page, issues);
 });
