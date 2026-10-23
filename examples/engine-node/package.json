@@ -1,0 +1,16 @@
+{
+  "name": "ofdrw-viewer-example-engine-node",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "node render.mjs",
+    "start": "node render.mjs"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.13",
+    "@ofdrw/ofdrw-viewer-engine": "^0.1.0"
+  }
+}

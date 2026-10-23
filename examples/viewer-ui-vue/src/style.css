@@ -1,0 +1,183 @@
+/* 示例页面布局：根容器必须撑满视口，阅读器才能获得确定高度。 */
+:root {
+  color-scheme: light;
+  font-family:
+    'PingFang SC', 'Microsoft YaHei', 'Segoe UI', system-ui, -apple-system,
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #eef1f5;
+  color: #1f2937;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100vh;
+  height: 100dvh;
+  padding: 12px;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 10px 14px;
+  background: #ffffff;
+  border: 1px solid #dbe1e8;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 6%);
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.brand-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.brand-sub {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.file-input {
+  display: none;
+}
+
+.button {
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: #1f2937;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+
+.button:disabled {
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
+.button-primary {
+  color: #ffffff;
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+.button-primary:hover:not(:disabled) {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+}
+
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  font-size: 13px;
+  color: #4b5563;
+}
+
+.viewer-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #6b7280;
+}
+
+.viewer-state::before {
+  width: 7px;
+  height: 7px;
+  content: '';
+  background: #d1d5db;
+  border-radius: 50%;
+}
+
+.viewer-state.ready::before {
+  background: #16a34a;
+}
+
+.file-name {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-info {
+  font-variant-numeric: tabular-nums;
+}
+
+.error {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+}
+
+.viewer-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #ffffff;
+  border: 1px solid #dbe1e8;
+  border-radius: 10px;
+}
+
+.placeholder {
+  display: grid;
+  height: 100%;
+  margin: 0;
+  font-size: 14px;
+  color: #6b7280;
+  place-items: center;
+}
+
+@media (max-width: 640px) {
+  .app {
+    padding: 8px;
+  }
+
+  .status {
+    width: 100%;
+    margin-left: 0;
+  }
+}

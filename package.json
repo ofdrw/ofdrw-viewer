@@ -21,7 +21,11 @@
     "cli:build": "pnpm -C packages/ofdrw-viewer-cli build",
     "cli:build:sea": "pnpm -C packages/ofdrw-viewer-cli build:sea",
     "cli:package:sea": "pnpm -C packages/ofdrw-viewer-cli package:sea",
-    "demo:web": "pnpm -C examples/web run dev"
+    "demo:h5": "node scripts/serve-examples.mjs",
+    "demo:web": "node scripts/serve-examples.mjs",
+    "demo:node": "pnpm -C examples/engine-node dev",
+    "demo:vue": "pnpm -C examples/viewer-ui-vue dev",
+    "demo:react": "pnpm -C examples/viewer-ui-react dev"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
