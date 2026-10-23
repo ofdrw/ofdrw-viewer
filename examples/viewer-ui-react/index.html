@@ -3,7 +3,52 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OFD Viewer React 接入示例</title>
+    <title>OFD 阅读器 · React 19 最小接入示例</title>
+    <style>
+      html,
+      body,
+      #root {
+        height: 100%;
+        margin: 0;
+      }
+      /* 阅读器需要确定高度：顶部工具条固定，主体占满剩余空间。 */
+      .app {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+      }
+      .app header {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 10px 16px;
+        border-bottom: 1px solid #dbe3ee;
+        background: #fff;
+      }
+      .open {
+        padding: 6px 12px;
+        border: 1px solid #c7d2e0;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .open input {
+        display: none;
+      }
+      .app main {
+        flex: 1;
+        min-height: 0;
+      }
+      .viewer {
+        height: 100%;
+      }
+      .loading,
+      .error {
+        padding: 12px 16px;
+      }
+      .error {
+        color: #b91c1c;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

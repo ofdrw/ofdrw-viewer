@@ -3,137 +3,105 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OFD 单页渲染示例 · engine-h5</title>
-    <link rel="stylesheet" href="./style.css" />
-    <!-- 引擎 CDN 产物：IIFE，挂载 globalThis.OFDRWViewer，无需模块加载器。 -->
-    <script src="./global.js"></script>
-    <script type="module" src="./app.js"></script>
+    <title>OFD 渲染示例 · engine-h5</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+        color: #1f2937;
+        background: #eef2f7;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      header {
+        width: 100%;
+        padding: 14px 20px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        background: #fff;
+        border-bottom: 1px solid #dbe3ee;
+      }
+      h1 {
+        margin: 0 12px 0 0;
+        font-size: 16px;
+        font-weight: 600;
+      }
+      button,
+      .file-label {
+        padding: 7px 14px;
+        border: 1px solid #c7d2e0;
+        border-radius: 8px;
+        background: #fff;
+        font: inherit;
+        cursor: pointer;
+      }
+      button:hover:not(:disabled),
+      .file-label:hover {
+        border-color: #2563eb;
+        color: #2563eb;
+      }
+      button:disabled {
+        color: #9aa7b8;
+        cursor: not-allowed;
+      }
+      .file-label input {
+        display: none;
+      }
+      #page-label {
+        min-width: 68px;
+        text-align: center;
+        font-variant-numeric: tabular-nums;
+      }
+      main {
+        width: 100%;
+        max-width: 900px;
+        padding: 24px 20px 48px;
+      }
+      #hint {
+        min-height: 24px;
+        margin: 0 0 12px;
+        color: #64748b;
+        font-size: 14px;
+      }
+      #canvas {
+        display: block;
+        width: 100%;
+        height: auto;
+        background: #fff;
+        border-radius: 4px;
+        box-shadow: 0 8px 30px rgb(15 23 42 / 12%);
+      }
+    </style>
   </head>
   <body>
-    <main class="page">
-      <header class="hero">
-        <p class="eyebrow">@ofdrw/ofdrw-viewer-engine · 纯静态示例</p>
-        <h1>OFD 单页渲染</h1>
-        <p class="lede">
-          预置 global.js + 原生 ES Module，无打包、无包管理；选择本地文件或直接打开内置样例。
-        </p>
-      </header>
+    <header>
+      <h1>OFD 渲染示例</h1>
+      <label class="file-label">
+        打开 OFD
+        <input id="file-input" type="file" accept=".ofd,application/ofd" />
+      </label>
+      <button id="prev" type="button" disabled>上一页</button>
+      <span id="page-label">— / —</span>
+      <button id="next" type="button" disabled>下一页</button>
+    </header>
 
-      <section class="panel toolbar" aria-label="文档与翻页控制">
-        <div class="toolbar-group">
-          <label id="file-label" class="button button--primary" for="file-input">选择 OFD 文件</label>
-          <input
-            id="file-input"
-            class="visually-hidden"
-            type="file"
-            accept=".ofd,application/octet-stream"
-          />
-          <button
-            class="button"
-            type="button"
-            data-sample="samples/doc1File.ofd"
-            data-name="doc1File.ofd"
-          >
-            样例 doc1File.ofd · 11 页
-          </button>
-          <button
-            class="button"
-            type="button"
-            data-sample="samples/dense-text-perf.ofd"
-            data-name="dense-text-perf.ofd"
-          >
-            样例 dense-text-perf.ofd · 2 页
-          </button>
-        </div>
-
-        <div class="toolbar-group toolbar-group--pager">
-          <button id="prev-button" class="button" type="button" disabled>上一页</button>
-          <label class="page-jump">
-            <span>第</span>
-            <input
-              id="page-input"
-              type="number"
-              min="1"
-              value="1"
-              inputmode="numeric"
-              aria-label="页码"
-              disabled
-            />
-            <span id="page-total">/ — 页</span>
-          </label>
-          <button id="go-button" class="button" type="button" disabled>跳转</button>
-          <button id="next-button" class="button" type="button" disabled>下一页</button>
-          <label class="dpi-picker">
-            <span>DPI</span>
-            <select id="dpi-select" disabled>
-              <option value="96">96</option>
-              <option value="144">144</option>
-              <option value="216">216</option>
-            </select>
-          </label>
-        </div>
-      </section>
-
-      <section class="panel status" aria-label="文档状态">
-        <div class="status-head">
-          <h2>状态</h2>
-          <p id="status-note" class="status-note" role="status">正在初始化…</p>
-        </div>
-        <dl class="status-grid">
-          <div class="status-item">
-            <dt>文件名</dt>
-            <dd id="status-file">—</dd>
-          </div>
-          <div class="status-item">
-            <dt>页数</dt>
-            <dd id="status-pages">—</dd>
-          </div>
-          <div class="status-item">
-            <dt>当前页</dt>
-            <dd id="status-current">—</dd>
-          </div>
-          <div class="status-item">
-            <dt>画布像素</dt>
-            <dd id="status-canvas">—</dd>
-          </div>
-          <div class="status-item">
-            <dt>渲染耗时</dt>
-            <dd id="status-time">—</dd>
-          </div>
-          <div class="status-item">
-            <dt>输出 DPI</dt>
-            <dd id="status-dpi">96</dd>
-          </div>
-        </dl>
-      </section>
-
-      <section id="error-panel" class="message message--error" role="alert" hidden>
-        <div class="message-head">
-          <h2>错误</h2>
-          <span id="error-kind" class="badge badge--error">—</span>
-        </div>
-        <p id="error-code" class="message-code">—</p>
-        <p id="error-message" class="message-body">—</p>
-      </section>
-
-      <section class="stage-wrap" aria-label="页面预览">
-        <div class="stage">
-          <p id="stage-empty" class="stage-empty">尚未打开文档</p>
-          <canvas id="ofd-canvas" aria-label="OFD 当前页渲染结果" hidden></canvas>
-        </div>
-      </section>
-
-      <section class="panel warnings" aria-label="渲染警告">
-        <div class="warnings-head">
-          <h2>
-            Warning
-            <span id="warning-count" class="badge">0</span>
-          </h2>
-          <p class="hint">warning 不中断渲染；同一 code/页面/对象由引擎去重后上报。</p>
-        </div>
-        <p id="warning-empty" class="hint">暂无 warning。</p>
-        <ul id="warning-list" class="warning-list"></ul>
-      </section>
+    <main>
+      <p id="hint">正在加载样例…</p>
+      <canvas id="canvas"></canvas>
     </main>
+
+    <!-- 引擎 CDN 产物：IIFE，挂载 globalThis.OFDRWViewer -->
+    <script src="./ofdrw-viewer-engine.min.js"></script>
+    <script type="module" src="./app.js"></script>
   </body>
 </html>
