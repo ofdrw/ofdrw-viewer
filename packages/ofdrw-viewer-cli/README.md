@@ -5,6 +5,13 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](../../LICENSE)
 [![Node.js >= 22](https://img.shields.io/badge/node-%3E%3D22-green)](https://nodejs.org/)
 
+[![Linux x86_64](https://img.shields.io/badge/Linux-x86__64-FCC624?logo=linux&logoColor=black)](https://github.com/ofdrw/ofdrw-viewer/releases)
+[![Linux ARM64](https://img.shields.io/badge/Linux-ARM64-FCC624?logo=linux&logoColor=black)](https://github.com/ofdrw/ofdrw-viewer/releases)
+[![macOS x86_64](https://img.shields.io/badge/macOS-x86__64-000000?logo=apple&logoColor=white)](https://github.com/ofdrw/ofdrw-viewer/releases)
+[![macOS ARM64](https://img.shields.io/badge/macOS-ARM64-000000?logo=apple&logoColor=white)](https://github.com/ofdrw/ofdrw-viewer/releases)
+[![Windows x86_64](https://img.shields.io/badge/Windows-x86__64-0078D4?logo=windows&logoColor=white)](https://github.com/ofdrw/ofdrw-viewer/releases)
+[![Windows ARM64](https://img.shields.io/badge/Windows-ARM64-0078D4?logo=windows&logoColor=white)](https://github.com/ofdrw/ofdrw-viewer/releases)
+
 ## ✨ 功能概述
 
 **ofdrw-viewer-cli** 面向终端与自动化场景，将 OFD 文档转换为 **PNG / JPEG / WebP** 图片，支持**加密文档转换**、**文档信息查询**与**签名/完整性验证**，还可按需导出**页面文字空间坐标**，便于脚本与智能体处理 OFD 文档。
