@@ -4,7 +4,7 @@
  * 本文件只使用公共阅读器 API 与真实 crypto 夹具，不复制产品实现；所有断言
  * 都落在浏览器 DOM/状态/验证报告上。
  */
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
@@ -83,6 +83,28 @@ async function badgeColors(
       node = node.parentElement;
     }
     return { foreground: getComputedStyle(badge).color, background };
+  }, status);
+}
+
+/** 读取签章浮层状态徽标的计算色；背景取浮层自身表面色。 */
+async function popoverBadgeColors(
+  page: Page,
+  status: string,
+): Promise<{ text: string; foreground: string; borderColor: string; background: string }> {
+  return page.evaluate((targetStatus) => {
+    const popover = document.querySelector<HTMLElement>('.ofd-signature-popover');
+    if (!popover) throw new Error('找不到签章浮层');
+    const badge = popover.querySelector<HTMLElement>(
+      `.ofd-signature-badge[data-status="${targetStatus}"]`,
+    );
+    if (!badge) throw new Error(`找不到浮层状态徽标：${targetStatus}`);
+    const style = getComputedStyle(badge);
+    return {
+      text: (badge.textContent ?? '').trim(),
+      foreground: style.color,
+      borderColor: style.borderColor,
+      background: getComputedStyle(popover).backgroundColor,
+    };
   }, status);
 }
 
@@ -711,5 +733,96 @@ test('验证结果配色：light/dark 的 valid/unknown/invalid 以颜色+文字
   expect(contrastRatio(invalid.foreground, invalid.background)).toBeGreaterThanOrEqual(4.5);
   expect(invalid.foreground).not.toBe(unknown.foreground);
   await page.screenshot({ path: resolve(ARTIFACTS, 'verification-colors-invalid-root.png') });
+  await expectNoPageErrors(page, issues);
+});
+
+test('签章浮层状态徽标：valid/unknown/invalid 在 light/dark 有颜色+文字且对比度 ≥4.5', async ({
+  page,
+  issues,
+}) => {
+  test.setTimeout(240_000);
+  const artifacts = resolve(
+    process.cwd(),
+    '../../test/.artifacts/ui-bugfix-20261023/t21',
+  );
+  mkdirSync(artifacts, { recursive: true });
+  const cases = [
+    {
+      status: 'valid',
+      label: '有效',
+      open: () =>
+        openViewer(page, FIXTURES.cryptoSigned, {
+          rootCertificate: FIXTURES.cryptoRoot,
+          waitForRender: false,
+        }),
+    },
+    {
+      status: 'unknown',
+      label: '未知',
+      open: () => openViewer(page, FIXTURES.cryptoSigned, { waitForRender: false }),
+    },
+    {
+      status: 'invalid',
+      label: '无效',
+      open: () =>
+        openViewer(page, SHOWCASE, {
+          rootCertificate: FIXTURES.cryptoRoot,
+          waitForRender: false,
+        }),
+    },
+  ] as const;
+  const lightForegrounds: string[] = [];
+  const darkForegrounds: string[] = [];
+  const colorRecords: Array<{
+    status: string;
+    light: Record<string, string>;
+    dark: Record<string, string>;
+  }> = [];
+
+  for (const item of cases) {
+    await item.open();
+    await expect.poll(() => overall(page), { timeout: 120_000 }).toBe(item.status);
+    const overlay = page.locator('.ofd-signature-box[data-signature-id]').first();
+    await expect(overlay).toBeVisible();
+    await overlay.click();
+    const popover = page.locator('.ofd-signature-popover');
+    await expect(popover).toBeVisible();
+    const badge = popover.locator('.ofd-signature-badge');
+    await expect(badge).toHaveAttribute('data-status', item.status);
+    await expect(badge).toHaveText(item.label);
+
+    const light = await popoverBadgeColors(page, item.status);
+    expect(light.text).toBe(item.label);
+    expect(light.borderColor).toBe(light.foreground);
+    expect(contrastRatio(light.foreground, light.background)).toBeGreaterThanOrEqual(4.5);
+    lightForegrounds.push(light.foreground);
+    await page.screenshot({
+      path: resolve(artifacts, `popover-${item.status}-light.png`),
+      fullPage: false,
+    });
+
+    await page.evaluate(() => window.__viewer!.setTheme('dark'));
+    await expect(page.locator('.ofd-viewer')).toHaveAttribute('data-theme', 'dark');
+    const dark = await popoverBadgeColors(page, item.status);
+    expect(dark.text).toBe(item.label);
+    expect(dark.borderColor).toBe(dark.foreground);
+    expect(contrastRatio(dark.foreground, dark.background)).toBeGreaterThanOrEqual(4.5);
+    expect(dark.foreground).not.toBe(light.foreground);
+    darkForegrounds.push(dark.foreground);
+    colorRecords.push({ status: item.status, light, dark });
+    await page.screenshot({
+      path: resolve(artifacts, `popover-${item.status}-dark.png`),
+      fullPage: false,
+    });
+    await page.keyboard.press('Escape');
+    await expect(popover).toBeHidden();
+  }
+
+  expect(new Set(lightForegrounds).size).toBe(3);
+  expect(new Set(darkForegrounds).size).toBe(3);
+  writeFileSync(
+    resolve(artifacts, 'popover-badge-colors.json'),
+    JSON.stringify(colorRecords, null, 2),
+  );
   await expectNoPageErrors(page, issues);
 });

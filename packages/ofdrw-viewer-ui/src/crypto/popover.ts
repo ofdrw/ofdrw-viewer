@@ -21,7 +21,7 @@ export interface SignaturePopoverOptions {
   readonly document: Document;
   /** 锚点：签章覆盖层按钮。 */
   readonly anchor: HTMLElement;
-  /** 浮层挂载容器（通常为签章层）。 */
+  /** 锚点所在容器；浮层优先 portal 到最近的 `.ofd-viewer` 根。 */
   readonly container: HTMLElement;
   /** 签名验证结果。 */
   readonly signature: SignatureVerification;
@@ -69,7 +69,12 @@ export function openSignaturePopover(
   closeButton.dataset.ofdControl = 'signature-popover-close';
   closeButton.setAttribute('aria-label', text.close);
   closeButton.textContent = '×';
-  header.append(title, closeButton);
+  // 复用签章列表/详情的彩色徽标，浮层状态不只靠正文文字区分。
+  const badge = doc.createElement('span');
+  badge.className = 'ofd-signature-badge';
+  badge.dataset.status = signature.status;
+  badge.textContent = statusText(signature.status, text);
+  header.append(title, badge, closeButton);
 
   const body = doc.createElement('dl');
   body.className = 'ofd-signature-popover__pairs';
@@ -115,6 +120,7 @@ export function openSignaturePopover(
   full.dataset.ofdControl = 'signature-popover-full';
   full.textContent = text.fullPanel;
 
+  let sealBox: HTMLElement | null = null;
   const sealImageHandle: SealImageHandle | null = options.sealImage
     ? createSealImageElement(doc, options.sealImage, {
         label:
@@ -125,7 +131,7 @@ export function openSignaturePopover(
       })
     : null;
   if (sealImageHandle) {
-    const sealBox = doc.createElement('div');
+    sealBox = doc.createElement('div');
     sealBox.className = 'ofd-signature-popover__seal';
     sealBox.dataset.ofdControl = 'signature-popover-seal-image';
     sealBox.appendChild(sealImageHandle.element);
@@ -133,14 +139,114 @@ export function openSignaturePopover(
   } else {
     popover.append(header, body, full);
   }
-  container.appendChild(popover);
 
-  // 以覆盖层按钮的当前样式定位；覆盖层使用绝对定位（mm→px 已由签章服务计算）。
-  const left = Number.parseFloat(anchor.style.left) || 0;
-  const top = Number.parseFloat(anchor.style.top) || 0;
-  const height = Number.parseFloat(anchor.style.height) || anchor.offsetHeight;
-  popover.style.left = `${Math.max(0, left)}px`;
-  popover.style.top = `${top + height + 4}px`;
+  // 浮层必须脱离页面栈：签章按钮位于页面的 signature-layer 内，后续页会
+  // 覆盖浮层，阅读器滚动容器也会裁切它。portal 到 .ofd-viewer 根后使用
+  // fixed 定位，坐标始终取覆盖层按钮的视口矩形。
+  const portalRoot = anchor.closest<HTMLElement>('.ofd-viewer') ?? container;
+  popover.style.position = 'fixed';
+  popover.style.zIndex = '35';
+  popover.style.display = 'flex';
+  popover.style.flexDirection = 'column';
+  popover.style.boxSizing = 'border-box';
+  popover.style.overflow = 'hidden';
+  popover.style.left = '0px';
+  popover.style.top = '0px';
+  popover.style.visibility = 'hidden';
+
+  // 标题与完整面板按钮固定，只有内容区滚动，避免小视口下按钮被滚出可视区。
+  header.style.flex = '0 0 auto';
+  full.style.flex = '0 0 auto';
+  if (sealBox) sealBox.style.flex = '0 0 auto';
+  body.style.flex = '1 1 auto';
+  body.style.minHeight = '0';
+  body.style.overflowY = 'auto';
+
+  const margin = 8;
+  const view = doc.defaultView;
+  const positionPopover = (): void => {
+    const main = portalRoot.querySelector<HTMLElement>('.ofd-viewer__main');
+    const mainRect = main?.getBoundingClientRect();
+    const hasMain = mainRect !== undefined && mainRect.width > 0 && mainRect.height > 0;
+    const bounds = hasMain
+      ? {
+          left: mainRect.left,
+          top: mainRect.top,
+          right: mainRect.right,
+          bottom: mainRect.bottom,
+        }
+      : {
+          left: 0,
+          top: 0,
+          right: view?.innerWidth ?? 1024,
+          bottom: view?.innerHeight ?? 768,
+        };
+    const availableWidth = Math.max(1, bounds.right - bounds.left - margin * 2);
+    const width = Math.min(320, availableWidth);
+    popover.style.width = `${width}px`;
+    const mainMaxHeight = Math.max(120, bounds.bottom - bounds.top - margin * 2);
+    popover.style.maxHeight = `${mainMaxHeight}px`;
+
+    const anchorRect = anchor.getBoundingClientRect();
+    const height = popover.getBoundingClientRect().height;
+    const topLimit = bounds.top + margin;
+    const bottomLimit = bounds.bottom - margin;
+    const rightLimit = bounds.right - margin;
+    let left = anchorRect.left;
+    left = Math.max(bounds.left + margin, Math.min(left, rightLimit - width));
+
+    const gap = 4;
+    const below = anchorRect.bottom + gap;
+    const above = anchorRect.top - gap;
+    let top: number;
+    if (below + height <= bottomLimit) {
+      top = below;
+    } else if (above - height >= topLimit) {
+      top = above - height;
+    } else {
+      // 上下都放不下时优先并排到锚点右侧，再尝试左侧；这样全部字段
+      // 仍可读，完整面板按钮也不会被裁切。
+      const sideTop = Math.max(topLimit, Math.min(anchorRect.top, bottomLimit - height));
+      const rightLeft = anchorRect.right + gap;
+      const leftLeft = anchorRect.left - gap - width;
+      if (rightLeft + width <= rightLimit) {
+        left = rightLeft;
+        top = sideTop;
+      } else if (leftLeft >= bounds.left + margin) {
+        left = leftLeft;
+        top = sideTop;
+      } else {
+        // 极窄视口没有并排空间时，把浮层整体夹在阅读器可视区内；
+        // max-height 由上方统一下发，内容区自行滚动。
+        top = Math.max(topLimit, Math.min(anchorRect.top, bottomLimit - height));
+      }
+    }
+    top = Math.max(topLimit, Math.min(top, bottomLimit - height));
+    popover.style.left = `${Math.round(left)}px`;
+    popover.style.top = `${Math.round(top)}px`;
+  };
+
+  const onScroll = (event: Event): void => {
+    if (event.target instanceof Node && popover.contains(event.target)) return;
+    positionPopover();
+  };
+
+  // 印章图片加载后浮层高度会变化；重新定位，避免底部字段或完整面板按钮
+  // 越过阅读器可视区。ResizeObserver 在无布局的测试 DOM 中可能不存在。
+  const resizeObserver =
+    typeof ResizeObserver === 'function'
+      ? new ResizeObserver(() => {
+          if (popover.isConnected) positionPopover();
+        })
+      : null;
+  resizeObserver?.observe(popover);
+  const mainElement = portalRoot.querySelector<HTMLElement>('.ofd-viewer__main');
+  if (mainElement) resizeObserver?.observe(mainElement);
+  sealImageHandle?.element.addEventListener('load', positionPopover, true);
+
+  portalRoot.appendChild(popover);
+  positionPopover();
+  popover.style.visibility = '';
 
   let closed = false;
   const close = (restoreFocus = true): void => {
@@ -151,7 +257,20 @@ export function openSignaturePopover(
     anchor.setAttribute('aria-expanded', 'false');
     doc.removeEventListener('pointerdown', onOutside, true);
     doc.removeEventListener('keydown', onKeydown, true);
-    if (restoreFocus) anchor.focus();
+    doc.removeEventListener('scroll', onScroll, true);
+    view?.removeEventListener('resize', positionPopover);
+    resizeObserver?.disconnect();
+    sealImageHandle?.element.removeEventListener('load', positionPopover, true);
+    if (restoreFocus) {
+      anchor.focus();
+      // 点外关闭时浏览器随后可能把焦点交给被点击元素；下一帧再确认焦点
+      // 回到锚点，但若锚点已重新打开浮层则不要抢焦点。
+      view?.requestAnimationFrame(() => {
+        if (!popover.isConnected && anchor.getAttribute('aria-expanded') !== 'true') {
+          anchor.focus();
+        }
+      });
+    }
   };
   const onOutside = (event: Event): void => {
     if (event.target instanceof Node && popover.contains(event.target)) return;
@@ -171,6 +290,8 @@ export function openSignaturePopover(
   });
   doc.addEventListener('pointerdown', onOutside, true);
   doc.addEventListener('keydown', onKeydown, true);
+  doc.addEventListener('scroll', onScroll, true);
+  view?.addEventListener('resize', positionPopover);
   anchor.setAttribute('aria-expanded', 'true');
   closeButton.focus();
 
