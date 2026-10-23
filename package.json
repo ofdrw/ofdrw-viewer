@@ -20,10 +20,7 @@
     "cli:test:acceptance": "pnpm -C packages/ofdrw-viewer-cli test:acceptance",
     "cli:build": "pnpm -C packages/ofdrw-viewer-cli build",
     "cli:build:sea": "pnpm -C packages/ofdrw-viewer-cli build:sea",
-    "cli:package:sea": "pnpm -C packages/ofdrw-viewer-cli package:sea",
-    "demo:node": "pnpm -C examples/engine-node dev",
-    "demo:vue": "pnpm -C examples/viewer-ui-vue dev",
-    "demo:react": "pnpm -C examples/viewer-ui-react dev"
+    "cli:package:sea": "pnpm -C packages/ofdrw-viewer-cli package:sea"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

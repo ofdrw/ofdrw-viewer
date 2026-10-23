@@ -1,37 +1,33 @@
 # OFD 接入示例
 
-四个最小示例，按使用场景选择：
+四个**独立示例**，不属于根仓库 workspace，也不使用 pnpm。每个示例只通过 npm 依赖引用
+`@ofdrw/ofdrw-viewer-*`，像普通使用者一样运行。
 
 | 示例 | 说明 | 运行 |
 | --- | --- | --- |
-| [engine-h5](engine-h5/) | 纯静态页面，预置引擎 `ofdrw-viewer-engine.min.js`，无包管理 | 用任意静态服务器从仓库根启动，见 [engine-h5/README](engine-h5/README.md) |
+| [engine-h5](engine-h5/) | 纯静态页面，预置引擎压缩包 | `cd examples/engine-h5 && node serve.mjs` → <http://127.0.0.1:5180/> |
 | [engine-node](engine-node/) | Node.js，逐页导出 PNG | `cd examples/engine-node && npm install && npm run dev` |
-| [viewer-ui-vue](viewer-ui-vue/) | Vue 3 + 完整阅读器 UI | `pnpm demo:vue` → <http://127.0.0.1:5181/> |
-| [viewer-ui-react](viewer-ui-react/) | React 19 + 完整阅读器 UI | `pnpm demo:react` → <http://127.0.0.1:5182/> |
+| [viewer-ui-vue](viewer-ui-vue/) | Vue 3 + 完整阅读器 UI | `cd examples/viewer-ui-vue && npm install && npm run dev` → 5181 |
+| [viewer-ui-react](viewer-ui-react/) | React 19 + 完整阅读器 UI | `cd examples/viewer-ui-react && npm install && npm run dev` → 5182 |
 
-## engine-h5
+## 依赖关系
 
-唯一不需要 `npm install` 的示例。`ofdrw-viewer-engine.min.js` 是引擎的 IIFE 压缩产物，
-通过普通 `<script>` 引入：
-
-```html
-<script src="./ofdrw-viewer-engine.min.js"></script>
-<script type="module" src="./app.js"></script>
-```
-
-页面自动打开 `samples/doc1File.ofd`，支持选择本地文件与上一页/下一页。
-
-## 三个 npm 示例
-
-`engine-node`、`viewer-ui-vue`、`viewer-ui-react` 都是独立 npm 工程，依赖按正式发布版本声明：
+三个 npm 工程的 `package.json` 只引用发布版本：
 
 ```json
 "@ofdrw/ofdrw-viewer-engine": "^0.1.0"
 "@ofdrw/ofdrw-viewer-ui": "^0.1.0"
 ```
 
-包尚未发布时，把依赖临时改为 `file:../../packages/...` 即可本地运行，详见各示例 README；
+包尚未发布时，临时改为 `file:../../packages/...` 即可本地安装，详见各示例 README；
 调试结束改回 npm 版本号。
+
+`engine-h5` 没有 `package.json`，引擎以 IIFE 压缩包预置在同目录，通过普通 `<script>` 引入：
+
+```html
+<script src="./ofdrw-viewer-engine.min.js"></script>
+<script type="module" src="./app.js"></script>
+```
 
 ## 样例
 
