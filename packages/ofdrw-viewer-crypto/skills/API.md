@@ -70,6 +70,17 @@ const report = await verifyOfd({
 console.log(report.overall, report.integrity?.status, report.signatures);
 ```
 
+### 1.4 版本查询
+
+```ts
+import { VERSION, getVersion } from '@ofdrw/ofdrw-viewer-crypto';
+
+console.log(VERSION); // 例如 0.1.0
+console.log(getVersion()); // 与 VERSION 相同
+```
+
+版本号内置于产物，不读取 `package.json`；用于日志、CLI `version` 输出与故障排查。
+
 ---
 
 ## 2. 公共输入类型
@@ -81,21 +92,28 @@ export type CryptoSource =
   | { readonly kind: 'arraybuffer'; readonly data: ArrayBuffer | Uint8Array }
   | { readonly kind: 'blob'; readonly blob: Blob }
   | { readonly kind: 'url'; readonly url: string;
-      readonly headers?: Record<string, string> };
+      readonly headers?: Record<string, string> }
+  | { readonly kind: 'byte-source'; readonly source: ByteSource };
 ```
 
 | `kind` | 字段 | 说明 |
 | --- | --- | --- |
 | `arraybuffer` | `data` | 内存字节；不复制输入视图，调用方不得在调用期间修改 |
 | `blob` | `blob` | 浏览器 `Blob`/`File`；Node 22 需全局 `Blob` |
-| `url` | `url`、`headers` | `fetch` 读取；按 `maxSourceBytes` 流式累计，缺 `Content-Length` 也安全 |
+| `url` | `url`、`headers` | `fetch` 读取；按 `maxSourceBytes` 流式累计，缺 `Content-Length` 时依赖 reader |
+| `byte-source` | `source` | engine `ByteSource` 随机读；Node/CLI 处理本地文件首选；**调用方拥有并关闭**，crypto 只读、不 close |
 
-`readCryptoSource(source, { maxBytes, signal })` 是所有入口的底层读取器：
+`ByteSource` 由 engine 导出（`import type { ByteSource } from '@ofdrw/ofdrw-viewer-engine'`），要求 `size` 为非负安全整数（单位 byte）、`read(offset, length)` 返回 `Uint8Array`。
 
-- 支持 `arraybuffer`/`blob`/`url`；
-- `url` 没有 `Content-Length` 时按响应体 reader 分块计数，超限立即 `cancel` 并抛 `CRYPTO_LIMIT_EXCEEDED`；
+`readCryptoSource(source, { maxBytes, signal })` 是把输入源整体读成字节的公共工具：
+
+- 支持 `arraybuffer`/`blob`/`url`/`byte-source`；
+- `url` 没有 `Content-Length` 时按响应体 reader 分块计数，超限立即 `cancel` 并抛 `CRYPTO_LIMIT_EXCEEDED`；无法流式读取且缺少可信 `Content-Length` 时拒绝；
+- `byte-source` 按 `source.size` 预检上限后分块读取（每块 1 MiB），不调用调用方 `close`；
 - 先检查取消信号；读取中取消抛 `CRYPTO_ABORTED`；
-- 不 import `node:*`，Node 文件由调用方读成 `arraybuffer`。
+- 不 import `node:*`，Node 文件由调用方读成 `arraybuffer` 或提供 `byte-source`。
+
+业务入口（`inspect`/`openDecryptingContainer`/`verifyOfd`）优先使用按需容器，不整包调用 `readCryptoSource`；`byte-source` 的所有权与关闭规则见 [12 节](#12-与-engine-的-virtualcontainer-集成)。
 
 ### 2.2 凭据
 
@@ -568,12 +586,13 @@ export interface SealVerification {
 ### 6.1 `parseSeal`
 
 ```ts
-export function parseSeal(data: Uint8Array, options?: SealParseOptions): ParsedSeal;
-
-export interface SealParseOptions extends ParseOptions {
-  readonly maxCertificates?: number; // 默认 maxCertificates
-}
+export function parseSeal(
+  data: Uint8Array,
+  options?: ParseOptions & { readonly maxCertificates?: number },
+): ParsedSeal;
 ```
+
+`options.maxCertificates` 是证书数量上限（单位张，默认 `maxCertificates` = 32）。该选项类型未从包根导出，直接传对象字面量即可。
 
 支持：
 
@@ -1173,6 +1192,13 @@ interface VirtualContainer {
 - `OFDDocument.open({ container })` 中 engine **借用**容器，不关闭；调用方在 `doc.close()` 后自行关闭；
 - `OFDDocument.open` 遇到 `container.encrypted=true` 抛 `OFD_ENCRYPTED`，必须先用 crypto 解密。
 
+`CryptoSource.kind='byte-source'` 的所有权：
+
+- `ByteSource` 归调用方所有，crypto 创建隔离视图时只转发 `size`/`read`/`ready`，**不转发 `close`**；
+- `inspect`/`verifyOfd` 关闭自己打开的容器，但不会关闭调用方 `ByteSource`；
+- `openDecryptingContainer` 对明文包返回 source-backed 容器，关闭该容器也不会关闭原 `ByteSource`；
+- 调用方应在读取/验证/解密结束后自行关闭文件句柄或字节源。
+
 ---
 
 ## 13. 导出索引
@@ -1195,7 +1221,7 @@ interface VirtualContainer {
 
 ### 13.5 工具、错误、warning
 
-`CryptoError`、`isCryptoError`、`toCryptoError`、`CRYPTO_ERROR_CODES`、`CRYPTO_WARNING_CODES`、`DEFAULT_CRYPTO_LIMITS`、`createWarningCollector`、`toUint8Array`、`concatBytes`、`copyBytes`、`bytesEqual`、`constantTimeEqual`、`toHex`、`fromHex`、`toBase64`、`tryFromBase64`、`fromBase64`、`utf8Encode`、`utf8Decode`、`zeroize`、`leftPadBytes`、`sha256`、`sha256Hex`、`looksLikePem`、`parsePemBlocks`、`throwIfAborted`、`requireString`、`requirePositiveInteger`、`requireWithinBytes`、`resolveCryptoLimits`、`resolveCryptoOptions`、`resolveParseOptions`、`resolveSm2UserId`、`readCryptoSource`。
+`CryptoError`、`isCryptoError`、`toCryptoError`、`CRYPTO_ERROR_CODES`、`CRYPTO_WARNING_CODES`、`DEFAULT_CRYPTO_LIMITS`、`createWarningCollector`、`VERSION`、`getVersion`、`toUint8Array`、`concatBytes`、`copyBytes`、`bytesEqual`、`constantTimeEqual`、`toHex`、`fromHex`、`toBase64`、`tryFromBase64`、`fromBase64`、`utf8Encode`、`utf8Decode`、`zeroize`、`leftPadBytes`、`sha256`、`sha256Hex`、`looksLikePem`、`parsePemBlocks`、`throwIfAborted`、`requireString`、`requirePositiveInteger`、`requireWithinBytes`、`resolveCryptoLimits`、`resolveCryptoOptions`、`resolveParseOptions`、`resolveSm2UserId`、`readCryptoSource`。
 
 ### 13.6 OID 常量
 
@@ -1203,7 +1229,7 @@ interface VirtualContainer {
 
 ### 13.7 公共类型索引
 
-`CryptoSource`、`CryptoCredential`、`PasswordCredential`、`PrivateKeyCredential`、`Sm2PrivateKeyInput`、`CertificateDer`、`CertificatesToDerOptions`、`CertificateSummary`、`CertificateKeyUsage`、`CertificateValidity`、`CryptoOptions`、`ParseOptions`、`CryptoLimits`、`CryptoWarning`、`CryptoWarningCode`、`CryptoWarningHandler`、`CryptoErrorCode`、`CryptoErrorOptions`、`OfdInspection`、`EncryptionLayerInfo`、`EncryptionUserInfo`、`SignatureEntrySummary`、`DecryptingContainerResult`、`DecryptionLayerSummary`、`OpenDecryptingContainerOptions`、`VerificationReport`、`PackageVerificationInfo`、`DecryptionReportInfo`、`IntegrityVerification`、`SignatureVerification`、`SealVerification`、`CertificateChainVerification`、`DataHashVerification`、`ReferenceCheckResult`、`ReferenceFailure`、`ReferenceFailureReason`、`SignatureMathResult`、`VerifyOfdOptions`、`TimestampParseResult`、`TimestampParseOptions`、`TimestampStatus`、`ParsedSeal`、`SealParseOptions`、`SealPictureInfo`、`ParsedSignedValue`、`SesVersion`、`PemBlock`、`SignaturesXml`、`SignatureRecord`、`SignatureXml`、`SignatureReferenceXml`、`StampAnnotInfo`、`OfdEntriesInfo`、`X509Certificate`、`X509Extension`、`DistinguishedNameAttribute`、`CertificateParseOptions`、`CertificateLoadOptions`、`DerNode`、`DerTag`、`DerClass`、`DerBitString`、`DerParseOptions`、`Sm2Cipher`、`C1C3C2ParseOptions`、`Sm2CurveParams`、`Sm2PrivateKey`、`Sm2PrivateKeyParseOptions`、`Sm2SignOptions`、`Sm2DecryptOptions`、`Sm4CbcOptions`、`Sm4Padding`、`VerificationStatus`、`ChainStatus`、`VerificationIssue`、`VerificationIssueSeverity`、`WarningCollector`、`ReadCryptoSourceOptions`、`ResolvedCryptoOptions`。
+`CryptoSource`、`ByteSource`、`CryptoCredential`、`PasswordCredential`、`PrivateKeyCredential`、`Sm2PrivateKeyInput`、`CertificateDer`、`CertificatesToDerOptions`、`CertificateSummary`、`CertificateKeyUsage`、`CertificateValidity`、`CryptoOptions`、`ParseOptions`、`CryptoLimits`、`CryptoWarning`、`CryptoWarningCode`、`CryptoWarningHandler`、`CryptoErrorCode`、`CryptoErrorOptions`、`OfdInspection`、`EncryptionLayerInfo`、`EncryptionUserInfo`、`SignatureEntrySummary`、`DecryptingContainerResult`、`DecryptionLayerSummary`、`OpenDecryptingContainerOptions`、`VerificationReport`、`PackageVerificationInfo`、`DecryptionReportInfo`、`IntegrityVerification`、`SignatureVerification`、`SealVerification`、`CertificateChainVerification`、`DataHashVerification`、`ReferenceCheckResult`、`ReferenceFailure`、`ReferenceFailureReason`、`SignatureMathResult`、`VerifyOfdOptions`、`TimestampParseResult`、`TimestampParseOptions`、`TimestampStatus`、`ParsedSeal`、`SealPictureInfo`、`ParsedSignedValue`、`SesVersion`、`PemBlock`、`SignaturesXml`、`SignatureRecord`、`SignatureXml`、`SignatureReferenceXml`、`StampAnnotInfo`、`OfdEntriesInfo`、`X509Certificate`、`X509Extension`、`DistinguishedNameAttribute`、`CertificateParseOptions`、`CertificateLoadOptions`、`DerNode`、`DerTag`、`DerClass`、`DerBitString`、`DerParseOptions`、`Sm2Cipher`、`C1C3C2ParseOptions`、`Sm2CurveParams`、`Sm2PrivateKey`、`Sm2PrivateKeyParseOptions`、`Sm2SignOptions`、`Sm2DecryptOptions`、`Sm4CbcOptions`、`Sm4Padding`、`VerificationStatus`、`ChainStatus`、`VerificationIssue`、`VerificationIssueSeverity`、`WarningCollector`、`ReadCryptoSourceOptions`、`ResolvedCryptoOptions`。
 
 ---
 
@@ -1211,5 +1237,7 @@ interface VirtualContainer {
 
 | 版本 | 日期 | 说明 |
 | --- | --- | --- |
+| 0.1.0 | 2026-10-23 | 新增 `VERSION` 常量与 `getVersion()`，供 CLI/UI 与宿主在故障排查时读取密码能力包版本；版本内置于产物，不依赖 `package.json` |
 | 0.1.0 | 2026-10-23 | 首次公开 API 文档：inspect/解密/verify/parse、SM/ASN.1/证书、错误与 warning、VirtualContainer 集成 |
 | 0.1.0 | 2026-10-23 | 证书输入统一为 DER：新增 `CertificateDer`/`certificatesToDer`；roots/load/parse 只收 DER |
+| 0.1.0 | 2026-10-23 | 补充 `byte-source` 输入与所有权规则；同步 `parseSeal` 选项写法（`SealParseOptions` 未从包根导出）；更新导出索引 |
