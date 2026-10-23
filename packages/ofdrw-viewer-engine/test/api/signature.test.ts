@@ -11,8 +11,66 @@ import { ZipReader } from '../../src/container/zip-reader';
 import type { Canvas2DLike } from '../../src/renderer/types';
 import { RecordingRenderer } from '../../src/renderer/recording';
 import type { OFDWarning } from '../../src/warnings';
+import type { XmlElementSpec } from '../fixtures/xml';
+import { ensureFixtures, readFixture } from '../font/fixtures';
 import { nodeImageDecoders } from '../helpers/node-image-decoder';
 import { buildFixtureOfd, openTestDocument, renderPage } from './helpers';
+
+const fixtures = ensureFixtures();
+
+/**
+ * 构造文本对象。
+ *
+ * @param id 对象 ID。
+ * @param text 文本内容。
+ * @returns TextObject XML 描述。
+ */
+function textObject(id: number, text: string): XmlElementSpec {
+  return {
+    name: 'ofd:TextObject',
+    attrs: { ID: id, Boundary: '10 10 40 20', Font: 1, Size: 10 },
+    children: [
+      {
+        name: 'ofd:TextCode',
+        attrs: { X: 0, Y: 10 },
+        children: [text],
+      },
+    ],
+  };
+}
+
+/**
+ * 构造含文本、但字体资源没有内嵌 FontFile 的矢量章 OFD。
+ *
+ * @param text 页面文本。
+ * @returns OFD ZIP 字节。
+ */
+function vectorTextOfd(text: string): Uint8Array {
+  return buildFixtureOfd({
+    pages: [{ id: 1, widthMm: 60, heightMm: 30, objects: [textObject(1, text)] }],
+    documentRes: [
+      {
+        path: 'Doc_0/Res/Res.xml',
+        children: [
+          {
+            name: 'ofd:Fonts',
+            children: [
+              {
+                name: 'ofd:Font',
+                attrs: {
+                  ID: 1,
+                  FontName: 'Missing Vector Font',
+                  FamilyName: 'Missing Vector Font',
+                  Charset: 'unicode',
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+}
 
 /** 读取样本字节。 */
 function sample(name: string): Uint8Array {
@@ -72,6 +130,20 @@ function canvasHasRedPixel(canvas: Canvas2DLike): boolean {
     if ((data[index] ?? 0) > 150 && (data[index + 1] ?? 0) < 120 && (data[index + 2] ?? 0) < 120) {
       return true;
     }
+  }
+  return false;
+}
+
+/** 判断画布中是否存在深色像素（矢量章文本）。 */
+function canvasHasDarkPixel(canvas: Canvas2DLike): boolean {
+  if (canvas.width <= 0 || canvas.height <= 0) return false;
+  const context = canvas.getContext('2d') as unknown as {
+    getImageData(x: number, y: number, width: number, height: number): { data: Uint8ClampedArray };
+  } | null;
+  if (!context) return false;
+  const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+  for (let index = 0; index < data.length; index += 4) {
+    if ((data[index + 3] ?? 0) > 0 && (data[index] ?? 255) < 128) return true;
   }
   return false;
 }
@@ -274,6 +346,51 @@ describe('签章 API 接线', () => {
           (canvas) => canvas.width * canvas.height <= 1000 && canvasHasRedPixel(canvas),
         ),
       ).toBe(true);
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it.skipIf(!fixtures.dejavu)('矢量章内嵌 OFD 使用宿主 defaultFonts 补字', async () => {
+    const parentBytes = signedValuePackage(signedValueOfd(vectorTextOfd('AB')));
+
+    // 不传 defaultFonts：嵌套文档缺字体，印章文字空白并上报 W_FONT_MISSING。
+    const withoutWarnings: OFDWarning[] = [];
+    const withoutCanvases: Canvas2DLike[] = [];
+    const without = await openTestDocument(parentBytes, {
+      renderer: new RecordingRenderer(),
+      createCanvas: (width, height) => {
+        const canvas = createCanvas(width, height) as unknown as Canvas2DLike;
+        withoutCanvases.push(canvas);
+        return canvas;
+      },
+      onWarning: (warning) => withoutWarnings.push(warning),
+    });
+    try {
+      await renderPage(await without.getPage(0));
+      expect(withoutWarnings.some((warning) => warning.code === 'W_FONT_MISSING')).toBe(true);
+      expect(withoutCanvases.some(canvasHasDarkPixel)).toBe(false);
+    } finally {
+      await without.close();
+    }
+
+    // 传 defaultFonts：嵌套文档继承默认字体，印章文字可见且不再报缺字体。
+    const warnings: OFDWarning[] = [];
+    const canvases: Canvas2DLike[] = [];
+    const doc = await openTestDocument(parentBytes, {
+      renderer: new RecordingRenderer(),
+      defaultFonts: [{ data: readFixture(fixtures.dejavu as string), family: 'DejaVu Sans' }],
+      createCanvas: (width, height) => {
+        const canvas = createCanvas(width, height) as unknown as Canvas2DLike;
+        canvases.push(canvas);
+        return canvas;
+      },
+      onWarning: (warning) => warnings.push(warning),
+    });
+    try {
+      await renderPage(await doc.getPage(0));
+      expect(warnings.some((warning) => warning.code === 'W_FONT_MISSING')).toBe(false);
+      expect(canvases.some(canvasHasDarkPixel)).toBe(true);
     } finally {
       await doc.close();
     }

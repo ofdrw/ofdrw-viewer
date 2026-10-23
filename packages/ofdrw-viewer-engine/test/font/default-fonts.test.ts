@@ -92,18 +92,19 @@ describe('defaultFonts 主字体选择', () => {
   it.skipIf(!fixtures.dejavu || !fixtures.cjkTtf)(
     '多个 defaultFonts 按字体名评分选择，而非取第一个',
     async () => {
-    const library = new FontLibrary({
-      defaultFonts: [
-        dataInput(fixtures.cjkTtf as string, 'Droid Sans Fallback'),
-        dataInput(fixtures.dejavu as string, 'DejaVu Sans'),
-      ],
-    });
-    // 第一个来源与请求无关；评分后应选中第二项。
-    const faces = await library.resolve(makeFontResource({ fontName: 'DejaVu Sans' }));
+      const library = new FontLibrary({
+        defaultFonts: [
+          dataInput(fixtures.cjkTtf as string, 'Droid Sans Fallback'),
+          dataInput(fixtures.dejavu as string, 'DejaVu Sans'),
+        ],
+      });
+      // 第一个来源与请求无关；评分后应选中第二项。
+      const faces = await library.resolve(makeFontResource({ fontName: 'DejaVu Sans' }));
 
-    expect(faces?.primary.family).toContain('DejaVu');
-    library.dispose();
-  });
+      expect(faces?.primary.family).toContain('DejaVu');
+      library.dispose();
+    },
+  );
 
   it.skipIf(!fixtures.notoTtc)('TTC/OTC 展开全部字体面参与评分', async () => {
     const bytes = readFixture(fixtures.notoTtc as string);
@@ -197,6 +198,90 @@ describe('defaultFonts 显式 GID 与缓存', () => {
     expect(second?.primary.family).toContain('DejaVu');
     library.dispose();
   });
+});
+
+describe('defaultFonts 失败降级与回退链', () => {
+  it.skipIf(!fixtures.dejavu)('单个来源读取失败只 warning 并继续后续来源', async () => {
+    const { callback, warnings } = collectWarnings();
+    const requested: string[] = [];
+    const library = new FontLibrary({
+      defaultFonts: [
+        { path: '/fonts/null.ttf', family: 'Null Font' },
+        { path: '/fonts/throw.ttf', family: 'Throw Font' },
+        dataInput(fixtures.dejavu as string, 'DejaVu Sans'),
+      ],
+      loadInput(input) {
+        const path = 'path' in input ? input.path : '';
+        requested.push(path);
+        if (path.endsWith('null.ttf')) return null;
+        throw new Error('loader boom');
+      },
+      onWarning: callback,
+    });
+
+    const faces = await library.resolve(makeFontResource({ fontName: 'Missing Font' }));
+    expect(requested).toEqual(['/fonts/null.ttf', '/fonts/throw.ttf']);
+    expect(faces?.primary.family).toContain('DejaVu');
+    expect(warnings.filter((warning) => warning.includes('字体字节读取失败'))).toHaveLength(1);
+    expect(warnings.every((warning) => warning.includes('W_FONT_MISSING'))).toBe(true);
+    library.dispose();
+  });
+
+  it.skipIf(!fixtures.dejavu || !fixtures.broken)(
+    '单个来源解析失败只 warning 并继续后续来源',
+    async () => {
+      const { callback, warnings } = collectWarnings();
+      const library = new FontLibrary({
+        defaultFonts: [
+          { data: readFixture(fixtures.broken as string), family: 'Broken Font' },
+          dataInput(fixtures.dejavu as string, 'DejaVu Sans'),
+        ],
+        onWarning: callback,
+      });
+
+      const faces = await library.resolve(makeFontResource({ fontName: 'Missing Font' }));
+      expect(faces?.primary.family).toContain('DejaVu');
+      expect(warnings.some((warning) => warning.includes('字体解析失败'))).toBe(true);
+      library.dispose();
+    },
+  );
+
+  it.skipIf(!fixtures.dejavu || !fixtures.cjkTtf)(
+    '单个来源超过 maxFontBytes 时 warning 并继续后续来源',
+    async () => {
+      const { callback, warnings } = collectWarnings();
+      const library = new FontLibrary({
+        // Droid 约 4 MiB 超限；DejaVu 约 760 KiB 仍可解析。
+        defaultFonts: [
+          dataInput(fixtures.cjkTtf as string, 'Droid Sans Fallback'),
+          dataInput(fixtures.dejavu as string, 'DejaVu Sans'),
+        ],
+        maxFontBytes: 1024 * 1024,
+        onWarning: callback,
+      });
+
+      const faces = await library.resolve(makeFontResource({ fontName: 'Missing Font' }));
+      expect(faces?.primary.family).toContain('DejaVu');
+      expect(warnings.some((warning) => warning.includes('超过'))).toBe(true);
+      library.dispose();
+    },
+  );
+
+  it.skipIf(!fixtures.dejavu || !fixtures.cjkTtf)(
+    '内嵌字体命中时 defaultFonts 仍进入逐字形回退链',
+    async () => {
+      const font = makeFontResource({ fontFile: 'Res/embedded.ttf' });
+      const library = new FontLibrary({
+        defaultFonts: [dataInput(fixtures.cjkTtf as string, 'Droid Sans Fallback')],
+      });
+      library.registerEmbedded(font, readFixture(fixtures.dejavu as string));
+      const faces = await library.resolve(font);
+
+      expect(faces?.primary.key.startsWith('embedded:')).toBe(true);
+      expect(faces?.fallbacks.some((face) => face.family.includes('Droid'))).toBe(true);
+      library.dispose();
+    },
+  );
 });
 
 describe('defaultFonts 兼容性', () => {
