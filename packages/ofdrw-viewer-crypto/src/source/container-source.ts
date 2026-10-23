@@ -75,12 +75,13 @@ export function mapEngineError(error: unknown): CryptoError {
  * 把 crypto 公共来源映射为 engine 的 `OFDSource`。
  *
  * `byte-source` 会先隔离为不转发 `close` 的只读视图，保证调用方拥有原始字节源。
- * URL 保留既有流式整包读取语义，以维持 fetch/Content-Length 错误码兼容。
+ * `url` 不再映射为 engine 来源（engine 已移除 `OFDSource.url`）；
+ * `openCryptoContainer` 会先用 `readCryptoSource` 读取 URL 字节，不经过本函数。
  *
  * @param source crypto 输入源。
  * @param signal 取消信号。
  * @returns engine 来源描述。
- * @throws CryptoError `CRYPTO_SOURCE_UNSUPPORTED`：来源非法。
+ * @throws CryptoError `CRYPTO_SOURCE_UNSUPPORTED`：来源非法或直接传入 url。
  */
 export function toEngineSource(source: CryptoSource, signal?: AbortSignal): OFDSource {
   if (!source || typeof source !== 'object' || typeof source.kind !== 'string') {
@@ -92,11 +93,11 @@ export function toEngineSource(source: CryptoSource, signal?: AbortSignal): OFDS
     case 'blob':
       return { kind: 'blob', blob: source.blob };
     case 'url':
-      return {
-        kind: 'url',
-        url: source.url,
-        ...(source.headers ? { headers: source.headers } : {}),
-      };
+      // engine 不再接受 url 来源；crypto 的 url 能力由 openCryptoContainer 先读成字节。
+      throw new CryptoError(
+        'CRYPTO_SOURCE_UNSUPPORTED',
+        'engine 不再接受 url 来源，请先读取为字节或改用 openCryptoContainer',
+      );
     case 'byte-source':
       return { kind: 'custom', source: isolateByteSource(source.source, signal) };
     default:
