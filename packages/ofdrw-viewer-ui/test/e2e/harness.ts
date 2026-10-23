@@ -11,6 +11,19 @@ interface HarnessEvent {
   readonly detail: unknown;
 }
 
+interface RenderTaskLike {
+  /** 引擎操作 id；仅用于透传。 */
+  readonly id?: number;
+  /** 渲染完成 Promise。 */
+  readonly promise: Promise<unknown>;
+  /** 取消渲染。 */
+  cancel(): void;
+}
+
+interface EnginePageLike {
+  render(options: unknown): RenderTaskLike;
+}
+
 interface HarnessState {
   readonly viewer: OFDViewer;
   readonly events: HarnessEvent[];
@@ -22,6 +35,10 @@ interface HarnessState {
   emitEngineEvent(type: string, payload: Record<string, unknown>): void;
   /** 在页面渲染前登记用途；仅测试夹具使用。 */
   trackPageRender(pageIndex: number, purpose: 'main' | 'thumbnail'): { drop(): void };
+  /** 延迟一页真实 page.render 的完成 Promise；仅用于像素回归。 */
+  delayPageRender(pageIndex: number, delayMs: number): Promise<void>;
+  /** 取消最近一次被延迟的真实渲染；仅用于 abort 回归。 */
+  cancelDelayedPageRender(): void;
 }
 
 declare global {
@@ -168,6 +185,42 @@ function trackPageRender(
   return tracker.trackPageRenderStart(pageIndex, purpose);
 }
 
+let delayedRenderPageIndex: number | null = null;
+
+/**
+ * 延迟指定页真实 page.render 的完成 Promise，用于在渲染期间采样旧 canvas。
+ *
+ * @param pageIndex 页索引，0-based。
+ * @param delayMs 延迟完成时长，单位毫秒。
+ */
+async function delayPageRender(pageIndex: number, delayMs: number): Promise<void> {
+  const controller = (
+    viewer as unknown as {
+      controller: { getPage(index: number): Promise<EnginePageLike> };
+    }
+  ).controller;
+  const page = await controller.getPage(pageIndex);
+  const original = page.render.bind(page);
+  delayedRenderPageIndex = pageIndex;
+  page.render = (options: unknown) => {
+    const task = original(options);
+    const promise = task.promise.then(
+      (value) =>
+        new Promise<unknown>((resolve) => {
+          setTimeout(() => resolve(value), delayMs);
+        }),
+    );
+    return { id: task.id, promise, cancel: () => task.cancel() };
+  };
+}
+
+/** 取消最近一次被延迟的真实渲染；走阅读器渲染队列，等价于 UI abort。 */
+function cancelDelayedPageRender(): void {
+  if (delayedRenderPageIndex === null) return;
+  const queue = (viewer as unknown as { queue: { cancel(key: string): void } }).queue;
+  queue.cancel(`page:${delayedRenderPageIndex}`);
+}
+
 window.__harness = {
   viewer,
   events,
@@ -177,6 +230,8 @@ window.__harness = {
   openSettledAt: null,
   emitEngineEvent,
   trackPageRender,
+  delayPageRender,
+  cancelDelayedPageRender,
 };
 window.__events = events;
 window.__errors = errors;

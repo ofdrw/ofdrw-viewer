@@ -149,6 +149,61 @@ describe('PageView 页面 loading', () => {
     page.destroy();
   });
 
+  it('重渲染先绘制到离屏 canvas，completeRender 成功后才替换旧 canvas', () => {
+    const page = createPage();
+    const first = page.beginRender('scale:1');
+    page.prepareCanvas(120, 160, first);
+    page.completeRender(first, 'scale:1');
+    const oldCanvas = page.canvas!;
+    expect(oldCanvas).not.toBeNull();
+
+    const second = page.beginRender('scale:2');
+    const context = page.prepareCanvas(240, 320, second);
+    expect(context).not.toBeNull();
+    // 旧 canvas 仍在 DOM 且尺寸未被改写；新 canvas 尚未挂载。
+    expect(page.canvas).toBe(oldCanvas);
+    expect(oldCanvas.width).toBe(120);
+    expect(oldCanvas.height).toBe(160);
+    expect(page.element.querySelectorAll('.ofd-page__canvas')).toHaveLength(1);
+
+    page.completeRender(second, 'scale:2');
+    expect(page.canvas).not.toBe(oldCanvas);
+    expect(oldCanvas.isConnected).toBe(false);
+    expect(page.element.querySelectorAll('.ofd-page__canvas')).toHaveLength(1);
+    expect(page.canvas?.width).toBe(240);
+    expect(page.canvas?.height).toBe(320);
+    expect(page.canvas?.dataset.renderKey).toBe('scale:2');
+
+    page.destroy();
+  });
+
+  it('重渲染 abort/fail 丢弃离屏 canvas 并保留旧画面', () => {
+    const page = createPage();
+    const first = page.beginRender('scale:1');
+    page.prepareCanvas(120, 160, first);
+    page.completeRender(first, 'scale:1');
+    const oldCanvas = page.canvas!;
+
+    const aborted = page.beginRender('scale:2');
+    page.prepareCanvas(240, 320, aborted);
+    page.cancelRender(aborted);
+    expect(page.canvas).toBe(oldCanvas);
+    expect(oldCanvas.isConnected).toBe(true);
+    expect(page.state).toBe('rendered');
+    expect(page.canvasWrapper.hidden).toBe(false);
+
+    const failed = page.beginRender('scale:3');
+    page.prepareCanvas(360, 480, failed);
+    page.failRender(failed, { code: 'OFD_RENDER_FAILED', message: '失败' });
+    expect(page.canvas).toBe(oldCanvas);
+    expect(oldCanvas.isConnected).toBe(true);
+    expect(page.state).toBe('error');
+    expect(page.canvasWrapper.hidden).toBe(false);
+    expect(page.element.querySelectorAll('.ofd-page__canvas')).toHaveLength(1);
+
+    page.destroy();
+  });
+
   it('取消静默隐藏，不显示错误卡；旧操作晚到不关闭新操作的 loading', async () => {
     const page = createPage();
     const loading = loadingOf(page);

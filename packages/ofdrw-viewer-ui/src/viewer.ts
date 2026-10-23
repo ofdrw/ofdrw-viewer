@@ -401,6 +401,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       root: this.root,
       ownerDocument: this.ownerDocument,
       translator: this.translator,
+      background: [this.elements.toolbar, this.elements.body, this.elements.dialogLayer],
       onCancel: () => this.cancelDocumentOpen(),
       onRetry: () => this.retryOpen(),
       onClose: () => void this.close(),
@@ -2611,6 +2612,8 @@ interface DocumentLoadingOverlayOptions {
   readonly ownerDocument: Document;
   /** 当前语言翻译器。 */
   readonly translator: Translator;
+  /** 遮罩显示期间需要 inert 的背景区域（工具栏、正文、对话框层等）。 */
+  readonly background: readonly HTMLElement[];
   /** 点击“取消”。 */
   readonly onCancel: () => void;
   /** 点击“重试”。 */
@@ -2640,6 +2643,9 @@ class DocumentLoadingOverlay {
   private readonly root: HTMLElement;
   private readonly doc: Document;
   private readonly callbacks: Pick<DocumentLoadingOverlayOptions, 'onCancel' | 'onRetry' | 'onClose'>;
+  private readonly background: readonly HTMLElement[];
+  /** 背景元素原有的 inert 状态；关闭遮罩时只恢复原本未 inert 的元素。 */
+  private readonly savedInert = new Map<HTMLElement, boolean>();
   private translator: Translator;
   private delayTimer: ReturnType<typeof setTimeout> | null = null;
   private hideTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2648,6 +2654,9 @@ class DocumentLoadingOverlay {
   private shownAt = 0;
   private cancelling = false;
   private currentSource: ViewerSource | null = null;
+  /** 遮罩是否已启用焦点约束；避免重复添加监听器。 */
+  private modalActive = false;
+  private readonly onModalKeyDown = (event: KeyboardEvent): void => this.handleModalKeyDown(event);
 
   /**
    * @param options 根节点、宿主文档、翻译器与按钮回调。
@@ -2656,6 +2665,7 @@ class DocumentLoadingOverlay {
     this.root = options.root;
     this.doc = options.ownerDocument;
     this.translator = options.translator;
+    this.background = options.background;
     this.callbacks = options;
     const create = <K extends keyof HTMLElementTagNameMap>(
       tag: K,
@@ -2759,6 +2769,7 @@ class DocumentLoadingOverlay {
     this.errorCode.textContent = info.code;
     this.errorMessage.textContent = info.message;
     this.error.hidden = false;
+    this.activateModal();
   }
 
   /** 取消：立即隐藏 loading 与错误卡。 */
@@ -2796,6 +2807,7 @@ class DocumentLoadingOverlay {
     this.shownAt = Date.now();
     this.status.hidden = false;
     this.status.removeAttribute('data-fading');
+    this.activateModal();
   }
 
   /** 按最短展示与 reduced-motion 设置淡出。 */
@@ -2819,6 +2831,7 @@ class DocumentLoadingOverlay {
     this.status.hidden = true;
     this.status.removeAttribute('data-fading');
     this.hideError();
+    this.deactivateModal();
   }
 
   /** “取消”按钮：切换为“正在取消…”并禁用，随后交给宿主中止打开。 */
@@ -2830,9 +2843,79 @@ class DocumentLoadingOverlay {
     this.callbacks.onCancel();
   }
 
-  /** 隐藏错误卡。 */
+  /**
+   * 隐藏错误卡；若 loading 也未显示，同步退出模态并恢复背景 inert。
+   *
+   * 新一次 `open()` 关闭错误卡时可能走不到 `hideAll()`：若文档在 150 ms 内
+   * 打开成功，`finish()` 因 loading 从未显示而直接返回，必须在这里恢复。
+   */
   private hideError(): void {
     this.error.hidden = true;
+    if (this.status.hidden) this.deactivateModal();
+  }
+
+  /** 启用模态行为：背景 inert，Tab/Enter 限制在遮罩内。 */
+  private activateModal(): void {
+    if (this.modalActive) return;
+    this.modalActive = true;
+    for (const element of this.background) {
+      this.savedInert.set(element, element.hasAttribute('inert'));
+      element.setAttribute('inert', '');
+    }
+    this.doc.addEventListener('keydown', this.onModalKeyDown, true);
+  }
+
+  /** 关闭模态行为并恢复背景元素原有的 inert 状态。 */
+  private deactivateModal(): void {
+    if (!this.modalActive) return;
+    this.modalActive = false;
+    for (const [element, wasInert] of this.savedInert) {
+      if (!wasInert) element.removeAttribute('inert');
+    }
+    this.savedInert.clear();
+    this.doc.removeEventListener('keydown', this.onModalKeyDown, true);
+  }
+
+  /** 当前可见的遮罩面板；loading 优先于错误卡。 */
+  private activePanel(): HTMLElement | null {
+    if (!this.status.hidden) return this.status;
+    if (!this.error.hidden) return this.error;
+    return null;
+  }
+
+  /**
+   * 遮罩显示期间的键盘约束：Tab 在面板按钮间循环；焦点在背景时 Enter 不触发背景。
+   *
+   * @param event 键盘事件。
+   */
+  private handleModalKeyDown(event: KeyboardEvent): void {
+    const panel = this.activePanel();
+    if (!panel) return;
+    const active = this.doc.activeElement;
+    if (event.key === 'Tab') {
+      const buttons = [
+        ...panel.querySelectorAll<HTMLButtonElement>('button:not([disabled])'),
+      ];
+      if (buttons.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const index = buttons.indexOf(active as HTMLButtonElement);
+      const next =
+        index < 0
+          ? event.shiftKey
+            ? buttons[buttons.length - 1]!
+            : buttons[0]!
+          : buttons[
+              (index + (event.shiftKey ? -1 : 1) + buttons.length) % buttons.length
+            ]!;
+      event.preventDefault();
+      next.focus();
+      return;
+    }
+    if (event.key === 'Enter' && !panel.contains(active)) {
+      event.preventDefault();
+    }
   }
 
   /** 刷新错误卡/按钮文案。 */

@@ -195,6 +195,42 @@ describe('文档全屏 loading', () => {
     await vi.advanceTimersByTimeAsync(0);
   });
 
+  it('显示期间背景 inert 且 Tab 锁在遮罩内，隐藏后恢复', async () => {
+    const { viewer, pending, status } = createPendingViewer();
+    const elements = viewer.getElements();
+    expect(elements.toolbar.hasAttribute('inert')).toBe(false);
+    expect(elements.body.hasAttribute('inert')).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(DELAY_MS);
+    expect(status.hidden).toBe(false);
+    expect(elements.toolbar.hasAttribute('inert')).toBe(true);
+    expect(elements.body.hasAttribute('inert')).toBe(true);
+
+    // 焦点在背景时按 Enter 被拦截；Tab 把焦点送进遮罩内的取消按钮。
+    document.body.tabIndex = -1;
+    document.body.focus();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(document.activeElement).toBe(document.body);
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }),
+    );
+    const cancel = statusButton(status);
+    expect(document.activeElement).toBe(cancel);
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }),
+    );
+    expect(document.activeElement).toBe(cancel);
+
+    cancel.click();
+    expect(status.hidden).toBe(true);
+    expect(elements.toolbar.hasAttribute('inert')).toBe(false);
+    expect(elements.body.hasAttribute('inert')).toBe(false);
+
+    viewer.destroy();
+    pending.resolve(makeDocument(1));
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
   it('文档名回退：URL 取 basename，缺失时显示“文档”', async () => {
     const first = createPendingViewer('https://example.com/docs/%E6%8A%A5%E5%91%8A.ofd?token=1');
     expect(
@@ -297,6 +333,27 @@ describe('文档全屏 loading', () => {
     await vi.advanceTimersByTimeAsync(DELAY_MS + MIN_VISIBLE_MS + FADE_MS);
     expect(status.hidden).toBe(true);
     expect(error.hidden).toBe(false);
+
+    viewer.destroy();
+  });
+
+  it('错误卡后新 open 快速完成（未显示 loading）时清除背景 inert', async () => {
+    const { viewer, pending, status, error } = createPendingViewer();
+    pending.reject(new Error('文件损坏'));
+    await expect(viewer.ready).rejects.toThrow('文件损坏');
+    const elements = viewer.getElements();
+    expect(error.hidden).toBe(false);
+    expect(elements.toolbar.hasAttribute('inert')).toBe(true);
+    expect(elements.body.hasAttribute('inert')).toBe(true);
+
+    engineMocks.open.mockResolvedValue(makeDocument(1));
+    await viewer.open(new ArrayBuffer(8));
+    // 未推进 150 ms 计时器：loading 从未显示，finish() 不会走 hideAll()。
+    expect(status.hidden).toBe(true);
+    expect(error.hidden).toBe(true);
+    expect(viewer.getState().document.status).toBe('ready');
+    expect(elements.toolbar.hasAttribute('inert')).toBe(false);
+    expect(elements.body.hasAttribute('inert')).toBe(false);
 
     viewer.destroy();
   });

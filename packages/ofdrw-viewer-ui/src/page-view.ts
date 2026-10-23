@@ -112,6 +112,8 @@ export class PageView {
   /** 是否由引擎事件启动 loading；false 时由 `beginRender` 兜底。 */
   private readonly eventDrivenLoading: boolean;
   private canvasElement: HTMLCanvasElement | null = null;
+  /** 后台绘制中的新 canvas；completeRender 成功后才替换旧 canvas。 */
+  private pendingCanvasElement: HTMLCanvasElement | null = null;
   private stateValue: PageRenderState = 'empty';
   private generationValue = 0;
   private renderedKeyValue: string | null = null;
@@ -379,6 +381,8 @@ export class PageView {
    * @returns 本次渲染代次号。
    */
   beginRender(renderKey: string): number {
+    // 上一代未提交的离屏画布直接丢弃；旧显示 canvas 保持可见。
+    this.discardPendingCanvas();
     this.generationValue += 1;
     this.renderedKeyValue = null;
     this.stateValue = 'queued';
@@ -404,7 +408,9 @@ export class PageView {
   /**
    * 准备 canvas 并返回 2D 上下文。
    *
-   * 只在真正渲染时创建 canvas；尺寸取设备像素（可能因上限降低 DPI）。
+   * 首次渲染直接创建可见 canvas；重渲染时旧 canvas 保持可见，新内容绘制到
+   * 离屏 canvas，等 `completeRender` 成功后再原子替换，避免缩放/旋转闪白。
+   * 尺寸取设备像素（可能因上限降低 DPI）。
    *
    * @param width 设备像素宽。
    * @param height 设备像素高。
@@ -419,16 +425,15 @@ export class PageView {
     if (this.destroyed || !this.isCurrent(generation)) return null;
     const pixelWidth = Math.max(1, Math.ceil(width));
     const pixelHeight = Math.max(1, Math.ceil(height));
-    let canvas = this.canvasElement;
-    if (!canvas) {
-      canvas = this.doc.createElement('canvas');
-      canvas.className = 'ofd-page__canvas';
-      canvas.setAttribute('aria-hidden', 'true');
-      canvas.style.display = 'block';
-      canvas.style.width = '100%';
-      canvas.style.height = '100%';
+    let canvas: HTMLCanvasElement;
+    if (!this.canvasElement) {
+      canvas = this.createRenderCanvas();
       this.canvasElement = canvas;
       this.canvasWrapper.appendChild(canvas);
+    } else {
+      // 旧 canvas 不动；新内容先画到不挂载的离屏 canvas。
+      canvas = this.pendingCanvasElement ?? this.createRenderCanvas();
+      this.pendingCanvasElement = canvas;
     }
     if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
     if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
@@ -450,6 +455,27 @@ export class PageView {
     return context;
   }
 
+  /** 创建渲染用 canvas 元素（样式与可见 canvas 一致）。 */
+  private createRenderCanvas(): HTMLCanvasElement {
+    const canvas = this.doc.createElement('canvas');
+    canvas.className = 'ofd-page__canvas';
+    canvas.setAttribute('aria-hidden', 'true');
+    canvas.style.display = 'block';
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    return canvas;
+  }
+
+  /** 丢弃尚未提交的离屏 canvas，旧画面保持不变。 */
+  private discardPendingCanvas(): void {
+    const canvas = this.pendingCanvasElement;
+    if (!canvas) return;
+    this.pendingCanvasElement = null;
+    canvas.width = 0;
+    canvas.height = 0;
+    canvas.remove();
+  }
+
   /**
    * 取消一次渲染；若已有旧 canvas 则继续展示（CSS 拉伸过渡）。
    *
@@ -457,9 +483,11 @@ export class PageView {
    */
   cancelRender(generation: number): void {
     if (!this.isCurrent(generation)) return;
+    this.discardPendingCanvas();
     // 当前代次已终止；无论 loading 归属哪个 operationId 都应静默隐藏。
     this.cancelLoading();
     this.errorLayer.hidden = true;
+    this.canvasWrapper.hidden = this.canvasElement === null;
     this.stateValue = this.canvasElement ? 'rendered' : 'empty';
     this.element.dataset.pageState = this.stateValue;
   }
@@ -472,6 +500,7 @@ export class PageView {
    */
   completeRender(generation: number, renderKey: string): void {
     if (!this.isCurrent(generation)) return;
+    if (this.pendingCanvasElement) this.commitPendingCanvas(renderKey);
     this.stateValue = 'rendered';
     this.renderedKeyValue = renderKey;
     this.painted = true;
@@ -480,10 +509,34 @@ export class PageView {
     this.element.dataset.pageState = 'rendered';
     this.element.dataset.renderedScale = String(this.currentScale);
     this.element.dataset.rotation = String(this.currentRotation);
+    this.canvasWrapper.hidden = this.canvasElement === null;
     if (this.canvasElement) {
       delete this.canvasElement.dataset.stale;
       this.canvasElement.dataset.renderKey = renderKey;
     }
+  }
+
+  /**
+   * 用后台画布原子替换可见 canvas；同一任务内完成，浏览器不会绘制中间态。
+   *
+   * @param renderKey 本次渲染 key。
+   */
+  private commitPendingCanvas(renderKey: string): void {
+    const previous = this.canvasElement;
+    const next = this.pendingCanvasElement!;
+    this.pendingCanvasElement = null;
+    if (previous && previous.parentNode === this.canvasWrapper) {
+      previous.replaceWith(next);
+    } else {
+      this.canvasWrapper.appendChild(next);
+    }
+    this.canvasElement = next;
+    if (previous && previous !== next) {
+      previous.width = 0;
+      previous.height = 0;
+    }
+    delete next.dataset.stale;
+    next.dataset.renderKey = renderKey;
   }
 
   /**
@@ -494,15 +547,18 @@ export class PageView {
    */
   failRender(generation: number, info: ViewerErrorInfo): void {
     if (!this.isCurrent(generation)) return;
+    // 失败可能发生在重渲染；保留旧画面，仅用页内错误卡覆盖。
+    this.discardPendingCanvas();
     this.stateValue = 'error';
     this.cancelLoading();
     this.showError(info);
     this.element.dataset.pageState = 'error';
-    this.canvasWrapper.hidden = true;
+    this.canvasWrapper.hidden = this.canvasElement === null;
   }
 
   /** 释放 canvas；用于 LRU 淘汰与关闭。 */
   releaseCanvas(): void {
+    this.discardPendingCanvas();
     this.cancelLoading();
     this.errorLayer.hidden = true;
     this.painted = false;
@@ -549,6 +605,7 @@ export class PageView {
     this.hideLoadingNow();
     this.destroyed = true;
     this.generationValue += 1;
+    this.discardPendingCanvas();
     if (this.canvasElement) {
       this.canvasElement.width = 0;
       this.canvasElement.height = 0;

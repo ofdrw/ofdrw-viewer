@@ -6,6 +6,7 @@
  * 真实千页/缺页夹具。
  */
 
+import type { Locator } from '@playwright/test';
 import { expect, expectNoPageErrors, test } from './fixtures';
 import { FIXTURES, openViewer, viewerUrl } from './support';
 
@@ -35,6 +36,16 @@ const FAIL_PATTERN = /\/ofd_pdf_match\/helloworld\.ofd\?e2e=fail/;
  */
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 读取 canvas 的像素签名（PNG data URL）。
+ *
+ * @param canvas canvas 定位器。
+ * @returns 像素签名。
+ */
+async function canvasSignature(canvas: Locator): Promise<string> {
+  return canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL('image/png'));
 }
 
 /**
@@ -151,6 +162,59 @@ test('慢文件 >150ms 显示全屏 loading，完成后最短展示并淡出', a
   await expectNoPageErrors(page, issues);
 });
 
+test('全屏 loading 背景 inert，Tab 焦点锁在遮罩内且 Enter 不改变背景', async ({ page, issues }) => {
+  await page.route(SLOW_PATTERN, async (route) => {
+    try {
+      await wait(1500);
+      await route.continue();
+    } catch {
+      // 取消/关闭后请求可能已被中止。
+    }
+  });
+  await page.goto(viewerUrl(SLOW_FIXTURE, { crypto: false, autoVerify: false }));
+  const overlay = page.locator('.ofd-viewer__loading');
+  await expect(overlay).toBeVisible({ timeout: 5_000 });
+  const toolbar = page.locator('.ofd-viewer__toolbar');
+  const body = page.locator('.ofd-viewer__body');
+  await expect(toolbar).toHaveAttribute('inert', '');
+  await expect(body).toHaveAttribute('inert', '');
+
+  // 焦点在背景时按 Enter 不得触发工具栏/侧栏。
+  await page.evaluate(() => {
+    document.body.tabIndex = -1;
+    document.body.focus();
+  });
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.ofd-viewer__sidebar')).toBeHidden();
+  expect(await page.evaluate(() => window.__viewer?.getState().document.status)).toBe('opening');
+
+  // Tab/Shift+Tab 只在遮罩按钮间循环。
+  for (let index = 0; index < 3; index += 1) {
+    await page.keyboard.press('Tab');
+    expect(
+      await page.evaluate(
+        () => document.querySelector('.ofd-viewer__loading')?.contains(document.activeElement) ?? false,
+      ),
+    ).toBe(true);
+  }
+  await page.keyboard.press('Shift+Tab');
+  expect(
+    await page.evaluate(
+      () => document.querySelector('.ofd-viewer__loading')?.contains(document.activeElement) ?? false,
+    ),
+  ).toBe(true);
+
+  // 通过取消隐藏遮罩，验证背景恢复可交互。
+  await overlay.locator('.ofd-viewer__loading-button').click();
+  await expect(overlay).toBeHidden();
+  await expect(toolbar).not.toHaveAttribute('inert', '');
+  await expect(body).not.toHaveAttribute('inert', '');
+  await expect
+    .poll(() => page.evaluate(() => window.__viewer?.getState().document.status ?? null))
+    .toBe('closed');
+  await expectNoPageErrors(page, issues);
+});
+
 test('取消打开立即回空态，无错误卡/toast，且关闭已打开文档', async ({ page, issues }) => {
   await page.route(SLOW_PATTERN, async (route) => {
     try {
@@ -198,6 +262,85 @@ test('打开失败显示全屏错误卡；重试后成功打开', async ({ page,
   await expect(error).toBeHidden();
   await expect(page.locator('.ofd-viewer__loading')).toBeHidden();
   expect(await page.evaluate(() => window.__viewer?.getPageCount() ?? 0)).toBeGreaterThan(0);
+  await expectNoPageErrors(page, issues, { windowErrors: [/OFDError/] });
+});
+
+test('错误卡后公开 open 快速打开新文档：退出模态并恢复工具栏', async ({ page, issues }) => {
+  await page.route(FAIL_PATTERN, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/ofd', body: 'not an ofd' });
+  });
+  await page.goto(viewerUrl(FAIL_FIXTURE, { crypto: false, autoVerify: false }));
+  const error = page.locator('.ofd-viewer__loading-error');
+  await expect(error).toBeVisible({ timeout: 10_000 });
+  const toolbar = page.locator('.ofd-viewer__toolbar');
+  const body = page.locator('.ofd-viewer__body');
+  await expect(toolbar).toHaveAttribute('inert', '');
+  await expect(body).toHaveAttribute('inert', '');
+
+  // 通过公开 API 在 150 ms 内打开合法小文件；loading 不应出现，模态应立即退出。
+  const result = await page.evaluate(async () => {
+    window.__overlayShown = false;
+    const overlay = document.querySelector<HTMLElement>('.ofd-viewer__loading');
+    if (!overlay) throw new Error('全屏 loading 元素缺失');
+    const observer = new MutationObserver(() => {
+      if (!overlay.hidden) window.__overlayShown = true;
+    });
+    observer.observe(overlay, { attributes: true, attributeFilter: ['hidden'] });
+    const response = await fetch('/ofd_pdf_match/helloworld.ofd');
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const started = performance.now();
+    await window.__viewer!.open(bytes);
+    const elapsed = performance.now() - started;
+    observer.disconnect();
+    return { elapsed, shown: window.__overlayShown };
+  });
+  expect(result.elapsed).toBeLessThan(150);
+  expect(result.shown).toBe(false);
+  expect(await page.evaluate(() => window.__viewer?.getState().document.status)).toBe('ready');
+  await expect(error).toBeHidden();
+  await expect(page.locator('.ofd-viewer__loading')).toBeHidden();
+  await expect(toolbar).not.toHaveAttribute('inert', '');
+  await expect(body).not.toHaveAttribute('inert', '');
+
+  // 工具栏恢复可点击：打开侧栏。
+  await page.locator('[data-ofd-control="sidebar"]').click();
+  await expect(page.locator('.ofd-viewer__sidebar')).toBeVisible();
+  await expectNoPageErrors(page, issues, { windowErrors: [/OFDError/] });
+});
+
+test('全屏错误卡背景 inert，Tab 焦点锁在重试/关闭，Enter 不改变背景', async ({ page, issues }) => {
+  await page.route(FAIL_PATTERN, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/ofd', body: 'not an ofd' });
+  });
+  await page.goto(viewerUrl(FAIL_FIXTURE, { crypto: false, autoVerify: false }));
+  const error = page.locator('.ofd-viewer__loading-error');
+  await expect(error).toBeVisible({ timeout: 10_000 });
+  const toolbar = page.locator('.ofd-viewer__toolbar');
+  const body = page.locator('.ofd-viewer__body');
+  await expect(toolbar).toHaveAttribute('inert', '');
+  await expect(body).toHaveAttribute('inert', '');
+
+  await page.evaluate(() => {
+    document.body.tabIndex = -1;
+    document.body.focus();
+  });
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.ofd-viewer__sidebar')).toBeHidden();
+  await expect(error).toBeVisible();
+
+  const focusedText = async (): Promise<string> =>
+    page.evaluate(() => document.activeElement?.textContent?.trim() ?? '');
+  await page.keyboard.press('Tab');
+  expect(await focusedText()).toBe('重试');
+  await page.keyboard.press('Tab');
+  expect(await focusedText()).toBe('关闭');
+  await page.keyboard.press('Tab');
+  expect(await focusedText()).toBe('重试');
+
+  await error.locator('.ofd-viewer__loading-button').nth(1).click();
+  await expect(error).toBeHidden();
+  await expect(toolbar).not.toHaveAttribute('inert', '');
+  await expect(body).not.toHaveAttribute('inert', '');
   await expectNoPageErrors(page, issues, { windowErrors: [/OFDError/] });
 });
 
@@ -269,6 +412,59 @@ test('重渲染保留旧 canvas 并显示遮罩；abort 静默不显示错误', 
   await expect(loading).toBeHidden();
   await expect(main.locator('.ofd-page__error')).toBeHidden();
   await expect(main).not.toHaveAttribute('aria-busy');
+  await expectNoPageErrors(page, issues);
+});
+
+test('真实 page.render 重渲染期间旧 canvas 像素不变，完成后才替换', async ({ page, issues }) => {
+  await openViewer(page, FIXTURES.multi, { crypto: false, autoVerify: false });
+  const main = page.locator('.ofd-page').first();
+  await expect(main).toHaveAttribute('data-page-state', 'rendered');
+  const canvas = main.locator('canvas');
+  await expect(canvas).toHaveCount(1);
+  const before = await canvasSignature(canvas);
+  expect(before.length).toBeGreaterThan(1000);
+
+  // 真实 page.render 正常绘制，仅把完成 Promise 推迟，便于在渲染期间采样旧画面。
+  await page.evaluate(async () => {
+    await window.__harness!.delayPageRender(0, 900);
+  });
+  await page.evaluate(() => window.__viewer!.setScale(2));
+  await expect(main).toHaveAttribute('data-page-state', 'rendering', { timeout: 2_000 });
+
+  for (let index = 0; index < 3; index += 1) {
+    expect(await canvasSignature(canvas), `渲染中第 ${index} 次采样`).toBe(before);
+    await wait(100);
+  }
+
+  await expect
+    .poll(async () => canvasSignature(canvas), { timeout: 5_000 })
+    .not.toBe(before);
+  await expect(main.locator('canvas')).toHaveCount(1);
+  await expect(main).toHaveAttribute('data-page-state', 'rendered');
+  await expect(main.locator('.ofd-page__error')).toBeHidden();
+  await expectNoPageErrors(page, issues);
+});
+
+test('真实 page.render 重渲染 abort 后保留旧画面像素', async ({ page, issues }) => {
+  await openViewer(page, FIXTURES.multi, { crypto: false, autoVerify: false });
+  const main = page.locator('.ofd-page').first();
+  const canvas = main.locator('canvas');
+  await expect(main).toHaveAttribute('data-page-state', 'rendered');
+  const before = await canvasSignature(canvas);
+
+  await page.evaluate(async () => {
+    await window.__harness!.delayPageRender(0, 5_000);
+  });
+  await page.evaluate(() => window.__viewer!.setScale(2));
+  await expect(main).toHaveAttribute('data-page-state', 'rendering', { timeout: 2_000 });
+  await page.evaluate(() => window.__harness!.cancelDelayedPageRender());
+
+  await expect(main).toHaveAttribute('data-page-state', 'rendered');
+  await expect(main).not.toHaveAttribute('aria-busy');
+  await expect(main.locator('.ofd-page__loading')).toBeHidden();
+  await expect(main.locator('.ofd-page__error')).toBeHidden();
+  expect(await canvasSignature(canvas)).toBe(before);
+  await expect(main.locator('canvas')).toHaveCount(1);
   await expectNoPageErrors(page, issues);
 });
 
