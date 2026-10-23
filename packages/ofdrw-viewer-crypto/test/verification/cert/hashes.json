@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-23T04:14:15.573Z",
+  "note": "V-CERT（t66）独立验证时的工作区字节快照；只记录，不参与实现门禁。aggregate 方法：按包内 src/**/*.ts 路径排序，对每个文件累计 \"path\\0sha256(file)\\n\" 后再取 SHA-256。",
+  "packageSrcAggregate": {
+    "packages/ofdrw-viewer-crypto": {
+      "files": 75,
+      "sha256": "5af733029e513cc200079315984a174f948205d797e55b8e7db89b42d84f4d71"
+    },
+    "packages/ofdrw-viewer-ui": {
+      "files": 78,
+      "sha256": "98693b38d5f2150cc29abe1171913ef36288f9bf8dfa549d54bcb202e6ef3a27"
+    },
+    "packages/ofdrw-viewer-cli": {
+      "files": 18,
+      "sha256": "297de64a184ac9bc8b36035faed902ce2928c16c5833a94a6647985ae94c9053"
+    }
+  },
+  "keyFiles": {
+    "packages/ofdrw-viewer-crypto/src/cert/convert.ts": "1b1f438c63628fd3847901af879a890c4163c7c24015ff5841eff0624d787169",
+    "packages/ofdrw-viewer-crypto/src/cert/parse.ts": "148584325c0a109aff52907aeb9397368ef2435ba372bb876efdb394a620d678",
+    "packages/ofdrw-viewer-crypto/src/cert/loader.ts": "e2ce5069f6c33d4ba52f5d7fbae15a456e65a5f2dab5cc097948db35c2c2b440",
+    "packages/ofdrw-viewer-crypto/src/cert/index.ts": "9bd10b8ffc125d7fd36276042050cde68d7d0e154007710c8d6531185f6830f3",
+    "packages/ofdrw-viewer-crypto/src/types/certificate.ts": "5db0928158acb07ee999638c75640e055d54ca81f49fddf413ca557350ec6ca9",
+    "packages/ofdrw-viewer-crypto/src/types/index.ts": "ad308d6f07d06228f6cdc67da668f23e880afb54870b5af2002f30fdcc63223e",
+    "packages/ofdrw-viewer-crypto/src/verify/types.ts": "f8b40d6188da21b196381cda2d85aaf47d66c6cbff2013f63e361e9f32b24c59",
+    "packages/ofdrw-viewer-crypto/src/index.ts": "159dcc9429afe97be5abc1f25793be4bcfb92a59cb26881fbff3bb68d079ce93",
+    "packages/ofdrw-viewer-ui/src/options.ts": "9f1d273eafb1d323744b9ae21ba32692345e8bf369122e79057c82aff4c9e822",
+    "packages/ofdrw-viewer-ui/src/crypto/service.ts": "fee703f7688a9bf4165a52292d4f84bcece612554d24d2089d51be48b9a91f97",
+    "packages/ofdrw-viewer-cli/src/credentials.ts": "499cd6557034bf9ecfda264138e293a3ee32899a24264be32225f550c7b85253",
+    "packages/ofdrw-viewer-cli/src/verify.ts": "2ae2f7c55940ff3513ee74fa8e10d5b7773cca8c3fd9c6b69b94e5d9dcd9a807",
+    "packages/ofdrw-viewer-crypto/dist/index.d.ts": "838e52b999f8d4f63148b1ed225b4e20f5aaec8f36a9f50a50a5dd98b6b13a73"
+  },
+  "fixtureManifest": "packages/ofdrw-viewer-crypto/test/fixtures/crypto/manifest.sha256",
+  "fixtureManifestSha256": "71d80c1527cf2985bc22323a0469cc47ee30efcbeee58d2c716d2dc7fcf4885e",
+  "fixtures": {
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/README.md": "405e6589d2ee921f3d9570bae1ee201d351dfdaacd0031fb3371e02286936a14",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/cert-encrypted.ofd": "338bf97a350e728d11aa5e9bdbaf093717a4bc3832ffb7ead011738808d34466",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/encrypt.crt.der": "20fd11b661cf3638747de012a72b26f61dc48af95cd7eb5b7c41834e38332331",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/encrypt.crt.pem": "2a398b94c8996726bc595ad9cb09c29b9708ef71e0a404b3ac1e293118123b25",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/encrypt.key.der": "9f5d9987b44459eb1150a2f8ca319ac2795a994eb0c96bd367f3a416ffab6ece",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/encrypt.key.pem": "fcf548de204796e317e9ea105820d32f61ab307607826380134ee173335d78e5",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/root-ca.crt.der": "31c0849fa9066e6c39b36828f069fb9e3035687061aece24d3baa8433e6b4112",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/root-ca.crt.pem": "3a67ca6eb7d5d69472d84c2eed170b3642c1e60ed243c081cf713f007d8de4d1",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/root-ca.key.der": "edc05890ab3587ccdbcf1b8298a6bed7ad03fa7314c1dc5f4caff14781f0279a",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/root-ca.key.pem": "be3b83fef9d78833235201e9eababf784ccf0a3596c2c155f6301e2600e39f2a",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/seal.crt.der": "dbddf294b0767716d3c03c5551768ec6c5a2211a759d95d68623456195d32bcc",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/seal.crt.pem": "75e6f431509efd6b0b7e1a614e6bbbc518457b9cef86beacdd33899396379f2c",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/seal.key.der": "ece1e9f6775f87d6f11a39ea362ee045fd9dc505419054a5893c5b0623f284c5",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/seal.key.pem": "12f8a5f7875ef49f3c5109a178a9c3b007747a3dfb1e503dbda10581e03d6e0d",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/signer.crt.der": "e425cc9af0a50ef0fd24e02fa99eb0a30b4e36d0b7b7dba3b32dc6dcfd6c6fd3",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/signer.crt.pem": "df28cf6ce5d8e8aa0baef0896a1f3831250a10ec25474d6e1ed266f90256a79c",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/signer.key.der": "a630d11e315cc08497f09f1939e335ed5b64f318a28061701272c66ff9eb178a",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/signer.key.pem": "2bff73ca48f9e99698c638fb6fd812078a82e4480e7c2b1e83c48c257daea04e",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/tsa.crt.der": "b2d230ce161dc8e2a3b4fa5c1b25f8ae5b358d749ca7f0771a902cd9e5d1c393",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/tsa.crt.pem": "5e72b55c2db5332dd7f6911c2375dd4e023671863cb72516081da00701f1edae",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/tsa.key.der": "b13c0f336bb29f9b2ab734550915d02e6806cc7565ae623799a0af8cefd88c95",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/tsa.key.pem": "bbd827eb79baf78e2b794b38f1c77ad4b1c5c1527983fc72974abf9e7c1bf17c",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/combined-password-encrypted.ofd": "191e1f765ec5c41dcbe343d8486d1ca217d2439089e94eda679258f6b83d2b88",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/combined-signed-integrity.ofd": "60b760c27ca054472085500e1e07adb954fc0624cc1ff0ef0c6a579aa5b7698c",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/integrity.ofd": "e71de6e2bae89b63ed4564721808135a1cde5f529fccfd15da67c57014c6a537",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/manifest.json": "2a4fe53758f77320b8b7f84290ab31e2f6dea8ac33b4cf8762d7ed06e6d2db56",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/manifest.sha256": "71d80c1527cf2985bc22323a0469cc47ee30efcbeee58d2c716d2dc7fcf4885e",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/negative-extra-file.ofd": "8a18eb02d48d08b9bd12f4b2e6b73ad4eb63cf4b405fbe9fac9a7332f64ed9a5",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/negative-tampered-content.ofd": "30c493c9fc31caad752d586fab083b32f637f4d406281b3db4a911dd6d42ceb8",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/negative-tampered-signature.ofd": "1338bb87854b20a957d94cd768143a6be58576ba0f2598054f7747b4fc29435c",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/negative-tampered-signedvalue.ofd": "7a7c18244731c6db9b08c49952d3282fd2868704a800052fbb7e33851997f50b",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/password-encrypted.ofd": "e742b60cd79a345de08b130ddc1cf5fe0072eb0a672d185d299bf541022f45d8",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/plain.ofd": "1df1080b49774a4084a2b42b18e6cb866eb514d6ad158613c6b389b16eb4136c",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/signed-sesv4.ofd": "295ce26a53dcdafd50a3e570ca428bd05ff31aef0ddc3c4631dec5be164a8401",
+    "packages/ofdrw-viewer-crypto/test/fixtures/crypto/signed-sesv5.ofd": "9c9d29cedb56dd0cf41b2ffe04cc04c65eb121d3fa3c3b1d36167c8465675022"
+  }
+}

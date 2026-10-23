@@ -7,7 +7,7 @@
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { inspect, verifyOfd } from '@ofdrw/ofdrw-viewer-crypto';
+import { inspect, toBase64, verifyOfd } from '@ofdrw/ofdrw-viewer-crypto';
 import type { CliInfoJson } from '../../src/info.js';
 import type { CliVerifyJson } from '../../src/verify.js';
 import {
@@ -31,11 +31,6 @@ afterEach(cleanupTempDirs);
 /** 读取夹具字节并交给 crypto 作 oracle。 */
 async function sourceOf(name: string) {
   return { kind: 'arraybuffer' as const, data: new Uint8Array(await readFile(fixture(name))) };
-}
-
-/** 读取 PEM 根证书。 */
-async function rootPem(): Promise<string> {
-  return readFile(ROOT_PEM, 'utf8');
 }
 
 describe('V-CLI info：只查询、不解密、不验签', () => {
@@ -177,7 +172,7 @@ describe('V-CLI verify：一次性完整性 + 签名 + 证书链', () => {
 
     const oracle = await verifyOfd({
       source: await sourceOf('signed-sesv4.ofd'),
-      roots: [{ pem: await rootPem() }],
+      roots: [new Uint8Array(await readFile(ROOT_DER))],
     });
     expect(payload.report.overall).toBe(oracle.overall);
     expect(payload.report.signatures.map((item) => item.status)).toEqual(
@@ -255,6 +250,27 @@ describe('V-CLI verify：一次性完整性 + 签名 + 证书链', () => {
     expect(mixedText.code).toBe(0);
     // 同一根以 PEM/DER 两条路径传入：文本按实际信任锚显示 1，而不是路径数 2。
     expect(mixedText.stdout).toContain('根证书: 已配置 1 / 链 valid');
+  });
+
+  it('--root 支持 Base64 文本与多证书 PEM bundle', async () => {
+    const cwd = await createTempDir();
+    const base64Path = join(cwd, 'root.b64');
+    await writeFile(base64Path, toBase64(new Uint8Array(await readFile(ROOT_DER))));
+    const base64 = await runMain(
+      ['verify', fixture('signed-sesv4.ofd'), '--root', base64Path, '--json'],
+      cwd,
+    );
+    expect(base64.code).toBe(0);
+    expect(parseJson<CliVerifyJson>(base64.stdout).report.overall).toBe('valid');
+
+    const bundlePath = join(cwd, 'roots.pem');
+    await writeFile(bundlePath, `${await readFile(ROOT_PEM, 'utf8')}\n${await readFile(ROOT_PEM, 'utf8')}`);
+    const bundle = await runMain(
+      ['verify', fixture('signed-sesv4.ofd'), '--root', bundlePath],
+      cwd,
+    );
+    expect(bundle.code).toBe(0);
+    expect(bundle.stdout).toContain('根证书: 已配置 1 / 链 valid');
   });
 
   it('内容篡改与夹带文件均 invalid 退出 5，文本与 JSON 状态一致', async () => {
