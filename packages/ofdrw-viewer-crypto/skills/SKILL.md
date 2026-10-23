@@ -33,6 +33,7 @@ import {
   inspect,
   openDecryptingContainer,
   verifyOfd,
+  certificatesToDer,
   parseSeal,
   parseSignedValue,
   parseTimestamp,
@@ -123,7 +124,7 @@ console.log(info.integrityPresent);
 const report = await verifyOfd({
   source,                 // 或 container（必须已解密）
   credentials,
-  roots: [{ pem: rootPem }],
+  roots: certificatesToDer(rootPem), // 入口转换：PEM/DER/CER/Base64 → 逐张 DER
   signatureIds: ['sig-1'],
   now: new Date(),
   signal,
@@ -152,20 +153,25 @@ for (const sig of report.signatures) {
 
 ## 根证书
 
+公共证书接口只接收 DER（`CertificateDer = Uint8Array`）。PEM/CER/DER/Base64
+与多证书先经 `certificatesToDer` 转换：
+
 ```ts
-roots: [
-  { pem: rootPem },       // PEM 文本，可含多张
-  { der: rootDerBytes },  // DER/CER
-  { data: rootBytes },    // 原始字节
-]
+import { certificatesToDer, verifyOfd } from '@ofdrw/ofdrw-viewer-crypto';
+
+const roots = [
+  ...certificatesToDer(rootPem),       // PEM 文本，可含多张
+  ...certificatesToDer(rootDerBytes),  // DER/CER 或拼接 DER
+];
+const report = await verifyOfd({ source, roots });
 ```
 
-- 三态 `data`/`pem`/`der` 只能提供一个；
+- `roots` 每项为一张证书 DER；核心不解析 PEM/Base64/CER，也不读取 URL/path/filePath；
+- UI/CLI 的 `data/url/path/filePath` 根证书来源由宿主读成**原始字节**，再调用 `certificatesToDer` 转为 DER；
 - 非法根证书：`CRYPTO_TRUST_ROOT_INVALID`；
 - **未配置 roots**：证书链 `unknown`，产生 `W_CRYPTO_TRUST_UNKNOWN`，绝不会是 `valid`；
 - 配置 roots 后：`valid` 必须能追到 SHA-256 指纹一致的根；缺中间证书 `incomplete`，终点不是根 `untrusted`；
-- 有效期由 `now`（默认当前时间）判断；不检查 CRL/OCSP，`revocation` 固定 `'not-checked'`；
-- UI 的 `url/path/filePath` 根证书来源要先由宿主读成字节，再传三态输入。
+- 有效期由 `now`（默认当前时间）判断；不检查 CRL/OCSP，`revocation` 固定 `'not-checked'`。
 
 ## 印章与时间戳解析
 

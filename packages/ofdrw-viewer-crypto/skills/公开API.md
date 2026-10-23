@@ -60,11 +60,12 @@ try {
 ### 1.3 一次性验证
 
 ```ts
-import { verifyOfd } from '@ofdrw/ofdrw-viewer-crypto';
+import { certificatesToDer, verifyOfd } from '@ofdrw/ofdrw-viewer-crypto';
 
+const roots = certificatesToDer(rootPem); // PEM/DER/CER/Base64 → 逐张 DER
 const report = await verifyOfd({
   source: { kind: 'arraybuffer', data: bytes },
-  roots: [{ pem: rootPem }],
+  roots,
 });
 console.log(report.overall, report.integrity?.status, report.signatures);
 ```
@@ -130,14 +131,14 @@ export type CryptoCredential = PasswordCredential | PrivateKeyCredential;
 ### 2.3 证书输入
 
 ```ts
-export interface CertificateInput {
-  readonly data?: ArrayBuffer | Uint8Array;
-  readonly pem?: string;
-  readonly der?: Uint8Array;
-}
+/** X.509 证书 DER 字节；公共证书接口只接收该类型。 */
+export type CertificateDer = Uint8Array;
 ```
 
-`data`/`pem`/`der` 必须且只能提供一个；PEM 可包含多张证书，DER/CER 可拼接多张。URL/path/filePath 属于 UI/CLI 宿主层，crypto 不读取文件系统或网络路径。
+- `parseCertificate`、`parseCertificates`、`loadCertificate`、`loadCertificates` 与 `VerifyOfdOptions.roots` 都只接收 DER；crypto 核心不识别 PEM/Base64/CER，也不读取 URL/path/filePath。
+- PEM（单/多证书）、CER、拼接 DER、Base64 必须先经 [`certificatesToDer`](#71-入口格式转换-certificatestoder) 转为逐张 DER；该工具由 UI/CLI 在入口调用，crypto 不做隐式转换。
+- `loadCertificates` 的数组每项为恰好一张证书；`parseCertificates` 可直接接收拼接的多张 DER。
+- DER 字节归调用方所有；crypto 不修改，也不跨调用持有，调用期间调用方不得变更同一 `Uint8Array`。
 
 ### 2.4 `CryptoOptions` 与 `ParseOptions`
 
@@ -352,7 +353,7 @@ export interface VerifyOfdOptions extends CryptoOptions {
   readonly source?: CryptoSource;
   readonly container?: VirtualContainer;
   readonly credentials?: CryptoCredential | readonly CryptoCredential[];
-  readonly roots?: readonly CertificateInput[];
+  readonly roots?: readonly CertificateDer[];
   readonly signatureIds?: readonly string[];
 }
 ```
@@ -364,7 +365,7 @@ export interface VerifyOfdOptions extends CryptoOptions {
 | `source` / `container` | 必须且只能提供一个，否则 `CRYPTO_INVALID_ARGUMENT` |
 | `container` | 必须 `encrypted=false`；否则 `CRYPTO_CREDENTIALS_REQUIRED` |
 | `credentials` | 仅加密 `source` 使用；明文 source 提供时 warning 后忽略 |
-| `roots` | 省略/空数组 = 未配置；每项 `CertificateInput` 三选一；非法 → `CRYPTO_TRUST_ROOT_INVALID` |
+| `roots` | 省略/空数组 = 未配置；每项为一张证书 DER（`CertificateDer`）；非法 → `CRYPTO_TRUST_ROOT_INVALID`。PEM/Base64/CER 必须先用 `certificatesToDer` 转换 |
 | `signatureIds` | 字符串数组；只验证匹配的签名 ID，不存在的 ID 不报错 |
 | `signal` | 中止抛 `CRYPTO_ABORTED` |
 
@@ -741,6 +742,43 @@ export interface OfdEntriesInfo {
 
 ## 7. 证书 API
 
+### 7.1 入口格式转换 `certificatesToDer`
+
+公共证书接口只收 DER；PEM/Base64/CER 与多证书拆分统一由本工具完成。
+
+```ts
+export interface CertificatesToDerOptions {
+  /** 原始输入与单张输出 DER 上限，默认 maxAsn1Bytes，单位 byte。 */
+  readonly maxBytes?: number;
+  /** 输出证书张数上限，默认 maxCertificates，单位张。 */
+  readonly maxCertificates?: number;
+}
+
+export function certificatesToDer(
+  input: ArrayBuffer | Uint8Array | string,
+  options?: CertificatesToDerOptions,
+): readonly CertificateDer[];
+```
+
+| 输入/行为 | 说明 |
+| --- | --- |
+| PEM | 接受 `CERTIFICATE`、`X509 CERTIFICATE`、`TRUSTED CERTIFICATE`；支持单/多证书、CRLF、BOM 与块外文字；`TRUSTED CERTIFICATE` 只取首个证书 TLV |
+| DER/CER | 按 DER 处理，支持多张证书直接拼接；每张必须是完整 X.509 `SEQUENCE` |
+| Base64 | 字符串或可打印字节；忽略 ASCII 空白，单行/折行均可 |
+| 输出 | 按输入顺序返回逐张 DER；每项为独立副本，调用方拥有所有权；工具不按指纹去重 |
+| 上限 | 原始输入与每张输出 DER 均不超过 `maxBytes`；输出张数不超过 `maxCertificates` |
+| 职责边界 | 只做格式识别、拆分与 X.509 最小合法性校验；不建信任链、不输出摘要、不判定 `valid/untrusted/unknown` |
+
+错误码：
+
+| 场景 | 错误码 |
+| --- | --- |
+| 入参类型不是 ArrayBuffer/Uint8Array/string，或 `maxBytes`/`maxCertificates` 非正整数 | `CRYPTO_INVALID_ARGUMENT` |
+| 空输入、非法 PEM/Base64/DER、PEM 中没有证书块 | `CRYPTO_CERTIFICATE_INVALID` |
+| 原始输入或输出证书超过 `maxBytes`，或张数超过 `maxCertificates` | `CRYPTO_LIMIT_EXCEEDED` |
+
+### 7.2 DER 解析与加载
+
 ```ts
 export function parseX509Certificate(
   der: Uint8Array,
@@ -748,32 +786,29 @@ export function parseX509Certificate(
 ): X509Certificate;
 
 export function parseCertificates(
-  input: Uint8Array | string,
+  input: CertificateDer,
   options?: CertificateParseOptions,
 ): readonly X509Certificate[];
 
 export function parseCertificate(
-  input: Uint8Array | string,
+  input: CertificateDer,
   options?: CertificateParseOptions,
 ): X509Certificate;
 
 export function loadCertificates(
-  inputs: readonly CertificateInput[],
+  inputs: readonly CertificateDer[],
   options?: CertificateLoadOptions,
 ): Promise<readonly X509Certificate[]>;
 
 export function loadCertificate(
-  input: CertificateInput,
+  input: CertificateDer,
   options?: CertificateLoadOptions,
 ): Promise<X509Certificate>;
-
-export function checkCertificateValidity(
-  certificate: X509Certificate,
-  now?: Date,
-): CertificateValidity;
-
-export function toCertificateSummary(certificate: X509Certificate): CertificateSummary;
 ```
+
+- `parseCertificates` 可接收拼接的多张证书 DER；`parseCertificate` 要求恰好一张，尾随字节视为非法。
+- `loadCertificates` 的数组每项必须是一张证书 DER；PEM/Base64/CER/多证书先经 `certificatesToDer` 拆分。
+- 核心对非 DER 的运行时拒绝：字符串、ArrayBuffer 或其他非 `Uint8Array` 对象 → `CRYPTO_INVALID_ARGUMENT`；PEM 字节等非法内容 → `CRYPTO_CERTIFICATE_INVALID`。
 
 `CertificateParseOptions` 继承 `DerParseOptions`，额外 `maxCertificates`。`CertificateLoadOptions`：
 
@@ -788,9 +823,20 @@ interface CertificateLoadOptions {
 }
 ```
 
+### 7.3 摘要与所有权
+
+```ts
+export function checkCertificateValidity(
+  certificate: X509Certificate,
+  now?: Date,
+): CertificateValidity;
+
+export function toCertificateSummary(certificate: X509Certificate): CertificateSummary;
+```
+
 `CertificateSummary` 字段：`subject`、`issuer`、`serialNumber`、`notBefore`、`notAfter`（ISO 8601）、`fingerprintSha256`、`publicKeyAlgorithm?`、`signatureAlgorithm?`、`keyUsage?`、`isCA`。
 
-`X509Certificate` 保留完整 DER、TBS、DN 属性（含 `subjectDer`/`issuerDer` 原始 Name DER，供链匹配）、有效期、公钥/签名算法、KeyUsage、EKU、SKI/AKI、扩展与 SHA-256 指纹；调用方可用 `toCertificateSummary` 得到不含原文的展示对象。
+`X509Certificate` 保留完整 DER、TBS、DN 属性（含 `subjectDer`/`issuerDer` 原始 Name DER，供链匹配）、有效期、公钥/签名算法、KeyUsage、EKU、SKI/AKI、扩展与 SHA-256 指纹；调用方可用 `toCertificateSummary` 得到不含原文的展示对象。DER 输入与 `certificatesToDer` 输出均归调用方所有，crypto 不修改、不跨调用持有。
 
 ---
 
@@ -1075,7 +1121,7 @@ export function toCryptoError(
 | `CRYPTO_ASN1_INVALID` | ASN.1/DER 结构非法 |
 | `CRYPTO_UNSUPPORTED_SES_VERSION` | SES/eSeal 版本不是 v1/v4/v5 |
 | `CRYPTO_UNSUPPORTED_ALGORITHM` | 签名/摘要/证书算法不支持 |
-| `CRYPTO_CERTIFICATE_INVALID` | 证书解析失败 |
+| `CRYPTO_CERTIFICATE_INVALID` | 证书 DER 解析或入口格式转换失败（非法 PEM/Base64/DER、非 X.509） |
 | `CRYPTO_TRUST_ROOT_INVALID` | 信任根输入非法 |
 | `CRYPTO_INTEGRITY_INVALID` | 完整性无法产出报告 |
 | `CRYPTO_SIGNATURE_INVALID` | 签名入口无法产出报告 |
@@ -1099,7 +1145,7 @@ export function toCryptoError(
 | `W_CRYPTO_REFERENCE_UNSUPPORTED` | Reference CheckMethod 非 SM3 |
 | `W_CRYPTO_SEAL_PICTURE_INVALID` | 印章图片缺失/损坏 |
 | `W_CRYPTO_TRUST_UNKNOWN` | 未配置信任根，链无法判定 |
-| `W_CRYPTO_CERT_SOURCE_UNSUPPORTED` | `skipInvalid=true` 时证书输入读取/解析失败被跳过 |
+| `W_CRYPTO_CERT_SOURCE_UNSUPPORTED` | `skipInvalid=true` 时非法证书输入被跳过 |
 
 ---
 
@@ -1137,7 +1183,7 @@ interface VirtualContainer {
 
 ### 13.2 证书
 
-`parseX509Certificate`、`parseCertificate`、`parseCertificates`、`loadCertificate`、`loadCertificates`、`checkCertificateValidity`、`toCertificateSummary`。
+`certificatesToDer`、`parseX509Certificate`、`parseCertificate`、`parseCertificates`、`loadCertificate`、`loadCertificates`、`checkCertificateValidity`、`toCertificateSummary`。
 
 ### 13.3 SM
 
@@ -1157,7 +1203,7 @@ interface VirtualContainer {
 
 ### 13.7 公共类型索引
 
-`CryptoSource`、`CryptoCredential`、`PasswordCredential`、`PrivateKeyCredential`、`Sm2PrivateKeyInput`、`CertificateInput`、`CertificateSummary`、`CertificateKeyUsage`、`CertificateValidity`、`CryptoOptions`、`ParseOptions`、`CryptoLimits`、`CryptoWarning`、`CryptoWarningCode`、`CryptoWarningHandler`、`CryptoErrorCode`、`CryptoErrorOptions`、`OfdInspection`、`EncryptionLayerInfo`、`EncryptionUserInfo`、`SignatureEntrySummary`、`DecryptingContainerResult`、`DecryptionLayerSummary`、`OpenDecryptingContainerOptions`、`VerificationReport`、`PackageVerificationInfo`、`DecryptionReportInfo`、`IntegrityVerification`、`SignatureVerification`、`SealVerification`、`CertificateChainVerification`、`DataHashVerification`、`ReferenceCheckResult`、`ReferenceFailure`、`ReferenceFailureReason`、`SignatureMathResult`、`VerifyOfdOptions`、`TimestampParseResult`、`TimestampParseOptions`、`TimestampStatus`、`ParsedSeal`、`SealParseOptions`、`SealPictureInfo`、`ParsedSignedValue`、`SesVersion`、`PemBlock`、`SignaturesXml`、`SignatureRecord`、`SignatureXml`、`SignatureReferenceXml`、`StampAnnotInfo`、`OfdEntriesInfo`、`X509Certificate`、`X509Extension`、`DistinguishedNameAttribute`、`CertificateParseOptions`、`CertificateLoadOptions`、`DerNode`、`DerTag`、`DerClass`、`DerBitString`、`DerParseOptions`、`Sm2Cipher`、`C1C3C2ParseOptions`、`Sm2CurveParams`、`Sm2PrivateKey`、`Sm2PrivateKeyParseOptions`、`Sm2SignOptions`、`Sm2DecryptOptions`、`Sm4CbcOptions`、`Sm4Padding`、`VerificationStatus`、`ChainStatus`、`VerificationIssue`、`VerificationIssueSeverity`、`WarningCollector`、`ReadCryptoSourceOptions`、`ResolvedCryptoOptions`。
+`CryptoSource`、`CryptoCredential`、`PasswordCredential`、`PrivateKeyCredential`、`Sm2PrivateKeyInput`、`CertificateDer`、`CertificatesToDerOptions`、`CertificateSummary`、`CertificateKeyUsage`、`CertificateValidity`、`CryptoOptions`、`ParseOptions`、`CryptoLimits`、`CryptoWarning`、`CryptoWarningCode`、`CryptoWarningHandler`、`CryptoErrorCode`、`CryptoErrorOptions`、`OfdInspection`、`EncryptionLayerInfo`、`EncryptionUserInfo`、`SignatureEntrySummary`、`DecryptingContainerResult`、`DecryptionLayerSummary`、`OpenDecryptingContainerOptions`、`VerificationReport`、`PackageVerificationInfo`、`DecryptionReportInfo`、`IntegrityVerification`、`SignatureVerification`、`SealVerification`、`CertificateChainVerification`、`DataHashVerification`、`ReferenceCheckResult`、`ReferenceFailure`、`ReferenceFailureReason`、`SignatureMathResult`、`VerifyOfdOptions`、`TimestampParseResult`、`TimestampParseOptions`、`TimestampStatus`、`ParsedSeal`、`SealParseOptions`、`SealPictureInfo`、`ParsedSignedValue`、`SesVersion`、`PemBlock`、`SignaturesXml`、`SignatureRecord`、`SignatureXml`、`SignatureReferenceXml`、`StampAnnotInfo`、`OfdEntriesInfo`、`X509Certificate`、`X509Extension`、`DistinguishedNameAttribute`、`CertificateParseOptions`、`CertificateLoadOptions`、`DerNode`、`DerTag`、`DerClass`、`DerBitString`、`DerParseOptions`、`Sm2Cipher`、`C1C3C2ParseOptions`、`Sm2CurveParams`、`Sm2PrivateKey`、`Sm2PrivateKeyParseOptions`、`Sm2SignOptions`、`Sm2DecryptOptions`、`Sm4CbcOptions`、`Sm4Padding`、`VerificationStatus`、`ChainStatus`、`VerificationIssue`、`VerificationIssueSeverity`、`WarningCollector`、`ReadCryptoSourceOptions`、`ResolvedCryptoOptions`。
 
 ---
 
@@ -1166,3 +1212,4 @@ interface VirtualContainer {
 | 版本 | 日期 | 说明 |
 | --- | --- | --- |
 | 0.1.0 | 2026-10-23 | 首次公开 API 文档：inspect/解密/verify/parse、SM/ASN.1/证书、错误与 warning、VirtualContainer 集成 |
+| 0.1.0 | 2026-10-23 | 证书输入统一为 DER：新增 `CertificateDer`/`certificatesToDer`；roots/load/parse 只收 DER |
