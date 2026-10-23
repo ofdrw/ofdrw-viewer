@@ -1197,7 +1197,6 @@ packages/ofdrw-viewer-ui/
       index.ts
       OFDViewer.ts
   test/
-  demo/
 ```
 
 ### 14.2 依赖
@@ -1239,7 +1238,7 @@ packages/ofdrw-viewer-ui/
 - 版本：从 `0.1.0` 开始；与引擎版本解耦，但 peer/workspace 约束引擎 `^0.1.0`。
 - `react`/`react-dom` `>=18`、`vue` `>=3.3` 作为可选 `peerDependencies`，用 `peerDependenciesMeta` 标记 optional；不安装不影响核心/纯 HTML。
 - 发布范围：npm 公开包，`publishConfig.access = public`；各子包已移除 `private` 标记。
-- 发布前检查：许可证、NOTICE、README、API 文档、demo、类型声明、CSS 导出、子路径 `exports` 解析。
+- 发布前检查：许可证、NOTICE、README、API 文档、在线演示站、类型声明、CSS 导出、子路径 `exports` 解析。
 
 ### 14.5 测试
 

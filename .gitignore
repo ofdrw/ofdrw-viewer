@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist.bak/
 coverage/
 .npm-cache/
 .pnpm-store/
@@ -14,29 +15,35 @@ coverage/
 **/test/.fixtures/
 examples/*/dist/
 # 在线演示站构建产物（由 CI 构建并部署到 GitHub Pages）
-packages/ofdrw-viewer-ui/site-dist/
+site-dist/
 
 # 发布工作流在本地运行时生成的中间产物
 release-assets/
 release-notes.md
 
 # 本地参考源码与素材，不纳入版本管理
-references/
-src_material/
+/references/
+/src_material/
 
+# AgentTeams / 浏览器调试运行状态，不纳入版本管理
+/.agent-teams/
+/.playwright-cli/
+/.research/
+/.cache/
+/.vhs*/
 
-# AgentTeams 运行状态，不纳入版本管理
-.agent-teams/
-.playwright-cli/
-.research/
-.cache
-.vhs*/
-ofd-render-showcase
+# 根目录示例构建产物；文档 GIF 的逐帧中间图不提交（最终 GIF 已提交）
+/ofd-render-showcase/
+/docs/img/ofd-render-showcase/
 
-# 仅忽略仓库根目录的 test/（不影响 packages/*/test/）
-/test/
+# 仅忽略根目录 test/ 下的本地产物，测试源码与基准图正常纳入版本管理
+/test/.artifacts/
+/test/.fixtures/
+/test/acceptance/artifacts/
+# 注：test/acceptance/artifacts/ 中已跟踪的基准图不受忽略影响；新增基准图需 git add -f
 
-.tmp*
-.pki
-.config
-.local
+# 本地工具与浏览器配置
+/.tmp*
+/.pki/
+/.config/
+/.local/

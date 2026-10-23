@@ -1,5 +1,6 @@
 packages:
   - 'packages/*'
+  - 'site'
 # examples/ 是无包管理的独立示例，不参与 workspace 安装；
 # 其中 engine-node、viewer-ui-vue、viewer-ui-react 按正式 npm 依赖声明，
 # 发布前需按各自 README 临时改成本地路径安装。

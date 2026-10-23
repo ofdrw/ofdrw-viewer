@@ -469,15 +469,6 @@ await viewer.ready;
 
 `on(event, handler)` 返回取消订阅函数，`once`/`off` 同样可用。事件包括 `documentopen`、`pagechanging`、`pagerendered`、`scalechanging`、`rotationchanging`、`findstart`/`findmatches`/`findcurrent`、`selectionchange`、`signatureclick`、`printstart`/`printprogress`/`printend`、`exportprogress`、`warning`/`error`、`verificationcompleted`、`featureschange`、`statechange` 等。
 
-## Demo
-
-构建后使用 Vite 运行 `demo/`：
-
-```bash
-pnpm -C packages/ofdrw-viewer-ui build
-npx vite packages/ofdrw-viewer-ui/demo
-```
-
 ## 已知边界
 
 - 签名验证覆盖 SM2/SM3/SM4、SES v1/v4/v5、Reference、证书链/信任根/有效期和 GB/T 35275 防夹带完整性；不检查 CRL/OCSP，`revocation` 固定 `not-checked`。

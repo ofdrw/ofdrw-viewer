@@ -165,6 +165,21 @@ importers:
         specifier: ^3.5.44
         version: 3.5.44(typescript@5.9.3)
 
+  site:
+    devDependencies:
+      '@ofdrw/ofdrw-viewer-ui':
+        specifier: workspace:^
+        version: link:../packages/ofdrw-viewer-ui
+      '@types/node':
+        specifier: ^26.6.5
+        version: 26.6.5
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vite:
+        specifier: ^8.3.5
+        version: 8.3.5(@types/node@26.6.5)(esbuild@0.28.2)
+
 packages:
 
   '@asamuzakjp/css-color@7.1.7':

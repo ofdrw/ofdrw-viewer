@@ -4,11 +4,11 @@
  * 页面只有 `<ofd-viewer>` 与悬浮在底部的演示控件，阅读器铺满整个视口；
  * 文档解析与页面渲染全部在浏览器本地完成，不上传文件。
  */
-import '../src/style.css';
+import '../packages/ofdrw-viewer-ui/src/style.css';
 import './style.css';
-import '../src/component/ofd-viewer-element';
-import { getVersions } from '../src/index';
-import type { OFDViewerElement } from '../src/component/ofd-viewer-element';
+import '../packages/ofdrw-viewer-ui/src/component/ofd-viewer-element';
+import { getVersions } from '../packages/ofdrw-viewer-ui/src/index';
+import type { OFDViewerElement } from '../packages/ofdrw-viewer-ui/src/component/ofd-viewer-element';
 
 /** 内置示例文档；`name` 对应 `public/samples` 下的文件名。 */
 const SAMPLES = [

@@ -67,7 +67,7 @@ jobs:
       - name: 构建演示站
         env:
           BASE_PATH: ${{ steps.base.outputs.base }}
-        run: pnpm --filter @ofdrw/ofdrw-viewer-ui build:site
+        run: pnpm -C site build
 
       - name: 配置 Pages
         uses: actions/configure-pages@v6
@@ -75,7 +75,7 @@ jobs:
       - name: 上传站点产物
         uses: actions/upload-pages-artifact@v5
         with:
-          path: packages/ofdrw-viewer-ui/site-dist
+          path: site-dist
 
   deploy:
     name: 部署到 GitHub Pages

@@ -43,6 +43,11 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
+      # ui/site 的类型检查通过 paths 引用 engine/crypto 的 dist 类型声明，
+      # 干净检出后必须先构建依赖包，否则 tsc 找不到模块。
+      - name: 构建全部包
+        run: pnpm build
+
       - name: 类型检查
         run: pnpm -r --if-present run typecheck
 
@@ -65,12 +70,9 @@ jobs:
       - name: cli 单元与端到端测试
         run: pnpm -C packages/ofdrw-viewer-cli test
 
-      - name: 构建全部包
-        run: pnpm build
-
       # 演示站部署在 GitHub Pages 根路径以外时由 pages.yml 注入 BASE_PATH，
       # 这里用根路径验证站点可构建。
       - name: 构建演示站
         env:
           BASE_PATH: /
-        run: pnpm --filter @ofdrw/ofdrw-viewer-ui build:site
+        run: pnpm -C site build

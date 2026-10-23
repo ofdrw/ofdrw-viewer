@@ -1,0 +1,23 @@
+{
+  "name": "@ofdrw/ofdrw-viewer-site",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ofdrw-viewer-ui 在线演示站（直接引用 UI 源码构建，部署到 GitHub Pages）",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@ofdrw/ofdrw-viewer-ui": "workspace:^",
+    "@types/node": "^26.6.5",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.5"
+  }
+}
