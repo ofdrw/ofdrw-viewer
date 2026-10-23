@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OFD 渲染引擎生命周期与事件</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f4f7fb;
+    --ink: #0f172a;
+    --muted: #64748b;
+    --line: #cbd5e1;
+    --doc: #2563eb;
+    --page: #7c3aed;
+    --danger: #e11d48;
+    --stage: #10b981;
+    --start: #3b82f6;
+    --decision: #8b5cf6;
+    --terminal: #fb7185;
+    --loop: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); }
+  body {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  }
+  .canvas {
+    width: 1200px;
+    height: 1600px;
+    background: transparent;
+  }
+  svg { display: block; width: 100%; height: 100%; }
+  .mono { font-family: "JetBrains Mono", "SFMono-Regular", "Cascadia Code", Consolas, monospace; }
+  .title { font-size: 30px; font-weight: 750; fill: var(--ink); letter-spacing: -0.02em; }
+  .subtitle { font-size: 15px; fill: var(--muted); }
+  .stage-title { font-size: 21px; font-weight: 700; fill: #ffffff; }
+  .stage-sub { font-size: 12.5px; fill: rgba(255,255,255,.88); }
+  .start-title { font-size: 18px; font-weight: 650; fill: #ffffff; }
+  .event-name { font-size: 13px; font-weight: 650; }
+  .event-sub { font-size: 11.5px; fill: var(--muted); }
+  .branch-label { font-size: 11.5px; font-weight: 600; fill: var(--danger); }
+  .loop-label { font-size: 12.5px; font-weight: 650; fill: #b45309; }
+  .footnote { font-size: 12px; fill: var(--muted); }
+  .legend-text { font-size: 12px; fill: var(--muted); }
+  .step { font-size: 10px; font-weight: 700; fill: rgba(255,255,255,.75); letter-spacing: .08em; }
+</style>
+</head>
+<body>
+<div class="canvas">
+<svg viewBox="0 0 1200 1600" role="img" aria-labelledby="title desc">
+  <title id="title">OFD 渲染引擎生命周期与事件</title>
+  <desc id="desc">文档打开、页面加载、页面渲染、文档关闭四个阶段的纵向生命周期图，事件在阶段边界以左侧标签展示，失败与取消在右侧展示。</desc>
+
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbfdff"/>
+      <stop offset="1" stop-color="#eef4fb"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="7" stdDeviation="9" flood-color="#0f172a" flood-opacity="0.13"/>
+    </filter>
+    <filter id="soft-shadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#0f172a" flood-opacity="0.08"/>
+    </filter>
+    <marker id="arrow-spine" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrow-doc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrow-page" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7c3aed"/>
+    </marker>
+    <marker id="arrow-danger" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#e11d48"/>
+    </marker>
+    <marker id="arrow-loop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f59e0b"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="1600" fill="url(#bg)"/>
+  <circle cx="1100" cy="120" r="160" fill="#dbeafe" opacity="0.35"/>
+  <circle cx="80" cy="1480" r="180" fill="#ede9fe" opacity="0.35"/>
+
+  <!-- header -->
+  <text x="60" y="50" class="title">OFD 渲染引擎生命周期与事件</text>
+  <text x="60" y="79" class="subtitle">文档打开 → 页面加载 → 页面渲染 → 文档关闭</text>
+
+  <g aria-label="图例">
+    <circle cx="780" cy="45" r="5" fill="#2563eb"/>
+    <text x="792" y="49" class="legend-text">文档事件</text>
+    <circle cx="890" cy="45" r="5" fill="#7c3aed"/>
+    <text x="902" y="49" class="legend-text">页面事件</text>
+    <circle cx="1000" cy="45" r="5" fill="#e11d48"/>
+    <text x="1012" y="49" class="legend-text">失败 / 取消</text>
+  </g>
+
+  <!-- spine -->
+  <line x1="600" y1="216" x2="600" y2="1460" stroke="#cbd5e1" stroke-width="2.5"/>
+
+  <!-- start -->
+  <rect x="440" y="140" width="320" height="76" rx="18" fill="var(--start)" filter="url(#shadow)"/>
+  <text x="600" y="174" text-anchor="middle" class="start-title mono">OFDDocument.open()</text>
+  <text x="600" y="198" text-anchor="middle" font-size="11.5" fill="rgba(255,255,255,.82)">开始打开文档</text>
+
+  <!-- stage 1 -->
+  <rect x="420" y="260" width="360" height="86" rx="16" fill="var(--stage)" filter="url(#shadow)"/>
+  <text x="600" y="294" text-anchor="middle" class="stage-title">打开容器与文档</text>
+  <text x="600" y="318" text-anchor="middle" class="stage-sub">OFD.xml · Document.xml · 注释与资源索引</text>
+  <text x="438" y="282" class="step">01</text>
+
+  <!-- hook: open start -->
+  <rect x="70" y="270" width="280" height="62" rx="12" fill="#ffffff" stroke="var(--doc)" stroke-width="1.8" stroke-dasharray="6 4" filter="url(#soft-shadow)"/>
+  <text x="88" y="296" class="event-name mono" fill="var(--doc)">document:open:start</text>
+  <text x="88" y="316" class="event-sub">打开开始</text>
+  <path d="M 420 303 H 354" fill="none" stroke="var(--doc)" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#arrow-doc)"/>
+
+  <!-- stage 2 -->
+  <rect x="420" y="390" width="360" height="86" rx="16" fill="var(--stage)" filter="url(#shadow)"/>
+  <text x="600" y="424" text-anchor="middle" class="stage-title">文档就绪</text>
+  <text x="600" y="448" text-anchor="middle" class="stage-sub">OFDDocument Ready</text>
+  <text x="438" y="412" class="step">02</text>
+
+  <!-- hook: open end -->
+  <rect x="70" y="400" width="280" height="62" rx="12" fill="#ffffff" stroke="var(--doc)" stroke-width="1.8" stroke-dasharray="6 4" filter="url(#soft-shadow)"/>
+  <text x="88" y="426" class="event-name mono" fill="var(--doc)">document:open:end</text>
+  <text x="88" y="446" class="event-sub">打开完成</text>
+  <path d="M 420 433 H 354" fill="none" stroke="var(--doc)" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#arrow-doc)"/>
+
+  <!-- stage 3 -->
+  <rect x="420" y="520" width="360" height="86" rx="16" fill="var(--stage)" filter="url(#shadow)"/>
+  <text x="600" y="554" text-anchor="middle" class="stage-title mono">document.getPage(index)</text>
+  <text x="600" y="578" text-anchor="middle" class="stage-sub">加载页面模型、模板页与页资源</text>
+  <text x="438" y="542" class="step">03</text>
+
+  <!-- hook: page load start -->
+  <rect x="70" y="530" width="280" height="62" rx="12" fill="#ffffff" stroke="var(--page)" stroke-width="1.8" stroke-dasharray="6 4" filter="url(#soft-shadow)"/>
+  <text x="88" y="556" class="event-name mono" fill="var(--page)">page:load:start</text>
+  <text x="88" y="576" class="event-sub">取页开始</text>
+  <path d="M 420 563 H 354" fill="none" stroke="var(--page)" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#arrow-page)"/>
+
+  <!-- branch: page load error -->
+  <rect x="850" y="530" width="280" height="62" rx="12" fill="#fff7f9" stroke="var(--danger)" stroke-width="1.8" stroke-dasharray="6 4" filter="url(#soft-shadow)"/>
+  <text x="868" y="554" class="event-name mono" fill="var(--danger)">page:load:error / abort</text>
+  <text x="868" y="575" class="event-sub">取页失败或取消</text>
+  <path d="M 780 563 H 846" fill="none" stroke="var(--danger)" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#arrow-danger)"/>
+  <text x="810" y="550" class="branch-label">失败 / 取消</text>
+
+  <!-- stage 4 -->
+  <rect x="420" y="650" width="360" height="86" rx="16" fill="var(--stage)" filter="url(#shadow)"/>
+  <text x="600" y="684" text-anchor="middle" class="stage-title mono">page.render()</text>
+  <text x="600" y="708" text-anchor="middle" class="stage-sub">创建 RenderTask，异步准备后同步绘制</text>
+  <text x="438" y="672" class="step">04</text>
+
+  <!-- hook: render start -->
+  <rect x="70" y="660" width="280" height="62" rx="12" fill="#ffffff" stroke="var(--page)" stroke-width="1.8" stroke-dasharray="6 4" filter="url(#soft-shadow)"/>
+  <text x="88" y="686" class="event-name mono" fill="var(--page)">page:render:start</text>
+  <text x="88" y="706" class="event-sub">渲染开始</text>
+  <path d="M 420 693 H 354" fill="none" stroke="var(--page)" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#arrow-page)"/>
+
+  <!-- branch: render error -->
+  <rect x="850" y="660" width="280" height="62" rx="12" fill="#fff7f9" stroke="var(--danger)" stroke-width="1.8" stroke-dasharray="6 4" filter="url(#soft-shadow)"/>
+  <text x="868" y="684" class="event-name mono" fill="var(--danger)">page:render:error / abort</text>
+  <text x="868" y="705" class="event-sub">渲染失败或取消</text>
+  <path d="M 780 693 H 846" fill="none" stroke="var(--danger)" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#arrow-danger)"/>
+  <text x="808" y="680" class="branch-label">失败 / 取消</text>
+
+  <!-- stage 5 -->
+  <rect x="420" y="780" width="360" height="86" rx="16" fill="var(--stage)" filter="url(#shadow)"/>
+  <text x="600" y="814" text-anchor="middle" class="stage-title">异步准备 + 同步绘制</text>
+  <text x="600" y="838" text-anchor="middle" class="stage-sub">字体、图片、模板 → drawPage</text>
+  <text x="438" y="802" class="step">05</text>
+
+  <!-- hook: render end -->
+  <rect x="70" y="790" width="280" height="62" rx="12" fill="#ffffff" stroke="var(--page)" stroke-width="1.8" stroke-dasharray="6 4" filter="url(#soft-shadow)"/>
+  <text x="88" y="816" class="event-name mono" fill="var(--page)">page:render:end</text>
+  <text x="88" y="836" class="event-sub">渲染完成</text>
+  <path d="M 420 823 H 354" fill="none" stroke="var(--page)" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#arrow-page)"/>
+
+  <!-- decision -->
+  <path d="M 600 885 L 750 960 L 600 1035 L 450 960 Z" fill="var(--decision)" filter="url(#shadow)"/>
+  <text x="600" y="955" text-anchor="middle" font-size="19" font-weight="700" fill="#ffffff">是否关闭文档？</text>
+  <text x="600" y="979" text-anchor="middle" font-size="11.5" fill="rgba(255,255,255,.84)">由宿主动作决定</text>
+
+  <!-- decision to close -->
+  <path d="M 600 1035 V 1096" fill="none" stroke="#94a3b8" stroke-width="2.5" marker-end="url(#arrow-spine)"/>
+  <text x="614" y="1072" font-size="12.5" font-weight="650" fill="#475569">是</text>
+
+  <!-- loop: continue -->
+  <path d="M 750 960 H 1150 V 610 H 700 V 646" fill="none" stroke="var(--loop)" stroke-width="2.2" stroke-dasharray="7 5" marker-end="url(#arrow-loop)"/>
+  <text x="920" y="598" class="loop-label">否：继续渲染 / 其他页面</text>
+
+  <!-- stage 6 -->
+  <rect x="420" y="1100" width="360" height="86" rx="16" fill="var(--stage)" filter="url(#shadow)"/>
+  <text x="600" y="1134" text-anchor="middle" class="stage-title mono">document.close()</text>
+  <text x="600" y="1158" text-anchor="middle" class="stage-sub">停止接收新操作，中止活动操作</text>
+  <text x="438" y="1122" class="step">06</text>
+
+  <!-- hook: close start -->
+  <rect x="70" y="1110" width="280" height="62" rx="12" fill="#ffffff" stroke="var(--doc)" stroke-width="1.8" stroke-dasharray="6 4" filter="url(#soft-shadow)"/>
+  <text x="88" y="1136" class="event-name mono" fill="var(--doc)">document:close:start</text>
+  <text x="88" y="1156" class="event-sub">关闭开始</text>
+  <path d="M 420 1143 H 354" fill="none" stroke="var(--doc)" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#arrow-doc)"/>
+
+  <!-- branch: active operations aborted -->
+  <rect x="850" y="1110" width="280" height="62" rx="12" fill="#fff7f9" stroke="var(--danger)" stroke-width="1.8" stroke-dasharray="6 4" filter="url(#soft-shadow)"/>
+  <text x="868" y="1134" class="event-name mono" fill="var(--danger)">page:*:abort</text>
+  <text x="868" y="1155" class="event-sub">活动操作中止，cause=close</text>
+  <path d="M 780 1143 H 846" fill="none" stroke="var(--danger)" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#arrow-danger)"/>
+  <text x="812" y="1130" class="branch-label">中止</text>
+
+  <!-- stage 7 -->
+  <rect x="420" y="1230" width="360" height="86" rx="16" fill="var(--stage)" filter="url(#shadow)"/>
+  <text x="600" y="1264" text-anchor="middle" class="stage-title">释放容器、渲染器与缓存</text>
+  <text x="600" y="1288" text-anchor="middle" class="stage-sub">等待所有活动操作结束</text>
+  <text x="438" y="1252" class="step">07</text>
+
+  <!-- terminal -->
+  <rect x="470" y="1360" width="260" height="76" rx="38" fill="var(--terminal)" filter="url(#shadow)"/>
+  <text x="600" y="1392" text-anchor="middle" font-size="20" font-weight="700" fill="#ffffff">Closed</text>
+  <text x="600" y="1415" text-anchor="middle" font-size="11.5" fill="rgba(255,255,255,.86)">不再派发事件</text>
+
+  <!-- hook: close end -->
+  <rect x="70" y="1368" width="280" height="62" rx="12" fill="#ffffff" stroke="var(--doc)" stroke-width="1.8" stroke-dasharray="6 4" filter="url(#soft-shadow)"/>
+  <text x="88" y="1394" class="event-name mono" fill="var(--doc)">document:close:end</text>
+  <text x="88" y="1414" class="event-sub">关闭完成</text>
+  <path d="M 470 1398 H 354" fill="none" stroke="var(--doc)" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#arrow-doc)"/>
+
+  <!-- footnotes -->
+  <text x="600" y="1490" text-anchor="middle" class="footnote">事件只观察，不参与控制流；取消仍由 AbortSignal / RenderTask.cancel() 驱动。</text>
+  <text x="600" y="1514" text-anchor="middle" class="footnote">P1 的 prepare / text / export 复用同样的 start → end / error / abort 模式，不再细分阶段。</text>
+</svg>
+</div>
+</body>
+</html>

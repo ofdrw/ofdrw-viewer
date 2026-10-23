@@ -2,12 +2,13 @@ Output "packages/ofdrw-viewer-cli/demo/demo.gif"
 
 Set Shell "bash"
 Set FontFamily "Noto Sans Mono CJK SC"
-Set FontSize 15
-Set Width 1200
-Set Height 720
-Set Padding 24
+Set FontSize 24
+Set Width 620
+Set Height 240
+Set Padding 20
 Set Theme "Catppuccin Mocha"
-Set TypingSpeed 50ms
+Set TypingSpeed 40ms
+Set CursorBlink false
 
 Hide
 Type "PS1='$ '"
@@ -28,4 +29,4 @@ Sleep 3s
 
 Type "ls -a output"
 Enter
-Sleep 3s
+Sleep 2s
