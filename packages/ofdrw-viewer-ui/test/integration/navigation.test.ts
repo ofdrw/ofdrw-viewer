@@ -37,6 +37,23 @@ const OUTLINE: OutlineNode[] = [
   },
 ];
 
+const MULTI_OUTLINE: OutlineNode[] = [
+  {
+    title: '第一章',
+    dest: { type: 'XYZ', pageIndex: 0, zoom: 1.25 },
+    children: [
+      {
+        title: '1.1 背景',
+        dest: { type: 'FitH', pageIndex: 1, topMm: 5 },
+        children: [
+          { title: '1.1.1 术语', dest: { type: 'Fit', pageIndex: 2 }, children: [] },
+        ],
+      },
+    ],
+  },
+  { title: '第二章', dest: { type: 'Fit', pageIndex: 3 }, children: [] },
+];
+
 const BOOKMARKS: BookmarkItem[] = [
   { name: '封面', dest: { type: 'XYZ', pageIndex: 0, zoom: 1 } },
   { name: '越界书签', dest: { type: 'FitH', pageIndex: 99 } },
@@ -138,6 +155,46 @@ describe('导航集成', () => {
     bookmarks[1]!.click();
     expect(viewer.getPageNumber()).toBe(1);
     expect(warn).toHaveBeenCalled();
+    viewer.destroy();
+  });
+
+  it('多级大纲渲染 aria-level/role=group，逐层展开后可跳转第三级', async () => {
+    const { viewer } = await openViewer(openMock, {
+      pageCount: 4,
+      outline: MULTI_OUTLINE,
+    });
+    await vi.waitFor(() => {
+      expect(viewer.getState().document.outline).toHaveLength(2);
+    });
+    const shell = getUIShell(viewer)!;
+    viewer.openSidebar('outline');
+    const navigation = await waitNavigation(viewer);
+    await vi.waitFor(() => expect(navigation.outline).toBeDefined());
+    const panel = shell.sidebar.getPanel('outline')!;
+
+    const level1 = panel.querySelector<HTMLLIElement>('.ofd-outline__tree > li')!;
+    expect(level1.getAttribute('aria-level')).toBe('1');
+    expect(level1.getAttribute('aria-expanded')).toBe('true');
+    const level1Group = level1.querySelector<HTMLUListElement>('.ofd-outline__children')!;
+    expect(level1Group.getAttribute('role')).toBe('group');
+    expect(level1Group.hidden).toBe(false);
+
+    const level2 = [...level1Group.children] as HTMLLIElement[];
+    expect(level2.map((item) => item.getAttribute('aria-level'))).toEqual(['2']);
+    expect(level2[0]!.getAttribute('aria-expanded')).toBe('false');
+    const level2Group = level2[0]!.querySelector<HTMLUListElement>('.ofd-outline__children')!;
+    expect(level2Group.getAttribute('role')).toBe('group');
+    expect(level2Group.hidden).toBe(true);
+    const level3 = [...level2Group.children] as HTMLLIElement[];
+    expect(level3.map((item) => item.getAttribute('aria-level'))).toEqual(['3']);
+
+    level2[0]!
+      .querySelector<HTMLButtonElement>('.ofd-outline__toggle')!
+      .click();
+    expect(level2Group.hidden).toBe(false);
+    const deepTitle = level3[0]!.querySelector<HTMLButtonElement>('.ofd-outline__title')!;
+    deepTitle.click();
+    expect(viewer.getPageNumber()).toBe(3);
     viewer.destroy();
   });
 

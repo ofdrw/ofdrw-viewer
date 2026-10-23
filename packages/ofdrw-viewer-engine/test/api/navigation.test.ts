@@ -5,6 +5,8 @@ import { isOFDError } from '../../src/errors';
 import type { OFDWarning } from '../../src/warnings';
 import { ZipReader } from '../../src/container/zip-reader';
 import { buildXmlDocument } from '../fixtures/xml';
+import type { XmlElementSpec } from '../fixtures/xml';
+import type { OutlineNode } from '../../src/api/ui-types';
 import { OFD_NS, buildFixtureOfd, openTestDocument } from './helpers';
 
 /** 读取仓库根下的真实样例。 */
@@ -70,6 +72,34 @@ function secondDocumentXml(): string {
   });
 }
 
+/** 构造 ofd:Actions/ofd:Action/ofd:Goto 动作，目标为 Dest 或书签引用。 */
+function ofdGoto(options: { type?: string; pageId?: number; bookmark?: string }): XmlElementSpec {
+  const target: XmlElementSpec = options.bookmark
+    ? { name: 'ofd:Bookmark', children: [options.bookmark] }
+    : {
+        name: 'ofd:Dest',
+        attrs: { Type: options.type ?? 'Fit', PageID: options.pageId ?? 1 },
+      };
+  return {
+    name: 'ofd:Actions',
+    children: [
+      {
+        name: 'ofd:Action',
+        attrs: { Event: 'CLICK' },
+        children: [{ name: 'ofd:Goto', children: [target] }],
+      },
+    ],
+  };
+}
+
+/** 计算大纲树的最大层级数（空数组为 0）。 */
+function outlineDepth(nodes: readonly OutlineNode[]): number {
+  return nodes.reduce(
+    (max, node) => Math.max(max, 1 + outlineDepth(node.children)),
+    0,
+  );
+}
+
 describe('UI API：大纲/书签/文档属性', () => {
   it('z.ofd getOutline 保持 XML 顺序并映射 XYZ；getBookmarks 为空', async () => {
     const doc = await openTestDocument(sample('z.ofd'));
@@ -87,6 +117,80 @@ describe('UI API：大纲/书签/文档属性', () => {
       });
       expect(outline[4]?.dest?.pageIndex).toBe(3);
       expect(await doc.getBookmarks()).toEqual([]);
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('getOutline 保留 4 级大纲层级/顺序、Expanded 与 Dest/Bookmark', async () => {
+    const bytes = buildFixtureOfd({
+      pages: [1, 2, 3, 4].map((id) => ({ id, widthMm: 100, heightMm: 100, objects: [] })),
+      documentChildren: [
+        {
+          name: 'ofd:Bookmarks',
+          children: [
+            {
+              name: 'ofd:Bookmark',
+              attrs: { Name: '末页书签' },
+              children: [{ name: 'ofd:Dest', attrs: { Type: 'Fit', PageID: 4 } }],
+            },
+          ],
+        },
+        {
+          name: 'ofd:Outlines',
+          children: [
+            {
+              name: 'ofd:OutlineElem',
+              attrs: { Title: '卷一', Expanded: 'true' },
+              children: [
+                ofdGoto({ type: 'XYZ', pageId: 1 }),
+                {
+                  name: 'ofd:OutlineElem',
+                  attrs: { Title: '第一章', Expanded: 'false' },
+                  children: [
+                    {
+                      name: 'ofd:OutlineElem',
+                      attrs: { Title: '1.1' },
+                      children: [
+                        ofdGoto({ bookmark: '末页书签' }),
+                        {
+                          name: 'ofd:OutlineElem',
+                          attrs: { Title: '1.1.1' },
+                          children: [ofdGoto({ type: 'FitH', pageId: 2 })],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              name: 'ofd:OutlineElem',
+              attrs: { Title: '卷二' },
+              children: [ofdGoto({ type: 'Fit', pageId: 3 })],
+            },
+          ],
+        },
+      ],
+    });
+    const doc = await openTestDocument(bytes);
+    try {
+      const outline = await doc.getOutline();
+      expect(outline.map((node) => node.title)).toEqual(['卷一', '卷二']);
+      expect(outlineDepth(outline)).toBe(4);
+      expect(outline[0]?.expanded).toBe(true);
+      expect(outline[1]?.expanded).toBeUndefined();
+      expect(outline[0]?.dest).toEqual({ type: 'XYZ', pageIndex: 0 });
+      expect(outline[0]?.children.map((node) => node.title)).toEqual(['第一章']);
+      const chapter = outline[0]?.children[0];
+      expect(chapter?.expanded).toBe(false);
+      const section = chapter?.children[0];
+      expect(section?.title).toBe('1.1');
+      expect(section?.dest).toEqual({ type: 'Fit', pageIndex: 3 });
+      expect(section?.children.map((node) => node.title)).toEqual(['1.1.1']);
+      expect(section?.children[0]?.children).toEqual([]);
+      expect(section?.children[0]?.dest).toEqual({ type: 'FitH', pageIndex: 1 });
+      expect(outline[1]?.dest).toEqual({ type: 'Fit', pageIndex: 2 });
     } finally {
       await doc.close();
     }

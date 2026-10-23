@@ -100,6 +100,102 @@ describe('Document.xml 大纲/书签解码', () => {
     expect(warnings.filter((warning) => warning.code === 'W_OUTLINE_TARGET')).toHaveLength(2);
   });
 
+  it('4 级嵌套保持层级/顺序/Expanded/Dest 与 Bookmark 引用', () => {
+    const root = node('Document', {}, [
+      node('Pages', {}, [pageNode('1'), pageNode('2'), pageNode('3')]),
+      node('Bookmarks', {}, [
+        node('Bookmark', { Name: '深层书签' }, [
+          node('Dest', { Type: 'Fit', PageID: '3' }),
+        ]),
+      ]),
+      node('Outlines', {}, [
+        node('OutlineElem', { Title: '卷一', Expanded: 'true' }, [
+          destAction({ Type: 'XYZ', PageID: '1', Left: '5' }),
+          node('OutlineElem', { Title: '第一章', Expanded: 'false' }, [
+            node('OutlineElem', { Title: '1.1', Expanded: 'true' }, [
+              node('OutlineElem', { Title: '1.1.1' }, [destAction({}, '深层书签')]),
+              node('OutlineElem', { Title: '1.1.2' }, [
+                destAction({ Type: 'FitR', PageID: '3' }),
+              ]),
+            ]),
+            node('OutlineElem', { Title: '1.2' }, [
+              destAction({ Type: 'FitH', PageID: '2', Top: '7.5' }),
+            ]),
+          ]),
+        ]),
+        node('OutlineElem', { Title: '卷二', Expanded: '0' }, [
+          node('OutlineElem', { Title: '第二章' }, [destAction({ Type: 'Fit', PageID: '2' })]),
+        ]),
+      ]),
+    ]);
+    const [volume1, volume2] = decodeDocument(root, 'Doc_0/Document.xml').outlines ?? [];
+    expect(volume1?.title).toBe('卷一');
+    expect(volume1?.expanded).toBe(true);
+    expect(volume1?.dest).toEqual({ type: 'XYZ', pageIndex: 0, leftMm: 5 });
+    expect(volume1?.children.map((item) => item.title)).toEqual(['第一章']);
+    const chapter1 = volume1?.children[0];
+    expect(chapter1?.expanded).toBe(false);
+    expect(chapter1?.children.map((item) => item.title)).toEqual(['1.1', '1.2']);
+    const section11 = chapter1?.children[0];
+    expect(section11?.expanded).toBe(true);
+    expect(section11?.children.map((item) => item.title)).toEqual(['1.1.1', '1.1.2']);
+    expect(section11?.children[0]?.expanded).toBeUndefined();
+    expect(section11?.children[0]?.dest).toEqual({ type: 'Fit', pageIndex: 2 });
+    expect(section11?.children[1]?.children).toEqual([]);
+    expect(section11?.children[1]?.dest).toEqual({ type: 'FitR', pageIndex: 2 });
+    expect(chapter1?.children[1]?.dest).toEqual({ type: 'FitH', pageIndex: 1, topMm: 7.5 });
+    expect(volume2?.expanded).toBe(false);
+    expect(volume2?.children[0]?.dest).toEqual({ type: 'Fit', pageIndex: 1 });
+  });
+
+  it('超过 64 层时截断更深子节点并 warning，保留前 65 层', () => {
+    // 构造 70 层（L0…L69）大纲，自底向上包装。
+    let nested: ReturnType<typeof node> = node('OutlineElem', { Title: 'L69' });
+    for (let depth = 68; depth >= 0; depth -= 1) {
+      nested = node('OutlineElem', { Title: `L${depth}` }, [nested]);
+    }
+    const warnings: Array<{ code: string; message: string }> = [];
+    const outlines = decodeOutlines(
+      node('Document', {}, [node('Outlines', {}, [nested])]),
+      [],
+      { onWarning: (warning) => warnings.push(warning) },
+    );
+    const titles: string[] = [];
+    let current = outlines[0];
+    while (current) {
+      titles.push(current.title);
+      current = current.children[0];
+    }
+    // depth 0…64 共 65 个节点保留；depth 65 起被截断。
+    expect(titles).toHaveLength(65);
+    expect(titles.at(-1)).toBe('L64');
+    const truncations = warnings.filter(
+      (warning) => warning.code === 'W_OUTLINE_TARGET' && warning.message.includes('64'),
+    );
+    expect(truncations).toHaveLength(1);
+
+    // 恰好 64 层（L0…L63）不触发截断。
+    let exactly64: ReturnType<typeof node> = node('OutlineElem', { Title: 'L63' });
+    for (let depth = 62; depth >= 0; depth -= 1) {
+      exactly64 = node('OutlineElem', { Title: `L${depth}` }, [exactly64]);
+    }
+    const exactWarnings: Array<{ code: string }> = [];
+    const exact = decodeOutlines(
+      node('Document', {}, [node('Outlines', {}, [exactly64])]),
+      [],
+      { onWarning: (warning) => exactWarnings.push(warning) },
+    );
+    let exactDepth = 0;
+    let exactCurrent = exact[0];
+    while (exactCurrent?.children[0]) {
+      exactDepth += 1;
+      exactCurrent = exactCurrent.children[0];
+    }
+    expect(exactDepth).toBe(63);
+    expect(exactCurrent?.title).toBe('L63');
+    expect(exactWarnings.filter((warning) => warning.code === 'W_OUTLINE_TARGET')).toHaveLength(0);
+  });
+
   it('1000 页只解码页树与大纲，不读取页面 Content', () => {
     const pages = Array.from({ length: 1000 }, (_, index) => pageNode(String(index + 1)));
     const root = node('Document', {}, [
