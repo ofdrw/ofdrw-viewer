@@ -57,6 +57,9 @@ importers:
       '@types/node':
         specifier: ^26.6.5
         version: 26.6.5
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
       tsup:
         specifier: ^9.0.0
         version: 9.0.0(postcss@8.5.31)(typescript@5.9.3)
