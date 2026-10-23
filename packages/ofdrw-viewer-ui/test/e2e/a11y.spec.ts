@@ -48,7 +48,11 @@ async function settleAnimations(
   locator: import('@playwright/test').Locator,
 ): Promise<void> {
   await locator.evaluate(async (element) => {
-    await Promise.all(element.getAnimations().map((animation) => animation.finished));
+    const animations = element
+      .getAnimations()
+      .filter((animation) => animation.pending || animation.playState === 'running');
+    // 动画可能在使用过程中被取消；allSettled 避免 AbortError 让扫描失败。
+    await Promise.allSettled(animations.map((animation) => animation.finished));
   });
 }
 
