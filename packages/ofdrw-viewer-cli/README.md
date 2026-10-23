@@ -8,6 +8,7 @@
 ## ✨ 功能概述
 
 - **转图片**：把 OFD 逐页导出为 PNG（默认）、JPEG 或 WebP；
+- **字体自动发现**：默认使用系统字体渲染文档中未内嵌的文字，`--font-dir` 追加自定义字体，`--no-system-fonts` 可关闭；
 - **空间文本**：加 `--text` 时每页额外导出带像素坐标的 JSON；
 - **加密文档**：用口令或 SM2 私钥解密后导出，明文不落盘；
 - **`info` 查询**：只读查看包大小、加密层、用户、签名、完整性与明文文档元数据/页尺寸，不解密、不验签；
@@ -38,6 +39,24 @@ ofdrw-viewer-cli input.ofd -o out --pages 1-3 --format jpeg --dpi 300
 ```
 
 `--pages 1-3` 只导出第 1 到第 3 页（含两端）；`--format` 可选 `png`、`jpeg`、`webp`；`--dpi` 控制清晰度，并同步影响文字坐标。
+
+### 字体与缺省渲染
+
+CLI 默认自动发现系统字体，用它们渲染文档中未内嵌的文字（尤其是中文）：
+
+| 平台 | 只读扫描目录 |
+| --- | --- |
+| Linux | `/usr/share/fonts`、`/usr/local/share/fonts`、`~/.fonts`、`~/.local/share/fonts` |
+| macOS | `/System/Library/Fonts`、`/Library/Fonts`、`~/Library/Fonts` |
+| Windows | `%WINDIR%\Fonts`、`%LOCALAPPDATA%\Microsoft\Windows\Fonts` |
+
+发现过程只收集 `ttf/otf/ttc/otc`，按 realpath 去重，CJK 关键字字体优先；最多扫描 2000 个字体文件，并按优先级注入前 16 个。只读上述白名单目录，不写系统目录、不访问网络。
+
+- 不传 `--font-dir`：只使用自动发现的系统字体；
+- `--font-dir <dir>`：扫描结果作为扩充，参与字体匹配时排在系统字体之前，两者按 realpath 去重；
+- `--no-system-fonts`：关闭自动发现，仅使用 `--font-dir`，与旧版本行为一致。
+
+发现数量以一行日志写入 stderr（如 `自动发现系统字体 16 个（扫描 93 个文件）`），不污染 stdout 的摘要/JSON；使用 `--no-system-fonts` 时不扫描、也不输出该行。系统目录不存在或不可读时视为未发现，不报错；仍然找不到字体时按原有 `W_FONT_MISSING`/`W_GLYPH_MISSING` 处理。
 
 ### 导出文字位置
 
@@ -112,7 +131,7 @@ ofdrw-viewer-cli verify encrypted.ofd --key signer.key.pem --key-passphrase 'key
 - `--key-passphrase`：加密 PKCS#8 私钥口令，必须与 `--key` 一起使用；
 - `--sm2-user-id`：自定义 SM2 签名 userId，默认 `1234567812345678`，仅 `verify` 使用；
 - `--json`：`info`/`verify` 以 JSON 输出；`verify` 即使失败也输出完整报告再返回非 0；
-- `verify` 不接受 `-o`/`--format`/`--dpi`/`--pages`/`--font-dir`/`--text`，需要出图请直接使用转图片命令。
+- `verify` 不接受 `-o`/`--format`/`--dpi`/`--pages`/`--font-dir`/`--no-system-fonts`/`--text`，需要出图请直接使用转图片命令。
 
 ### 加密文档转图片
 
@@ -164,6 +183,7 @@ CLI 的 OFD 文件输入统一走 `NodeFileByteSource`（`fs.promises.open` + �
 
 - `--password` 和 `--key-passphrase` 可能出现在 shell 历史或进程列表中，请使用安全的方式传递；
 - CLI 不打印口令、私钥、PEM 或 `EncryptedWK`；
+- 系统字体发现只读上述白名单目录，不写、不下载、不联网；字体路径经 realpath 规范化后才读取；
 - 只对可信来源的 OFD 运行；超大页面或高 DPI 可能占用大量内存；
 - 未配置根证书时无法判断信任链，`verify` 会明确返回 `unknown` 而不是误报成功。
 

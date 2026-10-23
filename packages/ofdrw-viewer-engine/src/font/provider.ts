@@ -1,7 +1,7 @@
 /**
  * 字体来源匹配、字体库与逐字形回退（对应设计方案 12.2）。
  *
- * 字体来源优先级：内嵌 FontFile → 宿主 FontProvider → supplementaryFonts。
+ * 字体来源优先级：内嵌 FontFile → 宿主 FontProvider → defaultFonts → supplementaryFonts。
  * 回退是逐字形的：主字体缺字时才尝试回退链，而不是整段文字切换字体。
  */
 
@@ -28,6 +28,12 @@ export type FontInputLoader = (
 export interface FontLibraryOptions {
   /** 宿主字体提供者。 */
   fontProvider?: FontProvider;
+  /**
+   * 用户默认字体：文档字体完全缺省时的替代字体，优先级高于 supplementaryFonts。
+   *
+   * 仅作替代来源，显式 GID 不可信任；多个来源按字体名评分选择主字体。
+   */
+  defaultFonts?: readonly FontInput[];
   /** 补充字体列表，按顺序参与缺字回退；也用于完全无字体时的主字体。 */
   supplementaryFonts?: readonly FontInput[];
   /** url/path/filePath 来源的字节读取器；`data` 来源不需要。 */
@@ -179,16 +185,19 @@ function hasInlineData(input: FontInput): input is { data: ArrayBuffer | Uint8Ar
 export class FontLibrary {
   private readonly embedded = new Map<string, FontFace>();
   private readonly resolved = new Map<string, Promise<FontFaceSet | null>>();
+  private readonly defaultFonts: FontInput[];
   private readonly supplementary: FontInput[];
   private readonly maxFontBytes: number;
   private readonly warned = new Set<string>();
+  private defaultFaces?: Promise<FontFace[]>;
   private supplementaryFaces?: Promise<FontFace[]>;
   private disposed = false;
 
   /**
-   * @param options 宿主 provider、补充字体、字节读取器与 warning 回调。
+   * @param options 宿主 provider、默认/补充字体、字节读取器与 warning 回调。
    */
   constructor(private readonly options: FontLibraryOptions = {}) {
+    this.defaultFonts = [...(options.defaultFonts ?? [])];
     this.supplementary = [...(options.supplementaryFonts ?? [])];
     this.maxFontBytes = options.maxFontBytes ?? 64 * 1024 * 1024;
   }
@@ -241,6 +250,7 @@ export class FontLibrary {
   clear(): void {
     this.embedded.clear();
     this.resolved.clear();
+    this.defaultFaces = undefined;
     this.supplementaryFaces = undefined;
     this.warned.clear();
   }
@@ -288,7 +298,7 @@ export class FontLibrary {
   }
 
   /**
-   * 实际执行字体解析（内嵌 → provider → supplementary）。
+   * 实际执行字体解析（内嵌 → provider → default → supplementary）。
    *
    * @param font 字体资源。
    * @param key 缓存键。
@@ -300,21 +310,20 @@ export class FontLibrary {
     if (!embeddedFace) {
       providerFaces.push(...(await this.loadProviderFaces(font)));
     }
+    const defaultFaces = await this.loadDefaultFaces();
     const supplementaryFaces = await this.loadSupplementaryFaces();
-    // 补充字体可能同时包含无衬线/衬线/等宽多个族；按请求字体名与别名评分选择，
+    // 默认/补充字体可能同时包含无衬线/衬线/等宽多个族；按请求字体名与别名评分选择，
     // 不能固定取第一个，否则 Times/SimSun 等衬线请求会误用 Noto Sans。
-    const bestSupplementary = supplementaryFaces.reduce<FontFace | undefined>(
-      (best, face) =>
-        !best || scoreFace(face, font, this.options.aliases) > scoreFace(best, font, this.options.aliases)
-          ? face
-          : best,
-      undefined,
-    );
-
     const selectedPrimary =
-      embeddedFace ?? this.pickProviderFace(providerFaces, font) ?? bestSupplementary;
+      embeddedFace ??
+      this.pickBestFace(providerFaces, font) ??
+      this.pickBestFace(defaultFaces, font) ??
+      this.pickBestFace(supplementaryFaces, font);
+    // 默认字体固定为替代来源：即使 family 恰好同名也不重新信任显式 GID，必须走 cmap。
     const primary = selectedPrimary
-      ? withExplicitGlyphTrust(selectedPrimary, font, this.options.aliases)
+      ? defaultFaces.includes(selectedPrimary)
+        ? selectedPrimary
+        : withExplicitGlyphTrust(selectedPrimary, font, this.options.aliases)
       : undefined;
 
     if (!primary) {
@@ -326,11 +335,16 @@ export class FontLibrary {
       return null;
     }
 
+    // 回退链顺序固定为 provider 其余 → default 其余 → supplementary；主字体自身已去重。
     const fallbacks: FontFace[] = [];
     const seen = new Set<string>([primary.key]);
     const ordered = embeddedFace
-      ? [...supplementaryFaces]
-      : [...providerFaces.filter((face) => face !== primary), ...supplementaryFaces];
+      ? [...defaultFaces, ...supplementaryFaces]
+      : [
+          ...providerFaces.filter((face) => face !== primary),
+          ...defaultFaces,
+          ...supplementaryFaces,
+        ];
     for (const face of ordered) {
       if (seen.has(face.key)) continue;
       seen.add(face.key);
@@ -367,6 +381,51 @@ export class FontLibrary {
     }
     faces.sort((a, b) => scoreFace(b, font, this.options.aliases) - scoreFace(a, font, this.options.aliases));
     return faces;
+  }
+
+  /**
+   * 加载 defaultFonts；结果按来源顺序缓存。
+   *
+   * 未配置默认字体时直接返回空数组，不产生读取/解析开销。
+   *
+   * @returns 解析成功的默认字体面。
+   */
+  private loadDefaultFaces(): Promise<FontFace[]> {
+    if (this.defaultFonts.length === 0) return Promise.resolve([]);
+    if (!this.defaultFaces) {
+      this.defaultFaces = (async () => {
+        const faces: FontFace[] = [];
+        for (const [index, input] of this.defaultFonts.entries()) {
+          const data = await this.readInput(input, `default:${index}`);
+          if (!data) continue;
+          const family = input.family ?? `default-${index}`;
+          // TTC/OTC 可能包含多个字体面，全部展开后按真实 family 参与评分。
+          try {
+            faces.push(
+              ...createFontFaces(data, {
+                key: `default:${index}`,
+                fontName: family,
+                familyName: family,
+                aliases: this.options.aliases,
+                resourceId: `default-${index}`,
+                bold: false,
+                italic: false,
+                authoritative: false,
+                substitute: true,
+                onWarning: this.options.onWarning,
+              }),
+            );
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.warn('W_FONT_MISSING', `字体解析失败：${message}`, {
+              resourceId: `default-${index}`,
+            });
+          }
+        }
+        return faces;
+      })();
+    }
+    return this.defaultFaces;
   }
 
   /**
@@ -462,13 +521,13 @@ export class FontLibrary {
   }
 
   /**
-   * 在 provider 返回的字体面中选择与资源最匹配者。
+   * 在一组字体面中选择与资源最匹配者。
    *
-   * @param faces provider 字体面。
+   * @param faces 候选字体面。
    * @param font 字体资源。
    * @returns 最匹配的字体面；没有候选时为 undefined。
    */
-  private pickProviderFace(faces: readonly FontFace[], font: FontResource): FontFace | undefined {
+  private pickBestFace(faces: readonly FontFace[], font: FontResource): FontFace | undefined {
     if (faces.length === 0) return undefined;
     let best = faces[0];
     let bestScore = scoreFace(best, font, this.options.aliases);

@@ -8,6 +8,7 @@ import { loadImage } from '@napi-rs/canvas';
 import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
 import { main } from '../../src/cli.js';
 import { EXIT_CODES } from '../../src/errors.js';
+import { discoverSystemFonts } from '../../src/fonts.js';
 import { NodeFileByteSource } from '../../src/node-file-source.js';
 import { createStreamCapture } from '../unit/helpers.js';
 
@@ -36,6 +37,15 @@ const CJK_FONT_CANDIDATES = [
 
 /** 首个存在的 CJK 字体；全部缺失时跳过对应用例。 */
 const CJK_FONT = CJK_FONT_CANDIDATES.find((candidate) => existsSync(candidate));
+
+/**
+ * 系统字体文件名中可能提供 CJK 覆盖的关键字。
+ *
+ * 仅用于 e2e 条件断言：只有发现结果含 CJK 字体时，才断言中文示例不再报
+ * `W_FONT_MISSING`，避免仅安装西文字体的机器误报。
+ */
+const CJK_FONT_NAME_PATTERN =
+  /cjk|noto|sourcehan|source-han|simsun|simhei|msyh|pingfang|fangsong|kaiti|heiti|songti|yahei|wqy|wenquanyi|uming|ukai|arphic|hiragino|droid/i;
 
 const tempDirs: string[] = [];
 
@@ -156,15 +166,17 @@ function expectRecordShape(records: readonly TextRecord[]): void {
 }
 
 describe('CLI 图片导出 e2e', () => {
-  it('单页 PNG：默认 96 DPI、白底、A4 尺寸与命名', async () => {
+  it('单页 PNG（--no-system-fonts）：默认 96 DPI、白底、A4 尺寸与命名', async () => {
     const cwd = await createTempDir();
     const outDir = join(cwd, 'out');
     const input = join(SAMPLE_DIR, 'helloworld.ofd');
 
-    const result = await runCli([input, '-o', outDir], cwd);
+    const result = await runCli([input, '-o', outDir, '--no-system-fonts'], cwd);
 
     expect(result.code).toBe(EXIT_CODES.OK);
     expect(result.stdout).toContain('完成：1/1 页');
+    // --no-system-fonts 回到 r11 行为：不扫描系统字体，缺字体 warning 保持原样。
+    expect(result.stderr).not.toContain('自动发现系统字体');
     expect(result.stderr).toContain('W_FONT_MISSING');
     const filePath = join(outDir, 'helloworld-p001.png');
     expect(await imageSize(filePath)).toEqual({ width: 794, height: 1123 });
@@ -249,6 +261,40 @@ describe('CLI 图片导出 e2e', () => {
     expect(result.stdout).toContain('完成：1/1 页');
   });
 
+  it('默认自动发现系统字体并注入转换', async (context) => {
+    const discovered = await discoverSystemFonts();
+    if (discovered.fonts.length === 0) {
+      context.skip('本机没有白名单系统字体目录，或目录内没有 ttf/otf/ttc/otc 文件');
+      return;
+    }
+
+    const cwd = await createTempDir();
+    const outDir = join(cwd, 'out');
+    const result = await runCli(
+      [join(SAMPLE_DIR, 'helloworld.ofd'), '-o', outDir, '--text'],
+      cwd,
+    );
+
+    expect(result.code).toBe(EXIT_CODES.OK);
+    expect(result.stdout).toContain('完成：1/1 页（图片 + 文本）');
+    expect(result.stderr).toContain(
+      `自动发现系统字体 ${discovered.fonts.length} 个（扫描 ${discovered.scannedFiles} 个文件）`,
+    );
+    expect(existsSync(join(outDir, 'helloworld-p001.png'))).toBe(true);
+
+    // 发现结果含 CJK 字体时，中文示例应不再缺字体且文本非空；仅安装西文
+    // 字体的机器不做该断言，避免平台差异导致误报。
+    const hasCjkFont = discovered.fonts.some((font) =>
+      CJK_FONT_NAME_PATTERN.test(basename(font.path)),
+    );
+    if (hasCjkFont) {
+      expect(result.stderr).not.toContain('W_FONT_MISSING');
+      const records = await readTextJson(join(outDir, 'helloworld-p001.json'));
+      expect(records.length).toBeGreaterThan(0);
+      expect(records.map((record) => record.text).join('')).toContain('你好呀');
+    }
+  });
+
   it.skipIf(CJK_FONT === undefined)(
     '999.ofd 使用 --font-dir 加载非内嵌字体后 W_FONT_MISSING 归零',
     async () => {
@@ -267,6 +313,8 @@ describe('CLI 图片导出 e2e', () => {
           '1',
           '--font-dir',
           fontDir,
+          // 关闭系统字体，隔离验证 --font-dir 本身的注入语义。
+          '--no-system-fonts',
         ],
         cwd,
       );
@@ -474,15 +522,18 @@ describe('CLI 图片导出 e2e', () => {
     ]);
   });
 
-  it('helloworld 空文本页写 []，仍输出图片', async () => {
+  it('helloworld 空文本页写 []，仍输出图片（--no-system-fonts）', async () => {
     const cwd = await createTempDir();
     const outDir = join(cwd, 'out');
     const input = join(SAMPLE_DIR, 'helloworld.ofd');
 
-    const result = await runCli([input, '-o', outDir, '--text'], cwd);
+    // 关闭系统字体以保留 r11 的“无字体 → 文本为空”语义；默认自动发现
+    // 系统字体后该页文本非空，由上面的自动发现用例覆盖。
+    const result = await runCli([input, '-o', outDir, '--text', '--no-system-fonts'], cwd);
 
     expect(result.code).toBe(EXIT_CODES.OK);
     expect(result.stdout).toContain('（图片 + 文本）');
+    expect(result.stderr).not.toContain('自动发现系统字体');
     expect(await readFile(join(outDir, 'helloworld-p001.json'), 'utf8')).toBe('[]');
     expect(existsSync(join(outDir, 'helloworld-p001.png'))).toBe(true);
     await expectNoTempFiles(outDir);

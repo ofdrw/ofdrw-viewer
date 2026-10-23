@@ -38,7 +38,64 @@ async function renderFirstPage(file: File, canvas: HTMLCanvasElement) {
 }
 ```
 
-⚠️ 注意事项： 引擎**不内置 CJK 字体**，字体由宿主提供；未提供时只缺字，不会中断渲染，您需要在渲染前提供所需字体，详见[SKILL.md：补充字体](skills/SKILL.md#补充字体)。
+⚠️ 注意事项： 引擎**不内置 CJK 字体**，字体由宿主提供；未提供时只缺字，不会中断渲染。可用 `defaultFonts` 指定缺省替代字体（见下文），或用 `supplementaryFonts` 补齐缺字，详见[SKILL.md：补充字体](skills/SKILL.md#补充字体)。
+
+### 缺省字体 defaultFonts
+
+文档声明的字体既没有内嵌 `FontFile`、`fontProvider` 也匹配不到时，文字会整段空白并产生 `W_FONT_MISSING`。`defaultFonts` 用于为这类文档指定最终的替代字体，让文字至少可读。
+
+字段签名（`OFDOpenBaseOptions`）：`readonly defaultFonts?: readonly FontInput[]`；每个元素支持 `data`/`url`/`path`/`filePath`，可带 `family`。engine 自身不扫描系统字体，字体来源需由宿主显式提供。
+
+**固定优先级**（不按跨层评分反超）：
+
+```text
+主字体：内嵌 FontFile → FontProvider → defaultFonts → supplementaryFonts
+逐字形回退：主字体 → provider 其余候选 → defaultFonts 其余 → supplementaryFonts
+```
+
+- `defaultFonts` 是"缺省替代"，`supplementaryFonts` 是"逐字形补缺"；两者都传时由 `defaultFonts` 优先成为主字体。
+- **精确来源优先**：内嵌字体或 `fontProvider` 命中时，`defaultFonts` 不参与主字体选择；但仍保留在逐字形回退链中，内嵌字体缺某个字形时可用默认字体补字。
+- 多个来源（含 TTC/OTC 展开出的每个字体面）按 FontName/FamilyName/别名评分选择主字体，不是简单取第一个。
+- **替代字体不可信任显式 GID**：`CGTransform` 给出的 GID 会被忽略，始终按 Unicode 码点走 cmap；文档的 `DeltaX/DeltaY` 仍优先。
+- 单个来源读取或解析失败只产生 warning，继续尝试下一个来源；每个来源同样受 `limits.maxFontBytes`（默认 64 MiB/字体）限制。
+- **不传 `defaultFonts` 时行为与之前版本完全一致**（不加载、无额外开销）；全部来源都失败时仍产生 `W_FONT_MISSING` 并跳过文字对象。
+
+三种 `FontInput` 来源示例：
+
+```ts
+// Node.js / Electron 主进程：本地文件（path/filePath 需配合 loadInput）
+import { readFile } from 'node:fs/promises';
+
+await OFDDocument.open({
+  source: { kind: 'arraybuffer', data: await readFile('sample.ofd') },
+  defaultFonts: [
+    { path: '/opt/fonts/SourceHanSerifSC.otf', family: 'Source Han Serif SC' },
+  ],
+  loadInput: async (input) => {
+    if ('data' in input) return input.data;
+    if ('url' in input) return new Uint8Array(await (await fetch(input.url)).arrayBuffer());
+    return new Uint8Array(await readFile('path' in input ? input.path : input.filePath));
+  },
+});
+```
+
+```ts
+// Web：同源字体 URL，默认走 fetch
+await OFDDocument.open({
+  source: { kind: 'blob', blob: file },
+  defaultFonts: [{ url: '/assets/fonts/noto-serif-sc.otf', family: 'Noto Serif CJK SC' }],
+});
+```
+
+```ts
+// 微信小程序 / 内存字体包：直接传字节
+await OFDDocument.open({
+  source,
+  defaultFonts: [{ data: fontBytes, family: 'Noto Serif CJK SC' }],
+});
+```
+
+设计背景、评分规则与 CLI 系统字体策略见 [渲染字体缺省方案设计](../../docs/渲染字体缺省方案设计.md)。
 
 ### 打开容器与加密文档
 

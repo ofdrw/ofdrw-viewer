@@ -25,7 +25,8 @@ import {
   isErrnoError,
   toCliError,
 } from './errors.js';
-import { loadSupplementaryFonts } from './fonts.js';
+import { loadSupplementaryFonts, loadSystemFonts } from './fonts.js';
+import type { FontFile } from './fonts.js';
 import { runInfo } from './info.js';
 import { Logger } from './log.js';
 import type { OutputStream } from './log.js';
@@ -86,6 +87,7 @@ export const HELP_TEXT = `${USAGE_LINE}
   -d, --dpi <n>           输出 DPI，正整数（默认 96；超过 ${HIGH_DPI_WARNING_THRESHOLD} 给 warning）
   -p, --pages <ranges>    页码范围，1 起闭区间，如 1-3,5（默认全部页）
       --font-dir <dir>    补充字体目录；递归扫描 ttf/otf/ttc/otc
+      --no-system-fonts   关闭系统字体自动发现，仅使用 --font-dir
       --text              每页额外导出空间文本 JSON（<stem>-p<NNN>.json）
 ${CREDENTIAL_HELP}
       --root <file>       信任根证书（PEM/DER/CER，可重复；仅 verify）
@@ -113,6 +115,8 @@ export interface CliOptions {
   readonly pageNumbers: readonly number[] | undefined;
   /** 补充字体目录绝对路径；未提供时为 `undefined`。 */
   readonly fontDir: string | undefined;
+  /** 是否自动发现系统字体；`--no-system-fonts` 时为 false。 */
+  readonly systemFonts: boolean;
   /** 是否额外导出空间文本 JSON。 */
   readonly text: boolean;
   /** 加密凭据原始参数；未提供时为 `undefined`。 */
@@ -278,6 +282,7 @@ const PARSE_OPTIONS = {
   dpi: { type: 'string', short: 'd' },
   pages: { type: 'string', short: 'p' },
   'font-dir': { type: 'string' },
+  'no-system-fonts': { type: 'boolean' },
   text: { type: 'boolean' },
   user: { type: 'string' },
   password: { type: 'string' },
@@ -297,6 +302,7 @@ interface RawCliValues {
   readonly dpi?: string;
   readonly pages?: string;
   readonly 'font-dir'?: string;
+  readonly 'no-system-fonts'?: boolean;
   readonly text?: boolean;
   readonly user?: string;
   readonly password?: string;
@@ -376,6 +382,7 @@ export function parseCliArgs(
       ['dpi', '--dpi'],
       ['pages', '--pages'],
       ['font-dir', '--font-dir'],
+      ['no-system-fonts', '--no-system-fonts'],
       ['text', '--text'],
       ['user', '--user'],
       ['password', '--password'],
@@ -398,6 +405,7 @@ export function parseCliArgs(
       ['dpi', '--dpi'],
       ['pages', '--pages'],
       ['font-dir', '--font-dir'],
+      ['no-system-fonts', '--no-system-fonts'],
       ['text', '--text'],
     ], 'verify 不接受转图片参数；需要导出图片时请不要使用 verify 子命令');
     return {
@@ -443,6 +451,7 @@ export function parseCliArgs(
         dpi: parseDpi(values.dpi),
         pageNumbers: values.pages === undefined ? undefined : parsePageRanges(values.pages),
         fontDir,
+        systemFonts: values['no-system-fonts'] !== true,
         text: values.text === true,
         credentials: parseCredentialOptions(values, cwd),
       },
@@ -636,6 +645,35 @@ export async function validateInputFile(inputPath: string): Promise<void> {
 }
 
 /**
+ * 合并用户补充字体与自动发现的系统字体。
+ *
+ * `--font-dir` 扫描结果在前、系统字体在后，按 realpath 去重（两者返回值均
+ * 已规范化），因此用户显式提供的字体会优先参与 engine 的字体匹配。
+ *
+ * @param options 转图片参数
+ * @param logger 日志器
+ * @returns 注入 engine `supplementaryFonts` 的字体列表
+ */
+async function collectFontFiles(
+  options: CliOptions,
+  logger: Logger,
+): Promise<FontFile[]> {
+  const fontFiles =
+    options.fontDir === undefined ? [] : await loadSupplementaryFonts(options.fontDir, logger);
+  if (!options.systemFonts) return fontFiles;
+
+  const systemFonts = await loadSystemFonts(logger);
+  const seen = new Set(fontFiles.map((font) => font.path));
+  const merged = [...fontFiles];
+  for (const font of systemFonts) {
+    if (seen.has(font.path)) continue;
+    seen.add(font.path);
+    merged.push(font);
+  }
+  return merged;
+}
+
+/**
  * CLI 主流程：解析参数、分派子命令并计算退出码。
  *
  * @param argv 不含 node 与脚本路径的参数数组
@@ -698,10 +736,7 @@ export async function main(
           `--dpi ${options.dpi} 超过建议上限 ${HIGH_DPI_WARNING_THRESHOLD}，可能占用大量内存`,
         );
       }
-      const fontFiles =
-        options.fontDir === undefined
-          ? []
-          : await loadSupplementaryFonts(options.fontDir, logger);
+      const fontFiles = await collectFontFiles(options, logger);
       await prepareOutputDirectory(options.outDir);
 
       const { credentials: credentialOptions, ...convertOptions } = options;

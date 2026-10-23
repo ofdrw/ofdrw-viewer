@@ -177,6 +177,15 @@ export interface OFDOpenBaseOptions {
   documentIndex?: number;
   /** 资源限制覆盖；未提供的字段使用 DEFAULT_RESOURCE_LIMITS。 */
   limits?: Partial<ResourceLimits>;
+  /**
+   * 用户默认字体：文档字体完全缺省时使用的替代字体，优先级高于 `supplementaryFonts`。
+   *
+   * 用于"没有字体就用这些字"的简单兜底；内嵌字体或 `fontProvider` 命中时不会被选为主字体。
+   * 仅作替代来源，不可信任显式 GID（忽略 CGTransform 的 GID，走 cmap）；
+   * 多个来源按字体名/别名评分选择主字体。支持 `data`/`url`/`path`/`filePath` 四种 FontInput。
+   * 不传时行为与未引入本参数时一致。
+   */
+  readonly defaultFonts?: readonly FontInput[];
   /** 宿主补充字体，按需用于缺字/缺字体回退。 */
   supplementaryFonts?: FontInput[];
   /**

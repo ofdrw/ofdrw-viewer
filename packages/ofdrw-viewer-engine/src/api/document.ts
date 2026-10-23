@@ -682,10 +682,11 @@ export class OFDDocument {
         onWarning,
       });
 
-      // 5) 字体库：内嵌字体按需注册，provider/supplementary 由宿主注入。
+      // 5) 字体库：内嵌字体按需注册，provider/default/supplementary 由宿主注入。
       const fontInputLoader = options.loadInput ?? createFontInputLoader();
       const fontLibrary = new FontLibrary({
         ...(options.fontProvider ? { fontProvider: options.fontProvider } : {}),
+        ...(options.defaultFonts ? { defaultFonts: options.defaultFonts } : {}),
         ...(options.supplementaryFonts ? { supplementaryFonts: options.supplementaryFonts } : {}),
         loadInput: fontInputLoader,
         onWarning: (code, message, context) => {
