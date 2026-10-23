@@ -18,6 +18,7 @@
   --ofd-text-secondary: #5b616b;
   --ofd-border: #d8dbe0;
   --ofd-accent: #0b66d0;
+  --ofd-accent-hover: #0a58b5;
   --ofd-page-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
   --ofd-find-highlight: rgba(255, 213, 0, 0.35);
   --ofd-find-current: rgba(255, 140, 0, 0.55);
@@ -36,6 +37,17 @@
   --ofd-warning: #d97706;
   --ofd-on-accent: #ffffff;
   --ofd-focus-width: 2px;
+
+  /* 验证/签章状态与印章图片 */
+  --ofd-success: #067647;
+  --ofd-status-unknown: #8a5300;
+  --ofd-status-unsupported: #5b3f9e;
+  --ofd-status-neutral: #4b5563;
+  --ofd-text-muted: var(--ofd-text-secondary);
+  --ofd-surface: var(--ofd-toolbar-bg);
+  --ofd-seal-bg: #ffffff;
+  --ofd-seal-border: #d8dbe0;
+  --ofd-signature-hover-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 
   /* 外壳层级与浮层 */
   --ofd-scrim: rgba(0, 0, 0, 0.35);
@@ -112,6 +124,7 @@
   --ofd-text-secondary: #a9adb5;
   --ofd-border: #3a3a42;
   --ofd-accent: #6aa9ff;
+  --ofd-accent-hover: #8cbcff;
   --ofd-page-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
   --ofd-find-highlight: rgba(255, 213, 0, 0.28);
   --ofd-find-current: rgba(255, 170, 40, 0.55);
@@ -126,6 +139,15 @@
   --ofd-loading-spinner: var(--ofd-accent);
   --ofd-warning: #ffb74d;
   --ofd-on-accent: #101014;
+  --ofd-success: #5ddc8a;
+  --ofd-status-unknown: #ffc46b;
+  --ofd-status-unsupported: #c9b6ff;
+  --ofd-status-neutral: #c3c7cf;
+  --ofd-text-muted: var(--ofd-text-secondary);
+  --ofd-surface: var(--ofd-toolbar-bg);
+  --ofd-seal-bg: #ffffff;
+  --ofd-seal-border: #d8dbe0;
+  --ofd-signature-hover-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
   --ofd-scrim: rgba(0, 0, 0, 0.55);
   --ofd-menu-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
   --ofd-dialog-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
@@ -144,6 +166,7 @@
     --ofd-text-secondary: #a9adb5;
     --ofd-border: #3a3a42;
     --ofd-accent: #6aa9ff;
+    --ofd-accent-hover: #8cbcff;
     --ofd-page-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
     --ofd-find-highlight: rgba(255, 213, 0, 0.28);
     --ofd-find-current: rgba(255, 170, 40, 0.55);
@@ -158,6 +181,15 @@
   --ofd-loading-spinner: var(--ofd-accent);
     --ofd-warning: #ffb74d;
     --ofd-on-accent: #101014;
+    --ofd-success: #5ddc8a;
+    --ofd-status-unknown: #ffc46b;
+    --ofd-status-unsupported: #c9b6ff;
+    --ofd-status-neutral: #c3c7cf;
+    --ofd-text-muted: var(--ofd-text-secondary);
+    --ofd-surface: var(--ofd-toolbar-bg);
+    --ofd-seal-bg: #ffffff;
+    --ofd-seal-border: #d8dbe0;
+    --ofd-signature-hover-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
     --ofd-scrim: rgba(0, 0, 0, 0.55);
     --ofd-menu-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
     --ofd-dialog-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
@@ -218,6 +250,15 @@
   align-items: center;
   gap: 2px;
   flex: 0 0 auto;
+}
+
+/* 文档组（文档属性 + 更多）常驻工具栏右端：内容溢出横向滚动时仍可见可点。 */
+.ofd-toolbar__group:last-child {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  margin-left: auto;
+  background: var(--ofd-toolbar-bg);
 }
 
 .ofd-toolbar__separator {
@@ -462,6 +503,37 @@
   font-size: 11px;
 }
 
+/* 签章列表/详情：颜色 + 文字双重编码，不能只靠颜色。 */
+.ofd-signature-badge[data-status='valid'] {
+  color: var(--ofd-success);
+  border-color: currentColor;
+}
+
+.ofd-signature-badge[data-status='invalid'] {
+  color: var(--ofd-danger);
+  border-color: currentColor;
+}
+
+.ofd-signature-badge[data-status='unknown'] {
+  color: var(--ofd-status-unknown);
+  border-color: currentColor;
+}
+
+.ofd-signature-badge[data-status='unsupported'] {
+  color: var(--ofd-status-unsupported);
+  border-color: currentColor;
+}
+
+.ofd-signature-badge[data-status='not-applicable'] {
+  color: var(--ofd-status-neutral);
+  border-color: currentColor;
+}
+
+.ofd-signature-badge[data-status='not-verified'] {
+  color: var(--ofd-text-secondary);
+  border-color: var(--ofd-border);
+}
+
 /* ------------------------------------------------------------------------- */
 /* 主区域与页面                                                               */
 /* ------------------------------------------------------------------------- */
@@ -562,10 +634,21 @@
 .ofd-signature-box {
   position: absolute;
   pointer-events: auto;
-  border: 1px solid var(--ofd-signature-outline);
+  /* 默认不可见；hover/focus 才显示阴影边框，避免在文档上形成伪造的可见印章框。 */
+  border: 1px solid transparent;
   border-radius: 1px;
+  box-shadow: none;
   cursor: pointer;
   background: transparent;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.ofd-signature-box:hover,
+.ofd-signature-box:focus-visible {
+  border-color: var(--ofd-accent);
+  box-shadow: var(--ofd-signature-hover-shadow);
 }
 
 .ofd-signature-box:focus-visible {
@@ -1160,15 +1243,20 @@
 /* ------------------------------------------------------------------------- */
 
 .ofd-more-menu {
+  /* 菜单挂到 `.ofd-viewer` 根节点，坐标由脚本按视口夹紧；fixed 仅用于脱离组件时的回退。 */
   position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 5;
+  top: 0;
+  left: 0;
+  right: auto;
+  z-index: 25;
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 12rem;
   max-width: min(80vw, 18rem);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 4px;
   color: var(--ofd-text);
   background: var(--ofd-menu-bg);
@@ -1177,8 +1265,13 @@
   box-shadow: var(--ofd-menu-shadow);
 }
 
+.ofd-more-menu--fixed {
+  position: fixed;
+}
+
 .ofd-more-menu__item {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   min-height: 32px;
   padding: 4px 10px;
@@ -1519,6 +1612,18 @@
   border-color: var(--ofd-accent);
 }
 
+/* 主按钮 hover/focus 必须保留强调色背景，避免通用 hover 覆盖后文字与背景同色。 */
+.ofd-dialog__action--primary:hover,
+.ofd-dialog__action--primary:focus-visible {
+  color: var(--ofd-on-accent);
+  background: var(--ofd-accent-hover);
+  border-color: var(--ofd-accent-hover);
+}
+
+.ofd-dialog__action--primary:focus-visible {
+  outline-color: var(--ofd-text);
+}
+
 .ofd-viewer:where([data-viewport='mobile'], [data-viewport='narrow']) .ofd-dialog {
   width: calc(100% - 16px);
 }
@@ -1558,10 +1663,59 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  padding: 2px 4px;
+  border-radius: var(--ofd-radius);
+}
+
+/* 复选框行 hover/focus 使用半透明叠加，文字始终保持主文本色。 */
+.ofd-output-check:hover,
+.ofd-output-check:focus-within {
+  background: var(--ofd-hover-bg);
+}
+
+.ofd-output-check input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--ofd-accent);
+}
+
+.ofd-output-check input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--ofd-accent);
+  outline-offset: 2px;
 }
 
 .ofd-output-quality {
   width: 100%;
+  height: 24px;
+  margin: 0;
+  accent-color: var(--ofd-accent);
+}
+
+.ofd-output-quality:hover,
+.ofd-output-quality:focus-visible {
+  accent-color: var(--ofd-accent-hover);
+}
+
+.ofd-output-quality:focus-visible {
+  outline: 2px solid var(--ofd-accent);
+  outline-offset: 2px;
+}
+
+/* 下拉可选值显式着色：dark 主题下浏览器默认弹层可能沿用白底导致文字不可读。 */
+.ofd-select option {
+  color: var(--ofd-text);
+  background-color: var(--ofd-toolbar-bg);
+}
+
+.ofd-select option:checked {
+  color: var(--ofd-on-accent);
+  background-color: var(--ofd-accent);
+}
+
+.ofd-select:hover,
+.ofd-output-form .ofd-input:hover {
+  border-color: var(--ofd-accent);
 }
 
 .ofd-output-error {
@@ -1886,10 +2040,37 @@
   color: var(--ofd-danger, #b42318);
 }
 
-.ofd-verification-badge[data-status='unknown'],
-.ofd-verification-badge[data-status='unsupported'],
+.ofd-verification-badge[data-status='unknown'] {
+  color: var(--ofd-status-unknown);
+}
+
+.ofd-verification-badge[data-status='unsupported'] {
+  color: var(--ofd-status-unsupported);
+}
+
 .ofd-verification-badge[data-status='not-applicable'] {
-  color: var(--ofd-text-muted, #5b6472);
+  color: var(--ofd-status-neutral);
+}
+
+/* 卡片左侧状态色，与徽标/文字共同编码；不是唯一信息来源。 */
+.ofd-verification-card[data-status='valid'],
+.ofd-verification-signature[data-status='valid'] {
+  border-inline-start-color: var(--ofd-success);
+}
+
+.ofd-verification-card[data-status='invalid'],
+.ofd-verification-signature[data-status='invalid'] {
+  border-inline-start-color: var(--ofd-danger);
+}
+
+.ofd-verification-card[data-status='unknown'],
+.ofd-verification-signature[data-status='unknown'] {
+  border-inline-start-color: var(--ofd-status-unknown);
+}
+
+.ofd-verification-card[data-status='unsupported'],
+.ofd-verification-signature[data-status='unsupported'] {
+  border-inline-start-color: var(--ofd-status-unsupported);
 }
 
 .ofd-verification-card {
@@ -1939,6 +2120,80 @@
 
 .ofd-verification-timestamp__field {
   color: var(--ofd-text-muted, #5b6472);
+}
+
+/* 信任根缺失/不匹配：只解释状态，不提供忽略链校验的操作。 */
+.ofd-verification-guidance {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--ofd-status-unknown);
+  border-inline-start-width: 4px;
+  border-radius: 8px;
+  background: var(--ofd-bg);
+}
+
+.ofd-verification-guidance[data-status='invalid'] {
+  border-color: var(--ofd-danger);
+}
+
+.ofd-verification-guidance__title {
+  margin: 0;
+  color: var(--ofd-status-unknown);
+  font-weight: 600;
+}
+
+.ofd-verification-guidance[data-status='invalid'] .ofd-verification-guidance__title {
+  color: var(--ofd-danger);
+}
+
+.ofd-verification-guidance__note {
+  margin: 0;
+  color: var(--ofd-text-secondary);
+  font-size: 12px;
+}
+
+/* 印章图片：真实位图；矢量/缺失时显示可读降级而不是破图。 */
+.ofd-seal-image {
+  display: grid;
+  gap: 4px;
+  width: max-content;
+  max-width: 100%;
+  margin: 8px 0;
+  padding: 8px;
+  background: var(--ofd-seal-bg);
+  border: 1px solid var(--ofd-seal-border);
+  border-radius: 4px;
+}
+
+.ofd-seal-image__img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.ofd-seal-image__caption,
+.ofd-seal-image__fallback {
+  margin: 0;
+  color: var(--ofd-text-secondary);
+  font-size: 12px;
+}
+
+.ofd-seal-image__fallback {
+  max-width: 260px;
+  color: var(--ofd-text);
+}
+
+.ofd-signature-popover__seal {
+  margin-top: 8px;
+}
+
+.ofd-signature-popover__seal .ofd-seal-image {
+  margin: 0;
+}
+
+.ofd-verification-signature__seal .ofd-seal-image {
+  margin: 0;
 }
 
 .ofd-verification-root-list {

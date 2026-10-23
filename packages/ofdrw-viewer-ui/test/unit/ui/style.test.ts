@@ -74,6 +74,27 @@ describe('style.css 主题与布局契约', () => {
     expect(css).toMatch(/\.ofd-input,[\s\S]*?color:\s*var\(--ofd-text\);/);
   });
 
+  it('输出对话框 hover/focus 显式着色且不依赖 !important', async () => {
+    const css = await loadStyle();
+    expect(css).toContain('--ofd-accent-hover: #0a58b5');
+    expect(css).toContain('--ofd-accent-hover: #8cbcff');
+    expect(css).toMatch(
+      /\.ofd-dialog__action--primary:hover,\s*\.ofd-dialog__action--primary:focus-visible\s*\{[^}]*background:\s*var\(--ofd-accent-hover\);/s,
+    );
+    expect(css).toMatch(
+      /\.ofd-select option:checked\s*\{[^}]*background-color:\s*var\(--ofd-accent\);/s,
+    );
+    expect(css).toMatch(
+      /\.ofd-output-check:hover,[\s\S]*?background:\s*var\(--ofd-hover-bg\);/s,
+    );
+    expect(css).toMatch(
+      /\.ofd-output-quality\s*\{[^}]*accent-color:\s*var\(--ofd-accent\);/s,
+    );
+    expect(css).not.toMatch(
+      /\.ofd-output-(?:form|check|quality)[^{]*\{[^}]*!important/s,
+    );
+  });
+
   it('组件规则不出现硬编码颜色（颜色集中在 --ofd-* 变量）', async () => {
     const css = await loadStyle();
     const offenders = css
