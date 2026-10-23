@@ -75,8 +75,8 @@
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
   },
   "dependencies": {
-    "@ofdrw/ofdrw-viewer-crypto": "workspace:^0.1.0",
-    "@ofdrw/ofdrw-viewer-engine": "workspace:^0.1.0",
+    "@ofdrw/ofdrw-viewer-crypto": "workspace:^",
+    "@ofdrw/ofdrw-viewer-engine": "workspace:^",
     "fflate": "^0.8.3"
   },
   "peerDependencies": {

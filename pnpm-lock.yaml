@@ -33,7 +33,7 @@ importers:
   packages/ofdrw-viewer-crypto:
     dependencies:
       '@ofdrw/ofdrw-viewer-engine':
-        specifier: workspace:^0.1.0
+        specifier: workspace:^
         version: link:../ofdrw-viewer-engine
       '@peculiar/asn1-schema':
         specifier: ^2.11.0
@@ -113,10 +113,10 @@ importers:
   packages/ofdrw-viewer-ui:
     dependencies:
       '@ofdrw/ofdrw-viewer-crypto':
-        specifier: workspace:^0.1.0
+        specifier: workspace:^
         version: link:../ofdrw-viewer-crypto
       '@ofdrw/ofdrw-viewer-engine':
-        specifier: workspace:^0.1.0
+        specifier: workspace:^
         version: link:../ofdrw-viewer-engine
       fflate:
         specifier: ^0.8.3
