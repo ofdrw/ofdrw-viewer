@@ -64,6 +64,12 @@ export type { UIDialogAction, UIDialogOptions } from './ui/types';
 export * from './errors';
 
 // ---------------------------------------------------------------------------
+// 网络获取委托：宿主可复用的 HTTP Range 字节源
+// ---------------------------------------------------------------------------
+export { HttpByteSource } from './source/http-byte-source';
+export type { HttpByteSourceOptions } from './source/http-byte-source';
+
+// ---------------------------------------------------------------------------
 // 版本
 // ---------------------------------------------------------------------------
 export { VERSION, getVersions } from './version';

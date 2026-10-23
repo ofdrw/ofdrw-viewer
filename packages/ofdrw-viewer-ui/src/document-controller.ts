@@ -30,7 +30,9 @@ import type {
 } from '@ofdrw/ofdrw-viewer-engine';
 import type { ViewerWarning } from './state';
 import type { ViewerSource } from './types';
+import type { ViewerOrigin } from './state';
 import { OFDViewerError } from './errors';
+import { HttpByteSource } from './source/http-byte-source';
 
 /** 引擎渲染任务的最小结构。 */
 export interface EngineRenderTaskLike {
@@ -107,56 +109,129 @@ export interface DocumentControllerOptions {
   readonly onWarning?: (warning: ViewerWarning) => void;
 }
 
+/** 规范化后的来源与原始来源信息。 */
+export interface NormalizedViewerSource {
+  /** 可直接交给 engine 的来源；URL 已转成 `custom` 字节源。 */
+  readonly source: OFDSource;
+  /** 原始 URL/文件信息；用于标题与导出命名。 */
+  readonly origin?: ViewerOrigin;
+  /** 本次为 URL 新建的字节源；由调用方决定关闭归属。 */
+  readonly httpSource?: HttpByteSource;
+}
+
+/** 来源规范化上下文。 */
+export interface NormalizeViewerSourceContext {
+  /** 取消信号；传入后由 HTTP 字节源共享。 */
+  readonly signal?: AbortSignal;
+  /** 整包下载进度回调。 */
+  readonly onProgress?: (loaded: number, total: number | undefined) => void;
+}
+
+/**
+ * 把宿主来源规范化为引擎 `OFDSource`，并保留原始来源信息。
+ *
+ * 字符串与 `{ url, headers }` 转为 `{ kind: 'custom' }`（`HttpByteSource`），
+ * 不再产生 engine 已删除的 `url` 来源；`ArrayBuffer`/`Uint8Array`/`Blob` 原样返回。
+ * 请求头合并顺序为 `requestInit.headers` → 来源 headers（来源优先）。
+ *
+ * @param source 宿主来源。
+ * @param requestInit 额外请求参数；只使用 `headers` 与来源合并。
+ * @param context 取消信号与整包进度回调。
+ * @returns 规范化来源；URL/File 同时返回 origin。
+ * @throws {OFDViewerError} 来源类型非法或为空。
+ */
+export function normalizeViewerSourceDetailed(
+  source: ViewerSource,
+  requestInit?: RequestInit,
+  context: NormalizeViewerSourceContext = {},
+): NormalizedViewerSource {
+  const sourceHeaders =
+    typeof source === 'object' &&
+    source !== null &&
+    !(source instanceof ArrayBuffer) &&
+    !(source instanceof Uint8Array) &&
+    !(typeof Blob !== 'undefined' && source instanceof Blob)
+      ? (source as { headers?: Record<string, string> }).headers
+      : undefined;
+  // 来源对象自带的 headers 覆盖 requestInit.headers（后者是全局默认值）。
+  const headers = mergeHeaders(requestInit?.headers, sourceHeaders);
+  if (typeof source === 'string') {
+    if (!source.trim()) {
+      throw new OFDViewerError('OFD_INVALID_OPTION', 'source URL 不能为空');
+    }
+    return createUrlSource(source, headers, context);
+  }
+  if (source instanceof ArrayBuffer || source instanceof Uint8Array) {
+    if (source.byteLength === 0) {
+      throw new OFDViewerError('OFD_INVALID_OPTION', 'source 字节为空');
+    }
+    return { source: { kind: 'arraybuffer', data: source } };
+  }
+  if (typeof Blob !== 'undefined' && source instanceof Blob) {
+    if (source.size === 0) {
+      throw new OFDViewerError('OFD_INVALID_OPTION', 'source Blob 为空');
+    }
+    const isFile = typeof File !== 'undefined' && source instanceof File;
+    return {
+      source: { kind: 'blob', blob: source },
+      origin: isFile ? { kind: 'file', name: source.name } : { kind: 'blob' },
+    };
+  }
+  if (isUrlSource(source)) {
+    if (!source.url.trim()) {
+      throw new OFDViewerError('OFD_INVALID_OPTION', 'source.url 不能为空');
+    }
+    return createUrlSource(source.url, headers, context);
+  }
+  throw new OFDViewerError(
+    'OFD_INVALID_OPTION',
+    'source 必须是 ArrayBuffer、Uint8Array、Blob/File、URL 字符串或 { url, headers }',
+  );
+}
+
 /**
  * 把宿主来源规范化为引擎 `OFDSource`。
  *
- * 字符串按 URL 处理；对象形式支持额外请求头。`requestInit.headers` 与来源 headers
- * 合并（后者优先）。引擎 URL 来源固定同源凭据，`requestInit.credentials` 不使用。
+ * 保留该入口供内部复用；URL 同样转为 `custom` 字节源。需要 origin 时使用
+ * `normalizeViewerSourceDetailed()`。
  *
  * @param source 宿主来源。
  * @param requestInit 额外请求参数。
+ * @param context 取消信号与整包进度回调。
  * @returns 引擎来源。
  * @throws {OFDViewerError} 来源类型非法或为空。
  */
 export function normalizeViewerSource(
   source: ViewerSource,
   requestInit?: RequestInit,
+  context: NormalizeViewerSourceContext = {},
 ): OFDSource {
-  const headers = mergeHeaders(
-    requestInit?.headers,
-    typeof source === 'object' && source !== null && !(source instanceof ArrayBuffer) &&
-      !(source instanceof Uint8Array) && !(typeof Blob !== 'undefined' && source instanceof Blob)
-      ? (source as { headers?: Record<string, string> }).headers
-      : undefined,
-  );
-  if (typeof source === 'string') {
-    if (!source.trim()) {
-      throw new OFDViewerError('OFD_INVALID_OPTION', 'source URL 不能为空');
-    }
-    return withHeaders({ kind: 'url', url: source }, headers);
-  }
-  if (source instanceof ArrayBuffer || source instanceof Uint8Array) {
-    if (source.byteLength === 0) {
-      throw new OFDViewerError('OFD_INVALID_OPTION', 'source 字节为空');
-    }
-    return { kind: 'arraybuffer', data: source };
-  }
-  if (typeof Blob !== 'undefined' && source instanceof Blob) {
-    if (source.size === 0) {
-      throw new OFDViewerError('OFD_INVALID_OPTION', 'source Blob 为空');
-    }
-    return { kind: 'blob', blob: source };
-  }
-  if (isUrlSource(source)) {
-    if (!source.url.trim()) {
-      throw new OFDViewerError('OFD_INVALID_OPTION', 'source.url 不能为空');
-    }
-    return withHeaders({ kind: 'url', url: source.url }, headers);
-  }
-  throw new OFDViewerError(
-    'OFD_INVALID_OPTION',
-    'source 必须是 ArrayBuffer、Uint8Array、Blob、URL 字符串或 { url, headers }',
-  );
+  return normalizeViewerSourceDetailed(source, requestInit, context).source;
+}
+
+/**
+ * 创建 URL 来源：一次性构造 `HttpByteSource` 并保留 URL 供命名。
+ *
+ * @param url 文档 URL。
+ * @param headers 合并后的请求头。
+ * @param context 取消信号与进度回调。
+ * @returns 规范化来源。
+ */
+function createUrlSource(
+  url: string,
+  headers: Record<string, string> | undefined,
+  context: NormalizeViewerSourceContext,
+): NormalizedViewerSource {
+  const httpSource = new HttpByteSource(url, {
+    ...(headers ? { headers } : {}),
+    ...(context.signal ? { signal: context.signal } : {}),
+    ...(context.onProgress ? { onProgress: context.onProgress } : {}),
+  });
+  return {
+    source: { kind: 'custom', source: httpSource },
+    origin: { kind: 'url', url },
+    httpSource,
+  };
 }
 
 /**
@@ -201,20 +276,6 @@ function mergeHeaders(
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
-/**
- * 给 URL 来源附加请求头。
- *
- * @param source URL 来源。
- * @param headers 请求头。
- * @returns 带 headers 的来源。
- */
-function withHeaders(
-  source: { kind: 'url'; url: string },
-  headers: Record<string, string> | undefined,
-): OFDSource {
-  return headers ? { ...source, headers } : source;
-}
-
 /** 判断错误是否为取消。 */
 export function isAbortError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -235,7 +296,6 @@ export class DocumentController {
   private doc: EngineDocument | null = null;
   private docSource: OFDSource | null = null;
   private openToken = 0;
-  private openAbort: AbortController | null = null;
   private pageInfosPromise: Promise<readonly PageInfo[]> | null = null;
   private readonly pagePromises = new Map<number, Promise<EnginePage>>();
   private outlinePromise: Promise<readonly OutlineNode[]> | null = null;
@@ -274,13 +334,34 @@ export class DocumentController {
   /**
    * 打开文档；会先关闭旧文档。
    *
+   * URL 来源只在此规范化一次；需要 origin 或自行管理字节源时改用
+   * `openNormalized()`。
+   *
    * @param source 宿主来源。
+   * @param signal 取消信号；传给引擎打开流程与 HTTP 字节源。
    * @returns 打开结果。
    * @throws {OFDViewerError|Error} 来源非法、引擎打开失败或打开被取消（AbortError）。
    */
-  async open(source: ViewerSource): Promise<OpenedDocumentInfo> {
-    const normalized = normalizeViewerSource(source, this.options.requestInit);
-    return this.openWithOptions(normalized, { source: normalized });
+  async open(source: ViewerSource, signal?: AbortSignal): Promise<OpenedDocumentInfo> {
+    const normalized = normalizeViewerSourceDetailed(source, this.options.requestInit, {
+      ...(signal ? { signal } : {}),
+    });
+    return this.openNormalized(normalized, signal);
+  }
+
+  /**
+   * 打开已规范化的来源；不再二次规范化或新建字节源。
+   *
+   * @param normalized 规范化来源。
+   * @param signal 取消信号；传给引擎打开流程。
+   * @returns 打开结果。
+   * @throws {OFDViewerError|Error} 引擎打开失败或打开被取消（AbortError）。
+   */
+  async openNormalized(
+    normalized: NormalizedViewerSource,
+    signal?: AbortSignal,
+  ): Promise<OpenedDocumentInfo> {
+    return this.openWithOptions(normalized.source, { source: normalized.source }, signal);
   }
 
   /**
@@ -288,50 +369,73 @@ export class DocumentController {
    *
    * @param container 明文虚拟容器。
    * @param source 原始来源；仅用于状态展示与诊断。
+   * @param signal 取消信号。
    * @returns 打开结果。
    * @throws {OFDViewerError|Error} 引擎打开失败或打开被取消（AbortError）。
    */
   async openContainer(
     container: VirtualContainer,
     source: ViewerSource,
+    signal?: AbortSignal,
   ): Promise<OpenedDocumentInfo> {
-    const normalized = normalizeViewerSource(source, this.options.requestInit);
+    const normalized = normalizeViewerSourceDetailed(source, this.options.requestInit, {
+      ...(signal ? { signal } : {}),
+    });
+    return this.openContainerNormalized(container, normalized, signal);
+  }
+
+  /**
+   * 用已规范化的来源与外部明文容器打开；不会为 URL 再建字节源。
+   *
+   * @param container 明文虚拟容器。
+   * @param normalized 已规范化的来源。
+   * @param signal 取消信号。
+   * @returns 打开结果。
+   * @throws {OFDViewerError|Error} 引擎打开失败或打开被取消（AbortError）。
+   */
+  async openContainerNormalized(
+    container: VirtualContainer,
+    normalized: NormalizedViewerSource,
+    signal?: AbortSignal,
+  ): Promise<OpenedDocumentInfo> {
     // engine 要求 source 必填，但提供 container 时只把 source 作为宿主上下文。
-    return this.openWithOptions(normalized, { source: normalized, container });
+    return this.openWithOptions(
+      normalized.source,
+      { source: normalized.source, container },
+      signal,
+    );
   }
 
   /**
    * 统一打开流程：关闭旧文档、代次校验与结果组装。
    *
+   * 内部不再创建独立 AbortController：外部 signal 直接传给引擎，`close()` 通过
+   * 递增代次使迟到的打开结果失效并关闭。
+   *
    * @param normalized 规范化来源。
    * @param extra 引擎打开参数补丁（`source` 或 `container`）。
+   * @param signal 外部取消信号。
    * @returns 打开结果。
    */
   private async openWithOptions(
     normalized: OFDSource,
     extra: { readonly source: OFDSource; readonly container?: VirtualContainer },
+    signal?: AbortSignal,
   ): Promise<OpenedDocumentInfo> {
     await this.closeInternal();
     // closeInternal 会递增 openToken；打开代次必须在关闭之后捕获。
     const token = ++this.openToken;
-    const controller = new AbortController();
-    this.openAbort = controller;
+    if (signal?.aborted) throw createOpenAbortError();
     const openDocument =
       this.options.openDocument ??
       ((options: OFDOpenOptions) =>
         OFDDocument.open(options) as unknown as Promise<EngineDocument>);
-    let document: EngineDocument;
-    try {
-      document = await openDocument({
-        ...extra,
-        ...(this.options.onWarning ? { onWarning: this.options.onWarning } : {}),
-      });
-    } catch (error) {
-      if (this.openAbort === controller) this.openAbort = null;
-      throw error;
-    }
-    if (this.openAbort === controller) this.openAbort = null;
-    if (token !== this.openToken || controller.signal.aborted) {
+    const document = await openDocument({
+      ...extra,
+      ...(this.options.onWarning ? { onWarning: this.options.onWarning } : {}),
+      ...(signal ? { signal } : {}),
+    });
+    if (token !== this.openToken || signal?.aborted) {
       try {
         await document.close();
       } catch {
@@ -455,8 +559,6 @@ export class DocumentController {
   /** 关闭实现；递增 token 使进行中的打开结果失效。 */
   private async closeInternal(): Promise<void> {
     this.openToken += 1;
-    this.openAbort?.abort();
-    this.openAbort = null;
     const document = this.doc;
     this.doc = null;
     this.docSource = null;

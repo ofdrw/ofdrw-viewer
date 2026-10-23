@@ -12,15 +12,18 @@ import type {
 } from '@ofdrw/ofdrw-viewer-engine';
 import type { EnginePage } from '../document-controller';
 import type { FeatureState, ViewerFeature } from '../features';
+import type { ViewerOrigin } from '../state';
 
 /** 输出模块需要的文档状态子集。 */
 export interface OutputDocumentState {
   /** 文档属性；用于生成导出文件名。 */
   readonly metadata?: {
-    /** 文档标题；优先作为文件名。 */
+    /** 文档标题；没有 origin 时作为文件名。 */
     readonly title?: string;
   };
-  /** 规范化来源；没有元数据标题时用于推导文件名。 */
+  /** 原始来源信息；优先用于推导文件名。 */
+  readonly origin?: ViewerOrigin;
+  /** 规范化来源；已不再用于命名，保留以兼容既有宿主实现。 */
   readonly source?: OFDSource | null;
 }
 

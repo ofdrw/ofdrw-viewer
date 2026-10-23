@@ -19,6 +19,17 @@ import type { ViewerFeatureStates } from './features';
 /** 文档生命周期状态。 */
 export type DocumentStatus = 'idle' | 'opening' | 'ready' | 'error' | 'closed';
 
+/**
+ * 原始文档来源信息。
+ *
+ * URL 与 File 只保留命名所需的信息，不进入网络读取；`blob` 表示没有文件名的
+ * 内存 Blob。用于导出命名与后续下载能力。
+ */
+export type ViewerOrigin =
+  | { readonly kind: 'url'; readonly url: string }
+  | { readonly kind: 'file'; readonly name: string }
+  | { readonly kind: 'blob' };
+
 /** 缩放模式；`auto` 等价于适合宽度。 */
 export type ZoomMode = 'auto' | 'page-actual' | 'page-fit' | 'page-width';
 
@@ -106,6 +117,8 @@ export interface FindState {
 export interface DocumentState {
   /** 规范化后的引擎来源；未打开时为 null。 */
   readonly source: OFDSource | null;
+  /** 原始来源信息；URL/File 打开时保留，供标题与导出命名。 */
+  readonly origin?: ViewerOrigin;
   /** 总页数。 */
   readonly pageCount: number;
   /** 全部页尺寸信息，按页索引升序。 */

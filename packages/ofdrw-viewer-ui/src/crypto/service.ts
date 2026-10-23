@@ -28,11 +28,9 @@ import type {
 } from '@ofdrw/ofdrw-viewer-crypto';
 import type { OFDSource, VirtualContainer } from '@ofdrw/ofdrw-viewer-engine';
 import type { EngineDocument } from '../document-controller';
-import { normalizeViewerSource } from '../document-controller';
 import { createFeatureDisabledError, OFDViewerError, isOFDViewerError } from '../errors';
 import type { ViewerFeature } from '../features';
 import type { CertificateSource, CryptoViewerOptions } from '../options';
-import type { ViewerSource } from '../types';
 import type { UIShellHost } from '../ui';
 import { getUIShell } from '../ui';
 import { CredentialDialog } from './credentials-dialog';
@@ -154,7 +152,6 @@ export class CryptoService {
   constructor(
     private readonly host: CryptoServiceHost,
     options: CryptoViewerOptions | undefined,
-    private readonly requestInit?: RequestInit,
   ) {
     this.options = options ?? {};
     this.enabled = options?.enabled !== false;
@@ -251,15 +248,14 @@ export class CryptoService {
    * 检测非取消失败时抛 `OFD_CRYPTO_FAILED` 并保留 cause；加密检测成功但
    * 凭据缺失/取消/解密失败时抛 UI 错误，不打开文档。
    *
-   * @param source 宿主来源。
+   * @param source 已规范化的引擎来源；调用方负责 URL → 字节源，仅规范化一次。
    * @param signal 取消信号。
    * @returns 打开准备结果。
    */
-  async prepareOpen(source: ViewerSource, signal: AbortSignal): Promise<CryptoOpenPreparation> {
+  async prepareOpen(source: OFDSource, signal: AbortSignal): Promise<CryptoOpenPreparation> {
     if (!this.enabled) return { kind: 'plain' };
     await this.ensureRoots();
-    const normalized = normalizeViewerSource(source, this.requestInit);
-    const cryptoSource = toCryptoSource(normalized);
+    const cryptoSource = toCryptoSource(source);
     if (!cryptoSource) {
       throw new OFDViewerError('OFD_CRYPTO_UNSUPPORTED', this.text.cryptoUnsupported);
     }
@@ -941,12 +937,10 @@ function toCryptoSource(source: OFDSource): CryptoSource | null {
       return { kind: 'arraybuffer', data: source.data };
     case 'blob':
       return { kind: 'blob', blob: source.blob };
-    case 'url':
-      return {
-        kind: 'url',
-        url: source.url,
-        ...(source.headers ? { headers: source.headers } : {}),
-      };
+    case 'custom':
+      // UI 的 HttpByteSource 交给 crypto 按需读取；crypto 会隔离为不转发 close
+      // 的视图，因此关闭 crypto 容器不会误关 UI 的字节源。
+      return { kind: 'byte-source', source: source.source };
     default:
       return null;
   }

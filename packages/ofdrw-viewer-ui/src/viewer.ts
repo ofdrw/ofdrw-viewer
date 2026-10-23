@@ -27,8 +27,10 @@ import type {
 } from '@ofdrw/ofdrw-viewer-crypto';
 import {
   DocumentController,
+  normalizeViewerSourceDetailed,
   type EngineDocument,
   type EnginePage,
+  type NormalizedViewerSource,
 } from './document-controller';
 import {
   createFeatureDisabledError,
@@ -78,6 +80,7 @@ import {
   type SidebarView,
   type Theme,
   type ViewerErrorInfo,
+  type ViewerOrigin,
   type ViewerState,
   type ViewerWarning,
   type ZoomMode,
@@ -99,6 +102,7 @@ import { getUIShell } from './ui';
 import type { UIDialogOptions, UIShellElements } from './ui/types';
 import type { UIShellHost } from './ui';
 import type { CertificateSource } from './options';
+import { HttpByteSource } from './source/http-byte-source';
 import {
   CryptoService,
   type CryptoOpenPreparation,
@@ -224,6 +228,16 @@ async function closeContainer(container: VirtualContainer): Promise<void> {
   }
 }
 
+/** 关闭尚未移交的 HTTP 字节源；`close()` 幂等，失败不覆盖原始错误。 */
+async function closeHttpSource(source: HttpByteSource | null): Promise<void> {
+  if (!source) return;
+  try {
+    await source.close();
+  } catch {
+    // 字节源已关闭或底层取消失败不影响文档状态。
+  }
+}
+
 /** 把打开准备结果转为验证目标。 */
 function toVerificationTarget(preparation: CryptoOpenPreparation): VerificationTarget | null {
   if (preparation.kind === 'decrypted') {
@@ -331,6 +345,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private lastOpenSource: ViewerSource | null = null;
   /** UI 持有的解密容器；关闭文档后由 UI 关闭，engine 只借用。 */
   private decryptedContainer: VirtualContainer | null = null;
+  /** 加密路径下 UI 持有的 HTTP 字节源；明文路径交给 engine，不在此重复关闭。 */
+  private activeHttpSource: HttpByteSource | null = null;
   /** 最近一次打开准备结果；用于自动验证与错误映射。 */
   private cryptoPreparation: CryptoOpenPreparation | null = null;
   private scrollFrame: number | null = null;
@@ -432,14 +448,11 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         : null;
     this.bindEngineEvents();
     this.controller = new DocumentController({
-      openDocument: (openOptions) => {
-        const signal = this.openAbort?.signal;
-        return engineApi.OFDDocument.open({
+      openDocument: (openOptions) =>
+        engineApi.OFDDocument.open({
           ...openOptions,
           ...(this.engineEvents ? { eventBus: this.engineEvents } : {}),
-          ...(signal ? { signal } : {}),
-        }) as unknown as Promise<EngineDocument>;
-      },
+        }) as unknown as Promise<EngineDocument>,
       ...(this.options.requestInit ? { requestInit: this.options.requestInit } : {}),
       onWarning: (warning) => this.reportWarning(warning),
     });
@@ -466,7 +479,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       locale: this.options.locale,
       features: this.featureGate.getStates(),
     });
-    this.cryptoService = new CryptoService(this, this.options.crypto, this.options.requestInit);
+    this.cryptoService = new CryptoService(this, this.options.crypto);
     this.queue = new RenderQueue({
       concurrency: this.options.renderConcurrency,
       onTaskError: (error, task) => {
@@ -682,22 +695,37 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.assertNotDisposed();
     this.lastOpenSource = source;
     const previousSource = this.state.document.source;
+    const previousOrigin = this.state.document.origin;
     this.openToken += 1;
     const token = this.openToken;
     this.openAbort?.abort();
     const abort = new AbortController();
     this.openAbort = abort;
     this.queue.cancelAll();
-    this.patchDocument({ status: 'opening', source: null });
+    this.patchDocument({ status: 'opening', source: null, origin: undefined });
     this.commit();
     // 正常由 `document:open:start` 启动 150ms 计时；引擎事件不可用时在此降级。
     if (!this.engineEvents) this.documentLoading.begin(source);
     /** 尚未移交给阅读器的解密容器；取消/失败时必须关闭。 */
     let pendingContainer: VirtualContainer | null = null;
+    /** 本次创建的 HTTP 字节源；明文路径移交给 engine，加密路径由 UI 关闭。 */
+    let httpSource: HttpByteSource | null = null;
+    /** 本次来源的原始信息；成功后写入状态供导出命名。 */
+    let origin: ViewerOrigin | undefined;
     try {
-      const preparation = await this.cryptoService.prepareOpen(source, abort.signal);
+      // URL → HttpByteSource 只在这里做一次；crypto 与 engine 共用同一实例。
+      const normalized: NormalizedViewerSource = normalizeViewerSourceDetailed(
+        source,
+        this.options.requestInit,
+        { signal: abort.signal },
+      );
+      httpSource = normalized.httpSource ?? null;
+      origin = normalized.origin;
+      const preparation = await this.cryptoService.prepareOpen(normalized.source, abort.signal);
       if (token !== this.openToken || abort.signal.aborted) {
         if (preparation.kind === 'decrypted') await closeContainer(preparation.container);
+        await closeHttpSource(httpSource);
+        httpSource = null;
         throw createAbortError();
       }
       this.cryptoPreparation = preparation;
@@ -705,21 +733,32 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       if (preparation.kind === 'decrypted') {
         pendingContainer = preparation.container;
         try {
-          opened = await this.controller.openContainer(preparation.container, source);
+          opened = await this.controller.openContainerNormalized(
+            preparation.container,
+            normalized,
+            abort.signal,
+          );
         } catch (error) {
           await closeContainer(preparation.container);
           pendingContainer = null;
           throw error;
         }
       } else {
-        opened = await this.controller.open(source);
+        opened = await this.controller.openNormalized(normalized, abort.signal);
+        // 明文路径：字节源所有权随引擎容器移交，由 engine 在 doc.close() 关闭。
+        httpSource = null;
       }
       if (token !== this.openToken || abort.signal.aborted) throw createAbortError();
-      // 旧文档已由 controller 关闭，此时才能安全关闭旧解密容器。
+      // 旧文档已由 controller 关闭；先关旧解密容器，再关旧 HTTP 字节源。
       await this.releaseDecryptedContainer();
+      await this.releaseSource();
       this.decryptedContainer =
         preparation.kind === 'decrypted' ? pendingContainer : null;
       pendingContainer = null;
+      if (preparation.kind === 'decrypted') {
+        this.activeHttpSource = httpSource;
+        httpSource = null;
+      }
       this.cryptoService.setTarget(toVerificationTarget(preparation));
       const infos = await this.controller.getPageInfos();
       if (token !== this.openToken || abort.signal.aborted) throw createAbortError();
@@ -727,6 +766,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       this.buildPages();
       this.patchDocument({
         source: opened.source,
+        origin,
         pageCount: opened.pageCount,
         pageInfos: infos,
         status: 'ready',
@@ -763,11 +803,13 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       this.maybeAutoVerify();
     } catch (error) {
       if (token !== this.openToken) {
-        // 已有更新的 open 接管 loading，旧操作只做容器清理。
+        // 已有更新的 open 接管 loading，旧操作只做容器/字节源清理。
         if (pendingContainer) {
           await closeContainer(pendingContainer);
           pendingContainer = null;
         }
+        await closeHttpSource(httpSource);
+        httpSource = null;
         return;
       }
       if (isAbort(error)) {
@@ -775,16 +817,20 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
           await closeContainer(pendingContainer);
           pendingContainer = null;
         }
+        await closeHttpSource(httpSource);
+        httpSource = null;
         // 用户取消：立即隐藏全屏 loading，回到空态并清理可能已打开的引擎文档。
         this.documentLoading.cancel();
         this.queue.cancelAll();
         this.destroyPages();
         await this.controller.close();
         await this.releaseDecryptedContainer();
+        await this.releaseSource();
         this.pageInfos = [];
         this.patchDocument({
           status: 'closed',
           source: null,
+          origin: undefined,
           pageCount: 0,
           pageInfos: [],
           signaturesSummary: [],
@@ -793,18 +839,23 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         return;
       }
       if (isOFDViewerError(error) && error.code === 'OFD_CRYPTO_CANCELLED') {
+        await closeHttpSource(httpSource);
+        httpSource = null;
         this.documentLoading.cancel();
         this.patchDocument({
           status: this.controller.isOpen ? 'ready' : 'closed',
           source: previousSource,
+          origin: previousOrigin,
         });
         this.commit();
         throw error;
       }
+      await closeHttpSource(httpSource);
+      httpSource = null;
       const mapped = this.mapOpenFailure(error);
       const info = this.toErrorInfo(mapped, 'OFD_OPEN_FAILED', '打开文档失败');
       this.documentLoading.fail(info);
-      this.patchDocument({ status: 'error' });
+      this.patchDocument({ status: 'error', origin: undefined });
       this.reportError(info);
       this.commit();
       throw mapped;
@@ -828,12 +879,14 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       this.destroyPages();
       await this.controller.close();
       await this.releaseDecryptedContainer();
+      await this.releaseSource();
       this.cryptoPreparation = null;
       this.cryptoService.reset();
       this.pageInfos = [];
       this.patchDocument({
         status: 'closed',
         source: null,
+        origin: undefined,
         pageCount: 0,
         pageInfos: [],
         signaturesSummary: [],
@@ -1024,6 +1077,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.appliedExtensions.clear();
     void this.controller.close();
     void this.releaseDecryptedContainer();
+    void this.releaseSource();
     this.cryptoService.destroy();
     this.root.remove();
     activeViewers.delete(this);
@@ -2436,6 +2490,17 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     const container = this.decryptedContainer;
     this.decryptedContainer = null;
     if (container) await closeContainer(container);
+  }
+
+  /**
+   * 关闭 UI 持有的 HTTP 字节源；只处理加密路径创建的源。
+   *
+   * 明文路径的字节源随引擎容器生命周期关闭，这里不会重复关闭。
+   */
+  private async releaseSource(): Promise<void> {
+    const source = this.activeHttpSource;
+    this.activeHttpSource = null;
+    await closeHttpSource(source);
   }
 
   /** 挂载服务并返回卸载函数。 */

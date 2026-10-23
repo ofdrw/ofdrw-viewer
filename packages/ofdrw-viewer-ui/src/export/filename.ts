@@ -39,30 +39,26 @@ export function extensionForFormat(format: PageImageFormat): string {
 }
 
 /**
- * 从文档来源推导文件名；URL 取路径最后一段，文件来源取 basename。
+ * 从文档来源推导文件名。
+ *
+ * 优先使用原始 URL/文件名的 basename（去扩展名），其次 metadata.title，
+ * 都无法推导时返回 `document`；规范化来源不再参与命名。
  *
  * @param host 输出宿主。
  * @returns 清洗后的文档名；无法推导时为 `document`。
  */
 export function resolveDocumentName(host: OutputHost): string {
   const document = host.getState().document;
+  const origin = document.origin;
+  if (origin) {
+    const path = origin.kind === 'url' ? origin.url : origin.kind === 'file' ? origin.name : '';
+    const name = path ? fileNameFromPath(path) : '';
+    if (name) return name;
+  }
   const title = document.metadata?.title;
   if (title) {
     const cleaned = sanitizeFileName(title);
     if (cleaned) return cleaned;
-  }
-  const source = document.source;
-  if (source) {
-    if (source.kind === 'url') {
-      const name = fileNameFromPath(source.url);
-      if (name) return name;
-    } else if (source.kind === 'node-file') {
-      const name = fileNameFromPath(source.path);
-      if (name) return name;
-    } else if (source.kind === 'wechat-file') {
-      const name = fileNameFromPath(source.filePath);
-      if (name) return name;
-    }
   }
   return 'document';
 }
