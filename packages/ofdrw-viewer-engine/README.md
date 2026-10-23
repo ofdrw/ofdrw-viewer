@@ -4,10 +4,12 @@
 [![GitHub release](https://img.shields.io/github/v/release/ofdrw/ofdrw-viewer)](https://github.com/ofdrw/ofdrw-viewer/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](../../LICENSE)
 [![Node.js >= 22](https://img.shields.io/badge/node-%3E%3D22-339933.svg)](https://nodejs.org/)
+[![浏览器支持](https://img.shields.io/badge/%E6%B5%8F%E8%A7%88%E5%99%A8%E6%94%AF%E6%8C%81-4285F4?logo=googlechrome&logoColor=white)](skills/SKILL.md#环境适配)
+[![小程序支持](https://img.shields.io/badge/%E5%B0%8F%E7%A8%8B%E5%BA%8F%E6%94%AF%E6%8C%81-%E5%BE%AE%E4%BF%A1-07C160?logo=wechat&logoColor=white)](skills/SKILL.md#微信小程序)
 
 ## ✨ 功能概述
 
-**ofdrw-viewer-engine** 是符合 GB/T 33190-2016 的跨平台 OFD 渲染引擎，覆盖文字、图形、图像、注解等图元对象的绘制，以及底纹填充、字体字形解析与仿射变换等图形操作；通过稳定的可视化 API 封装上述实现，使调用方可在浏览器、Node.js、Electron 与微信小程序中获得语义一致的渲染结果。
+**ofdrw-viewer-engine** 是符合 GB/T 33190-2016 的跨平台 OFD 渲染引擎：文字、图形、图像、注解等图元，支持底纹填充、字体字形解析与仿射变换；一套稳定 API 同时覆盖浏览器、Node.js、Electron 与微信小程序，多端渲染结果语义一致。
 
 ![OFD 渲染效果](../../docs/img/ofd-render-showcase.gif)
 
@@ -32,49 +34,42 @@ npm install @ofdrw/ofdrw-viewer-engine
 脚本加载成功后，引擎注册全局变量 `window.OFDRWViewer`。
 
 
-## 🔎 查询版本
-
-```ts
-import { VERSION, getVersion } from '@ofdrw/ofdrw-viewer-engine';
-
-console.log(VERSION); // 例如 0.1.0
-console.log(getVersion()); // 与 VERSION 相同
-```
-
-版本号以常量形式内置于产物，浏览器与 Node.js 都能直接读取，便于日志与故障排查；`VERSION` 与
-`getVersion()` 返回同值，后者适合在需要函数形式时调用。
-
-
 ## 🚀 快速开始 Quick Start
 
-以浏览器为例，准备一个 OFD 文件和一个 `<canvas>`，就能画出第一页：
+在浏览器中准备 OFD 文件与 `<canvas>`，即可渲染第一页：
 
 ```ts
 import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
 
-// file 来自 <input type="file"> 或拖拽；canvas 是页面上的画布元素
+// file 来自 <input type="file"> 或拖拽；canvas 是页面画布
 const doc = await OFDDocument.open({ source: { kind: 'blob', blob: file } });
-
 const page = await doc.getPage(0);
-const viewport = page.getViewport(); // 默认 96 DPI
+const viewport = page.getViewport(); // 默认 96 DPI，可传 { dpi: 144 }
 canvas.width = Math.ceil(viewport.width);
 canvas.height = Math.ceil(viewport.height);
 await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise;
-
 await doc.close();
 ```
 
-- 想要更清晰的画面，给 `getViewport({ dpi: 144 })` 传入 `dpi` 即可。
-- 引擎不设置画布尺寸、不清屏、不填背景；背景交给 CSS。
-- 实际项目建议用 `try/finally` 包裹渲染逻辑，确保 `doc.close()` 一定执行。
+更多用法见 [ofdrw-viewer-engine SKILL.md 常用任务](skills/SKILL.md#常用任务) 与 [ofdrw-viewer-engine API 文档](skills/API.md)。
 
-更多用法 见 [SKILL.md 常用任务](skills/SKILL.md#常用任务)，[ofdrw-viewer-engine API 文档](skills/API.md) 。
+## 🌐 开发环境适配
 
 
-若您需要在浏览器、Node.js、Electron/Tauri 与微信小程序运行环境使用引擎，可以参考 [SKILL.md 环境适配](skills/SKILL.md#环境适配)，也可以参考我们为您准备 [示例项目](../../examples/README.md)：
+引擎核心不绑定 DOM 与 Node.js，各运行环境的接入方式：
 
-- [HTML5 示例](../../examples/engine-h5/)
-- [Node.js 示例](../../examples/engine-node/)
+- [H5浏览器](skills/SKILL.md#5-分钟跑通浏览器)
+- [Web Worker](skills/SKILL.md#web-worker--offscreencanvas)
+- [Node.js](skills/SKILL.md#nodejs)
+- [Electron / Tauri](skills/SKILL.md#electron--tauri)
+- [微信小程序](skills/SKILL.md#微信小程序)
+
+🧩 示例工程：
+
+- [engine-h5 示例](../../examples/engine-h5/)：单文件 `index.html`，引擎内联，双击即可浏览本地 OFD，适合快速验证浏览器渲染。
+- [engine-node 示例](../../examples/engine-node/)：以 `@napi-rs/canvas` 提供 Canvas 与图片解码，逐页导出 144 DPI PNG。
+
+更多示例见 [examples 示例总览](../../examples/README.md)。
 
 
 ## 常见问题
@@ -82,7 +77,7 @@ await doc.close();
 **页面中有文字丢失空白？**
 
 
-由于**引擎不内置任何字体**，字体由宿主提供，若您文档中的字体无法找到,将尝试会尝试您提供的默认字体，若都无法找到则会跳过这文字的绘制，详见 [SKILL.md 缺省字体与补充字体](skills/SKILL.md#缺省字体与补充字体) 与 [字体缺省方案设计](../../docs/渲染字体缺省方案设计.md)。
+由于**引擎不内置任何字体**，字体由宿主提供，若您文档中的字体无法找到，将尝试您提供的默认字体，若都无法找到则会跳过这文字的绘制，详见 [SKILL.md 缺省字体与补充字体](skills/SKILL.md#缺省字体与补充字体) 与 [字体缺省方案设计](../../docs/渲染字体缺省方案设计.md)。
 
 
 

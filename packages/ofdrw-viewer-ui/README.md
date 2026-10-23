@@ -1,18 +1,17 @@
 # @ofdrw/ofdrw-viewer-ui
 
-[![npm version](https://img.shields.io/npm/v/@ofdrw/ofdrw-viewer-ui)](https://www.npmjs.com/package/@ofdrw/ofdrw-viewer-ui)
-[![GitHub release](https://img.shields.io/github/v/release/ofdrw/ofdrw-viewer)](https://github.com/ofdrw/ofdrw-viewer/releases)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](../../LICENSE)
+[![npm version](https://img.shields.io/npm/v/@ofdrw/ofdrw-viewer-ui)](https://www.npmjs.com/package/@ofdrw/ofdrw-viewer-ui) [![GitHub release](https://img.shields.io/github/v/release/ofdrw/ofdrw-viewer)](https://github.com/ofdrw/ofdrw-viewer/releases) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](../../LICENSE)
+[![React](https://img.shields.io/badge/React-20232A?logo=react&logoColor=61DAFB)](../../examples/viewer-ui-react/) [![Vue](https://img.shields.io/badge/Vue.js-35495E?logo=vuedotjs&logoColor=4FC08D)](../../examples/viewer-ui-vue/) [![Web Component](https://img.shields.io/badge/Web%20Component-20232A?logo=webcomponentsdotorg&logoColor=white)](skills/SKILL.md#web-component)
 
 ## ✨ 功能概述
 
-**ofdrw-viewer-ui** 是框架无关的 OFD 阅读器 UI，内置连续滚动、缩放/旋转、缩略图、大纲、书签、全文查找、文本选择、打印与图片导出。提供 `<ofd-viewer>` Web Component 以及 React、Vue 薄适配，可直接嵌入现有应用。
+**ofdrw-viewer-ui** 是一款产品级的 Web OFD 阅读器组件，内置连续滚动、缩放/旋转、缩略图、大纲、书签、全文查找、文本选择、打印与图片导出等功能。组件基于 ofdrw-viewer-engine 实现高质量的 OFD 页面绘制，同时提供 Web Component 与 React、Vue API适配，可直接嵌入现有应用在线预览 OFD 文件，并自适应桌面、平板与手机。
 
 ![OFD Web 阅读器演示](../../docs/img/ofdrw-viewer-ui-showcase.gif)
 
 ## 🚀 在线体验
 
-[**👉 打开在线演示**](https://ofdrw.github.io/ofdrw-viewer/)：无需安装，可直接选择本地 `.ofd` 文件或使用内置样例；文档在浏览器本地解析与渲染，不会上传。
+[**👉 打开在线演示**](https://ofdrw.github.io/ofdrw-viewer/)：你可以快速了解ofdrw-viewer-ui阅读器OFD页面绘制效果和功能。
 
 ## 📦 安装
 
@@ -50,9 +49,16 @@ await viewer.ready;
 - [React 示例](skills/SKILL.md#react)
 - [Vue 示例](skills/SKILL.md#vue)
 
+可直接运行的示例项目：
+
+- [React 示例项目](../../examples/viewer-ui-react/)：Vite + React 19
+- [Vue 示例项目](../../examples/viewer-ui-vue/)：Vite + Vue 3
+
 ## 🤖 智能体 SKILL
 
-智能体读一下 [SKILL.md](skills/SKILL.md)，就能快速把 OFD 阅读器嵌入页面，并了解导航、缩放、查找、打印和导出等常用能力。
+本包提供智能体协作指南（SKILL），若你是智能体，请按照以下指南完成阅读器接入与调用：
+
+- 📖 [**ofdrw-viewer-ui** · SKILL](skills/SKILL.md) — 在网页中嵌入完整的 OFD 阅读器，具备滚动缩放、缩略图与大纲、文本搜索、打印导出、加密文档打开与签章验证等能力。
 
 ## 📄 许可证
 

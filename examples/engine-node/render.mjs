@@ -1,67 +1,48 @@
-#!/usr/bin/env node
 /**
- * Node.js 版 OFD 逐页导出示例。
+ * 逐页把 OFD 导出为 PNG。
  *
- * 用 @napi-rs/canvas 提供 Canvas 和图片解码，用引擎把每一页导出为 PNG。
  * 用法：node render.mjs [input.ofd] [outDir]
  */
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
 
-/** 默认输入：11 页、内嵌字体的样例。 */
-const DEFAULT_INPUT = fileURLToPath(new URL('./samples/doc1File.ofd', import.meta.url));
-/** 默认输出目录。 */
-const DEFAULT_OUT_DIR = 'out';
-/** 输出精度，单位 DPI。 */
-const DPI = 144;
+/** 输入文件（默认 11 页样例）和输出目录（默认 ./out）。 */
+const input = process.argv[2] ?? join(import.meta.dirname, 'samples/doc1File.ofd');
+const outDir = resolve(process.argv[3] ?? 'out');
 
 /**
- * 创建图片解码插件，供引擎读取 OFD 内嵌的 PNG/JPEG 图片。
+ * 把 OFD 内嵌的 PNG/JPEG 解码成引擎可用的图片。
  *
  * @param {'png' | 'jpeg'} format 图片格式。
- * @returns {import('@ofdrw/ofdrw-viewer-engine').ImageDecoderPlugin} 解码插件。
+ * @returns 引擎的图片解码插件。
  */
-function createDecoder(format) {
-  return {
-    format,
-    async decode(bytes) {
-      const image = await loadImage(Buffer.from(bytes));
-      return { width: image.width, height: image.height, data: image, kind: 'source' };
-    },
-  };
-}
-
-/** 从命令行读取输入文件与输出目录。 */
-const inputPath = resolve(process.argv[2] ?? DEFAULT_INPUT);
-const outDir = resolve(process.argv[3] ?? DEFAULT_OUT_DIR);
-
-const file = await readFile(inputPath);
-const data = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength);
-
-const doc = await OFDDocument.open({
-  source: { kind: 'arraybuffer', data },
-  createCanvas,
-  imageDecoders: [createDecoder('png'), createDecoder('jpeg')],
-  // 导出图片时由宿主负责编码；这里统一用 PNG。
-  encodeImage: (canvas) => canvas.toBuffer('image/png'),
-  onWarning: (warning) => console.warn(`[${warning.code}] ${warning.message}`),
+const decodeImage = (format) => ({
+  format,
+  async decode(bytes) {
+    const image = await loadImage(Buffer.from(bytes));
+    return { width: image.width, height: image.height, data: image, kind: 'source' };
+  },
 });
 
-try {
-  await mkdir(outDir, { recursive: true });
+const doc = await OFDDocument.open({
+  // Buffer 本身就是 Uint8Array，可以直接作为字节来源。
+  source: { kind: 'arraybuffer', data: await readFile(input) },
+  createCanvas, // 页面画布由 @napi-rs/canvas 提供
+  imageDecoders: [decodeImage('png'), decodeImage('jpeg')],
+  encodeImage: (canvas) => canvas.toBuffer('image/png'), // 导出的图片由宿主编码
+});
 
-  for (let index = 0; index < doc.pageCount; index += 1) {
-    const result = await (await doc.getPage(index)).exportImage({ dpi: DPI });
-    const outputPath = join(outDir, `page-${index + 1}.png`);
-    await writeFile(outputPath, result.data);
-    console.log(`第 ${index + 1}/${doc.pageCount} 页 -> ${outputPath}`);
-  }
+await mkdir(outDir, { recursive: true });
 
-  console.log(`完成：${doc.pageCount} 页已导出到 ${outDir}`);
-} finally {
-  await doc.close();
+for (let i = 0; i < doc.pageCount; i += 1) {
+  const { data } = await (await doc.getPage(i)).exportImage({ dpi: 144 }); // 固定 144 DPI
+  const file = join(outDir, `page-${i + 1}.png`);
+  await writeFile(file, data);
+  console.log(`第 ${i + 1}/${doc.pageCount} 页 -> ${file}`);
 }
+
+await doc.close();
+console.log(`完成：${doc.pageCount} 页已导出到 ${outDir}`);

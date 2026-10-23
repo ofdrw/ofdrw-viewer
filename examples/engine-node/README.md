@@ -10,7 +10,8 @@ npm install
 npm run dev
 ```
 
-默认读取 `samples/doc1File.ofd`（11 页），输出到 `out/page-1.png` … `out/page-11.png`。
+默认读取 `samples/doc1File.ofd`（11 页），输出到 `out/page-1.png` … `out/page-11.png`，
+固定 144 DPI。
 
 自定义输入/输出：
 
@@ -19,21 +20,19 @@ node render.mjs samples/dense-text-perf.ofd out
 node render.mjs /path/to/input.ofd /path/to/output
 ```
 
-输出固定为 144 DPI。
-
 ## 关键代码
 
 ```js
 const doc = await OFDDocument.open({
-  source: { kind: 'arraybuffer', data },
-  createCanvas,                    // @napi-rs/canvas
-  imageDecoders,                   // PNG/JPEG 解码
+  source: { kind: 'arraybuffer', data },          // 文件字节，Buffer 也行
+  createCanvas,                                  // @napi-rs/canvas
+  imageDecoders,                                 // PNG/JPEG 解码
   encodeImage: (canvas) => canvas.toBuffer('image/png'),
 });
 
 for (let i = 0; i < doc.pageCount; i += 1) {
-  const result = await (await doc.getPage(i)).exportImage({ dpi: 144 });
-  await writeFile(`out/page-${i + 1}.png`, result.data);
+  const { data } = await (await doc.getPage(i)).exportImage({ dpi: 144 });
+  await writeFile(`out/page-${i + 1}.png`, data);
 }
 await doc.close();
 ```
@@ -41,10 +40,10 @@ await doc.close();
 ## npm 包未发布时
 
 `package.json` 按正式发布后的方式引用 `@ofdrw/ofdrw-viewer-engine@^0.1.0`。发布前本地调试，
-把依赖临时改成：
+把依赖临时改成项目内的路径：
 
 ```json
 "@ofdrw/ofdrw-viewer-engine": "file:../../packages/ofdrw-viewer-engine"
 ```
 
-安装完成后即可运行；调试结束改回 npm 版本号，不要提交本地路径。
+安装后即可运行；调试结束改回 npm 版本号，不要提交本地路径。
