@@ -19,14 +19,9 @@ import type {
 } from './types';
 import type { WarningCode } from '../warnings';
 
-/** 从宿主字体来源读取字节；url/path/filePath 由宿主平台实现。 */
-export type FontInputLoader = (
-  input: FontInput,
-) => Uint8Array | ArrayBuffer | null | Promise<Uint8Array | ArrayBuffer | null>;
-
 /** 字体库选项。 */
 export interface FontLibraryOptions {
-  /** 宿主字体提供者。 */
+  /** 宿主字体提供者（字体按需读取的唯一入口）。 */
   fontProvider?: FontProvider;
   /**
    * 用户默认字体：文档字体完全缺省时的替代字体，优先级高于 supplementaryFonts。
@@ -36,8 +31,6 @@ export interface FontLibraryOptions {
   defaultFonts?: readonly FontInput[];
   /** 补充字体列表，按顺序参与缺字回退；也用于完全无字体时的主字体。 */
   supplementaryFonts?: readonly FontInput[];
-  /** url/path/filePath 来源的字节读取器；`data` 来源不需要。 */
-  loadInput?: FontInputLoader;
   /** 字体层 warning 回调。 */
   onWarning?: FontWarningCallback;
   /** 宿主扩展别名表。 */
@@ -168,16 +161,6 @@ function withExplicitGlyphTrust(
 }
 
 /**
- * 判断一个 FontInput 是否为内存字节来源。
- *
- * @param input 字体来源。
- * @returns 是 data 来源时返回 true。
- */
-function hasInlineData(input: FontInput): input is { data: ArrayBuffer | Uint8Array; family?: string } {
-  return 'data' in input;
-}
-
-/**
  * 字体库：负责内嵌/宿主/补充字体解析、缓存与逐字形回退。
  *
  * 一个文档实例使用一个 FontLibrary；`clear()`/`dispose()` 释放字形与字体缓存。
@@ -194,7 +177,7 @@ export class FontLibrary {
   private disposed = false;
 
   /**
-   * @param options 宿主 provider、默认/补充字体、字节读取器与 warning 回调。
+   * @param options 宿主 provider、默认/补充字体与 warning 回调。
    */
   constructor(private readonly options: FontLibraryOptions = {}) {
     this.defaultFonts = [...(options.defaultFonts ?? [])];
@@ -478,46 +461,26 @@ export class FontLibrary {
    * @returns 字体字节；无法读取时返回 null 并 warning。
    */
   private async readInput(input: FontInput, resourceId: ResourceId): Promise<Uint8Array | null> {
-    if (hasInlineData(input)) {
-      const data = input.data;
-      const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
-      if (bytes.byteLength > this.maxFontBytes) {
-        this.warn(
-          'W_FONT_MISSING',
-          `字体字节超过 ${this.maxFontBytes} byte 上限，已忽略`,
-          { resourceId },
-        );
-        return null;
-      }
-      return bytes;
-    }
-    const loader = this.options.loadInput;
-    if (!loader) {
+    // 类型已收敛为 { data }；这里兼容 JavaScript/旧版本调用方传入的 url/path/filePath。
+    const data = (input as { data?: unknown }).data;
+    if (!(data instanceof ArrayBuffer) && !(data instanceof Uint8Array)) {
       this.warn(
         'W_FONT_MISSING',
-        'FontProvider 返回了 url/path 来源，但未注入 loadInput，已忽略',
+        '字体来源缺少 data：engine 不再读取字体 URL/路径，请传 { data } 或使用 FontProvider',
         { resourceId },
       );
       return null;
     }
-    try {
-      const loaded = await loader(input);
-      if (!loaded) return null;
-      const bytes = loaded instanceof Uint8Array ? loaded : new Uint8Array(loaded);
-      if (bytes.byteLength > this.maxFontBytes) {
-        this.warn(
-          'W_FONT_MISSING',
-          `字体字节超过 ${this.maxFontBytes} byte 上限，已忽略`,
-          { resourceId },
-        );
-        return null;
-      }
-      return bytes;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.warn('W_FONT_MISSING', `字体字节读取失败：${message}`, { resourceId });
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+    if (bytes.byteLength > this.maxFontBytes) {
+      this.warn(
+        'W_FONT_MISSING',
+        `字体字节超过 ${this.maxFontBytes} byte 上限，已忽略`,
+        { resourceId },
+      );
       return null;
     }
+    return bytes;
   }
 
   /**

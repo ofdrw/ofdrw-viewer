@@ -74,7 +74,6 @@ import type {
   TextContent,
   TextContentOptions,
 } from './ui-types';
-import type { FontInputLoader } from '../font/provider';
 import type { FontFaceSet } from '../font/types';
 import type { PageAreaCandidate } from '../model/page-area';
 import { decodePageAreaXml } from '../model/page-info';
@@ -229,8 +228,6 @@ interface DocumentInit {
   defaultFonts?: readonly FontInput[];
   /** 宿主补充字体；矢量章独立打开内嵌 OFD 时继承。 */
   supplementaryFonts?: readonly FontInput[];
-  /** 宿主字体字节加载器；矢量章独立打开内嵌 OFD 时继承。 */
-  fontInputLoader?: FontInputLoader;
   /** 本文档使用的事件总线：注入时与宿主对象相同，否则由 engine 创建。 */
   eventBus: OFDEventBusClass;
   /** 内部事件派发器；与打开阶段共享同一操作号计数。 */
@@ -417,8 +414,6 @@ export class OFDDocument {
   private readonly defaultFonts: readonly FontInput[] | undefined;
   /** 宿主补充字体；供矢量章嵌套文档继承。 */
   private readonly supplementaryFonts: readonly FontInput[] | undefined;
-  /** 宿主字体字节加载器；未注入时为 Web 默认实现。 */
-  private readonly fontInputLoader: FontInputLoader;
   /** 是否允许加载签章；矢量章嵌套文档关闭，避免递归。 */
   private signatureLoading = true;
 
@@ -515,7 +510,6 @@ export class OFDDocument {
     this.fontProvider = init.fontProvider;
     this.defaultFonts = init.defaultFonts;
     this.supplementaryFonts = init.supplementaryFonts;
-    this.fontInputLoader = init.fontInputLoader ?? createFontInputLoader();
     this.pageCount = init.document.pageCount;
     this.xmlCache = new DisposableLruCache<string, XmlCacheEntry>({
       maxBytes: init.cacheOptions.xmlBytes,
@@ -806,14 +800,12 @@ export class OFDDocument {
         });
 
         // 5) 字体库：内嵌字体按需注册，provider/default/supplementary 由宿主注入。
-        const fontInputLoader = options.loadInput ?? createFontInputLoader();
         const fontLibrary = new FontLibrary({
           ...(options.fontProvider ? { fontProvider: options.fontProvider } : {}),
           ...(options.defaultFonts ? { defaultFonts: options.defaultFonts } : {}),
           ...(options.supplementaryFonts
             ? { supplementaryFonts: options.supplementaryFonts }
             : {}),
-          loadInput: fontInputLoader,
           onWarning: (code, message, context) => {
             const warning: OFDWarning = { code, message };
             if (context?.resourceId !== undefined) warning.resourceId = context.resourceId;
@@ -866,7 +858,6 @@ export class OFDDocument {
           ...(options.supplementaryFonts
             ? { supplementaryFonts: options.supplementaryFonts }
             : {}),
-          fontInputLoader,
         };
       };
 
@@ -2930,7 +2921,6 @@ export class OFDDocument {
       ...(this.fontProvider ? { fontProvider: this.fontProvider } : {}),
       ...(this.defaultFonts ? { defaultFonts: [...this.defaultFonts] } : {}),
       ...(this.supplementaryFonts ? { supplementaryFonts: [...this.supplementaryFonts] } : {}),
-      loadInput: this.fontInputLoader,
     });
     nested.disableSignatureLoading();
     try {
@@ -3694,26 +3684,4 @@ function normalizeSealFormat(type: string): string {
   if (normalized === 'jpg' || normalized === 'jpe') return 'jpeg';
   if (normalized === 'tif') return 'tiff';
   return normalized;
-}
-
-/**
- * 创建宿主字体来源加载器。
- *
- * Web 优先：`data` 由 FontLibrary 内部直接处理；`url` 用 fetch 读取。
- * `path`/`filePath` 属于 Node/小程序来源，本轮不实现，返回明确错误由字体层 warning。
- *
- * @returns FontInputLoader。
- */
-function createFontInputLoader(): FontInputLoader {
-  return async (input: FontInput): Promise<Uint8Array | null> => {
-    if ('url' in input) {
-      if (typeof globalThis.fetch !== 'function') {
-        throw new Error('当前环境没有 fetch，无法加载字体 URL');
-      }
-      const response = await globalThis.fetch(input.url);
-      if (!response.ok) throw new Error(`字体 URL 加载失败：HTTP ${response.status}`);
-      return new Uint8Array(await response.arrayBuffer());
-    }
-    throw new Error('Web 优先版本不支持本地字体 path/filePath，请改用 data 或 url');
-  };
 }

@@ -73,7 +73,6 @@ export type {
   CanvasImageEncodeSource,
   EncodeImage,
   FontInput,
-  FontInputLoader,
   OFDDocumentInfo,
   OFDOpenFromContainerOptions,
   OFDOpenOptions,

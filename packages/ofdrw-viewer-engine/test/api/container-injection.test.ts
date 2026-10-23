@@ -591,7 +591,10 @@ describe('OFDDocument 容器注入', () => {
   it('container+source 同时提供时不打开 source（无效来源也不影响）', async () => {
     const bytes = buildRichPackage();
     const container = new MemoryContainer(await readAllEntries(bytes));
-    const doc = await OFDDocument.open({ container, source: { kind: 'node-file', path: '/nope.ofd' } });
+    const doc = await OFDDocument.open({
+      container,
+      source: { kind: 'custom', source: new ArrayBufferSource(new Uint8Array([1, 2, 3])) },
+    });
     try {
       expect(doc.pageCount).toBe(1);
     } finally {

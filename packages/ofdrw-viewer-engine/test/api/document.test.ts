@@ -3,11 +3,10 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
-import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import { isOFDError } from '../../src/errors';
+import type { OFDSource } from '../../src/platform/source';
 import { ArrayBufferSource } from '../../src/container/byte-source';
 import {
   OFD_NS,
@@ -138,67 +137,18 @@ describe('OFDDocument 打开与来源', () => {
     expect(reads).toBeGreaterThan(0);
   });
 
-  it('node-file 来源本轮明确不支持（Node 适配另行规划）', async () => {
+  it.each([
+    [{ kind: 'url', url: 'https://example.test/sample.ofd' }, 'OFD_INVALID_PACKAGE', 'engine 不再负责网络获取'],
+    [{ kind: 'node-file', path: '/tmp/sample.ofd' }, 'OFD_RENDERER_UNSUPPORTED', "kind: 'custom'"],
+    [{ kind: 'wechat-file', filePath: 'wxfile://tmp/a.ofd' }, 'OFD_RENDERER_UNSUPPORTED', "kind: 'custom'"],
+  ])('旧来源 %j 在运行期明确拒绝并提示迁移', async (legacy, code, hint) => {
     const error = await rejectOf(
       openTestDocument(new Uint8Array(0), {
-        source: { kind: 'node-file', path: '/tmp/sample.ofd' },
+        source: legacy as unknown as OFDSource,
       }),
     );
-    expect(errorCode(error)).toBe('OFD_RENDERER_UNSUPPORTED');
-  });
-
-  it('wechat-file 来源明确不支持', async () => {
-    const error = await rejectOf(
-      openTestDocument(new Uint8Array(0), {
-        source: { kind: 'wechat-file', filePath: 'wxfile://tmp/a.ofd' },
-      }),
-    );
-    expect(errorCode(error)).toBe('OFD_RENDERER_UNSUPPORTED');
-  });
-
-  it('url 来源（HTTP Range）可打开与渲染', async () => {
-    const bytes = buildTwoPageOfd();
-    const payload = Buffer.from(bytes);
-    const server = createServer((request, response) => {
-      if (request.method === 'HEAD') {
-        response.writeHead(200, { 'Content-Length': payload.byteLength, 'Accept-Ranges': 'bytes' });
-        response.end();
-        return;
-      }
-      const range = /^bytes=(\d+)-(\d+)$/.exec(request.headers.range ?? '');
-      if (range) {
-        const start = Number(range[1]);
-        const end = Math.min(Number(range[2]), payload.byteLength - 1);
-        response.writeHead(206, {
-          'Content-Type': 'application/ofd',
-          'Content-Range': `bytes ${start}-${end}/${payload.byteLength}`,
-          'Content-Length': end - start + 1,
-        });
-        response.end(payload.subarray(start, end + 1));
-        return;
-      }
-      response.writeHead(200, { 'Content-Length': payload.byteLength });
-      response.end(payload);
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    try {
-      const { port } = server.address() as AddressInfo;
-      const doc = await openTestDocument(bytes, {
-        source: { kind: 'url', url: `http://127.0.0.1:${port}/sample.ofd` },
-      });
-      try {
-        expect(doc.pageCount).toBe(2);
-        const page = await doc.getPage(0);
-        const { canvas } = await renderPage(page);
-        expect(canvas.pixel(4, 4)).toEqual([255, 0, 0, 255]);
-      } finally {
-        await doc.close();
-      }
-    } finally {
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      );
-    }
+    expect(errorCode(error)).toBe(code);
+    expect(error instanceof Error ? error.message : '').toContain(hint);
   });
 
   it('缺少 source / 非法 ZIP 返回 OFD_INVALID_PACKAGE', async () => {

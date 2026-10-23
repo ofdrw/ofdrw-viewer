@@ -209,38 +209,44 @@ describe('FontLibrary 宿主 provider 与补充字体', () => {
     library.dispose();
   });
 
-  it.skipIf(!fixtures.dejavu)('无 provider 时使用 loadInput 读取 url 来源', async () => {
-    const loaded: FontInput[] = [];
+  it.skipIf(!fixtures.dejavu)('provider 按需返回宿主读好的 { data }', async () => {
+    let calls = 0;
     const provider: FontProvider = {
       async match() {
-        return { url: 'https://example.test/font.ttf', family: 'DejaVu Sans' };
+        calls += 1;
+        return { data: readFixture(fixtures.dejavu as string), family: 'DejaVu Sans' };
       },
     };
-    const library = new FontLibrary({
-      fontProvider: provider,
-      loadInput(input) {
-        loaded.push(input);
-        return readFixture(fixtures.dejavu as string);
-      },
-    });
+    const library = new FontLibrary({ fontProvider: provider });
     const faces = await library.resolve(makeFontResource());
-    expect(loaded).toHaveLength(1);
+    expect(calls).toBe(1);
     expect(faces?.primary.family).toContain('DejaVu');
     library.dispose();
   });
 
-  it.skipIf(!fixtures.dejavu)('supplementaryFonts 的 path 来源经 loadInput 读取并采用实际 family', async () => {
-    const loaded: FontInput[] = [];
-    const library = new FontLibrary({
-      supplementaryFonts: [{ path: fixtures.dejavu as string }],
-      loadInput(input) {
-        loaded.push(input);
-        if (!('path' in input)) return null;
-        return readFixture(input.path);
+  it.skipIf(!fixtures.dejavu)('provider 返回旧来源（无 data）时 warning 并继续回退', async () => {
+    const { callback, warnings } = collectWarnings();
+    const provider: FontProvider = {
+      async match() {
+        return { url: 'https://example.test/font.ttf', family: 'DejaVu Sans' } as unknown as FontInput;
       },
+    };
+    const library = new FontLibrary({
+      fontProvider: provider,
+      supplementaryFonts: [{ data: readFixture(fixtures.dejavu as string), family: 'DejaVu Sans' }],
+      onWarning: callback,
     });
     const faces = await library.resolve(makeFontResource({ fontName: 'Missing Font' }));
-    expect(loaded).toEqual([{ path: fixtures.dejavu as string }]);
+    expect(faces?.primary.family).toContain('DejaVu');
+    expect(warnings.some((warning) => warning.includes('字体来源缺少 data'))).toBe(true);
+    library.dispose();
+  });
+
+  it.skipIf(!fixtures.dejavu)('supplementaryFonts 的 data 来源采用实际 family', async () => {
+    const library = new FontLibrary({
+      supplementaryFonts: [{ data: readFixture(fixtures.dejavu as string) }],
+    });
+    const faces = await library.resolve(makeFontResource({ fontName: 'Missing Font' }));
     expect(faces?.primary.family).toContain('DejaVu');
     library.dispose();
   });

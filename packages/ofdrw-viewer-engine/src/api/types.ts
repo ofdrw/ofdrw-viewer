@@ -7,7 +7,6 @@
 
 import type { ResourceId, PageSize } from '../model/types';
 import type { FontInput, FontProvider } from '../platform/font-provider';
-import type { FontInputLoader } from '../font/provider';
 import type { ImageDecoderPlugin } from '../platform/image-decoder';
 import type { VirtualContainer, VirtualContainerFactory } from '../platform/virtual-container';
 import type { OFDSource } from '../platform/source';
@@ -17,7 +16,6 @@ import type { Viewport } from '../common/types';
 import type { OFDEventBus } from './events';
 
 export type { FontInput } from '../platform/font-provider';
-export type { FontInputLoader } from '../font/provider';
 export type { OFDSource } from '../platform/source';
 export type { OFDWarning } from '../warnings';
 export type { PageSize } from '../model/types';
@@ -183,20 +181,14 @@ export interface OFDOpenBaseOptions {
    *
    * 用于"没有字体就用这些字"的简单兜底；内嵌字体或 `fontProvider` 命中时不会被选为主字体。
    * 仅作替代来源，不可信任显式 GID（忽略 CGTransform 的 GID，走 cmap）；
-   * 多个来源按字体名/别名评分选择主字体。支持 `data`/`url`/`path`/`filePath` 四种 FontInput。
+   * 多个来源按字体名/别名评分选择主字体。只接受已读好的 `data`。
+   * 需要按需读取 URL/本地字体时，请实现 `fontProvider` 并在 `match()` 内读取。
    * 不传时行为与未引入本参数时一致。
    */
   readonly defaultFonts?: readonly FontInput[];
-  /** 宿主补充字体，按需用于缺字/缺字体回退。 */
+  /** 宿主补充字体，按需用于缺字/缺字体回退；只接受已读好的 `data`。 */
   supplementaryFonts?: FontInput[];
-  /**
-   * 宿主字体字节加载器，用于 `url`/`path`/`filePath` 来源。
-   *
-   * 不传时保持 Web 默认：`url` 走 fetch，`path`/`filePath` 不支持。
-   * Node 宿主（例如 CLI）通过此项注入文件读取，不改变 Web 优先语义。
-   */
-  loadInput?: FontInputLoader;
-  /** 宿主字体提供者。 */
+  /** 宿主字体提供者；`match()` 是字体按需读取的唯一入口。 */
   fontProvider?: FontProvider;
   /** JBIG2/TIFF 等图片解码插件。 */
   imageDecoders?: ImageDecoderPlugin[];

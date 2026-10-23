@@ -178,51 +178,39 @@ describe('defaultFonts 显式 GID 与缓存', () => {
     library.dispose();
   });
 
-  it.skipIf(!fixtures.dejavu)('clear() 后重新读取并解析 defaultFonts', async () => {
-    let loads = 0;
+  it.skipIf(!fixtures.dejavu)('clear() 后重新解析 defaultFonts', async () => {
     const library = new FontLibrary({
-      defaultFonts: [{ path: '/fonts/default.ttf', family: 'DejaVu Sans' }],
-      loadInput() {
-        loads += 1;
-        return readFixture(fixtures.dejavu as string);
-      },
+      defaultFonts: [dataInput(fixtures.dejavu as string, 'DejaVu Sans')],
     });
 
     const first = await library.resolve(makeFontResource({ fontName: 'Missing Font' }));
-    expect(loads).toBe(1);
     expect(first?.primary.family).toContain('DejaVu');
 
     library.clear();
     const second = await library.resolve(makeFontResource({ fontName: 'Missing Font' }));
-    expect(loads).toBe(2);
     expect(second?.primary.family).toContain('DejaVu');
+    // clear() 丢弃字体面缓存，重新解析应产生新的实例。
+    expect(second).not.toBe(first);
+    expect(second?.primary).not.toBe(first?.primary);
     library.dispose();
   });
 });
 
 describe('defaultFonts 失败降级与回退链', () => {
-  it.skipIf(!fixtures.dejavu)('单个来源读取失败只 warning 并继续后续来源', async () => {
+  it.skipIf(!fixtures.dejavu)('来源缺少 data 只 warning 并继续后续来源', async () => {
     const { callback, warnings } = collectWarnings();
-    const requested: string[] = [];
+    const legacy = [
+      { path: '/fonts/null.ttf', family: 'Null Font' },
+      { url: 'https://example.test/font.ttf', family: 'Url Font' },
+    ] as unknown as FontInput[];
     const library = new FontLibrary({
-      defaultFonts: [
-        { path: '/fonts/null.ttf', family: 'Null Font' },
-        { path: '/fonts/throw.ttf', family: 'Throw Font' },
-        dataInput(fixtures.dejavu as string, 'DejaVu Sans'),
-      ],
-      loadInput(input) {
-        const path = 'path' in input ? input.path : '';
-        requested.push(path);
-        if (path.endsWith('null.ttf')) return null;
-        throw new Error('loader boom');
-      },
+      defaultFonts: [...legacy, dataInput(fixtures.dejavu as string, 'DejaVu Sans')],
       onWarning: callback,
     });
 
     const faces = await library.resolve(makeFontResource({ fontName: 'Missing Font' }));
-    expect(requested).toEqual(['/fonts/null.ttf', '/fonts/throw.ttf']);
     expect(faces?.primary.family).toContain('DejaVu');
-    expect(warnings.filter((warning) => warning.includes('字体字节读取失败'))).toHaveLength(1);
+    expect(warnings.filter((warning) => warning.includes('字体来源缺少 data'))).toHaveLength(2);
     expect(warnings.every((warning) => warning.includes('W_FONT_MISSING'))).toBe(true);
     library.dispose();
   });

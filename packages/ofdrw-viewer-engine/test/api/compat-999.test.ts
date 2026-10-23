@@ -97,10 +97,12 @@ describe('999.ofd 兼容性回归', () => {
       }
 
       const warnings: OFDWarning[] = [];
+      // engine 不再读取本地路径：测试宿主先读成字节，再交给 supplementaryFonts。
+      const supplementaryFonts = FONT_PATHS.map((path) => ({
+        data: new Uint8Array(readFileSync(path)),
+      }));
       const withFonts = await openTestDocument(sampleBytes(), {
-        supplementaryFonts: FONT_PATHS.map((path) => ({ path })),
-        loadInput: async (input) =>
-          'path' in input ? new Uint8Array(readFileSync(input.path)) : null,
+        supplementaryFonts,
         onWarning: (warning) => warnings.push(warning),
       });
       let withPixels: Uint8ClampedArray;
