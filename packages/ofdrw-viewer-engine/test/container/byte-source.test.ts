@@ -233,4 +233,60 @@ describe('container/byte-source', () => {
     expect(source.size).toBe(1);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
+
+  it('HEAD 表明启用内容编码时整包下载，并按解压后长度读取', async () => {
+    const bytes = sequence(100);
+    const requests: { method: string; range?: string }[] = [];
+    const fetchImpl: FetchLike = async (_url, init) => {
+      requests.push({ method: init?.method ?? 'GET', range: init?.headers?.Range });
+      if (init?.method === 'HEAD') {
+        return makeResponse(200, new Uint8Array(0), {
+          'content-length': '60',
+          'content-encoding': 'gzip',
+        });
+      }
+      // 浏览器会自动解压，fetch 拿到的 body 是原始字节。
+      return makeResponse(200, bytes, { 'content-encoding': 'gzip' });
+    };
+    const source = await HttpRangeSource.open('https://example.com/a.ofd', { fetch: fetchImpl });
+    expect(source.size).toBe(100);
+    expect([...(await source.read(90, 20))]).toEqual([...bytes.slice(90)]);
+    expect(requests.some((request) => request.range !== undefined)).toBe(false);
+  });
+
+  it('HEAD 未暴露编码但 206 带内容编码时回退整包，避免错位读取', async () => {
+    const bytes = sequence(40);
+    const ranges: (string | undefined)[] = [];
+    const fetchImpl: FetchLike = async (_url, init) => {
+      if (init?.method === 'HEAD') {
+        return makeResponse(200, new Uint8Array(0), { 'content-length': '40' });
+      }
+      ranges.push(init?.headers?.Range);
+      if (init?.headers?.Range !== undefined) {
+        return makeResponse(206, bytes.slice(0, 1), {
+          'content-range': 'bytes 0-0/40',
+          'content-encoding': 'gzip',
+        });
+      }
+      return makeResponse(200, bytes, { 'content-encoding': 'gzip' });
+    };
+    const source = await HttpRangeSource.open('https://example.com/a.ofd', { fetch: fetchImpl });
+    expect([...(await source.read(10, 5))]).toEqual([...bytes.slice(10, 15)]);
+    expect(ranges).toContain(undefined);
+  });
+
+  it('内容编码且禁用整包回退时直接失败', async () => {
+    const fetchImpl: FetchLike = async (_url, init) => {
+      if (init?.method === 'HEAD') {
+        return makeResponse(200, new Uint8Array(0), {
+          'content-length': '10',
+          'content-encoding': 'gzip',
+        });
+      }
+      return makeResponse(200, sequence(20));
+    };
+    await expect(
+      HttpRangeSource.open('https://example.com/a.ofd', { fetch: fetchImpl, allowFullDownload: false }),
+    ).rejects.toBeInstanceOf(OFDError);
+  });
 });

@@ -200,6 +200,13 @@ export class HttpRangeSource implements ByteSource {
       headers: { ...this.headers, Range: `bytes=${start}-${wantedEnd - 1}` },
     });
     if (response.status === 206) {
+      // 服务器对实体启用 gzip/br 等传输编码时，Range 会切在编码后的字节流上，
+      // 浏览器解压出的片段与请求偏移不对应（甚至解码失败），长度也不再可信；
+      // 此时放弃区间读取，改用整包下载后按偏移切片。
+      if (hasContentEncoding(response.headers) || this.hasRangeTotalMismatch(response.headers)) {
+        const whole = await this.downloadWhole();
+        return whole.slice(start, wantedEnd);
+      }
       this.assertContentRangeStart(response.headers.get('content-range'), start);
       const body = new Uint8Array(await response.arrayBuffer());
       if (body.byteLength > wantedEnd - start) return body.slice(0, wantedEnd - start);
@@ -235,6 +242,13 @@ export class HttpRangeSource implements ByteSource {
 
     if (head?.ok) {
       const contentLength = parseContentLength(head.headers.get('content-length'));
+      if (hasContentEncoding(head.headers)) {
+        // GitHub Pages 等 CDN 会对文档启用 gzip 传输编码：Content-Length 是编码后长度，
+        // 且 Range 会切在编码后的字节流上，浏览器解压出的数据与偏移不对应。
+        // 此时整包下载（由浏览器透明解压）并改用真实字节长度。
+        await this.downloadWhole();
+        return;
+      }
       if (contentLength !== undefined) {
         this.sizeValue = contentLength;
         return;
@@ -247,6 +261,10 @@ export class HttpRangeSource implements ByteSource {
     });
     if (response.status === 206) {
       const range = parseContentRange(response.headers.get('content-range'));
+      if (hasContentEncoding(response.headers)) {
+        await this.downloadWhole();
+        return;
+      }
       if (!range || range.total === undefined) {
         // 极少数服务器只给 `bytes 0-0/*`；此时用 HEAD 的 Content-Length 兜底。
         const fallback = head?.ok ? parseContentLength(head.headers.get('content-length')) : undefined;
@@ -273,6 +291,42 @@ export class HttpRangeSource implements ByteSource {
       return;
     }
     throw new OFDError('OFD_INVALID_PACKAGE', `HTTP 探测失败：status=${response.status}`);
+  }
+
+  /**
+   * 判断 206 响应的 Content-Range 总长度是否与已探测大小不一致。
+   *
+   * @param headers 响应头。
+   * @returns 不一致时为 true。
+   */
+  private hasRangeTotalMismatch(headers: { get(name: string): string | null }): boolean {
+    if (this.sizeValue <= 0) return false;
+    const range = parseContentRange(headers.get('content-range'));
+    return range !== null && range.total !== undefined && range.total !== this.sizeValue;
+  }
+
+  /**
+   * 整包下载并缓存到内存；浏览器会自动解压传输编码，因此长度按解压后字节计算。
+   *
+   * @returns 解压后的完整字节。
+   * @throws OFDError 禁用整包回退或 HTTP 状态异常时。
+   */
+  private async downloadWhole(): Promise<Uint8Array> {
+    if (this.memory) return this.memory;
+    if (!this.allowFullDownload) {
+      throw new OFDError(
+        'OFD_INVALID_PACKAGE',
+        '服务器对响应体启用了内容编码，无法按 Range 读取，且已禁用整包回退',
+      );
+    }
+    const response = await this.fetchImpl(this.url, { headers: this.headers });
+    if (!response.ok) {
+      throw new OFDError('OFD_INVALID_PACKAGE', `文档整包下载失败：status=${response.status}`);
+    }
+    const body = new Uint8Array(await response.arrayBuffer());
+    this.memory = body;
+    this.sizeValue = body.byteLength;
+    return body;
   }
 
   /**
@@ -354,6 +408,22 @@ function parseContentLength(header: string | null): number | undefined {
   if (header === null) return undefined;
   const value = Number(header.trim());
   return Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/**
+ * 判断响应是否对实体做了内容编码（gzip/br 等）。
+ *
+ * 浏览器会自动解压 GET 响应体，但 HEAD 的 Content-Length 与 206 的 Range
+ * 都基于编码后的实体计算，按偏移读取会得到错误字节。
+ *
+ * @param headers 响应头。
+ * @returns 存在非 identity 的 Content-Encoding 时为 true。
+ */
+function hasContentEncoding(headers: { get(name: string): string | null }): boolean {
+  const encoding = headers.get('content-encoding');
+  if (encoding === null) return false;
+  const normalized = encoding.trim().toLowerCase();
+  return normalized !== '' && normalized !== 'identity';
 }
 
 /** Content-Range 解析结果；`total` 为 undefined 表示 `*`。 */
