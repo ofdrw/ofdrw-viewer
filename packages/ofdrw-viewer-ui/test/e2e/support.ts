@@ -20,6 +20,8 @@ export const FIXTURES = {
   signatureMissing: '/packages/ofdrw-viewer-ui/test/acceptance/fixtures/signature-missing-value.ofd',
   /** 1000 页性能夹具。 */
   thousand: '/packages/ofdrw-viewer-ui/test/acceptance/fixtures/thousand.ofd',
+  /** 第 3 页 Content.xml 缺失，用于缩略图失败/重试验收。 */
+  brokenPage: '/packages/ofdrw-viewer-ui/test/acceptance/fixtures/broken-page.ofd',
   /** 口令加密 OFD（口令 FixturePass123，用户 fixture-password-user）。 */
   cryptoPassword: '/packages/ofdrw-viewer-crypto/test/fixtures/crypto/password-encrypted.ofd',
   /** SM2 证书加密 OFD（用户 fixture-cert-user，私钥 certs/encrypt.key.pem）。 */
@@ -60,6 +62,8 @@ export interface OpenOptions {
   readonly autoPrompt?: boolean;
   /** 打开成功后是否自动验证；默认 true。 */
   readonly autoVerify?: boolean;
+  /** 是否启用密码/签名验证能力；默认 true。 */
+  readonly crypto?: boolean;
 }
 
 /**
@@ -83,6 +87,7 @@ export function viewerUrl(fixture: string, options: OpenOptions = {}): string {
   if (options.rootCertificate) params.set('root', options.rootCertificate);
   if (options.autoPrompt) params.set('prompt', '1');
   if (options.autoVerify !== undefined) params.set('autoVerify', options.autoVerify ? '1' : '0');
+  if (options.crypto === false) params.set('crypto', '0');
   return `/packages/ofdrw-viewer-ui/test/e2e/index.html?${params.toString()}`;
 }
 

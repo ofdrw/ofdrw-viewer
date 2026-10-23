@@ -2,7 +2,8 @@
  * 生成 E2E 专用大文档与签章降级夹具。
  *
  * - thousand.ofd：1000 页、每页一行文本，嵌入 SimSun 子集，用于性能与虚拟化验收；
- * - signature-missing-value.ofd：删除 SignedValue.dat，用于签章信息不完整降级验收。
+ * - signature-missing-value.ofd：删除 SignedValue.dat，用于签章信息不完整降级验收；
+ * - broken-page.ofd：删除第 3 页 Content.xml，用于缩略图失败/重试验收。
  *
  * 生成结果位于 test/acceptance/fixtures（已 gitignore），不进入提交。
  */
@@ -49,6 +50,13 @@ if (!existsSync(thousandPath)) {
   writeFileSync(thousandPath, zipSync(files, { level: 0 }));
 }
 
+const brokenPagePath = resolve(outputDir, 'broken-page.ofd');
+if (!existsSync(brokenPagePath)) {
+  const source = unzipSync(readFileSync(resolve(sourceDir, 'z.ofd')));
+  delete source['Doc_0/Pages/Page_2/Content.xml'];
+  writeFileSync(brokenPagePath, zipSync(source, { level: 0 }));
+}
+
 const missingValuePath = resolve(outputDir, 'signature-missing-value.ofd');
 if (!existsSync(missingValuePath)) {
   const source = unzipSync(readFileSync(resolve(sourceDir, 'SESV4SignDoc.ofd')));
@@ -59,7 +67,7 @@ if (!existsSync(missingValuePath)) {
 console.log(
   `E2E fixtures ready: thousand=${(readFileSync(thousandPath).byteLength / 1024).toFixed(0)}KiB, missing=${(
     readFileSync(missingValuePath).byteLength / 1024
-  ).toFixed(0)}KiB`,
+  ).toFixed(0)}KiB, broken=${(readFileSync(brokenPagePath).byteLength / 1024).toFixed(0)}KiB`,
 );
 
 /** Playwright globalSetup 入口；模块加载时已完成夹具生成。 */

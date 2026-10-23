@@ -18,6 +18,10 @@ interface HarnessState {
   readonly consoleWarnings: string[];
   readonly openStartedAt: number;
   openSettledAt: number | null;
+  /** 向阅读器注入的引擎事件总线派发合成事件；仅测试夹具使用。 */
+  emitEngineEvent(type: string, payload: Record<string, unknown>): void;
+  /** 在页面渲染前登记用途；仅测试夹具使用。 */
+  trackPageRender(pageIndex: number, purpose: 'main' | 'thumbnail'): { drop(): void };
 }
 
 declare global {
@@ -59,6 +63,7 @@ const userName = params.get('userName') ?? undefined;
 const rootCertificate = params.get('root');
 const autoPrompt = params.get('prompt') === '1';
 const autoVerify = params.get('autoVerify') !== '0';
+const cryptoEnabled = params.get('crypto') !== '0';
 
 const events: HarnessEvent[] = [];
 const errors: string[] = [];
@@ -74,12 +79,14 @@ const viewer = new OFDViewer({
   locale: params.get('locale') === 'en-US' ? 'en-US' : 'zh-CN',
   features,
   ...(featureDisplay ? { featureDisplay } : {}),
-  crypto: {
-    ...(password ? { credentials: { kind: 'password' as const, password, ...(userName ? { userName } : {}) } } : {}),
-    ...(rootCertificate ? { rootCertificates: [{ url: rootCertificate }] } : {}),
-    ...(autoPrompt ? { autoPrompt: true } : {}),
-    autoVerify,
-  },
+  crypto: cryptoEnabled
+    ? {
+        ...(password ? { credentials: { kind: 'password' as const, password, ...(userName ? { userName } : {}) } } : {}),
+        ...(rootCertificate ? { rootCertificates: [{ url: rootCertificate }] } : {}),
+        ...(autoPrompt ? { autoPrompt: true } : {}),
+        autoVerify,
+      }
+    : { enabled: false },
   onWarning: (warning) => {
     consoleWarnings.push(`${warning.code}: ${warning.message}`);
   },
@@ -119,6 +126,48 @@ window.addEventListener('unhandledrejection', (event) => {
   errors.push(String(event.reason));
 });
 
+const engineEvents = (
+  viewer as unknown as {
+    engineEvents: { emit(type: string, event: Record<string, unknown>): void } | null;
+  }
+).engineEvents;
+let syntheticSequence = 10_000;
+
+/**
+ * 向阅读器持有的引擎事件总线派发合成事件。
+ *
+ * @param type 事件名。
+ * @param payload 事件专属载荷。
+ */
+function emitEngineEvent(type: string, payload: Record<string, unknown>): void {
+  if (!engineEvents) throw new Error('当前阅读器没有引擎事件总线');
+  syntheticSequence += 1;
+  engineEvents.emit(type, {
+    type,
+    timestamp: performance.now(),
+    sequence: syntheticSequence,
+    ...payload,
+  });
+}
+
+/**
+ * 登记一次即将由测试触发的页面渲染用途。
+ *
+ * @param pageIndex 页索引，0-based。
+ * @param purpose 渲染用途。
+ * @returns 可回滚的登记句柄。
+ */
+function trackPageRender(
+  pageIndex: number,
+  purpose: 'main' | 'thumbnail',
+): { drop(): void } {
+  const tracker = viewer as unknown as {
+    trackPageRenderStart?: (index: number, kind: 'main' | 'thumbnail') => { drop(): void };
+  };
+  if (!tracker.trackPageRenderStart) throw new Error('阅读器未提供渲染归属登记');
+  return tracker.trackPageRenderStart(pageIndex, purpose);
+}
+
 window.__harness = {
   viewer,
   events,
@@ -126,6 +175,8 @@ window.__harness = {
   consoleWarnings,
   openStartedAt: performance.now(),
   openSettledAt: null,
+  emitEngineEvent,
+  trackPageRender,
 };
 window.__events = events;
 window.__errors = errors;

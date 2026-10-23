@@ -50,12 +50,21 @@ export function collectIssues(page: Page): IssueCollector {
  *
  * @param page 页面。
  * @param issues 收集器。
+ * @param options 预期内的窗口错误白名单（例如故意触发打开失败的验收用例）。
  */
-export async function expectNoPageErrors(page: Page, issues: IssueCollector): Promise<void> {
+export async function expectNoPageErrors(
+  page: Page,
+  issues: IssueCollector,
+  options: { readonly windowErrors?: readonly RegExp[] } = {},
+): Promise<void> {
   expect(issues.pageErrors, 'pageerror').toEqual([]);
   expect(issues.consoleErrors, 'console.error').toEqual([]);
   expect(issues.requestFailures, 'requestfailed').toEqual([]);
-  expect(await page.evaluate(() => window.__errors ?? []), 'window error').toEqual([]);
+  const windowErrors = await page.evaluate(() => window.__errors ?? []);
+  const unexpected = windowErrors.filter(
+    (text) => !options.windowErrors?.some((pattern) => pattern.test(text)),
+  );
+  expect(unexpected, 'window error').toEqual([]);
 }
 
 /**
