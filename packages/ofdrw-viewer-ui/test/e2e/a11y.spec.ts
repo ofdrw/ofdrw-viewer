@@ -39,6 +39,19 @@ async function scan(page: import('@playwright/test').Page, context: string): Pro
   return result.violations;
 }
 
+/**
+ * 等待元素自身的 CSS 入场动画结束：动画期间半透明中间态会造成对比度误报。
+ *
+ * @param locator 目标元素定位器。
+ */
+async function settleAnimations(
+  locator: import('@playwright/test').Locator,
+): Promise<void> {
+  await locator.evaluate(async (element) => {
+    await Promise.all(element.getAnimations().map((animation) => animation.finished));
+  });
+}
+
 function serious(violations: AxeViolation[]): AxeViolation[] {
   return violations.filter(
     (violation) => violation.impact === 'serious' || violation.impact === 'critical',
@@ -60,12 +73,14 @@ test('axe 扫描阅读页、侧栏、查找栏、打印/导出与签章对话框
 
   await page.locator('[data-ofd-control="sidebar"]').click();
   await expect(page.locator('.ofd-viewer__sidebar')).toBeVisible();
+  await settleAnimations(page.locator('.ofd-viewer__sidebar'));
   record('sidebar', await scan(page, '.ofd-viewer'));
 
   await page.evaluate(() => window.__viewer!.closeSidebar());
   await page.locator('.ofd-page').first().click();
   await page.keyboard.press('Control+f');
   await expect(page.locator('.ofd-viewer__findbar')).toBeVisible();
+  await settleAnimations(page.locator('.ofd-viewer__findbar'));
   record('findbar', await scan(page, '.ofd-viewer'));
   await page.keyboard.press('Escape');
 
@@ -74,9 +89,7 @@ test('axe 扫描阅读页、侧栏、查找栏、打印/导出与签章对话框
   await expect(page.locator('.ofd-dialog')).toBeVisible();
   await page.locator('.ofd-output-form select').first().selectOption('custom');
   // 等待 150ms 入场动画结束，避免半透明中间态造成对比度误报。
-  await page.locator('.ofd-dialog').evaluate(async (element) => {
-    await Promise.all(element.getAnimations().map((animation) => animation.finished));
-  });
+  await settleAnimations(page.locator('.ofd-dialog'));
   record('print-dialog', await scan(page, '.ofd-viewer'));
   await page.keyboard.press('Escape');
   await expect(page.locator('.ofd-dialog')).toBeHidden();
@@ -84,9 +97,7 @@ test('axe 扫描阅读页、侧栏、查找栏、打印/导出与签章对话框
   await page.locator('[data-ofd-control="export"]').click();
   await expect(page.locator('.ofd-dialog')).toBeVisible();
   await page.locator('.ofd-output-form select').first().selectOption('custom');
-  await page.locator('.ofd-dialog').evaluate(async (element) => {
-    await Promise.all(element.getAnimations().map((animation) => animation.finished));
-  });
+  await settleAnimations(page.locator('.ofd-dialog'));
   record('export-dialog', await scan(page, '.ofd-viewer'));
   await page.keyboard.press('Escape');
   await expect(page.locator('.ofd-dialog')).toBeHidden();
@@ -96,6 +107,7 @@ test('axe 扫描阅读页、侧栏、查找栏、打印/导出与签章对话框
     void window.__viewer!.showSignature(signatures[0]!.id);
   });
   await expect(page.locator('.ofd-dialog')).toBeVisible();
+  await settleAnimations(page.locator('.ofd-dialog'));
   record('dialog', await scan(page, '.ofd-viewer'));
   await page.keyboard.press('Escape');
   await expect(page.locator('.ofd-dialog')).toBeHidden();
