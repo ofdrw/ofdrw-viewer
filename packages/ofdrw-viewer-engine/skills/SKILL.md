@@ -31,6 +31,16 @@ import { OFDDocument, OFDError, isOFDError, getPageViewport, WarningCollector } 
 
 CDN 直出：`dist/ofdrw-viewer-engine.min.js`（或未压缩的 `dist/ofdrw-viewer-engine.js`）是自包含 IIFE，挂到 `window.OFDRWViewer`，无需打包器；通过 `<script>` 引入后直接使用同名 API，详见 README 的 CDN 小节。
 
+排查问题时先查询引擎版本，反馈缺陷时请一并提供：
+
+```ts
+import { getVersion } from '@ofdrw/ofdrw-viewer-engine';
+
+console.log(getVersion()); // 例如 0.1.0
+```
+
+`VERSION` 常量与 `getVersion()` 返回相同值；两者都内置于产物，不依赖 `package.json`，浏览器、Node.js 与小程序可用。
+
 支持在浏览器（含 Web Worker）、Node.js（>= 22）、Electron/Tauri 的渲染进程或主进程、微信小程序中运行。核心不绑定 DOM/Node；宿主要能提供 Canvas 2D、图片解码、图片编码（导出时）和字体来源，具体注入方式见下一节。
 
 ## 5 分钟跑通（浏览器）

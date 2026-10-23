@@ -28,7 +28,7 @@ npm install -g @ofdrw/ofdrw-viewer-cli
 ofdrw-viewer-cli --version
 ```
 
-返回版本号就可认为安装成功。
+返回版本号就可认为安装成功。排查问题时可运行 `ofdrw-viewer-cli version`，查看 CLI 自身版本、平台与 Node.js 版本（加 `--json` 输出机器可读结构）。
 
 ### 二进制安装
 

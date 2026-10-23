@@ -1,7 +1,7 @@
 # @ofdrw/ofdrw-viewer-engine 公开 API
 
 > 使用说明与示例：`SKILL.md`（同目录）
-> 版本：v1.1（契约 r12）
+> 版本：v1.2（契约 r12）
 > 更新：2026-10-23
 > 状态：v1 稳定接口；P0/P1/P2、r11 字体加载器与 r12 页面级事件系统已收录；`page.renderRegion` 暂不实现/不导出
 > 适用包：`@ofdrw/ofdrw-viewer-engine`（npm 作用域 `@ofdrw`）
@@ -125,6 +125,9 @@ Node/小程序没有浏览器 `document`/`OffscreenCanvas` 时必须注入 `crea
 | `OFDError` / `isOFDError` / `toOFDError` | class/function | 统一错误 |
 | `WARNING_CODES` / `WarningCollector` | const/class | warning 码与去重收集 |
 | `DEFAULT_RESOURCE_LIMITS` / `DEFAULT_CACHE_OPTIONS` | const | 默认限制/缓存预算 |
+| `VERSION` / `getVersion()` | const/function | 引擎版本号；内置于产物，不依赖 `package.json` |
+
+> 版本查询：`getVersion()` 返回与 `VERSION` 相同的语义化版本字符串，用于故障排查与日志；浏览器、Node.js 与小程序均可直接调用，无需读取包文件。
 
 ---
 
@@ -997,6 +1000,7 @@ P0/P1/P2 UI API 还会产生以下扩展码（`OFDWarning.code` 类型允许 `st
 | `getPageViewport` | mm 页尺寸 → 设备像素 |
 | `getPageTransform` | mm → 设备矩阵 |
 | `WarningCollector` | warning 去重收集器 |
+| `getVersion` | 返回引擎版本号（与 `VERSION` 相同） |
 
 ### 13.2 API 类型与常量
 
@@ -1024,6 +1028,7 @@ P0/P1/P2 UI API 还会产生以下扩展码（`OFDWarning.code` 类型允许 `st
 | `DEFAULT_CACHE_OPTIONS` | 默认缓存常量 |
 | `DEFAULT_DPI` | 96 |
 | `MM_PER_INCH` | 25.4 |
+| `VERSION` | 引擎版本号常量，与 `package.json` 保持同步 |
 
 ### 13.3 平台接口
 
@@ -1172,6 +1177,7 @@ P0/P1/P2 UI API 还会产生以下扩展码（`OFDWarning.code` 类型允许 `st
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
+| v1.2-r1 | 2026-10-23 | 新增 `VERSION` 常量与 `getVersion()`，供 CLI/UI 与宿主在故障排查时读取引擎版本；版本内置于产物，不依赖 `package.json` |
 | v1.1-r12 | 2026-10-23 | 新增页面级事件系统：`OFDEventBus`、`document.events` 与 `document/page` 的 `on/once/off/addEventListener/removeEventListener`；`OFDOpenOptions.eventBus/signal`、`getPage(index,{signal})`、`RenderTask.id`；14 个事件与载荷类型；入口校验失败不派发事件，`close:end` 后静默 |
 | v2.0-r1 | 2026-10-23 | 新增 `VirtualContainer`/`VirtualFileMeta`/`VirtualReadOptions`/`VirtualContainerFactory`/`openZipVirtualContainer`/`OpenZipVirtualContainerOptions`；`OFDOpenOptions.source` 保持必填，新增 `OFDOpenFromContainerOptions`（`container` 必填、`source` 可选上下文）与 `OFDDocument.open` 重载；新增 `container`（借用）与 `containerFactory`（engine 拥有）；明确 raw/明文容器边界与 `AbortSignal` 透传；默认 ZIP 行为不变 |
 | v1.0-r11 | 2026-10-22 | 新增可选 `OFDOpenOptions.loadInput` / `FontInputLoader`：不传时 Web 默认 `url` fetch、`path`/`filePath` 不支持；Node CLI `--font-dir` 注入 `node:fs` loader，真正读取并展开 TTF/OTF/TTC/OTC，按实际 family 匹配；999.ofd `W_FONT_MISSING` 归零。兼容旧版，无行为变化 |

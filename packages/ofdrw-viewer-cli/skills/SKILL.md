@@ -32,8 +32,10 @@ description: Convert OFD documents into per-page PNG/JPEG/WebP images with the o
 
 ```bash
 CLI="${OFDRW_VIEWER_CLI:-ofdrw-viewer-cli}"
-"$CLI" --version
+"$CLI" version
 ```
+
+`version` 输出 CLI 自身版本、平台与 Node.js 版本，是排查问题时首先要收集的信息；`--version` 只输出 CLI 与平台的单行信息。
 
 如果找不到可执行文件，**不要擅自下载或执行来源不明的二进制**。告知用户需要安装，并给出对应平台的 release 压缩包与 `SHA256SUMS` 校验步骤。
 
@@ -57,6 +59,10 @@ CLI="${OFDRW_VIEWER_CLI:-ofdrw-viewer-cli}"
 # 关闭系统字体自动发现，仅使用 --font-dir（复现旧版行为）
 "$CLI" input.ofd -o ./out --no-system-fonts
 
+# 版本信息（CLI 自身版本 + Node/平台），排查问题先运行
+"$CLI" version
+"$CLI" version --json
+
 # 只查询，不解密/不验签
 "$CLI" info input.ofd
 "$CLI" info input.ofd --json
@@ -73,9 +79,10 @@ CLI="${OFDRW_VIEWER_CLI:-ofdrw-viewer-cli}"
 "$CLI" encrypted.ofd -o ./out --password 'your-password'
 "$CLI" cert-encrypted.ofd -o ./out --key encrypt.key.pem
 
-# 文件名恰为 info/verify/decrypt 时用 ./ 前缀避免被当作子命令
+# 文件名恰为 info/verify/version/decrypt 时用 ./ 前缀避免被当作子命令
 "$CLI" info ./info
 "$CLI" ./verify -o ./out
+"$CLI" ./version
 ```
 
 参数：
@@ -96,9 +103,11 @@ CLI="${OFDRW_VIEWER_CLI:-ofdrw-viewer-cli}"
 | `--key-passphrase <text>` | 无 | 转图片 / verify | 加密 PKCS#8 私钥口令，必须配合 `--key` |
 | `--root <file>` | 无 | 仅 verify | 信任根证书，PEM/DER/CER，可重复 |
 | `--sm2-user-id <id>` | `1234567812345678` | 仅 verify | 自定义 SM2 签名 userId |
-| `--json` | 关闭 | info / verify | 输出固定 JSON 结构 |
+| `--json` | 关闭 | info / verify / version | 输出固定 JSON 结构 |
 | `-h, --help` | — | 全部 | 帮助 |
-| `-V, --version` | — | 全部 | 版本与平台 |
+| `-V, --version` | — | 全部 | 简短版本与平台；详细版本用 `version` 子命令 |
+
+`version` 子命令不接受 OFD 输入文件与转图片/凭据参数，只接受 `--json`；输出为 CLI 自身版本、平台、架构与 Node.js 版本（不含依赖包版本，依赖版本统一在 UI 的“关于”界面查看）。
 
 `info` 只接受 `--json`；带 `--user/--password/--key/--key-passphrase/--root/--sm2-user-id` 或转图片参数会报用法错误（1）。
 `verify` 不接受转图片参数（`-o`/`--format`/`--dpi`/`--pages`/`--font-dir`/`--no-system-fonts`/`--text`）；需要导出图片时不要使用 `verify` 子命令。

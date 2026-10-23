@@ -55,6 +55,7 @@ export const zhCN = {
   'toolbar.more': '更多操作',
   'toolbar.download': '下载原文件',
   'toolbar.documentProperties': '文档属性',
+  'toolbar.about': '关于',
 
   'sidebar.label': '侧栏',
   'sidebar.tabsLabel': '侧栏标签',
@@ -89,6 +90,14 @@ export const zhCN = {
   'dialog.close': '关闭对话框',
   'dialog.closeAction': '关闭',
   'dialog.defaultTitle': '提示',
+
+  'about.title': '关于 OFD 阅读器',
+  'about.uiVersion': '阅读器版本',
+  'about.engineVersion': '渲染引擎版本',
+  'about.cryptoVersion': '密码工具库版本',
+  'about.userAgent': '浏览器',
+  'about.license': '开源软件许可',
+  'about.licenseOpen': '查看',
 
   'properties.version': '版本',
   'properties.pageCount': '页数',

@@ -55,7 +55,8 @@ export type UIShellCommand =
   | { readonly type: 'signatures.open' }
   | { readonly type: 'verification.open' }
   | { readonly type: 'fullscreen.set'; readonly value: boolean }
-  | { readonly type: 'document.properties' };
+  | { readonly type: 'document.properties' }
+  | { readonly type: 'about.open' };
 
 /** 命令处理器。 */
 export type UIShellCommandHandler = (command: UIShellCommand) => void;

@@ -25,6 +25,8 @@ import type {
   ViewerEventHandler,
   ViewerEventName,
 } from '../types';
+import { getVersions } from '../version';
+import { THIRD_PARTY_NOTICES } from '../licenses';
 import { UIShell } from './ui-shell';
 import type { UIShellElements, UIShellCommand, UIShellViewState } from './types';
 
@@ -182,6 +184,76 @@ function showDocumentProperties(viewer: UIShellHost, shell: UIShell): void {
     name: 'documentProperties',
     title: translator.t('toolbar.documentProperties'),
     content: list,
+    actions: [{ label: translator.t('dialog.closeAction'), primary: true }],
+  });
+}
+
+/**
+ * 打开“关于”对话框，展示阅读器各组成包版本与浏览器标识，供故障排查。
+ *
+ * @param shell 当前外壳。
+ */
+function showAboutDialog(shell: UIShell): void {
+  const translator = shell.translatorInstance;
+  const doc = shell.elements.root.ownerDocument;
+  const versions = getVersions();
+  const userAgent = doc.defaultView?.navigator.userAgent;
+
+  const list = doc.createElement('dl');
+  list.className = 'ofd-properties';
+  const rows: readonly (readonly [string, string | undefined])[] = [
+    [translator.t('about.uiVersion'), versions.ui],
+    [translator.t('about.engineVersion'), versions.engine],
+    [translator.t('about.cryptoVersion'), versions.crypto],
+    [translator.t('about.userAgent'), userAgent],
+  ];
+  for (const [label, value] of rows) {
+    if (!value) continue;
+    const term = doc.createElement('dt');
+    term.textContent = label;
+    const description = doc.createElement('dd');
+    description.textContent = value;
+    list.append(term, description);
+  }
+
+  const licenseTerm = doc.createElement('dt');
+  licenseTerm.textContent = translator.t('about.license');
+  const licenseDescription = doc.createElement('dd');
+  const licenseLink = doc.createElement('a');
+  licenseLink.href = '#';
+  licenseLink.className = 'ofd-properties__link';
+  licenseLink.textContent = translator.t('about.licenseOpen');
+  licenseLink.addEventListener('click', (event) => {
+    event.preventDefault();
+    showLicensesDialog(shell);
+  });
+  licenseDescription.append(licenseLink);
+  list.append(licenseTerm, licenseDescription);
+
+  shell.openDialog({
+    name: 'about',
+    title: translator.t('about.title'),
+    content: list,
+    actions: [{ label: translator.t('dialog.closeAction'), primary: true }],
+  });
+}
+
+/**
+ * 打开“开源软件许可”对话框，展示固定的第三方许可文本。
+ *
+ * @param shell 当前外壳。
+ */
+function showLicensesDialog(shell: UIShell): void {
+  const translator = shell.translatorInstance;
+  const doc = shell.elements.root.ownerDocument;
+  const content = doc.createElement('pre');
+  content.className = 'ofd-licenses';
+  content.textContent = THIRD_PARTY_NOTICES;
+
+  shell.openDialog({
+    name: 'licenses',
+    title: translator.t('about.license'),
+    content,
     actions: [{ label: translator.t('dialog.closeAction'), primary: true }],
   });
 }
@@ -616,6 +688,9 @@ function dispatchCommand(
       return;
     case 'document.properties':
       showDocumentProperties(viewer, shell);
+      return;
+    case 'about.open':
+      showAboutDialog(shell);
       return;
   }
 }

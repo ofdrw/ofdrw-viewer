@@ -1,11 +1,12 @@
 /**
  * CLI 参数解析、帮助/版本、子命令分派与退出码。
  *
- * 三种入口：
+ * 四种入口：
  * - 无子命令：`<input.ofd> [转图片选项] [加密凭据]`，保持既有转图片行为；
  * - `info <input> [--json]`：只查询包结构，不解密、不验签；
  * - `verify <input> [凭据] [--root]... [--sm2-user-id] [--json]`：
- *   一次性完成防夹带完整性与全部签名验证。
+ *   一次性完成防夹带完整性与全部签名验证；
+ * - `version [--json]`：输出 CLI 版本与运行环境。
  *
  * 转换/查询/验证期间监听一次 SIGINT，通过 AbortSignal 取消并以 130 退出。
  */
@@ -63,7 +64,8 @@ export const USAGE_LINE = `用法: ${CLI_NAME} <input.ofd> [options]`;
 
 /** 子命令用法提示。 */
 export const SUBCOMMAND_USAGE = `${CLI_NAME} info <input.ofd> [--json]
-${CLI_NAME} verify <input.ofd> [凭据选项] [--root <file>]... [--sm2-user-id <id>] [--json]`;
+${CLI_NAME} verify <input.ofd> [凭据选项] [--root <file>]... [--sm2-user-id <id>] [--json]
+${CLI_NAME} version [--json]`;
 
 /** 凭据选项说明，`verify` 与转图片共用。 */
 const CREDENTIAL_HELP = `      --user <name>       加密文档用户名（verify 与转图片）
@@ -75,10 +77,12 @@ const CREDENTIAL_HELP = `      --user <name>       加密文档用户名（verif
 export const HELP_TEXT = `${USAGE_LINE}
        ${CLI_NAME} info <input.ofd> [--json]
        ${CLI_NAME} verify <input.ofd> [凭据选项] [--root <file>]... [--sm2-user-id <id>] [--json]
+       ${CLI_NAME} version [--json]
 
 子命令:
   info                    只查询包信息（不解密、不验签）
   verify                  一次性验证防夹带完整性与全部签名
+  version                 输出 CLI 版本与运行环境（排查用）
 
 参数:
   <input>                 本地 OFD 文件路径（必填）
@@ -92,13 +96,13 @@ export const HELP_TEXT = `${USAGE_LINE}
 ${CREDENTIAL_HELP}
       --root <file>       信任根证书（PEM/DER/CER，可重复；仅 verify）
       --sm2-user-id <id>  自定义 SM2 签名 userId（仅 verify）
-      --json              以 JSON 输出（仅 info/verify）
+      --json              以 JSON 输出（仅 info/verify/version）
   -h, --help              显示本帮助
-  -V, --version           显示版本与平台
+  -V, --version           显示简短版本与平台（详细版本用 version 子命令）
 
 输出命名: <out>/<stem>-p<NNN>.<ext>（页号至少 3 位）
 退出码: 0 成功；1 用法错误；2 文档级失败；3 页级失败；4 加密/凭据失败；5 验证未通过；130 用户中断
-文件名: 输入文件名恰为 info/verify 时请写成 ./info 或 ./verify，避免被识别为子命令
+文件名: 输入文件名恰为 info/verify/version 时请写成 ./info、./verify 或 ./version，避免被识别为子命令
 安全提示: --password/--key-passphrase 可能出现在 shell 历史与进程列表，请使用安全方式传递。`;
 
 /** 解析并归一化后的转图片参数；路径均为绝对路径。 */
@@ -145,11 +149,18 @@ export interface VerifyCliOptions {
   readonly sm2UserId: string | undefined;
 }
 
+/** 解析并归一化后的 `version` 参数。 */
+export interface VersionCliOptions {
+  /** 是否输出 JSON。 */
+  readonly json: boolean;
+}
+
 /** 解析后的命令。 */
 export type CliCommand =
   | { readonly kind: 'convert'; readonly options: CliOptions }
   | { readonly kind: 'info'; readonly options: InfoCliOptions }
-  | { readonly kind: 'verify'; readonly options: VerifyCliOptions };
+  | { readonly kind: 'verify'; readonly options: VerifyCliOptions }
+  | { readonly kind: 'version'; readonly options: VersionCliOptions };
 
 /** `parseCliArgs` 的结果。 */
 export interface ParsedCliArgs {
@@ -319,7 +330,7 @@ interface RawCliValues {
  * 解析命令行参数。
  *
  * `--help` / `--version` 优先于输入校验：即使缺少 `<input>` 也返回成功，
- * 由调用方打印对应信息。第一个位置参数严格等于 `info`/`verify`/`decrypt`
+ * 由调用方打印对应信息。第一个位置参数严格等于 `info`/`verify`/`version`/`decrypt`
  * 时进入子命令分支；文件名恰好为这些词时请写成 `./info`。
  *
  * @param argv 不含 node 与脚本路径的参数数组
@@ -354,6 +365,31 @@ export function parseCliArgs(
       '不提供 decrypt 子命令；请使用 verify 或带凭据的转图片命令',
       EXIT_CODES.USAGE,
     );
+  }
+  if (first === 'version') {
+    if (positionals.length > 1) {
+      throw new CliError('CLI_USAGE', 'version 不接受输入文件', EXIT_CODES.USAGE);
+    }
+    assertOptionsAbsent(values, 'version', [
+      ['out', '--out'],
+      ['format', '--format'],
+      ['dpi', '--dpi'],
+      ['pages', '--pages'],
+      ['font-dir', '--font-dir'],
+      ['no-system-fonts', '--no-system-fonts'],
+      ['text', '--text'],
+      ['user', '--user'],
+      ['password', '--password'],
+      ['key', '--key'],
+      ['key-passphrase', '--key-passphrase'],
+      ['root', '--root'],
+      ['sm2-user-id', '--sm2-user-id'],
+    ], 'version 只输出版本信息');
+    return {
+      help: false,
+      version: false,
+      command: { kind: 'version', options: { json: values.json === true } },
+    };
   }
   const subcommand: 'info' | 'verify' | undefined =
     first === 'info' || first === 'verify' ? first : undefined;
@@ -702,6 +738,15 @@ export async function main(
       throw new CliError('CLI_UNEXPECTED', '参数解析结果缺少命令', EXIT_CODES.DOCUMENT);
     }
 
+    if (command.kind === 'version') {
+      const info = getVersionInfo(
+        runtime.platform ?? process.platform,
+        runtime.arch ?? process.arch,
+      );
+      logger.info(command.options.json ? JSON.stringify(info) : formatVersionDetails(info));
+      return EXIT_CODES.OK;
+    }
+
     const interrupt = createInterruptScope(runtime);
     try {
       await validateInputFile(command.options.inputPath);
@@ -764,11 +809,53 @@ export async function main(
 /**
  * 生成 `--version` 输出。
  *
+ * 保持单行格式以兼容既有脚本；需要完整排查信息时使用 `version` 子命令。
+ *
  * @param platform 平台名，如 `linux`
  * @param arch CPU 架构，如 `x64`
  */
 export function formatVersion(platform: string, arch: string): string {
   return `${CLI_NAME} ${CLI_VERSION} (${platform}-${arch})`;
+}
+
+/** 版本信息；供 `version` 子命令的文本与 JSON 输出共用。 */
+export interface CliVersionInfo {
+  /** CLI 版本。 */
+  readonly cli: string;
+  /** 平台名，如 `linux`。 */
+  readonly platform: string;
+  /** CPU 架构，如 `x64`。 */
+  readonly arch: string;
+  /** Node.js 运行时版本，如 `v22.0.0`。 */
+  readonly node: string;
+}
+
+/**
+ * 收集版本信息。
+ *
+ * @param platform 平台名，如 `linux`
+ * @param arch CPU 架构，如 `x64`
+ * @returns CLI 与运行时信息
+ */
+export function getVersionInfo(platform: string, arch: string): CliVersionInfo {
+  return {
+    cli: CLI_VERSION,
+    platform,
+    arch,
+    node: process.version,
+  };
+}
+
+/**
+ * 生成 `version` 子命令的多行文本输出。
+ *
+ * @param info 版本信息
+ * @returns 每行一项的文本
+ */
+export function formatVersionDetails(info: CliVersionInfo): string {
+  return [`${CLI_NAME} ${info.cli} (${info.platform}-${info.arch})`, `node ${info.node}`].join(
+    '\n',
+  );
 }
 
 /** 解析并校验 `--format`；缺省为 png。 */

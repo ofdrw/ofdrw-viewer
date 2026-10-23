@@ -29,8 +29,8 @@ interface MenuItemSpec {
   readonly id: string;
   /** 文案键。 */
   readonly labelKey: MessageKey;
-  /** 所属功能。 */
-  readonly feature: ViewerFeature;
+  /** 所属功能；省略表示不受功能开关控制（如“关于”）。 */
+  readonly feature?: ViewerFeature;
   /** 在哪些断点显示。 */
   readonly visibility: MenuVisibility;
   /** 根据当前状态构造命令。 */
@@ -143,6 +143,13 @@ const MENU_ITEMS: readonly MenuItemSpec[] = [
     feature: 'documentProperties',
     visibility: 'always',
     command: () => ({ type: 'document.properties' }),
+  },
+  {
+    id: 'menu-about',
+    labelKey: 'toolbar.about',
+    visibility: 'always',
+    command: () => ({ type: 'about.open' }),
+    requiresDocument: false,
   },
 ];
 
@@ -323,11 +330,10 @@ export class MoreMenu {
   /** 应用功能门控。 */
   private applyFeatureStates(): void {
     for (const item of this.items) {
-      const gate = resolveFeatureGate(
-        this.featureStates,
-        item.spec.feature,
-        this.translator,
-      );
+      const gate =
+        item.spec.feature === undefined
+          ? { visible: true, disabled: false }
+          : resolveFeatureGate(this.featureStates, item.spec.feature, this.translator);
       item.gate = gate;
       applyFeatureGate(item.element, gate);
     }

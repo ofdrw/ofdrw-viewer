@@ -140,7 +140,7 @@ strategy:
 3. `pnpm install --frozen-lockfile`；
 4. 构建 engine、CLI 并执行类型检查/测试；
 5. `build:sea -- --target <target>`；
-6. 去掉 PATH 中的 Node 后执行 `--version`、`--help`、真实 OFD 图片与 `--text` 冒烟；
+6. 去掉 PATH 中的 Node 后执行 `version`、`--version`、`--help`、真实 OFD 图片与 `--text` 冒烟；
 7. `package:sea -- --target <target>` 打包并上传 artifact；
 8. release job 汇总产物并生成 `SHA256SUMS`。
 

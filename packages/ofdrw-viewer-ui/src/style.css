@@ -1700,6 +1700,24 @@
   word-break: break-word;
 }
 
+/* “关于”中的链接（如开源许可入口）。 */
+.ofd-properties__link {
+  color: var(--ofd-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* 开源软件许可的固定文本。 */
+.ofd-licenses {
+  max-height: 50vh;
+  margin: 0;
+  overflow: auto;
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* ------------------------------------------------------------------------- */
 /* 触控目标与轻量动效                                                         */
 /* ------------------------------------------------------------------------- */

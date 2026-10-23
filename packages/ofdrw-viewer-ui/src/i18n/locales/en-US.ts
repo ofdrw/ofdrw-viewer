@@ -56,6 +56,7 @@ export const enUS: MessageDictionary = {
   'toolbar.more': 'More actions',
   'toolbar.download': 'Download source file',
   'toolbar.documentProperties': 'Document properties',
+  'toolbar.about': 'About',
 
   'sidebar.label': 'Sidebar',
   'sidebar.tabsLabel': 'Sidebar tabs',
@@ -90,6 +91,14 @@ export const enUS: MessageDictionary = {
   'dialog.close': 'Close dialog',
   'dialog.closeAction': 'Close',
   'dialog.defaultTitle': 'Notice',
+
+  'about.title': 'About OFD Viewer',
+  'about.uiVersion': 'Viewer version',
+  'about.engineVersion': 'Engine version',
+  'about.cryptoVersion': 'Crypto version',
+  'about.userAgent': 'Browser',
+  'about.license': 'Open source licenses',
+  'about.licenseOpen': 'View',
 
   'properties.version': 'Version',
   'properties.pageCount': 'Pages',

@@ -7,6 +7,7 @@ import { createFindState, createInitialViewerState } from '../../../src/state';
 import type { ViewerState } from '../../../src/state';
 import { attachUIShell, getUIShell } from '../../../src/ui';
 import type { UIShellHost } from '../../../src/ui';
+import { getVersions } from '../../../src/version';
 import { cleanupShells, createRoot, setClientWidth } from './helpers';
 
 afterEach(() => {
@@ -381,5 +382,46 @@ describe('内置 UI 接线', () => {
     expect(host.offCount()).toBe(0);
     expect(getUIShell(host)).toBeUndefined();
     expect(shell.elements.toolbar.childElementCount).toBe(0);
+  });
+
+  it('关于菜单在未打开文档时也可用并展示各包版本', () => {
+    const host = createFakeHost(400);
+    const dispose = attachUIShell(host);
+    const shell = getUIShell(host)!;
+    host.setState({
+      ...host.getState(),
+      document: { ...host.getState().document, pageCount: 0 },
+    });
+    host.emit('statechange');
+
+    const about = shell.elements.toolbar.querySelector<HTMLButtonElement>(
+      '[data-ofd-control="menu-about"]',
+    );
+    expect(about).not.toBeNull();
+    expect(about!.disabled).toBe(false);
+
+    about!.click();
+    expect(shell.dialogs.isOpen).toBe(true);
+    expect(shell.dialogs.currentName).toBe('about');
+    const text = shell.elements.dialogLayer.textContent ?? '';
+    const versions = getVersions();
+    expect(text).toContain('关于 OFD 阅读器');
+    expect(text).toContain(versions.ui);
+    expect(text).toContain(versions.engine);
+    expect(text).toContain(versions.crypto);
+
+    const licenseLink = shell.elements.dialogLayer.querySelector<HTMLAnchorElement>(
+      '.ofd-properties__link',
+    );
+    expect(licenseLink).not.toBeNull();
+    expect(licenseLink!.textContent).toBe('查看');
+
+    licenseLink!.click();
+    expect(shell.dialogs.currentName).toBe('licenses');
+    const notices = shell.elements.dialogLayer.textContent ?? '';
+    expect(notices).toContain('开源软件许可');
+    expect(notices).toContain('fflate 0.8.3');
+    expect(notices).toContain('MIT');
+    dispose();
   });
 });

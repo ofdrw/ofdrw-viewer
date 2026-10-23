@@ -8,6 +8,8 @@ import {
   USAGE_LINE,
   createProgressReporter,
   formatVersion,
+  formatVersionDetails,
+  getVersionInfo,
   main,
   parseCliArgs,
   parsePageRanges,
@@ -108,6 +110,31 @@ describe('parseCliArgs', () => {
     expect(parseCliArgs(['-h'], cwd)).toEqual({ help: true, version: false });
     expect(parseCliArgs(['-V'], cwd)).toEqual({ help: false, version: true });
     expect(parseCliArgs(['--version'], cwd)).toEqual({ help: false, version: true });
+  });
+
+  it('version 子命令不要求输入并解析 --json', () => {
+    expect(parseCliArgs(['version'], cwd)).toEqual({
+      help: false,
+      version: false,
+      command: { kind: 'version', options: { json: false } },
+    });
+    expect(parseCliArgs(['version', '--json'], cwd).command).toEqual({
+      kind: 'version',
+      options: { json: true },
+    });
+  });
+
+  it('version 子命令拒绝输入文件与转换参数', () => {
+    for (const args of [
+      ['version', 'input.ofd'],
+      ['version', '--out', 'out'],
+      ['version', '--password', 'secret'],
+      ['version', '--root', 'root.pem'],
+    ]) {
+      const error = captureCliError(() => parseCliArgs(args, cwd));
+      expect(error.code).toBe('CLI_USAGE');
+      expect(error.exitCode).toBe(1);
+    }
   });
 
   it('缺少输入时抛出用法错误', () => {
@@ -346,6 +373,42 @@ describe('CLI 版本与 TTY 进度', () => {
     });
     expect(code).toBe(0);
     expect(capture.stdoutText()).toContain(`ofdrw-viewer-cli ${pkg.version}`);
+  });
+
+  it('version 子命令只输出 CLI 自身版本与运行环境', async () => {
+    const capture = createStreamCapture();
+    const code = await main(['version'], {
+      stdout: capture.stdout,
+      stderr: capture.stderr,
+      platform: 'testos',
+      arch: 'testarch',
+    });
+    expect(code).toBe(0);
+    const output = capture.stdoutText();
+    const info = getVersionInfo('testos', 'testarch');
+    expect(output).toBe(`${formatVersionDetails(info)}\n`);
+    expect(output).toContain('ofdrw-viewer-cli');
+    expect(output).toContain('(testos-testarch)');
+    expect(output).toContain(`node ${process.version}`);
+    expect(output).not.toContain('@ofdrw/ofdrw-viewer-engine');
+    expect(output).not.toContain('@ofdrw/ofdrw-viewer-crypto');
+  });
+
+  it('version --json 输出稳定 JSON 结构', async () => {
+    const capture = createStreamCapture();
+    const code = await main(['version', '--json'], {
+      stdout: capture.stdout,
+      stderr: capture.stderr,
+      platform: 'testos',
+      arch: 'testarch',
+    });
+    expect(code).toBe(0);
+    expect(JSON.parse(capture.stdoutText())).toEqual({
+      cli: CLI_VERSION,
+      platform: 'testos',
+      arch: 'testarch',
+      node: process.version,
+    });
   });
 
   it('TTY 进度写 stderr 并清理，非 TTY 保持安静', () => {

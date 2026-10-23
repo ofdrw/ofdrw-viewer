@@ -62,3 +62,9 @@ export type { UIDialogAction, UIDialogOptions } from './ui/types';
 // 错误类型与工具
 // ---------------------------------------------------------------------------
 export * from './errors';
+
+// ---------------------------------------------------------------------------
+// 版本
+// ---------------------------------------------------------------------------
+export { VERSION, getVersions } from './version';
+export type { ViewerVersions } from './version';

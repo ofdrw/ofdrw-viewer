@@ -179,6 +179,9 @@ viewer.setFeatureDisplay('disable');
   不抛异常）。
 - `showDialog(options)` / `closeDialog(restoreFocus?)`：控制内置 UI 对话框；未挂载
   内置 UI 时抛 `OFD_UNSUPPORTED`。
+- `getVersions()` / `VERSION`：读取阅读器 UI、渲染引擎与密码能力包的版本；工具栏
+  “更多 → 关于”也会可视化展示，并提供“开源软件许可”链接查看第三方许可文本，便于
+  用户反馈问题时截图。
 - 打印/导出按钮会打开选项对话框，可选择当前页/全部页/自定义范围、DPI、旋转、
   打印背景，以及导出格式、质量、背景；确认后分别调用 `print(options)` /
   `exportImages(options)` 或 `exportImage(options)`。
