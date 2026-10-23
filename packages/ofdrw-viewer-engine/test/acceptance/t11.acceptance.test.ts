@@ -21,9 +21,9 @@ function sample(name: string): Uint8Array {
   return new Uint8Array(readFileSync(`${ROOT}ofd_pdf_match/${name}`));
 }
 
-/** 读取内置 Web 样本。 */
-function webSample(): Uint8Array {
-  return new Uint8Array(readFileSync(`${ROOT}examples/web/public/samples/hello.ofd`));
+/** 读取两页 hello 样本；与已移除的 examples/web 副本字节一致。 */
+function helloSample(): Uint8Array {
+  return new Uint8Array(readFileSync(`${ROOT}ofd_pdf_match/hello.ofd`));
 }
 
 /** 统计画布非白像素数。 */
@@ -86,7 +86,7 @@ describe('T11 独立验收 19.6 关键项', () => {
       return;
     }
     const warnings: string[] = [];
-    const plain = await openTestDocument(webSample(), { onWarning: (warning) => warnings.push(warning.code) });
+    const plain = await openTestDocument(helloSample(), { onWarning: (warning) => warnings.push(warning.code) });
     let plainInk = 0;
     try {
       const page = await plain.getPage(0);
@@ -97,7 +97,7 @@ describe('T11 独立验收 19.6 关键项', () => {
 
     const fontWarnings: string[] = [];
     const withFont = await OFDDocument.open({
-      source: { kind: 'arraybuffer', data: webSample() },
+      source: { kind: 'arraybuffer', data: helloSample() },
       supplementaryFonts: [{ data: font.data, family: 'Noto Sans CJK SC' }],
       onWarning: (warning) => fontWarnings.push(warning.code),
       renderer: createTestRenderer(),
@@ -132,7 +132,7 @@ describe('T11 独立验收 19.6 关键项', () => {
   });
 
   it('P4：hello 两页往返翻页中位 draw <80ms', async () => {
-    const doc = await openTestDocument(webSample());
+    const doc = await openTestDocument(helloSample());
     try {
       const page0 = await doc.getPage(0);
       const page1 = await doc.getPage(1);
