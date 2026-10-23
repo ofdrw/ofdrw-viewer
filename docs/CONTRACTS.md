@@ -152,7 +152,7 @@ WARNING_CODES
 OFDError、isOFDError、toOFDError
 ```
 
-公共类型包括 `OFDOpenOptions`、`OFDSource`、`PageRenderParameters`、`PageImageExportOptions`、`PageImageResult`、`PageImageFormat`、`PageImageMime`、`CanvasImageEncodeSource`、`EncodeImage`、`ResourceLimits`、`CacheOptions`、`FontInput`、`FontInputLoader`、`FontProvider`、`ImageDecoderPlugin`、`Renderer`/`Canvas2DLike`/`CanvasRenderingContext2DLike`、`Viewport`、`Matrix`、`Box`、`DrawStyle`、`PaintSpec`、`ResolvedPaint`、`PatternSpec`、`PatternPaint`、`DisplayList`、`DrawCommand`、`OFDWarning`、`OFDErrorCode`、`WarningCode` 等；UI API 类型见 §5.3（`PageInfo`、`OutlineNode`、`SignatureEntryInfo`、`SignedValueFile`、`DocumentMetadata`、`TextContent` 等）。
+公共类型包括 `OFDOpenOptions`、`OFDSource`、`PageRenderParameters`、`PageImageExportOptions`、`PageImageResult`、`PageImageFormat`、`PageImageMime`、`CanvasImageEncodeSource`、`EncodeImage`、`ResourceLimits`、`CacheOptions`、`FontInput`、`FontProvider`、`ImageDecoderPlugin`、`Renderer`/`Canvas2DLike`/`CanvasRenderingContext2DLike`、`Viewport`、`Matrix`、`Box`、`DrawStyle`、`PaintSpec`、`ResolvedPaint`、`PatternSpec`、`PatternPaint`、`DisplayList`、`DrawCommand`、`OFDWarning`、`OFDErrorCode`、`WarningCode` 等；UI API 类型见 §5.3（`PageInfo`、`OutlineNode`、`SignatureEntryInfo`、`SignedValueFile`、`DocumentMetadata`、`TextContent` 等）。`FontInputLoader` 已在 v1.0-r13 删除。
 
 **不导出** `CanvasFactory`（渲染器内部结构）。自定义画布的两个公共入口：
 
@@ -225,25 +225,31 @@ exportImage(options?: PageImageExportOptions): Promise<PageImageResult>;
 - **错误**：`page.render` 的尺寸/像素/资源限制/取消错误原样传播；编码阶段不新增错误码，不裸抛第三方异常。结果 `data` 归调用方，engine 不缓存。
 - **导出面**：`PageImageExportOptions`、`PageImageResult`、`PageImageFormat`、`PageImageMime`、`CanvasImageEncodeSource`、`EncodeImage` 与 `OFDPage#exportImage` 属于 T15b 实现面；`src/index.ts` 由 T12/T15b 在不破坏既有导出的前提下追加。
 
-### 5.2.1 `OFDOpenOptions.loadInput`（v1.0-r11）
+### 5.2.1 字体来源委托（v1.0-r13，Unreleased）
 
 ```ts
-/** 从宿主字体来源读取字节；url/path/filePath 由宿主平台实现。 */
-export type FontInputLoader = (
-  input: FontInput,
-) => Uint8Array | ArrayBuffer | null | Promise<Uint8Array | ArrayBuffer | null>;
+interface FontInput {
+  data: ArrayBuffer | Uint8Array;
+  family?: string;
+}
+
+interface FontProvider {
+  match(request: FontMatchRequest): Promise<FontInput | FontInput[] | null>;
+}
 
 interface OFDOpenOptions {
-  /** 可选；不传时 Web 默认 url fetch，path/filePath 不支持。 */
-  loadInput?: FontInputLoader;
+  defaultFonts?: readonly FontInput[];  // 只收 { data }
+  supplementaryFonts?: FontInput[];     // 只收 { data }
+  fontProvider?: FontProvider;          // 按需读取的唯一入口
 }
 ```
 
-- **兼容增量**：字段可选；不传时 `data` 直接使用、`url` 走 `fetch`、`path`/`filePath` 不支持并产生字体 warning。浏览器 Web 行为与 r10 一致。
-- **接线**：`OFDDocument.open` 把 `loadInput` 传给字体库；`FontProvider`/`supplementaryFonts` 返回的 `url`/`path`/`filePath` 都通过它读取。`data` 不经过 loader。
-- **返回值/错误**：返回 `null` 表示来源不可用；抛错/读取失败由字体层降级为 `W_FONT_MISSING`，不中断打开。字节超过 `maxFontBytes` 仍按既有字体 warning 处理。
-- **Node CLI**：`--font-dir` 扫描字体文件后以 `{ path }` 形式加入 `supplementaryFonts`，CLI 注入基于 `node:fs` 的 loader（`path`/`filePath` 用 `readFile`，`url` 用 fetch）；TTC/OTC 展开全部字体面，按实际 family 匹配。引擎不依赖 Node API，Web 默认行为不变。
-- **范围**：只解决字体来源字节读取；不做系统字体发现、不下载字体、不新增运行时依赖。
+- **移除**：`FontInput.url`/`path`/`filePath`、`OFDOpenOptions.loadInput`、`FontInputLoader`、`fontInputLoader`、`createFontInputLoader()`；engine 不再读取字体 URL/路径。
+- **接线**：`defaultFonts`/`supplementaryFonts` 的 `data` 直接交给 fontkit；需要按需读取时由 `FontProvider.match()` 在宿主侧读文件/网络并返回 `{ data }`。`provider` 返回 `null` 表示无匹配，多个候选按顺序回退。
+- **错误**：来源不可用、`data` 为空或旧变体降级为 `W_FONT_MISSING`，不中断打开；字节超过 `maxFontBytes` 仍按既有字体 warning 处理。
+- **CLI**：`--font-dir` 与系统字体扫描结果由 CLI 的 `loadFontInputs()` 预读为 `{ data }[]` 后加入 `supplementaryFonts`；TTC/OTC 展开全部字体面，按实际 family 匹配。扫描、realpath 去重、96 MiB 预算与 warning 口径不变。
+- **范围**：engine 不做系统字体发现、不下载字体、不新增运行时依赖；Web/Node/小程序都只消费字节。
+- **设计依据**：[网络获取委托设计.md](./网络获取委托设计.md)；engine 实现提交见 `packages/ofdrw-viewer-engine/CHANGELOG.md`。
 
 ### 5.3 UI API 类型与签名（v1.0-r9/r10）
 
@@ -307,8 +313,8 @@ interface TextContentOptions { dpi?; includeChars?; includeAnnotations?; include
 ### 6.1 container
 
 ```ts
-// byte-source.ts
-class ArrayBufferSource/BlobSource/HttpRangeSource/NodeFileSource/WechatFileSource implements ByteSource
+// byte-source.ts（engine 只内置以下两种；HTTP/Node/微信由宿主实现 ByteSource）
+class ArrayBufferSource/BlobSource implements ByteSource
 
 // zip-reader.ts
 ZipReader.open(source: ByteSource, limits?: Partial<ZipLimits>): Promise<ZipReader>
@@ -712,7 +718,8 @@ interface Clip {
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
-| v1.0-r11 | 2026-10-22（t94/t96） | 新增可选 `OFDOpenOptions.loadInput` / `FontInputLoader`：不传时 Web 默认 url/fetch、path/filePath 不支持；Node CLI `--font-dir` 注入 node:fs loader，真正读取并展开 TTF/OTF/TTC/OTC 的 family。同步 999 修复 warning 口径：`g N V` 的 N=0 为合法空展开；页面积缺失时模板/CommonData 回退成功不提示、仅最终 A4 提示；空注释 Appearance 仅在模型解码提示一次。公开 API 兼容增量。 |
+| v1.0-r13（Unreleased） | 2026-10-23 | **breaking**：网络/文件读取委托给宿主。删除 `OFDSource.url/node-file/wechat-file`、`HttpRangeSource`/`NodeFileSource`/`WechatFileSource`、`FontInput.url/path/filePath`、`OFDOpenOptions.loadInput`/`FontInputLoader`/`fontInputLoader`。`OFDSource` 仅 `arraybuffer/blob/custom`；`FontInput` 仅 `{ data, family? }`，按需读取用 `FontProvider.match()`；`document:open:start.sourceKind` 对 URL 文档由 `url` 变 `custom`。UI 用 `HttpByteSource` 承接 URL（Range/取消/整包回退），crypto 映射为 `byte-source` 并与 engine 共用同一源；CLI 预读字体字节以 `{ data }` 注入。engine 包版本保持 `0.1.0`（未发布）。 |
+| v1.0-r11 | 2026-10-22（t94/t96） | 新增可选 `OFDOpenOptions.loadInput` / `FontInputLoader`：不传时 Web 默认 url/fetch、path/filePath 不支持；Node CLI `--font-dir` 注入 node:fs loader，真正读取并展开 TTF/OTF/TTC/OTC 的 family。同步 999 修复 warning 口径：`g N V` 的 N=0 为合法空展开；页面积缺失时模板/CommonData 回退成功不提示、仅最终 A4 提示；空注释 Appearance 仅在模型解码提示一次。公开 API 兼容增量。**（该能力已在 v1.0-r13 移除）** |
 | v1.0-r10 | 2026-10-22（T18e/P2） | 记录 `Clips@TransFlag` 非标准兼容扩展：标准 `CT_Clip` 无此属性；缺省/false 按对象空间在对象 CTM 前裁剪，true 在对象 CTM 后裁剪；true 优先于 t48 图片 manual 逆 CTM 兼容；模型 `Clip.transFlag?` 容器级复制、非法值 `W_BAD_NUMBER` 后 false。不涉及公开 API。同时登记 P2 公开 API：权限只读声明不做 DRM、附件元信息/原始字节不解析内容、`exportImage.rotation` 仅导出方向；`renderRegion` 不实现/不导出；新增 `W_PERMISSION_FIELD`/`W_ATTACHMENT_FIELD`/`W_ATTACHMENT_RESOURCE`。 |
 | v1.0-r9 | T17a/T17h | 冻结并落地 ofdrw-viewer-ui 引擎 P0/P1 API：PageInfo/Outline/Bookmark/签章 XML 元数据/SignedValueFile/DocumentMetadata/PagePrepareOptions/TextContent 全家族；`CacheOptions.textPages?` 默认 4（按页 LRU，键不含 dpi）；ASN.1/Seal.esl 不进入公共 API，P2 权限/附件/局部渲染/导出旋转延后。t67/t68/t70/t71 实现，t72 接线文本，t73 同步文档。 |
 | v1.0-r8 | T15a | 新增 `OFDPage.exportImage(options)` 与 `OFDOpenOptions.encodeImage(canvas,format,quality)`；整页 + dpi + 白底/PNG 透明；浏览器默认 convertToBlob/toBlob，Node 注入，不新增编码依赖；错误码复用 OFD_CANVAS_TOO_LARGE/OFD_CANVAS_SIZE_MISMATCH/OFD_RENDERER_UNSUPPORTED/OFD_ABORTED/OFD_CLOSED。 |
@@ -914,9 +921,9 @@ export function parseTimestamp(
 
 - `source` 必须实现 engine 公共 `ByteSource`（`size` 为非负安全整数，单位 byte；`read(offset,length)` 返回 `Uint8Array`），由宿主拥有；crypto 只通过隔离视图读取，**绝不调用调用方 `close`**。
 - crypto 先按 `source.size` 对 `maxSourceBytes` 预检，不读取内容；再经 engine `openZipVirtualContainer({ kind:'custom' })` 按需读取 ZIP 中央目录/条目，不整包 `readFile`。
-- `arraybuffer`/`blob`/`byte-source` 均为按需容器读；`url` 为兼容既有 fetch 语义由 crypto 流式读取整包。浏览器用 `arraybuffer`/`blob`/`url`，Node/CLI 优先 `byte-source`（CLI 使用 `NodeFileByteSource`，基于 `fs.promises.open` 随机读）。
+- `arraybuffer`/`blob`/`byte-source` 均为按需容器读；`url` 为兼容既有 fetch 语义由 crypto 流式读取整包。浏览器用 `arraybuffer`/`blob`/`url`，Node/CLI 优先 `byte-source`（CLI 使用 `NodeFileByteSource`，基于 `fs.promises.open` 随机读）。UI 对 URL 来源使用 `HttpByteSource` 并映射为 `{ kind: 'byte-source' }`，检测/解密与 engine 渲染共用同一字节源。
 - 所有权：`inspect`/`verifyOfd` 关闭内部容器；`openDecryptingContainer` 明文包返回 source-backed 容器并转移给调用方，加密包返回内存容器并在返回前关闭内部源容器；调用方 ByteSource 始终由调用方关闭。
-- `CryptoOptions.signal` 透传到每次读取，取消抛 `CRYPTO_ABORTED`；字节源结构非法或 `read()` 返回非 `Uint8Array` 抛 `CRYPTO_SOURCE_UNSUPPORTED`，底层读取异常/包结构损坏按 `CRYPTO_INVALID_PACKAGE`，`size` 超限抛 `CRYPTO_LIMIT_EXCEEDED`。crypto 不 import `node:*`，`byte-source` 不等同于 engine `OFDSource.kind='node-file'`。
+- `CryptoOptions.signal` 透传到每次读取，取消抛 `CRYPTO_ABORTED`；字节源结构非法或 `read()` 返回非 `Uint8Array` 抛 `CRYPTO_SOURCE_UNSUPPORTED`，底层读取异常/包结构损坏按 `CRYPTO_INVALID_PACKAGE`，`size` 超限抛 `CRYPTO_LIMIT_EXCEEDED`。crypto 不 import `node:*`；`byte-source` 是宿主提供的随机读源，与 engine 已删除的 `node-file`/`wechat-file` 无关。
 
 入口语义：
 
@@ -945,7 +952,7 @@ export function parseTimestamp(
 
 ### 13.7 UI/CLI 契约要点（冻结）
 
-- UI 新选项 `crypto?: CryptoViewerOptions`，含 `enabled/credentials/autoPrompt/rootCertificates/certificateLoader/autoVerify/onVerification/onCredentialRequired`；`CertificateSource` 对齐 FontInput 的 `data/url/path/filePath` 与 loader。
+- UI 新选项 `crypto?: CryptoViewerOptions`，含 `enabled/credentials/autoPrompt/rootCertificates/certificateLoader/autoVerify/onVerification/onCredentialRequired`；`CertificateSource` 是 **UI/证书**自身的 `data/url/path/filePath` 四态与 loader，和 engine `FontInput` 无关（engine 字体只收 `{ data }`）。
 - UI 打开流程：`inspect` → 加密则登录弹窗/预置凭据 → `openDecryptingContainer` → `OFDDocument.open({ container })`；失败可重试/取消；取消 `OFD_CRYPTO_CANCELLED`。
 - UI 工具栏新增 `verification` feature、验证面板、印章点击浮层、根证书配置；时间戳固定 `parsed-not-verified` +“已解析，未验证”；无根显示 `unknown`。
 - UI `setRootCertificates`/`getRootCertificates`/`verify`/`getVerificationReport` 与 `verificationcompleted` 事件按设计方案 §6.1。

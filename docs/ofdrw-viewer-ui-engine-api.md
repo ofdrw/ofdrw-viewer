@@ -2,7 +2,7 @@
 
 | 项 | 内容 |
 |---|---|
-| 状态 | 已确认并实现（P0/P1 + P2 权限/附件/导出旋转；renderRegion 暂不实现）；R1 容器/crypto 边界已同步 |
+| 状态 | 已确认并实现（P0/P1 + P2 权限/附件/导出旋转；renderRegion 暂不实现）；R1 容器/crypto 边界已同步；网络获取委托（engine 不联网）已同步 |
 | 版本 | 0.4-r1 |
 | 日期 | 2026-10-23 |
 | 使用方 | `@ofdrw/ofdrw-viewer-ui` |
@@ -15,6 +15,7 @@
 ### 0.1 引擎做什么
 
 - 打开/关闭 OFD 明文容器，读取包内条目；支持默认 ZIP、宿主注入容器和容器工厂。
+- 只消费宿主提供的 `arraybuffer`/`blob`/`custom ByteSource` 与字体 `{ data }`，从字节源按需读取。
 - 解析 OFD XML（`Document.xml`、`Page.xml`、`Signatures.xml`、`Signature.xml`、`OFD.xml` 等）为**对象信息**。
 - 提供页面尺寸、页面文本/空间信息、大纲、书签、签章 XML 元数据、原始签章资源字节、文档元数据、权限、附件。
 - 复用现有渲染管线绘制页面和签章外观。
@@ -25,6 +26,7 @@
 - 不把 `Seal.esl` 作为 engine 公开资源；电子印章由 crypto 的 `parseSeal`/`verifyOfd` 解析，UI 直接消费结构化结果。
 - 不判断签章时间、签署人、证书主题、印章类型、签章有效性。
 - 不做证书链、CRL/OCSP、时间戳、签名值验证。
+- **不做网络/文件获取**：不实现 URL `fetch`、HTTP Range、本地文件或小程序临时文件读取；字体不读 URL/路径，按需读取由宿主的 `FontProvider.match()` 完成。
 - 不实现阅读器 UI、布局、缩放、打印编排；提供整页 `exportImage`（含可选导出旋转），但不负责阅读器交互旋转/裁剪。
 
 ### 0.3 签章数据的分工
@@ -79,6 +81,17 @@ try {
 - 借用容器在 `doc.close()` 后只清 engine 引用，宿主负责 `await container.close()`；工厂/默认 ZIP 容器由 engine 关闭。
 - `VirtualReadOptions.signal` 取消本次读取；engine 合并宿主/close signal，共享加载不会被单个调用方取消。
 - 详细签名/所有权见 [CONTRACTS 第 13 章](./CONTRACTS.md#133-engine-公共-virtualcontainer冻结) 与 [引擎设计 15.1.4](./OFD渲染引擎设计方案.md#1514-虚拟容器与加密文档v20-r1)。
+
+### 0.5 来源与字体的委托边界
+
+engine 的 `OFDSource` 收敛为 `arraybuffer`/`blob`/`custom ByteSource`，字体 `FontInput` 只含 `{ data, family? }`。UI 侧的落点：
+
+- URL 字符串 / `{ url, headers? }` 由 UI 的 `normalizeViewerSourceDetailed()` **只规范化一次**，转成 `{ kind: 'custom', source: HttpByteSource }`；
+- crypto 与 engine 共用同一 `HttpByteSource`（crypto 侧映射为 `{ kind: 'byte-source' }`），避免重复探测/下载；
+- 明文路径的字节源随 engine 容器关闭；加密路径由 UI 的 `activeHttpSource` 持有并幂等关闭；
+- 取消信号（`viewer.open()` 内部的 `AbortController`）贯通 URL 探测、读取、crypto inspect 与 engine 打开；`close()`/切换文档后无悬挂请求；
+- `HttpByteSource`/`HttpByteSourceOptions` 从 UI 公共入口导出；`requestInit` 只使用 `headers`，来源 `headers` 覆盖 `requestInit.headers`；
+- 字体：engine 不再读取字体 URL/路径，UI 也不提供字体配置；宿主需要补充字体时直接向 engine 传 `{ data }` 或实现 `FontProvider`。
 
 ## 1. API 总览
 

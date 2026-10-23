@@ -238,6 +238,15 @@ try {
 - 取消时抛 `CRYPTO_ABORTED`，不会返回半解密容器；
 - 超过 `maxDecryptLayers`（默认 4）抛 `CRYPTO_DECRYPT_LAYER_LIMIT`，层循环抛 `CRYPTO_LAYER_LOOP`。
 
+### UI 集成（网络获取委托）
+
+`@ofdrw/ofdrw-viewer-ui` 接管 URL 获取后，crypto 在 UI 内不再使用自己的 `CryptoSource.url`：
+
+- UI 把 URL 规范化为一个 `HttpByteSource`，再用 `{ kind: 'byte-source', source }` 映射给 crypto（`toCryptoSource` 的 `custom` → `byte-source`）；检测/解密与 engine 渲染共用同一个字节源，不重复下载；
+- 字节源由 UI 持有：明文路径随 engine 容器关闭，加密路径由 UI 的 `activeHttpSource` 在切换/关闭时幂等关闭；crypto 只借用、不转发 `close`；
+- crypto 的 `CryptoSource.url` 继续保留，供不经过 UI、直接调用 crypto 的 Node/小程序/浏览器宿主使用；该场景下 `fetch`、鉴权头与取消由宿主自己控制，crypto 只负责读取与 `maxSourceBytes` 限制。
+- 字体不属于 crypto 职责；engine 字体来源同样委托给宿主（`{ data }` 或 `FontProvider`）。
+
 ## 一次性验证
 
 ```ts

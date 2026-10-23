@@ -1,6 +1,6 @@
 # OFD 渲染引擎设计方案
 
-> 版本：0.5-r12（设计稿，按 pdf.js 形态 + Monorepo 子包 + Renderer 扩展点 + 纯页面内容调整）
+> 版本：0.5-r13（设计稿，按 pdf.js 形态 + Monorepo 子包 + Renderer 扩展点 + 纯页面内容调整）
 > 日期：2026-10-23
 > 技术栈：TypeScript + Canvas 2D + fontkit  
 > 仓库：Monorepo，包含 `@ofdrw/ofdrw-viewer-engine`、`@ofdrw/ofdrw-viewer-crypto`、`@ofdrw/ofdrw-viewer-ui`、`@ofdrw/ofdrw-viewer-cli`
@@ -15,12 +15,13 @@
 > 0.5-r9 变更（2026-10-22）：落地并文档化阅读器 UI API（P0/P1）：PageInfo/Outline/Bookmark/签章 XML 元数据/SignedValue/DocumentMetadata/prepare/TextContent；不解析 ASN.1/证书、不暴露 Seal.esl；P2 权限/附件/局部渲染/导出旋转延后。
 > 0.5-r10 变更（2026-10-22）：记录非标准兼容扩展 `Clips@TransFlag`（缺省 false=裁剪区不受外部对象 CTM 影响；true=受外部 CTM 影响、在对象 CTM 后应用），并明确其优先于 t48 图片 manual 逆 CTM 兼容路径；`CT_Clip` 标准 schema 无此属性，不作为标准能力。
 > 0.5-r10 P2 变更（2026-10-22）：权限只读声明不做 DRM、附件元信息/原始字节不解析内容、`exportImage.rotation` 仅导出方向；`page.renderRegion` 按用户决定不实现/不导出。
-> 0.5-r11 变更（2026-10-22）：新增可选 `OFDOpenOptions.loadInput`/`FontInputLoader`，Web 默认行为不变，Node CLI `--font-dir` 注入 `node:fs` 并真实解析 family；同步 `g` 组 count=0 合法、页面积成功回退不提示（仅最终 A4）、空注释外观只提示一次。
+> 0.5-r11 变更（2026-10-22）：新增可选 `OFDOpenOptions.loadInput`/`FontInputLoader`，Web 默认行为不变，Node CLI `--font-dir` 注入 `node:fs` 并真实解析 family；同步 `g` 组 count=0 合法、页面积成功回退不提示（仅最终 A4）、空注释外观只提示一次。**该字体加载器已在 0.5-r13 中移除。**
 > 0.5-r12 变更（2026-10-23，R1）：新增公共 `VirtualContainer`/`openZipVirtualContainer` 与 `OFDOpenFromContainerOptions`；`OFDOpenOptions.source` 保持必填，新增 `container`（借用）/`containerFactory`（engine 拥有）；明确 raw/明文容器、`OFD_ENCRYPTED`、借用容器关闭后清引用与 AbortSignal 共享取消；密码学职责移交 `@ofdrw/ofdrw-viewer-crypto`。
+> 0.5-r13 变更（2026-10-23，Unreleased）：**网络/文件获取委托给宿主**。`OFDSource` 收敛为 `arraybuffer`/`blob`/`custom`，删除 `HttpRangeSource`/`NodeFileSource`/`WeChatFileSource` 与 `FontInputLoader`/`loadInput`/`fontInputLoader`；`FontInput` 只收 `{ data, family? }`，按需读取用 `FontProvider.match()`；URL 由 UI 的 `HttpByteSource` 获取，CLI 预读字体字节后以 `{ data }` 注入；`document:open:start.sourceKind` 对 URL 文档由 `url` 变为 `custom`。设计见 [网络获取委托设计.md](./网络获取委托设计.md)。
 > 0.4 变更：采用 Monorepo 子包 `@ofdrw/ofdrw-viewer-engine`；`Renderer` 改为 `beginGroup/endGroup`，H5 的 `CanvasFactory`/scratch 完全内部化，公开 API 不再有 `RenderSurface`；`fallbackFonts` 更名为 `supplementaryFonts`；删除 engine 级独立块栅格缓存，改为复用 display list。
 
 1. **引擎做成一个独立、平台无关的 TypeScript 库**：以 Monorepo 子包 `@ofdrw/ofdrw-viewer-engine` 交付；公开 API 按 pdf.js 形态收敛为 `open → getPage → page.getViewport/page.render（可选 page.exportImage） → close`；核心只定义 `ByteSource`、Canvas、图片解码器、字体来源等接口，`Renderer` 作为正式扩展点但默认实现由 engine 提供，**v1 不实现任何端适配器**。
-2. **ZIP 不做整体解压**。打开时只读 `OFD.xml`、`Document.xml` 和页树；渲染某页时才按中央目录定位并解压该页的 `Content.xml`、`PageRes.xml`、模板页、字体和图片。天然支持 HTTP Range、`Blob.slice`、Node 文件句柄和微信文件系统。
+2. **ZIP 不做整体解压**。打开时只读 `OFD.xml`、`Document.xml` 和页树；渲染某页时才按中央目录定位并解压该页的 `Content.xml`、`PageRes.xml`、模板页、字体和图片。通过宿主提供的 `ByteSource` 天然支持 HTTP Range、`Blob.slice`、Node 文件句柄和微信文件系统，engine 自身不实现这些读取。
 3. **文字绝不走 Canvas 文本 API**。统一走 `字体文件 → fontkit 解析 → 字形轮廓 → 路径 → fill/stroke`，因此不会受系统字体缺失、Canvas `fillText` 差异、小程序字体加载限制影响。
 4. **渲染分为“异步准备”和“同步绘制”两段**：先把该页需要的字体、图片、资源 XML 全部解析/解码完，再在一个同步循环里按文档顺序绘制，避免画到一半 `await` 导致 Canvas 状态被外部改写。
 5. **v1 的保真度分档**：基础路径/文字/图片、纯色、轴向渐变、路径裁剪、复合对象、模板页、页资源、**注释/签章外观**、**Gouraud/网格渐变**、**JBIG2/TIFF**、**Pattern 底纹** 为必做；**径向渐变 v1 不做**，识别到就 warning + 降级（平均色/透明），算法设计保留给 v2；重复/反射渐变、图像蒙版、边框、文字裁剪、合成粗斜体为次优先；ICC、BlendMode 不在 v1；加密文档解密与签名密码学验证不在 engine 范围，由 `@ofdrw/ofdrw-viewer-crypto` 提供。
@@ -35,7 +36,7 @@
 
 ### 1.1 目标
 
-- 输入一个 OFD 文件（本地文件、`ArrayBuffer`、`Blob`、URL、Node 路径、微信临时文件），能够：
+- 输入一个 OFD 文件（来源可以是本地文件、URL、Node 路径、微信临时文件，但都由宿主读取后以 `arraybuffer`/`blob`/`custom ByteSource` 交给 engine），能够：
   - 打开文档，得到页数；
   - 取页对象，查询物理尺寸（毫米）和指定 dpi 的 viewport（像素）；
   - 把页渲染到调用方提供的 Canvas 2D 上下文；
@@ -770,28 +771,31 @@ await task.promise;
 
 ```ts
 export interface ByteSource {
-  /** 总字节数，单位 byte */
+  /** 总字节数，单位 byte；异步探测完成前允许为 0 */
   readonly size: number;
   /** 读取 [offset, offset+length) 的字节；越界由实现截断或抛错 */
   read(offset: number, length: number): Promise<Uint8Array>;
+  /** 可选：异步探测完成；ZipReader.open 会先等待 */
+  ready?(): Promise<void>;
+  /** 可选：释放资源；容器关闭时调用，必须幂等 */
+  close?(): Promise<void> | void;
 }
 ```
 
-内置适配器：
+内置适配器（均在 container 层，不访问网络/文件系统）：
 
 | 适配器 | 实现 | 适用 |
 |---|---|---|
 | `ArrayBufferSource` | 直接 `slice` | 小文件、测试 |
 | `BlobSource` | `blob.slice(offset, offset+length).arrayBuffer()` | 浏览器 File/Blob |
-| `HttpRangeSource` | `fetch(url, { headers: { Range } })`；服务器不支持 Range 时回退整包 | URL |
-| `NodeFileSource` | `fs.promises.open` + `file.read(buffer, 0, length, offset)` | Node/Electron 主进程 |
-| `WeChatFileSource` | `wx.getFileSystemManager().read` + fd/position | 小程序 |
 
-`HttpRangeSource` 注意：
+`HttpByteSource`、Node 文件、微信文件适配已移出 engine：
 
-- 先 `HEAD` 或 `GET Range: bytes=0-0` 探测 `Content-Range`/`Accept-Ranges`；
-- 不支持 Range 时，首次读取后把整包缓存为 `ArrayBuffer`，后续走 `ArrayBufferSource`；
-- 跨域需要服务端 `Access-Control-Expose-Headers: Content-Range`。
+- 浏览器 URL：UI 的 `HttpByteSource` 负责 HEAD/Range 探测、206 校验、`Content-Encoding` 回退、416、取消与整包进度，再以 `custom ByteSource` 交给 engine；
+- Node/Electron：宿主用 `fs` 随机读实现 `custom ByteSource`（CLI 的 `NodeFileByteSource`）；
+- 小程序：宿主用 `wx.getFileSystemManager()` 读取并实现 `custom ByteSource`，或直接传 `arraybuffer`。
+
+因此 engine 只保留 `ArrayBufferSource`/`BlobSource` 两个内置实现；其余来源（含资源大小探测）由宿主负责，`ready()` 失败时应抛出真实错误。
 
 ### 7.2 ZIP 读取算法
 
@@ -1127,13 +1131,13 @@ interface FontResource {
    - `OS/2.usWeightClass`、`head.macStyle`、`post.italicAngle`（若存在）。
 4. 字体对象按 `fontFile` 路径缓存；同一文件被多个 `FontResource` 引用时复用。
 
-### 9.1.1 宿主补充字体与 `loadInput`（r11）
+### 9.1.1 宿主补充字体（r13：只收字节）
 
-- 字体来源优先级：内嵌 `FontFile` → 宿主 `FontProvider` → `defaultFonts` → `supplementaryFonts`；后三者可返回 `data`/`url`/`path`/`filePath` 四种 `FontInput`。`defaultFonts` 仅作缺省替代（显式 GID 不可信，走 cmap），精确来源命中时不参与主字体选择但仍进入逐字形回退链。
-- `data` 直接使用；`url`/`path`/`filePath` 需要字节加载器。`OFDOpenOptions.loadInput` 可选：不传时 Web 默认 `url` 走 `fetch`，`path`/`filePath` 不支持并产生字体 warning；传了则全部非 `data` 来源交给它读取。
-- loader 返回 `null` 表示来源不可用；抛错/读取失败降级为 `W_FONT_MISSING`，不中断打开；字节上限仍由 `maxFontBytes` 控制。
-- Node CLI 注入 `node:fs` loader（`path`/`filePath` 用 `readFile`，`url` 用 fetch）。`--font-dir` 递归扫描 `.ttf/.otf/.ttc/.otc`，以 `{ path }` 加入 `supplementaryFonts`；TTC/OTC 展开全部字体面，按 fontkit 实测 family 参与评分，不只看第 0 面。
-- Web 默认语义不变；引擎不依赖 Node API，不自动扫描系统字体，不下载字体。
+- 字体来源优先级：内嵌 `FontFile` → 宿主 `FontProvider` → `defaultFonts` → `supplementaryFonts`；后三者只接受 `{ data: ArrayBuffer | Uint8Array, family? }`。`defaultFonts` 仅作缺省替代（显式 GID 不可信，走 cmap），精确来源命中时不参与主字体选择但仍进入逐字形回退链。
+- engine **不读取字体 URL/路径、不下载字体**：`FontInput.url`/`path`/`filePath` 与 `OFDOpenOptions.loadInput`/`FontInputLoader` 已删除。需要按需读取时实现 `FontProvider.match()`，在其中完成 `fetch`/`fs.readFile`/`wx` 读取并返回 `{ data }`。
+- 字体来源不可用、`data` 为空或仍为旧变体时降级为 `W_FONT_MISSING`，不中断打开；字节上限仍由 `maxFontBytes` 控制。
+- Node CLI 由 CLI 读取字体字节：`--font-dir` 与系统字体扫描结果经 `loadFontInputs()` 预读为 `FontInput[]`，以 `{ data }` 加入 `supplementaryFonts`；TTC/OTC 展开全部字体面，按 fontkit 实测 family 参与评分，不只看第 0 面。该路径保持了改造前的输出（含 warning 口径）。
+- engine 不依赖 Node API，不自动扫描系统字体，不下载字体。
 
 ### 9.2 图片资源
 
@@ -1801,10 +1805,10 @@ interface Glyph {
 
 1. **内嵌字体**（`FontResource.FontFile`）——最高优先级；
 2. **`FontProvider`**——由宿主提供，按 `FontName`/`FamilyName`/`Charset`/`Bold`/`Italic`/`Serif`/`FixedSize` 匹配：
-   - **注入式**：宿主把字体字节/URL/路径放进 provider（Web、小程序、Electron 都可用）；
-   - **本地读取**：环境允许时，Node 扫描系统字体目录，浏览器可用 `queryLocalFonts()`（需权限/用户手势）；小程序没有本地字体，只能注入；
-3. **`defaultFonts`（可选）**——宿主显式注入的缺省替代字体，文档字体缺省时作为主字体；优先级高于 `supplementaryFonts`，且始终进入逐字形回退链。固定按替代字体处理（`substitute: true`），显式 GID 不可信、必须走 cmap；
-4. **`supplementaryFonts`（可选）**——宿主显式注入的补充字体列表，按顺序用于缺字/缺字体回退；不传就没有补充，只 warning。
+   - **注入式**：宿主把已读好的字体字节（`{ data }`）放进 provider（Web、小程序、Electron 都可用）；
+   - **本地读取**：环境允许时，在 provider 的 `match()` 内读文件/调用 `queryLocalFonts()`（需权限/用户手势）；小程序没有本地字体，只能注入；
+3. **`defaultFonts`（可选）**——宿主显式注入的缺省替代字体，文档字体缺省时作为主字体；优先级高于 `supplementaryFonts`，且始终进入逐字形回退链。固定按替代字体处理（`substitute: true`），显式 GID 不可信、必须走 cmap；只收 `{ data }`；
+4. **`supplementaryFonts`（可选）**——宿主显式注入的补充字体列表，按顺序用于缺字/缺字体回退；只收 `{ data }`，不传就没有补充，只 warning。
 
 主字体选择顺序为 内嵌 `FontFile` → `FontProvider` → `defaultFonts` → `supplementaryFonts`；逐字形回退链按 provider 其余候选 → `defaultFonts` 其余 → `supplementaryFonts` 依次尝试。精确来源（内嵌/provider）命中时 `defaultFonts` 不参与主字体选择，但仍进入回退链。
 
@@ -2263,7 +2267,7 @@ export interface CanvasRenderingContext2DLike {
 
 | 能力 | Web | Electron/Tauri | Node | 微信小程序 |
 |---|---|---|---|---|
-| 文件读取 | Blob/File/fetch Range | 同 Web 或 Node IPC | `fs` | `FileSystemManager` |
+| 文件读取 | 宿主 `fetch`/`Blob.slice` → 字节或 `custom` | 同 Web 或 Node IPC | `fs` 随机读 → `custom` | `FileSystemManager` → 字节或 `custom` |
 | Canvas | DOM Canvas | DOM Canvas | `@napi-rs/canvas`/`node-canvas` | Canvas 2D 节点 |
 | 图片解码 | `createImageBitmap`/`Image` | 同 Web | canvas `loadImage` | `canvas.createImage` |
 | 临时 Canvas（scratch/pattern） | `OffscreenCanvas` 可选 | 同 Web | 由 `createCanvas` 提供 | `wx.createOffscreenCanvas` |
@@ -2282,13 +2286,13 @@ export interface CanvasRenderingContext2DLike {
   - `fontkit` + 核心可能接近上限；
   - JBIG2/TIFF 解码器放分包/按需加载；
   - 补充字体不要进 JS 包，放 CDN/分包资源。
-- 文件读取用 fd + position，避免整包读入内存。
+- 文件读取用 fd + position（宿主实现），避免整包读入内存。
 - 页面 Canvas 建议复用；切换页时先取消上一个渲染任务。
 
 ### 14.4 Node/PC
 
-- Electron 渲染进程：直接用 Web 适配器；主进程读文件通过 `NodeFileSource` + IPC，或把 `ArrayBuffer` 传给渲染进程。
-- Tauri：WebView 内用 `fetch`/自定义协议；Range 读取可通过命令桥接。
+- Electron 渲染进程：直接用 Web 适配器（URL 由 UI 的 `HttpByteSource` 读取）；主进程用 `fs` 读文件并实现 `custom ByteSource`，再通过 IPC 传 `ArrayBuffer`/随机读桥接给渲染进程。
+- Tauri：WebView 内用宿主 `fetch`/自定义协议读取成 `arraybuffer`；大文件通过命令桥接实现 `custom ByteSource`（Range/取消由宿主控制）。
 - 纯 Node：
   - `@napi-rs/canvas` 性能好、安装简单；`node-canvas` 兼容性好但原生依赖重；
   - 图片解码用 canvas 的 `loadImage`，或 `sharp` 解码后转 `ImageData`；
@@ -2309,16 +2313,10 @@ export interface CanvasRenderingContext2DLike {
 公共 API 采用 pdf.js 的“文档 → 页 → 渲染任务”形态；engine 只渲染页面内容，不处理阅读器的缩放/旋转/背景/打印筛选。`page.exportImage` 提供整页离屏编码，属于同一页面内容渲染路径的便捷封装。
 
 ```ts
-export type FontInput =
-  | { data: ArrayBuffer | Uint8Array; family?: string }
-  | { url: string; family?: string }        // Web
-  | { path: string; family?: string }       // Node
-  | { filePath: string; family?: string };  // WeChat
-
-/** 从宿主字体来源读取字节；url/path/filePath 由宿主平台实现。 */
-export type FontInputLoader = (
-  input: FontInput,
-) => Uint8Array | ArrayBuffer | null | Promise<Uint8Array | ArrayBuffer | null>;
+export interface FontInput {
+  data: ArrayBuffer | Uint8Array;
+  family?: string;
+}
 
 export interface FontMatchRequest {
   fontName: string;
@@ -2333,15 +2331,12 @@ export interface FontMatchRequest {
 export interface FontProvider {
   /**
    * 返回 null 表示没有匹配字体；也可返回多个候选，按顺序回退。
-   * provider 只负责“找到字体文件/字节”，解析仍由 fontkit 完成。
+   * provider 负责读取字体字节（URL/文件/缓存均可），解析仍由 fontkit 完成。
    */
   match(request: FontMatchRequest): Promise<FontInput | FontInput[] | null>;
 }
 
-// 宿主可直接使用的三种实现（设计约定，不是强制 API）：
-// createInjectedFontProvider(fonts: FontInput[])
-// createNodeSystemFontProvider({ dirs?: string[] })
-// createBrowserLocalFontProvider()                    // queryLocalFonts()，需权限
+// 宿主自行实现 provider；engine 不提供系统字体扫描或浏览器 queryLocalFonts 封装。
 
 export interface ImageDecoderPlugin {
   /** "jbig2" | "tiff" 等；与图片头部识别结果匹配 */
@@ -2374,10 +2369,9 @@ export interface CacheOptions {
 export interface OFDOpenBaseOptions {
   documentIndex?: number;              // 默认 0
   limits?: Partial<ResourceLimits>;
-  defaultFonts?: readonly FontInput[]; // 文档字体缺省时的替代字体，优先级高于 supplementaryFonts
-  supplementaryFonts?: FontInput[];    // 宿主补充的字体，按需用于缺字/缺字体
-  loadInput?: FontInputLoader;         // url/path/filePath 字节加载器；不传保持 Web 默认
-  fontProvider?: FontProvider;         // 按需提供字体
+  defaultFonts?: readonly FontInput[]; // 文档字体缺省时的替代字体，优先级高于 supplementaryFonts；只收 { data }
+  supplementaryFonts?: FontInput[];    // 宿主补充的字体，按需用于缺字/缺字体；只收 { data }
+  fontProvider?: FontProvider;         // 字体按需读取的唯一入口
   imageDecoders?: ImageDecoderPlugin[];// JBIG2/TIFF 等
   onWarning?: (warning: OFDWarning) => void;
   cache?: Partial<CacheOptions>;
@@ -2408,9 +2402,6 @@ export interface OFDOpenFromContainerOptions extends OFDOpenBaseOptions {
 export type OFDSource =
   | { kind: 'arraybuffer'; data: ArrayBuffer | Uint8Array }
   | { kind: 'blob'; blob: Blob }
-  | { kind: 'url'; url: string; headers?: Record<string, string> }
-  | { kind: 'node-file'; path: string }
-  | { kind: 'wechat-file'; filePath: string }
   | { kind: 'custom'; source: ByteSource };
 
 export interface Viewport {
@@ -2648,15 +2639,18 @@ await doc.close();
 Node（显式注入 `createCanvas` 与 `encodeImage`）：
 
 ```ts
+import { readFile } from 'node:fs/promises';
 import { createCanvas } from '@napi-rs/canvas';
 import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
 
 const doc = await OFDDocument.open({
-  source: { kind: 'node-file', path: '/data/a.ofd' },
+  // engine 不读文件：Node 宿主 readFile（大文件可改 custom ByteSource）
+  source: { kind: 'arraybuffer', data: await readFile('/data/a.ofd') },
   createCanvas: (width, height) => createCanvas(width, height),
   // 宿主实现，例如把 canvas 交给 @napi-rs/canvas 的 encode；engine 不内置编码器。
   encodeImage: (canvas, format, quality) => encodeNodeCanvas(canvas, format, quality),
-  supplementaryFonts: [{ path: '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc' }],
+  // 字体同理：宿主读取字节后传 { data }
+  supplementaryFonts: [{ data: await readFile('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc') }],
 });
 
 const page = await doc.getPage(0);
@@ -2846,7 +2840,7 @@ Warning 码：
 | 字体 bomb | 字体大小上限；fontkit 异常捕获；不执行字体中的任何代码 |
 | Canvas 过大 | 像素上限；超限抛 `OFD_CANVAS_TOO_LARGE`，建议降 dpi |
 | 递归/循环 | 复合对象/页面块/Pattern/Relative 深度限制；资源 ID 栈检测环 |
-| 恶意 URL | 默认只读包内资源，不加载外部 URL；`url` 源只取 OFD 本身 |
+| 恶意 URL | engine 不联网、不读外部 URL；只消费宿主传入的 OFD 字节，包内资源仍受路径/限制校验 |
 | 内存耗尽 | 缓存预算；大对象及时释放；可选降采样 |
 | 画布状态泄漏 | 每对象 save/restore；页面开始重置 transform/alpha/composite/lineDash |
 | 部分绘制 | 分组 scratch 不提交；取消后由用户清屏/重绘；renderer.close 释放内部资源 |
@@ -2856,8 +2850,8 @@ Warning 码：
 
 - `close()` 后所有缓存引用置空，避免 GC 不了。
 - 不把 `ArrayBuffer` 长期持有超过必要；`Blob` 源保留引用以便重读。
-- 对 `HttpRangeSource` 的 206/200 响应都处理；200 表示服务器忽略 Range，缓存整包。
-- 不信任 `Content-Length`；以实际读取为准。
+- engine 不处理 HTTP/文件来源：Range 206/200、`Content-Encoding`、416、`Content-Length` 信任问题由宿主的 `custom ByteSource`（UI 为 `HttpByteSource`）负责。
+- `custom` 源的 `ready()` 失败应抛真实错误；`close()` 必须幂等。
 
 ---
 

@@ -1198,6 +1198,7 @@ interface VirtualContainer {
 - `inspect`/`verifyOfd` 关闭自己打开的容器，但不会关闭调用方 `ByteSource`；
 - `openDecryptingContainer` 对明文包返回 source-backed 容器，关闭该容器也不会关闭原 `ByteSource`；
 - 调用方应在读取/验证/解密结束后自行关闭文件句柄或字节源。
+- **与 UI 集成**：`@ofdrw/ofdrw-viewer-ui` 对 URL 来源只创建一份 `HttpByteSource`，再映射为 `{ kind: 'byte-source', source }` 交给 crypto；检测/解密与 engine 渲染共用同一字节源，生命周期归 UI（加密路径由 UI 关闭，crypto 不转发 `close`）。`CryptoSource.url` 仍保留给直接使用 crypto 的宿主，UI 不经过该分支。
 
 ---
 

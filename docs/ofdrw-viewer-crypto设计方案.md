@@ -314,7 +314,7 @@ export function openZipVirtualContainer(
 - 默认 ZIP 容器继续使用 `ResourceLimits` 的 package/entry/total/ratio 限制；crypto 容器使用同一 `VirtualReadOptions.maxBytes` 语义。
 - 容器读取 `onWarning` 直接转发 engine 的 `WarningCollector`；不新增 engine warning 码。
 - `OFD_ENCRYPTED` 是 engine 唯一新增的**行为路径**（已有错误码，不新增）；普通明文包行为、错误码、`packageSize`、页面渲染结果均不变。
-- 现有 `OFDSource` 调用、`OFDOpenOptions.createCanvas/loadInput/encodeImage/renderer` 等全部保留；新字段可选，属于兼容增量。
+- 现有 `OFDSource` 调用、`OFDOpenOptions.createCanvas/encodeImage/renderer` 等保留；`loadInput` 已在 engine 的网络获取委托（v1.0-r13）中移除，crypto 不依赖它。新字段可选，属于兼容增量。
 - engine 的 import-boundary smoke 增加断言：`api/*` 不 import crypto；`container/*` 不 import crypto；crypto 不出现在 engine `package.json`。
 
 ## 3. Crypto 公共 API 与数据类型（冻结）
@@ -366,7 +366,8 @@ export type CryptoSource =
 - 所有权：`inspect`/`verifyOfd` 关闭内部打开的容器；`openDecryptingContainer` 对明文包返回 **source-backed** 容器，所有权转移给调用方；对加密包最终返回内存容器，并在返回前关闭内部源容器。
 - 取消：`CryptoOptions.signal` 传到每次 `ByteSource.read`，取消抛 `CRYPTO_ABORTED`；字节源结构非法或 `read()` 返回非 `Uint8Array` 抛 `CRYPTO_SOURCE_UNSUPPORTED`，底层读取异常/包结构损坏按 `CRYPTO_INVALID_PACKAGE`，`size` 超限抛 `CRYPTO_LIMIT_EXCEEDED`。
 - 浏览器不使用该分支：`arraybuffer`、`blob`、`url` 保持兼容；`url` 仍由 crypto 流式读取整包（受 `maxSourceBytes` 限制），不是随机访问。
-- `byte-source` 不等于 engine `OFDSource.kind='node-file'`；crypto 不 import `node:fs`，Node 文件适配由宿主/CLI 完成。
+- `byte-source` 与 engine 已删除的 `node-file`/`wechat-file` 无关；crypto 不 import `node:fs`，Node 文件适配由宿主/CLI 完成。
+- UI 集成（网络获取委托）：UI 对 URL 只创建一份 `HttpByteSource`，并映射为 `{ kind: 'byte-source', source }` 交给 crypto；检测/解密与 engine 渲染共用同一字节源。字节源归 UI 所有（加密路径由 UI 关闭，crypto 不转发 `close`）；crypto 的 `CryptoSource.url` 保留给不经过 UI、直接调用 crypto 的宿主。
 
 /** SM2 私钥输入；pem/der 二选一。 */
 export interface Sm2PrivateKeyInput {
@@ -1289,7 +1290,7 @@ extensions [1] OPTIONAL
 `packages/ofdrw-viewer-ui/src/options.ts` 追加可选字段，旧调用完全兼容：
 
 ```ts
-/** 根证书来源；对齐 FontInput 的 data/url/path/filePath 四态。 */
+/** 根证书来源；UI/证书自身的 data/url/path/filePath 四态（与 engine FontInput 无关）。 */
 export type CertificateSource =
   | { readonly data: ArrayBuffer | Uint8Array; readonly name?: string }
   | { readonly url: string; readonly headers?: Record<string, string>; readonly name?: string }
@@ -1441,7 +1442,7 @@ viewer.open(source)
 ### 6.6 根证书配置
 
 - 来源：构造选项 `crypto.rootCertificates` + `setRootCertificates()` + 验证面板“配置根证书”。
-- 支持 `data`（File/ArrayBuffer）、`url`、`path`、`filePath` 四态；解析规则对齐 `FontInput`：
+- 支持 `data`（File/ArrayBuffer）、`url`、`path`、`filePath` 四态；这是 UI/证书来源自己的形态（engine `FontInput` 已收敛为只收 `{ data }`，两者互不影响）：
   - `data` 直接使用；
   - `url` 默认 `fetch`（带 `headers`），失败 → `W_CRYPTO_CERT_SOURCE_UNSUPPORTED`；
   - `path`/`filePath` 必须由宿主 `certificateLoader` 提供；Web 默认不支持，给 warning，不阻塞文档；

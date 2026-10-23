@@ -1,6 +1,6 @@
 ---
 name: ofdrw-viewer-engine
-description: Render OFD documents to Canvas with @ofdrw/ofdrw-viewer-engine. Use this skill whenever a task involves opening, previewing, rendering, or exporting .ofd pages in JavaScript/TypeScript, including browser pages, Web Workers/OffscreenCanvas, Node.js tools, Electron/Tauri, or WeChat Mini Programs. Covers page rendering, thumbnails, PNG/JPEG/WebP export, searchable text layers with pixel coordinates, outlines/metadata/attachments/signatures, DPI/canvas sizing, virtual container/encrypted-document injection, platform hooks (createCanvas, encodeImage, imageDecoders, loadInput, fontProvider), cancellation, and debugging warnings such as missing fonts or images. Also use for OFD 预览、OFD 转图片、文字层坐标, or when wiring a custom Canvas host. See the bundled API.md for exact signatures and defaults.
+description: Render OFD documents to Canvas with @ofdrw/ofdrw-viewer-engine. Use this skill whenever a task involves opening, previewing, rendering, or exporting .ofd pages in JavaScript/TypeScript, including browser pages, Web Workers/OffscreenCanvas, Node.js tools, Electron/Tauri, or WeChat Mini Programs. Covers page rendering, thumbnails, PNG/JPEG/WebP export, searchable text layers with pixel coordinates, outlines/metadata/attachments/signatures, DPI/canvas sizing, virtual container/encrypted-document injection, host-provided document sources (arraybuffer/blob/custom ByteSource, engine does not fetch URLs or read files), platform hooks (createCanvas, encodeImage, imageDecoders, custom ByteSource, FontProvider), cancellation, and debugging warnings such as missing fonts or images. Also use for OFD 预览、OFD 转图片、文字层坐标、engine 不联网/来源委托, or when wiring a custom Canvas host. See the bundled API.md for exact signatures and defaults.
 ---
 
 # OFD 页面渲染引擎（@ofdrw/ofdrw-viewer-engine）
@@ -70,7 +70,90 @@ try {
 }
 ```
 
-浏览器主线程通常不需要任何平台钩子。`source` 也可以直接用 `url` 或 `arraybuffer`；`url` 依赖 `fetch` 和 HTTP Range，跨域时要允许请求头并暴露 `Content-Range`。
+浏览器主线程通常不需要任何平台钩子。**engine 不联网、不读本地文件**：`source` 只接受 `arraybuffer`/`blob` 或宿主实现的 `custom ByteSource`；URL、File、本地路径要先由宿主读成字节，详见下一节。
+
+## 来源与字体由宿主提供（engine 不联网）
+
+engine 只消费“已经可读的字节 / 随机读源”，网络与文件读取全部由宿主负责。这样鉴权、Cookie、代理、重试、Range、取消和下载进度都在宿主手里，engine 不做平台分支。
+
+### 文档来源
+
+| 场景 | 宿主做法 | 传给 engine |
+| --- | --- | --- |
+| 浏览器 URL | `fetch(url, { headers, signal })` → `arrayBuffer()` | `{ kind: 'arraybuffer', data }` |
+| 浏览器大文件/需要 Range | 宿主实现 HTTP `ByteSource`（按需 `read` + 取消 + 鉴权）；Web 可直接复用 UI 的 `HttpByteSource` | `{ kind: 'custom', source }` |
+| Node / Electron 主进程 | `fs.readFile`，或 `fs.open` + 随机读 | `{ kind: 'arraybuffer', data }` 或 `{ kind: 'custom', source }` |
+| 微信小程序 | `wx.downloadFile` 得到临时路径 → `wx.getFileSystemManager().readFile/read` | `{ kind: 'arraybuffer', data }` 或 `{ kind: 'custom', source }` |
+| 已有 `File`/`Blob` | 直接使用 | `{ kind: 'blob', blob: file }` |
+
+```ts
+// 浏览器：URL 由宿主 fetch
+const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+if (!response.ok) throw new Error(`HTTP ${response.status}`);
+const doc = await OFDDocument.open({
+  source: { kind: 'arraybuffer', data: await response.arrayBuffer() },
+});
+```
+
+```ts
+// Node：本地文件由宿主读取；大文件可改为 custom ByteSource
+import { readFile } from 'node:fs/promises';
+
+const doc = await OFDDocument.open({
+  source: { kind: 'arraybuffer', data: await readFile('sample.ofd') },
+});
+```
+
+```ts
+// 小程序：wx.downloadFile 的临时路径由宿主读取（downloadOfd/readFile 为宿主封装）
+const tempFilePath = await downloadOfd(url);
+const data = await readFile(tempFilePath);
+const doc = await OFDDocument.open({
+  source: { kind: 'arraybuffer', data },
+});
+```
+
+自定义 `ByteSource` 只需要 `size` 与 `read(offset, length)`；需要异步探测大小时再实现 `ready()`，需要释放句柄时实现幂等 `close()`。完整契约见 [API.md §8.3](./API.md#83-bytesource)。
+
+### 字体来源
+
+字体也只收宿主读好的字节：
+
+- 一次性提供：`defaultFonts` / `supplementaryFonts: [{ data, family? }]`；
+- 按需读取：实现 `FontProvider`，在 `match(request)` 里 `fs.readFile`、`fetch` 或查缓存，返回 `{ data }`/`[{ data }]`/`null`。`match()` 是字体按需读取的唯一入口。
+
+```ts
+const fontData = await (await fetch('/fonts/noto-serif-sc.otf')).arrayBuffer();
+const doc = await OFDDocument.open({
+  source,
+  supplementaryFonts: [{ data: fontData }],
+});
+
+// 或按需：provider 内部读文件/网络
+const fontProvider = {
+  async match(request) {
+    const path = findFontPath(request);
+    return path ? { data: await readFile(path) } : null;
+  },
+};
+```
+
+### 取消、鉴权与进度
+
+- **取消**：网络请求的 `AbortSignal` 由宿主传给 `fetch`/`ByteSource`；`OFDOpenOptions.signal` 只取消 engine 的打开流程。两者可共用同一个 `AbortController`。
+- **鉴权**：请求头、Cookie、token 刷新都在宿主；engine 不接触 URL 与凭据。
+- **进度**：下载进度由宿主统计（如 `response.body.getReader()`）；engine 只提供 `document:open:start/end/error/abort` 等生命周期事件，不保证字节级进度。
+- 旧来源 `{ kind: 'url' }`、`{ kind: 'node-file' }`、`{ kind: 'wechat-file' }` 已删除；运行时收到会抛带迁移提示的 `OFDError`，类型层面直接报错。
+
+### 排障
+
+| 现象 | 处理 |
+| --- | --- |
+| 报错“未知来源类型：url” | 旧代码仍传 URL；先 `fetch` 成 `arraybuffer`，或传 `custom ByteSource` |
+| 打开失败 `OFD_INVALID_PACKAGE` | 检查宿主读取的字节是否为空、是否 404/403、是否读到了 HTML 错误页 |
+| 字体不显示并出现 `W_FONT_MISSING` | 字体没提供、`data` 为空或仍是旧 `url`/`path` 写法；改传 `{ data }` 或实现 `FontProvider` |
+| 大文件内存高 | 不要整包 `readFile`；实现按需 `custom ByteSource` |
+| 跨域/Range 失败 | 属于宿主网络层；检查 CORS、`Range`/`Content-Range` 暴露头与鉴权 |
 
 ## 打开容器与加密文档
 
@@ -106,9 +189,9 @@ try {
 | --- | --- | --- |
 | 浏览器主线程 | 无 | 默认使用 `document.createElement('canvas')`、`createImageBitmap`/`Image`、`toBlob`/`convertToBlob` |
 | Web Worker | 无，缺失 `OffscreenCanvas` 时注入 `createCanvas` | Worker 没有 `document`，默认走 `OffscreenCanvas` |
-| Node.js | `createCanvas`、`imageDecoders`；导出时 `encodeImage`；读 `path`/`filePath` 字体时 `loadInput` | 推荐 `@napi-rs/canvas` 或 `canvas` |
+| Node.js | `createCanvas`、`imageDecoders`；导出时 `encodeImage`；文档/字体字节由 `fs` 读取 | 推荐 `@napi-rs/canvas` 或 `canvas` |
 | Electron / Tauri | 视进程而定 | 渲染进程按浏览器，主进程按 Node；通过 IPC/命令传 `ArrayBuffer` |
-| 微信小程序 | `createCanvas`、`imageDecoders`、`loadInput`；`source` 用 `custom` | 没有 `document`/全局 `OffscreenCanvas`/系统字体 |
+| 微信小程序 | `createCanvas`、`imageDecoders`；`source` 用宿主读取的 `arraybuffer` 或 `custom`；字体读成 `{ data }` | 没有 `document`/全局 `OffscreenCanvas`/系统字体 |
 
 ### Web Worker / OffscreenCanvas
 
@@ -167,12 +250,8 @@ const doc = await OFDDocument.open({
     return nodeCanvas.toBuffer('image/webp', quality);
   },
   imageDecoders,
-  supplementaryFonts: [{ path: '/path/to/font.ttf' }],
-  loadInput: async (input) => {
-    if ('data' in input) return input.data;
-    if ('url' in input) return new Uint8Array(await (await fetch(input.url)).arrayBuffer());
-    return new Uint8Array(await readFile('path' in input ? input.path : input.filePath));
-  },
+  // engine 不读字体 URL/路径：Node 宿主读取字节后传 data。
+  supplementaryFonts: [{ data: await readFile('/path/to/font.ttf') }],
   onWarning: (warning) => console.warn(warning.code, warning.message),
 });
 ```
@@ -195,7 +274,7 @@ const source = {
 };
 ```
 
-- `source.kind='node-file'` 只有类型，当前实现会抛 `OFD_RENDERER_UNSUPPORTED`；请用 `custom` 或 `arraybuffer`。
+- engine 不读本地文件：没有 `node-file` 这类来源；用 `arraybuffer` 或上面示例的 `custom ByteSource`。整包读入有内存上限，大文件优先随机读。
 - PNG/JPEG/WebP 在 Node 没有浏览器原生解码；不注入 `imageDecoders` 会得到 `W_IMAGE_DECODE` 并跳过该图。
 - GIF/JBIG2/TIFF 有内置纯 JS 解码器，会按需动态加载；宿主插件优先于内置。
 - `@napi-rs/canvas` 与 `canvas` 二选一；引擎不依赖任何原生 Canvas 包。
@@ -286,31 +365,20 @@ async function openOfd() {
   const filePath = `${wx.env.USER_DATA_PATH}/sample.ofd`;
 
   return OFDDocument.open({
-    source: await createFileByteSource(filePath),
+    source: { kind: 'custom', source: await createFileByteSource(filePath) },
     createCanvas: (width, height) =>
       wx.createOffscreenCanvas({ type: '2d', width, height }) as unknown as Canvas2DLike,
     imageDecoders: (['png', 'jpeg', 'webp'] as const).map(createImageDecoder),
+    // engine 只收字体字节：宿主用 FileSystemManager 读成 ArrayBuffer/Uint8Array。
     supplementaryFonts: [
-      { filePath: `${wx.env.USER_DATA_PATH}/fonts/fallback.ttf` },
-    ],
-    loadInput: async (input) => {
-      if ('data' in input) return input.data;
-      if ('url' in input) {
-        const { data } = await invoke<{ data: ArrayBuffer }>(
-          wx.request,
-          { url: input.url, responseType: 'arraybuffer' },
-          wx,
-        );
-        return new Uint8Array(data);
-      }
-      return new Uint8Array(
-        await invoke<ArrayBuffer>(
+      {
+        data: await invoke<ArrayBuffer>(
           fs.readFile,
-          { filePath: 'path' in input ? input.path : input.filePath },
+          { filePath: `${wx.env.USER_DATA_PATH}/fonts/fallback.ttf` },
           fs,
         ),
-      );
-    },
+      },
+    ],
     onWarning: (warning) => console.warn(warning.code, warning.message),
   });
 }
@@ -362,8 +430,8 @@ Page({
 
 - `wx.canvasToTempFilePath` 只接受 `<canvas type="2d">` 组件实例，不接受 `OffscreenCanvas`。示例因此直接把页面渲染到组件 canvas，再导出；不要在小程序里直接调用 `page.exportImage`，它需要把离屏结果再画到组件 canvas 才能编码。
 - `imageDecoders` 用 base64 Data URI 适合中小图；大图建议先 `fs.writeFile` 到临时文件，再设置 `image.src = tempFilePath`，避免 base64 膨胀。
-- 字体没有系统扫描：用 `data` 或 `filePath` + `loadInput` 显式提供；缺字体只会 warning，不会中断渲染。
-- `source.kind='wechat-file'` 只有类型，当前实现会抛 `OFD_RENDERER_UNSUPPORTED`；请用 `custom` `ByteSource`。
+- 字体没有系统扫描：用 `data` 显式提供（小程序用 `FileSystemManager.readFile` 读成字节），或实现 `FontProvider.match()` 按需读取；缺字体只会 warning，不会中断渲染。
+- engine 不读微信文件：没有 `wechat-file` 这类来源；用 `arraybuffer` 或 `custom` `ByteSource`。
 - 小程序不支持 `Path2D`、`DOMMatrix`、`ctx.filter`；引擎不依赖它们。`setLineDash`、`createRadialGradient`、`globalCompositeOperation` 需按基础库验证，不支持时降级并 warning。
 - 主包有 2 MB 限制：字体和大型解码器放分包/CDN；`wx.createOffscreenCanvas` 需要基础库 >= 2.7.0。
 - 小程序 API 依据：[OffscreenCanvas](https://developers.weixin.qq.com/miniprogram/dev/api/canvas/OffscreenCanvas.html)、[Image.src](https://developers.weixin.qq.com/miniprogram/dev/api/canvas/Image.html)、[wx.canvasToTempFilePath](https://developers.weixin.qq.com/miniprogram/dev/api/canvas/wx.canvasToTempFilePath.html)、[FileSystemManager.read](https://developers.weixin.qq.com/miniprogram/dev/api/file/FileSystemManager.read.html)。
@@ -472,7 +540,7 @@ const doc = await OFDDocument.open({
 });
 ```
 
-字体优先级：内嵌 FontFile → `fontProvider` → `defaultFonts` → `supplementaryFonts`；逐字形回退链为 provider 其余候选 → `defaultFonts` 其余 → `supplementaryFonts`。精确来源（内嵌/provider）命中时 `defaultFonts` 不参与主字体选择，但仍进入回退链。替代字体不可信任显式 GID（忽略 `CGTransform` 的 GID，走 cmap）。`data` 直接可用；`url` 默认走 fetch；`path`/`filePath` 需要 `loadInput`。CJK 字体由宿主提供，引擎不内置；缺字体/缺字只产生 warning，渲染继续。
+字体优先级：内嵌 FontFile → `fontProvider` → `defaultFonts` → `supplementaryFonts`；逐字形回退链为 provider 其余候选 → `defaultFonts` 其余 → `supplementaryFonts`。精确来源（内嵌/provider）命中时 `defaultFonts` 不参与主字体选择，但仍进入回退链。替代字体不可信任显式 GID（忽略 `CGTransform` 的 GID，走 cmap）。engine 只接受已读好的 `data`，不读字体 URL/路径；需要按需读取时实现 `FontProvider.match()`。CJK 字体由宿主提供，引擎不内置；缺字体/缺字只产生 warning，渲染继续。
 
 ## 错误与 warning
 
@@ -515,7 +583,7 @@ warning 不中断渲染，默认不打印；`onWarning` 按 `(code,pageIndex,obj
 - `page.render` 不会设置 canvas 宽高、不会清屏、不会填白底；透明区域保留 canvas 原内容。
 - canvas 宽高必须 >= viewport；用 `Math.ceil` 分配，不要用 `Math.floor`，也不要传入比 canvas 更大的取整 viewport。
 - `page.exportImage` 不经过自定义 `renderer`；自定义渲染器不能改变导出结果。
-- `node-file`/`wechat-file` 只有类型，不要直接使用；用 `custom` `ByteSource`。
+- engine 不联网、不读本地文件：没有 `url`/`node-file`/`wechat-file` 来源；先由宿主读成 `arraybuffer`/`blob`，或传 `custom ByteSource`。
 - Node 的 `imageDecoders` 只覆盖 PNG/JPEG/WebP 时，遇到 BMP 仍会失败；按实际图片格式补齐。
 - 不要在主线程同步等待渲染；`render` 返回任务，必须 `await task.promise`。
 - 同一页的 `getTextContent` 缓存不含 DPI，但包含 `includeChars`/`includeAnnotations`/`includeInvisible`/`layerOrder`/上限。

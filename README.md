@@ -50,6 +50,8 @@ await doc.close();
 
 [👉 *进入了解 ofdrw-viewer-engine*🔗](packages/ofdrw-viewer-engine/README.md)
 
+> **职责边界**：engine 不联网、不读取本地文件，只消费 `arraybuffer`/`blob`/`custom ByteSource` 与字体 `{ data }`。URL 文档由 `ofdrw-viewer-ui` 的 `HttpByteSource` 获取，CLI/小程序由宿主读取；鉴权、取消与进度也在宿主侧。
+
 
 
 ### 🔐 OFD密码工具库 | [*ofdrw-viewer-crypto*](packages/ofdrw-viewer-crypto/README.md)

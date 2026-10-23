@@ -1,6 +1,6 @@
 ---
 name: ofdrw-viewer-ui
-description: Embed the framework-agnostic OFD reader UI from @ofdrw/ofdrw-viewer-ui in web apps. Use this skill whenever a task involves a complete OFD reading interface, including continuous scrolling, zoom/rotation, thumbnails, outline/bookmarks, text selection and search, printing, PNG/JPEG/WebP export, encrypted-document credentials, signature overlays and verification panels, or the Web Component/React/Vue adapters. Covers installation, style import, container sizing, OFDViewer options/methods/events, feature gates, crypto configuration, framework wrappers, and known boundaries. Also use for OFD 阅读器、OFD 在线预览、Vue/React OFD 组件, or when embedding @ofdrw/ofdrw-viewer-ui.
+description: Embed the framework-agnostic OFD reader UI from @ofdrw/ofdrw-viewer-ui in web apps. Use this skill whenever a task involves a complete OFD reading interface, including continuous scrolling, zoom/rotation, thumbnails, outline/bookmarks, text selection and search, printing, PNG/JPEG/WebP export, encrypted-document credentials, signature overlays and verification panels, or the Web Component/React/Vue adapters. Covers installation, style import, container sizing, OFDViewer options/methods/events, feature gates, crypto configuration, framework wrappers, and known boundaries. Also covers URL loading in the UI layer: HttpByteSource, HTTP Range/CORS, request headers, cancellation, shared byte sources (engine does not fetch), and host-controlled font bytes. Use for OFD 阅读器、OFD 在线预览、Vue/React OFD 组件、URL 跨域/Range 排障, or when embedding @ofdrw/ofdrw-viewer-ui.
 ---
 
 # OFD 阅读器 UI（@ofdrw/ofdrw-viewer-ui）
@@ -107,12 +107,51 @@ viewer.destroy();
 
 | 形态 | 说明 |
 | --- | --- |
-| `File` / `Blob` | 本地文件或拖拽得到的文件 |
-| `ArrayBuffer` / `Uint8Array` | 已读入内存的字节 |
-| `string` | 公开 URL，按 URL 打开 |
-| `{ url, headers? }` | URL 加自定义请求头，适合鉴权资源 |
+| `File` / `Blob` | 本地文件或拖拽得到的文件；UI 以 `blob` 交给 engine |
+| `ArrayBuffer` / `Uint8Array` | 已读入内存的字节；UI 以 `arraybuffer` 交给 engine |
+| `string` | 公开 URL；**UI 内部创建 `HttpByteSource`** 按 Range 读取，engine 只收字节 |
+| `{ url, headers? }` | URL 加自定义请求头，适合鉴权资源；构造方式同上 |
 
-`requestInit` 只对 URL 来源生效，`headers` 会与来源对象的 `headers` 合并（来源优先）；`requestInit.credentials` 不使用，engine 固定同源凭据。
+`requestInit` 只对 URL 来源生效，且**只使用 `headers`**：先合并 `requestInit.headers`，再由来源对象的 `headers` 覆盖（来源优先）。`requestInit.credentials` 不转发，fetch 使用默认 `same-origin` 凭据策略。
+
+### 网络来源与字节源
+
+URL 不再交给 engine：UI 的 `normalizeViewerSourceDetailed()` 只规范化一次，把 URL 转成 `{ kind: 'custom', source: HttpByteSource }`，crypto 与 engine 共用同一实例，避免重复探测/下载。`HttpByteSource` 与 `HttpByteSourceOptions` 从公共入口导出，供宿主在 UI 之外复用同一套 HTTP Range 适配（例如直接交给 engine）：
+
+```ts
+import { HttpByteSource, type HttpByteSourceOptions } from '@ofdrw/ofdrw-viewer-ui';
+
+const options: HttpByteSourceOptions = {
+  headers: { Authorization: 'Bearer <token>' }, // 与 requestInit.headers 合并时来源优先
+  signal: abortController.signal,
+  allowFullDownload: true,
+  onProgress: (loaded, total) => console.log(loaded, total), // byte
+};
+const httpSource = new HttpByteSource('/api/doc.ofd', options);
+await httpSource.ready(); // 大小探测完成；失败时抛 OFDError
+const head = await httpSource.read(0, 4);
+
+// OFDViewer 的 source 仍传 URL/字节（不能直接传 ByteSource）；
+// 传 URL 时 UI 会按同样规则在内部创建 HttpByteSource。
+const viewer = new OFDViewer({ container: '#viewer', source: '/api/doc.ofd' });
+```
+
+| 能力 | 说明 |
+| --- | --- |
+| 构造 | `new HttpByteSource(url, options?)`；`size` 探测完成前为 0 |
+| 读取 | `ready()` 缓存探测结果；`read(offset, length)` 按需发 Range，越界截断 |
+| 关闭 | `close()` 幂等、中止在途请求；关闭后 `read()` 抛 `OFD_CLOSED` |
+| Range | 先 `HEAD` 探测大小，必要时 `Range: bytes=0-0`；读取按需发 Range，不缓存整包 |
+| 回退 | 服务器忽略 Range（200）、响应启用 `Content-Encoding` 或总长不一致时整包下载并缓存；`allowFullDownload=false` 时改为报错 |
+| CORS | 跨域需要服务端允许 `Range`，并暴露 `Content-Range`（`Access-Control-Expose-Headers: Content-Range`） |
+| 取消 | `signal` 与 `close()` 合并生效；`viewer.open()` 切换/关闭会取消旧打开并关闭对应字节源 |
+| 进度 | `onProgress` 仅在整包回退/整包来源时可用；UI 公共 API 不额外暴露字节级进度，加载态以 `documentopen`/`document:open:*` 事件为准 |
+| 共享 | 明文路径 engine 拥有 `custom` 源并在 `doc.close()` 关闭；加密路径由 UI 持有并关闭，crypto 只借用（不转发 close） |
+| 鉴权 | 用来源 `headers` 或 `requestInit.headers`；token 刷新/重试由宿主负责 |
+
+- `HttpByteSource` 只负责 URL → `ByteSource`；ZIP 解析、解密、渲染仍在 engine/crypto。
+- URL 打开失败（HTTP 非 2xx、Range 不符、CORS）属于 UI/网络层错误，不再由 engine 报“网络读取失败”。
+- **字体**：engine 不再读取字体 URL/路径。UI 当前不提供字体配置；宿主若需要补充字体，把字体读成 `{ data }` 传给 engine，或实现 `FontProvider` 后由宿主直接使用 engine（不在 UI 选项内）。
 
 ## 框架适配
 
@@ -227,7 +266,7 @@ Vue 组件使用 `defineComponent` + `shallowRef`/`markRaw`，实例不会进入
 | `thumbnailCacheSize` | `number` | `100` | 缩略图缓存数量 |
 | `renderConcurrency` | `number` | 桌面 2 / 移动 1 | 同时渲染的页数 |
 | `updateHash` | `boolean` | `false` | 把页码/缩放/旋转/侧栏写入 URL hash，并响应 `hashchange`/`popstate` |
-| `requestInit` | `RequestInit` | 无 | URL 来源的额外请求参数；`headers` 与来源合并（来源优先），`credentials` 不使用 |
+| `requestInit` | `RequestInit` | 无 | URL 来源的额外请求参数；**只使用 `headers`**，与来源合并（来源优先），`credentials` 不转发 |
 | `onWarning` | `(warning: ViewerWarning) => void` | 无 | 非阻断诊断；包含 `code`、`message`、`pageIndex`（0-based） |
 | `onError` | `(error: ViewerErrorInfo) => void` | 无 | 打开/渲染失败；在 warning 字段之外包含 `cause` |
 | `crypto` | `CryptoViewerOptions` | 默认启用 | 加密文档与验签配置，见“加密文档与签名验证” |
@@ -475,7 +514,9 @@ await viewer.ready;
 - 时间戳只解析、不验证 TSA 签名/ESSCertID/策略链；不参与整体 `overall`。
 - `crypto.enabled=false` 时只保证明文文档阅读；加密文档以 `OFD_CRYPTO_UNSUPPORTED` 拒绝，不提供降级渲染。
 - 打印调用浏览器打印对话框，不生成 PDF；图片导出不合并为 PDF。
-- 不提供局部/瓦片渲染；不修改 `@ofdrw/ofdrw-viewer-engine`。
+- 不提供局部/瓦片渲染。
+- **网络获取在 UI 层**：URL 由 UI 的 `HttpByteSource` 读取（Range + 整包回退），engine 只消费字节；跨域需要 CORS 与 `Content-Range` 暴露头。取消/关闭由 UI 管理，鉴权头由宿主提供。
+- **字体在宿主机**：engine 不再读取字体 URL/路径；UI 无字体配置项，需要补充字体时由宿主直接使用 engine（`{ data }` 或 `FontProvider`）。
 - 缩放入口：工具栏/API/下拉，以及 Ctrl/Command+滚轮与触控板双指缩放（以指针为锚点）、触摸屏双指捏合（以两指中点为锚点）、双击在适合宽度与 100% 间切换；`zoom` 功能关闭时手势不拦截默认行为。
 - 性能目标（设计 §12.6）为 **P1/延期，非 MVP 门禁**：1000 页、约 0.8MB 派生夹具多轮实测打开约 4.7–7.4s、全篇查找约 20.3–30.0s，未达到 2s/5s 目标；按用户决定暂不优化性能、先补手势。50–200MB 夹具与目标信创机型复测尚未提供，不宣称达标。`test/e2e/performance.spec.ts` 只记录指标并在未达标时显式标注，不使用注水阈值。
 

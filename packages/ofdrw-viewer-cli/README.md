@@ -69,6 +69,8 @@ ofdrw-viewer-cli input.ofd -o out --pages 1-3 --format jpeg --dpi 300 --text
 
 可以用 `-o` 指定目录，用 `--pages`、`--format`、`--dpi` 控制页码、格式与清晰度；加 `--text` 会额外导出带像素坐标的页面文字 JSON。
 
+输入 OFD 与字体都由 CLI 自己读取：本地文件用 `fs` 随机读，字体目录/系统字体扫描后由 CLI 预读字节并以 `{ data }` 注入 engine（engine 不联网、不再提供 `loadInput`）。CLI 不访问网络、不自动下载字体或二进制。
+
 更多参数可以运行 `ofdrw-viewer-cli --help`，请查看 [SKILL.md 命令与参数](skills/SKILL.md#命令)。
 
 遇到加密文档，或需要查询文档信息、验证签名与完整性时，请参考 [SKILL.md](skills/SKILL.md) 中的对应说明。

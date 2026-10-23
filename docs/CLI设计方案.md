@@ -65,7 +65,7 @@ OFD 文件
 
 ## 3. 与 engine 的边界
 
-CLI 只能从 `@ofdrw/ofdrw-viewer-engine` 与 `@ofdrw/ofdrw-viewer-crypto` 包根导入类型与 API，禁止跨包相对路径引用内部模块。
+CLI 只能从 `@ofdrw/ofdrw-viewer-engine` 与 `@ofdrw/ofdrw-viewer-crypto` 包根导入类型与 API，禁止跨包相对路径引用内部模块。engine 不联网、不读取本地文件：OFD 由 CLI 用 `fs` 随机读后以 `custom` 传入，字体由 CLI 预读为 `{ data }`；网络/文件策略全部留在 CLI。
 
 | CLI 需要的能力 | 来源 |
 | --- | --- |
@@ -73,7 +73,7 @@ CLI 只能从 `@ofdrw/ofdrw-viewer-engine` 与 `@ofdrw/ofdrw-viewer-crypto` 包�
 | 默认 Canvas2D 渲染器 | `H5Canvas2DRenderer` |
 | Viewport 计算 | `page.getViewport({ dpi })` |
 | 空间文本 | `page.getTextContent({ dpi, includeChars: false })`，只取 `item.text/rect` |
-| 字体补充 | `OFDOpenOptions.supplementaryFonts` |
+| 字体补充 | `OFDOpenOptions.supplementaryFonts`（CLI 读取字节，传 `{ data }`） |
 | 图片解码插件 | `OFDOpenOptions.imageDecoders` |
 | warning/error | `onWarning`、`OFDError` |
 | 包/加密/签名摘要 | `inspect(source)`，只读，不解密不验签 |
@@ -393,7 +393,7 @@ try {
     createCanvas: createCanvasLike,
     encodeImage: encodeCanvasImage,
     imageDecoders: [...nodeImageDecoders],
-    supplementaryFonts: fontFiles.map((font) => ({ path: font.path })),
+    supplementaryFonts: await loadFontInputs(fontFiles, logger),
     onWarning: printWarning,
   });
   // ...逐页导出...
@@ -483,7 +483,7 @@ export function loadCanvas(): typeof import('@napi-rs/canvas') {
 - `--font-dir` 指定一个目录；
 - 递归扫描 `.ttf` / `.otf` / `.ttc` / `.otc`，大小写不敏感；
 - 文件按路径字典序排列，去重（`realpath`）；
-- 以 `{ path }[]` 传给 `supplementaryFonts`，由 engine 匹配；
+- **CLI 读取字体字节**：`loadFontInputs()` 用 `readFile` 预读每个文件，以 `{ data }[]` 传给 `supplementaryFonts`；engine 只收已读好的 `FontInput.data`，不再提供 `loadInput`、也不读取字体 URL/路径。单文件读取失败发 `W_FONT_MISSING` 并跳过；
 - **默认自动扫描白名单系统字体**（Linux/macOS/Windows 各自目录；CJK 优先，最多注入 6 个、总字节预算 96 MiB，不跟随目录符号链接、文件符号链接不得逃逸白名单），发现结果排在 `--font-dir` 之后并按 `realpath` 去重；`--no-system-fonts` 关闭自动发现、仅用 `--font-dir`（恢复旧版行为）；
 - 缺字体由 engine 产生 `W_FONT_MISSING`；文本仍保留，图片可能少字形。
 

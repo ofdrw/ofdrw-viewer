@@ -11,6 +11,8 @@
 
 **ofdrw-viewer-engine** 是符合 GB/T 33190-2016 的跨平台 OFD 渲染引擎：文字、图形、图像、注解等图元，支持底纹填充、字体字形解析与仿射变换；一套稳定 API 同时覆盖浏览器、Node.js、Electron 与微信小程序，多端渲染结果语义一致。
 
+> **engine 不联网、不读本地文件。** OFD 字节与字体字节由宿主（浏览器 `fetch`、Node `fs`、小程序 `wx`、UI/CLI）读取后传入：文档来源为 `arraybuffer`/`blob`/`custom ByteSource`，字体只收 `{ data }` 或用 `FontProvider` 按需提供。迁移说明见 [CHANGELOG.md](./CHANGELOG.md) 与 [SKILL.md](skills/SKILL.md#来源与字体由宿主提供engine-不联网)。
+
 ![OFD 渲染效果](../../docs/img/ofd-render-showcase.gif)
 
 ## 📦 安装
@@ -36,12 +38,13 @@ npm install @ofdrw/ofdrw-viewer-engine
 
 ## 🚀 快速开始 Quick Start
 
-在浏览器中准备 OFD 文件与 `<canvas>`，即可渲染第一页：
+在浏览器中准备 OFD 文件与 `<canvas>`，即可渲染第一页。文件/URL 由宿主读取，engine 只消费字节：
 
 ```ts
 import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
 
-// file 来自 <input type="file"> 或拖拽；canvas 是页面画布
+// file 来自 <input type="file"> 或拖拽；canvas 是页面画布。
+// URL 场景：先 await (await fetch(url)).arrayBuffer()，再传 { kind: 'arraybuffer', data }。
 const doc = await OFDDocument.open({ source: { kind: 'blob', blob: file } });
 const page = await doc.getPage(0);
 const viewport = page.getViewport(); // 默认 96 DPI，可传 { dpi: 144 }
@@ -77,7 +80,11 @@ await doc.close();
 **页面中有文字丢失空白？**
 
 
-由于**引擎不内置任何字体**，字体由宿主提供，若您文档中的字体无法找到，将尝试您提供的默认字体，若都无法找到则会跳过这文字的绘制，详见 [SKILL.md 缺省字体与补充字体](skills/SKILL.md#缺省字体与补充字体) 与 [字体缺省方案设计](../../docs/渲染字体缺省方案设计.md)。
+由于**引擎不内置任何字体**，字体由宿主提供：一次性提供用 `defaultFonts`/`supplementaryFonts: [{ data }]`，按需读取实现 `FontProvider.match()`。若您文档中的字体无法找到，将尝试您提供的默认字体，若都无法找到则会跳过这文字的绘制，详见 [SKILL.md 缺省字体与补充字体](skills/SKILL.md#缺省字体与补充字体) 与 [字体缺省方案设计](../../docs/渲染字体缺省方案设计.md)。
+
+**为什么不能直接传 URL 或本地路径？**
+
+engine 不再执行网络/文件读取（`OFDSource.url`、`FontInput.url/path/filePath`、`loadInput` 已移除）。浏览器先 `fetch` 成 `ArrayBuffer`，Node 用 `fs` 读取，小程序用 `wx` 读取；大文件可实现 `custom ByteSource`。完整“旧 → 新”迁移见 [CHANGELOG.md](./CHANGELOG.md)。
 
 
 
@@ -91,7 +98,7 @@ await doc.close();
 
 智能体加载 SKILL 后，可以按既定流程完成 OFD 页面渲染、导出图片、读取文字坐标与元数据，并按运行环境完成 Canvas、图片解码与字体来源注入。
 
-入口：[SKILL.md](skills/SKILL.md) · [API.md](skills/API.md)
+入口：[SKILL.md](skills/SKILL.md) · [API.md](skills/API.md) · [CHANGELOG.md](./CHANGELOG.md)
 
 ## 📄 许可证
 

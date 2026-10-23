@@ -165,8 +165,9 @@ UIState:
 ### 3.4 数据流
 
 ```text
-open(source)
-  → crypto.inspect(source)
+open(source)  // 取消上一次打开
+  → normalizeViewerSourceDetailed(source)：URL → HttpByteSource → { kind: 'custom' }，保留 origin；字节/Blob 原样
+  → crypto.prepareOpen(OFDSource)   // 内部映射为 CryptoSource；URL 共用同一个 HttpByteSource
       ├─ 明文 → engine.open({ source })
       └─ 加密 → 凭据 → crypto.openDecryptingContainer() → engine.open({ container })
   → autoVerify ? crypto.verifyOfd() → VerificationReport → UI 面板/浮层
@@ -188,7 +189,7 @@ open(source)
 | 选项 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `container` | `HTMLElement \| string` | 必填 | 挂载点；字符串按 CSS 选择器解析 |
-| `source` | `ArrayBuffer \| Uint8Array \| Blob \| string \| { url, headers? }` | 必填 | 本地文件、Blob、公开 URL；URL 支持可选 headers（企业系统预留） |
+| `source` | `ArrayBuffer \| Uint8Array \| Blob \| string \| { url, headers? }` | 必填 | 本地文件、Blob、公开 URL；URL 支持可选 headers（企业系统预留）。URL 由 UI 的 `HttpByteSource` 读取，engine 只收字节 |
 | `initialPage` | `number` | `1` | 1-based |
 | `initialScale` | `number \| 'auto' \| 'page-actual' \| 'page-fit' \| 'page-width'` | `'auto'` | 数字为缩放倍数 |
 | `rotation` | `0 \| 90 \| 180 \| 270` | `0` | 初始旋转 |
@@ -504,14 +505,17 @@ new OFDViewer({
 
 ### 6.1 打开流程
 
-1. 规范化 `source`：ArrayBuffer/Uint8Array/Blob/URL 转为引擎 `OFDSource`。
-2. `OFDDocument.open`；`document:open:start` 后 150 ms 仍未完成才显示全屏 loading；支持取消/关闭。
-3. 取 `pageCount`；调用 `getPageInfos()` 拿全部页尺寸（P0 新 API）。
-4. `PageLayout` 建立 1000 个页壳（仅 DOM 壳，不含 canvas），计算总高度。
-5. 初始页（默认第 1 页，或 hash/选项）；计算可见页。
-6. 页壳布局完成（UI `documentopen`）后隐藏全屏 loading，页面骨架接管；再渲染可见页。`pagesloaded` 不作为 loading 结束条件。
-7. 异步加载缩略图/大纲/书签摘要；签章摘要按需。
-8. 若 `getPageInfos` 不可用：先 `getPage(0..N)` 取前若干页，剩余按 A4 估算并后台补齐；**这会滚动跳动，仅作为降级，不作为 1000 页正式方案**。
+1. `viewer.open()` 取消上一次打开（abort 在途请求），并**只规范化一次** `source`：URL → `HttpByteSource` → `{ kind: 'custom' }`，同时保留 origin 供标题/导出命名；ArrayBuffer/Uint8Array/Blob 原样转成 engine 来源。
+2. `crypto.prepareOpen(OFDSource, signal)`：明文直接进入下一步；加密则 inspect/解密得到容器。crypto 与 engine 共用同一个 URL 字节源，不重复下载。
+3. `OFDDocument.open({ source | container, signal })`；`document:open:start` 后 150 ms 仍未完成才显示全屏 loading；取消/切换文档/`close()` 都会中止打开。
+4. 取 `pageCount`；调用 `getPageInfos()` 拿全部页尺寸（P0 新 API）。
+5. `PageLayout` 建立 1000 个页壳（仅 DOM 壳，不含 canvas），计算总高度。
+6. 初始页（默认第 1 页，或 hash/选项）；计算可见页。
+7. 页壳布局完成（UI `documentopen`）后隐藏全屏 loading，页面骨架接管；再渲染可见页。`pagesloaded` 不作为 loading 结束条件。
+8. 异步加载缩略图/大纲/书签摘要；签章摘要按需。
+9. 若 `getPageInfos` 不可用：先 `getPage(0..N)` 取前若干页，剩余按 A4 估算并后台补齐；**这会滚动跳动，仅作为降级，不作为 1000 页正式方案**。
+
+字节源生命周期：明文路径的 `HttpByteSource` 随 engine 容器关闭；加密路径由 UI 的 `activeHttpSource` 持有，在切换/失败/关闭时调用幂等 `close()`。`HttpByteSource`/`HttpByteSourceOptions` 从 UI 公共入口导出。
 
 ### 6.2 页面布局
 
@@ -937,8 +941,9 @@ empty → queued → preparing → rendering → rendered → evicted
 
 ```text
 viewer.open(source)
-  → crypto.inspect(source)
-      ├─ 明文 → OFDDocument.open({ source, ... })
+  → 取消旧打开；单次 normalize：URL → HttpByteSource → { kind: 'custom' }
+  → crypto.prepareOpen(OFDSource)（URL 映射为 CryptoSource.byte-source，共用同一字节源）
+      ├─ 明文 → OFDDocument.open({ source, signal, ... })
       └─ 加密且 crypto.enabled=true
            ├─ crypto.credentials 预置 → openDecryptingContainer
            ├─ autoPrompt=false 且无预置 → OFD_CRYPTO_CREDENTIAL_REQUIRED
@@ -1353,10 +1358,12 @@ packages/ofdrw-viewer-ui/
 
 ### 15.3 CORS 与 URL
 
-- URL 来源需要服务端允许 CORS；引擎默认用 Range 请求，服务端需支持 `Range`/`Content-Range`；不支持时回退全量下载（引擎已有策略）。
+- URL 来源需要服务端允许 CORS；**UI 的 `HttpByteSource`** 默认用 Range 请求，服务端需支持 `Range`/`Content-Range`（并暴露 `Content-Range` 响应头）；不支持时回退全量下载。engine 不参与网络获取。
+- 鉴权头通过来源 `{ url, headers }` 或 `requestInit.headers` 提供，来源 `headers` 优先；`requestInit.credentials` 不转发。token 刷新/重试由宿主负责。
 - 公开 URL 不需要认证；企业系统可传 `headers`（预留），但 MVP 不实现登录/刷新 token。
 - 本地文件用 `<input type=file>`/拖拽；拖拽需 `preventDefault` 并校验扩展名/MIME。
 - 不在 URL 中放敏感 token；如必须，使用宿主提供的 `headers`。
+- 取消：切换文档/`close()`/显式中止会关闭 `HttpByteSource` 并 abort 在途请求；进度由 `HttpByteSource.onProgress` 在整包读取时提供，UI 不额外暴露字节级进度。
 
 ### 15.4 CSP
 

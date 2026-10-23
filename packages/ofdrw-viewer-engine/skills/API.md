@@ -1,9 +1,9 @@
 # @ofdrw/ofdrw-viewer-engine 公开 API
 
 > 使用说明与示例：`SKILL.md`（同目录）
-> 版本：v1.2（契约 r12）
+> 版本：v1.2（契约 r12）；另含 Unreleased（未发布）的“网络获取委托”变更
 > 更新：2026-10-23
-> 状态：v1 稳定接口；P0/P1/P2、r11 字体加载器与 r12 页面级事件系统已收录；`page.renderRegion` 暂不实现/不导出
+> 状态：v1 稳定接口；P0/P1/P2、r12 页面级事件系统已收录；`page.renderRegion` 暂不实现/不导出。Unreleased 变更移除 engine 的 URL/文件读取（`OFDSource.url`、`FontInput.url/path/filePath`、`FontInputLoader`），见 §3.2、§8.1、§14；包版本仍为 `0.1.0`
 > 适用包：`@ofdrw/ofdrw-viewer-engine`（npm 作用域 `@ofdrw`）
 > 公共入口：`packages/ofdrw-viewer-engine/src/index.ts`
 > 设计依据：`docs/OFD渲染引擎设计方案.md` §15
@@ -58,6 +58,8 @@ try {
 }
 ```
 
+> **engine 不联网、不读本地文件。**`source` 只接受已经可读的字节（`arraybuffer`/`blob`）或宿主实现的 `custom ByteSource`；URL、`File`、本地路径由宿主先读取成字节。迁移示例见 §3.2，平台读法见 [SKILL.md](./SKILL.md#来源与字体由宿主提供engine-不联网)。
+
 ### 1.2 导出图片（Web）
 
 ```ts
@@ -71,12 +73,16 @@ const transparent = await page.exportImage({ format: 'png', background: null });
 ### 1.3 Node / 自定义 Canvas
 
 ```ts
+import { readFile } from 'node:fs/promises';
 import { createCanvas } from '@napi-rs/canvas'; // 宿主依赖，engine 不内置
 import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
 
 const doc = await OFDDocument.open({
-  source: { kind: 'node-file', path: 'sample.ofd' }, // 本版本仅保留类型；见 §3.1
+  // engine 不读文件：Node 宿主自己 readFile（或实现 custom ByteSource，见 §3.2）
+  source: { kind: 'arraybuffer', data: await readFile('sample.ofd') },
   createCanvas: (w, h) => createCanvas(w, h),
+  // 字体同理：宿主读成字节，engine 只收 { data }
+  supplementaryFonts: [{ data: await readFile('/path/to/font.ttf') }],
   encodeImage: async (canvas, format, quality) => {
     // 宿主自行编码；返回非空 Uint8Array
     return canvas.toBuffer(format === 'jpeg' ? 'image/jpeg' : 'image/png');
@@ -84,7 +90,7 @@ const doc = await OFDDocument.open({
 });
 ```
 
-Node/小程序没有浏览器 `document`/`OffscreenCanvas` 时必须注入 `createCanvas`；使用 `page.exportImage` 时还必须注入 `encodeImage`。
+Node/小程序没有浏览器 `document`/`OffscreenCanvas` 时必须注入 `createCanvas`；使用 `page.exportImage` 时还必须注入 `encodeImage`。大文件不要整包读入内存，改为实现 `custom ByteSource`；字体需要按需读取时实现 `FontProvider` 并在 `match()` 内读文件（见 §8.1）。
 
 ---
 
@@ -145,10 +151,9 @@ Node/小程序没有浏览器 `document`/`OffscreenCanvas` 时必须注入 `crea
 | `documentIndex` | `number` | `0` | 多文档包时的文档索引；按带 `DocRoot` 的 `DocBody` 顺序计数；必须为非负整数，越界抛 `OFD_INVALID_PACKAGE` |
 | `limits` | `Partial<ResourceLimits>` | `DEFAULT_RESOURCE_LIMITS` | 资源限制覆盖；浅合并；单位见 §11 |
 | `cache` | `Partial<CacheOptions>` | `DEFAULT_CACHE_OPTIONS` | 缓存预算覆盖；浅合并；单位见 §11 |
-| `defaultFonts` | `readonly FontInput[]` | 无 | 用户默认字体：文档字体缺省时的替代来源，优先级高于 `supplementaryFonts`；仅作替代，显式 GID 不可信（走 cmap）；不传时不加载；`path`/`filePath` 需配合 `loadInput` |
-| `supplementaryFonts` | `FontInput[]` | 无 | 宿主补充字体；引擎不内置 CJK 字体；按需用于缺字/缺字体回退；`path`/`filePath` 需配合 `loadInput` |
-| `loadInput` | `FontInputLoader` | 无 | 字体来源字节加载器；不传时 Web 默认 `url` fetch、`data` 直读，`path`/`filePath` 不支持；Node CLI 注入 `node:fs` |
-| `fontProvider` | `FontProvider` | 无 | 宿主按需提供字体；优先于 `defaultFonts`/`supplementaryFonts` 的匹配流程见 §8.1 |
+| `defaultFonts` | `readonly FontInput[]` | 无 | 用户默认字体：文档字体缺省时的替代来源，优先级高于 `supplementaryFonts`；仅作替代，显式 GID 不可信（走 cmap）；不传时不加载；只接受已读好的 `{ data }` |
+| `supplementaryFonts` | `FontInput[]` | 无 | 宿主补充字体；引擎不内置 CJK 字体；按需用于缺字/缺字体回退；只接受已读好的 `{ data }` |
+| `fontProvider` | `FontProvider` | 无 | 字体按需读取的唯一入口；可在 `match()` 内读本地文件或网络，返回 `{ data }`；匹配流程见 §8.1 |
 | `imageDecoders` | `ImageDecoderPlugin[]` | 无 | JBIG2/TIFF 等插件；PNG/JPEG/GIF 内置路径优先 |
 | `onWarning` | `(warning: OFDWarning) => void` | 无（不打印） | 非致命 warning 回调；同一 `(code,pageIndex,objectId)` 去重；回调抛错不影响渲染 |
 | `strictImageCtm` | `boolean` | `true` | 图片缺 CTM 时：`true` 按 identity 1×1；`false` 铺满 Boundary |
@@ -192,16 +197,45 @@ function openZipVirtualContainer(
 
 ### 3.2 `OFDSource`
 
+```ts
+export type OFDSource =
+  | { kind: 'arraybuffer'; data: ArrayBuffer | Uint8Array }
+  | { kind: 'blob'; blob: Blob }
+  | { kind: 'custom'; source: ByteSource };
+```
+
 | `kind` | 字段 | 说明 |
 | --- | --- | --- |
 | `arraybuffer` | `data: ArrayBuffer \| Uint8Array` | 内存字节；Web/Node 均可用 |
 | `blob` | `blob: Blob` | 浏览器 `Blob`/`File`；Node 需宿主提供 Blob 兼容实现 |
-| `url` | `url: string; headers?: Record<string,string>` | HTTP(S) Range 读取；依赖 `fetch`；`headers` 透传；需服务端支持 Range，否则可能全量读取 |
-| `node-file` | `path: string` | 类型保留；本版本未提供 Node 文件适配，Node 宿主请用 `custom` 或 `arraybuffer` |
-| `wechat-file` | `filePath: string` | 类型保留；本版本未提供微信适配 |
-| `custom` | `source: ByteSource` | 宿主实现随机读取；最通用的平台入口，见 §8.4 |
+| `custom` | `source: ByteSource` | 宿主实现随机读取，**推荐的外部来源路径**；`ready()`/`read()`/`close()` 见 §8.3 |
 
-约束：`source` 缺失/为空抛 `OFD_INVALID_PACKAGE`；URL 请求失败、非 2xx、Range 不满足按 `OFD_INVALID_PACKAGE`/`OFD_ENTRY_NOT_FOUND` 处理。
+约束与迁移：
+
+- engine **不发起网络请求、不读取本地文件**；`source` 缺失/为空抛 `OFD_INVALID_PACKAGE`。
+- URL、`node-file`、`wechat-file` 三个旧变体已删除：TypeScript 用户会收到类型错误；JavaScript/旧版本调用方在运行时收到带迁移提示的 `OFDError`（`url` → `OFD_INVALID_PACKAGE`；文件/微信 → `OFD_RENDERER_UNSUPPORTED`）。
+- 旧 → 新：
+  - `{ kind: 'url', url }` → 宿主 `fetch` 后 `{ kind: 'arraybuffer', data }`，或实现 `custom ByteSource`（可带 Range/鉴权/取消）；
+  - `{ kind: 'node-file', path }` → Node 宿主 `readFile` 后 `{ kind: 'arraybuffer', data }`，或 `fs.open` 随机读的 `custom ByteSource`；
+  - `{ kind: 'wechat-file', filePath }` → `wx.getFileSystemManager()` 读取后传 `{ kind: 'arraybuffer', data }` 或 `custom`。
+
+```ts
+// 旧
+const doc = await OFDDocument.open({ source: { kind: 'url', url } });
+
+// 新（浏览器：fetch 成字节）
+const response = await fetch(url);
+if (!response.ok) throw new Error(`HTTP ${response.status}`);
+const data = await response.arrayBuffer();
+const doc = await OFDDocument.open({ source: { kind: 'arraybuffer', data } });
+
+// 新（大文件/需要 Range、鉴权、取消：宿主实现 ByteSource）
+const doc2 = await OFDDocument.open({
+  source: { kind: 'custom', source: myHttpByteSource },
+});
+```
+
+> `document:open:start` 的 `sourceKind` 随之收窄为 `'arraybuffer' | 'blob' | 'custom'`；URL 文档从 `url` 变为 `custom`，依赖该字段的宿主需同步调整。
 
 ### 3.3 `document.pageCount: number`
 
@@ -772,16 +806,12 @@ new H5Canvas2DRenderer(options?: H5Canvas2DRendererOptions)
 ### 8.1 字体
 
 ```ts
-type FontInput =
-  | { data: ArrayBuffer | Uint8Array; family?: string }
-  | { url: string; family?: string }
-  | { path: string; family?: string }
-  | { filePath: string; family?: string };
-
-/** 从宿主字体来源读取字节；url/path/filePath 由宿主平台实现。 */
-type FontInputLoader = (
-  input: FontInput,
-) => Uint8Array | ArrayBuffer | null | Promise<Uint8Array | ArrayBuffer | null>;
+interface FontInput {
+  /** 字体文件字节。 */
+  readonly data: ArrayBuffer | Uint8Array;
+  /** 字体族名；用于诊断与别名匹配。 */
+  readonly family?: string;
+}
 
 interface FontMatchRequest {
   fontName: string;
@@ -794,23 +824,47 @@ interface FontMatchRequest {
 }
 
 interface FontProvider {
+  /** 返回一个/多个字体字节，或 null；返回多个时按顺序回退。 */
   match(request: FontMatchRequest): Promise<FontInput | FontInput[] | null>;
 }
 ```
 
 约束：
 
-- engine 不内置 CJK 字体；缺字/缺字体只 warning，不中断。
+- engine **不内置 CJK 字体、不读取字体 URL/路径、不下载字体**；缺字/缺字体只 warning，不中断。
+- 字体来源只接受已读好的字节：`defaultFonts`/`supplementaryFonts` 传 `{ data, family? }`；`FontProvider.match()` 返回 `{ data }`。
 - 主字体优先级：内嵌 `FontFile` → `fontProvider` → `defaultFonts` → `supplementaryFonts`；逐字形回退链为 provider 其余候选 → defaultFonts 其余 → supplementaryFonts。精确来源命中时 `defaultFonts` 不参与主字体选择，但仍进入回退链。
 - `defaultFonts` 是替代来源，显式 GID 一律不可信（忽略 `CGTransform` 的 GID，走 cmap）；不传时不读取、不产生额外开销。
-- `fontProvider` 返回多个候选时按顺序尝试；`null` 表示无匹配。
+- `fontProvider` 返回多个候选时按顺序尝试；`null` 表示无匹配。`match()` 是字体按需读取的**唯一入口**，宿主可以在这里 `fetch`、`fs.readFile`、查缓存或查 `wx` 临时文件。
 - `FontInput.family` 用于诊断/别名匹配；真实字体名以字体文件为准。
 - 字体解析失败抛 `OFD_FONT_PARSE` 的场景限于引擎必须加载的字体；可降级时只 warning。
-- **`OFDOpenOptions.loadInput` 可选（r11 兼容增量）**：不传时保持 Web 默认行为——`data` 直接使用，`url` 走 `fetch`，`path`/`filePath` 不支持并产生字体 warning；传了则所有非 `data` 来源都交给 loader。
-- loader 返回 `null` 表示该来源不可用；抛错/读取失败由字体层降级并上报 `W_FONT_MISSING`，不中断文档打开。
-- Node CLI 注入基于 `node:fs` 的 loader（`path`/`filePath` 用 `readFile`，`url` 仍用 fetch）；`--font-dir` 扫描到的字体以 `path` 来源传入，真正读取字节并解析实际 family。
-- `--font-dir` 递归扫描 `.ttf/.otf/.ttc/.otc`（大小写不敏感）；TTC/OTC 展开全部字体面，按 fontkit 实测 family 参与匹配；默认自动扫描白名单系统字体（CJK 优先，最多 6 个 / 96 MiB，不跟随目录符号链接），`--no-system-fonts` 可关闭；`--font-dir` 作为追加来源；不下载字体。
-- 浏览器/读者宿主如需本地字体，仍推荐 `data`（`ArrayBuffer`/`Uint8Array`）或 `url`；不要让 engine 直接依赖 Node API。
+- 旧 `FontInput` 的 `url`/`path`/`filePath` 与 `OFDOpenOptions.loadInput`/`FontInputLoader` 已删除。运行期仍收到旧变体时，字体层上报 `W_FONT_MISSING` 并跳过，文案带迁移提示。
+- 旧 → 新：
+  - `supplementaryFonts: [{ url: '/fonts/a.ttf' }]` → 宿主 `fetch` 后 `supplementaryFonts: [{ data }]`；
+  - `supplementaryFonts: [{ path: '/fonts/a.ttf' }]` + `loadInput` → 宿主 `readFile` 后 `supplementaryFonts: [{ data }]`；
+  - 需要按需读取（大字体集、系统字体扫描）→ 实现 `FontProvider`。
+
+```ts
+// 旧
+supplementaryFonts: [{ url: '/fonts/a.ttf' }]
+loadInput: async (input) => { /* ... */ }
+
+// 新（宿主读成字节）
+const data = await (await fetch('/fonts/a.ttf')).arrayBuffer();
+supplementaryFonts: [{ data }]
+
+// 新（按需读取：Node 示例）
+const provider: FontProvider = {
+  async match(request) {
+    const path = findFontPath(request);
+    if (!path) return null;
+    return { data: await readFile(path) }; // Uint8Array 可直接使用
+  },
+};
+```
+
+- CLI 现在由 CLI 自己读取字体文件字节，并以 `supplementaryFonts: [{ data }]` 注入；不再需要 engine 的 `loadInput`。`--font-dir` 递归扫描 `.ttf/.otf/.ttc/.otc`（大小写不敏感），TTC/OTC 展开全部字体面参与匹配；默认自动扫描白名单系统字体（CJK 优先，最多 6 个 / 96 MiB，不跟随目录符号链接），`--no-system-fonts` 可关闭；`--font-dir` 作为追加来源；不下载字体。
+- 浏览器/读者宿主如需本地字体，推荐 `data`（`ArrayBuffer`/`Uint8Array`）或 `FontProvider`；不要让 engine 直接依赖 Node API。
 
 ### 8.2 图片解码插件
 
@@ -833,12 +887,18 @@ interface ImageDecoder {
 
 ```ts
 interface ByteSource {
-  readonly size: number; // byte
-  read(offset: number, length: number): Promise<Uint8Array>; // byte
+  /** 总字节数，单位 byte；异步探测完成前允许为 0。 */
+  readonly size: number;
+  /** 读取 [offset, offset + length)；越界截断。 */
+  read(offset: number, length: number): Promise<Uint8Array>;
+  /** 可选：异步探测完成；ZipReader.open 会先等待。 */
+  ready?(): Promise<void>;
+  /** 可选：释放资源；容器关闭时调用，实现应幂等。 */
+  close?(): Promise<void> | void;
 }
 ```
 
-实现随机读取；越界可截断或抛错。用于 `OFDSource.kind='custom'`、HTTP Range/Node 文件/微信文件适配。
+实现随机读取；越界可截断或抛错。用于 `OFDSource.kind='custom'`，由**宿主**适配 HTTP Range、Node 文件、微信临时文件等来源（engine 不内置这些适配器）。约定见 §3.2 与 §12：`size` 为 0 时 engine 报 `OFD_INVALID_PACKAGE`，探测失败应由 `ready()` 抛真实错误；`close()` 在容器关闭时调用，必须幂等。
 
 ### 8.4 画布与编码钩子
 
@@ -861,7 +921,7 @@ function toOFDError(error: unknown, code: OFDErrorCode, message: string): OFDErr
 
 | `code` | 触发场景 |
 | --- | --- |
-| `OFD_INVALID_PACKAGE` | 非 OFD/ZIP、缺 `OFD.xml`/`Document.xml`、`DocRoot`/`documentIndex` 非法、URL 读取失败 |
+| `OFD_INVALID_PACKAGE` | 非 OFD/ZIP、缺 `OFD.xml`/`Document.xml`、`DocRoot`/`documentIndex` 非法、来源为空或使用已删除的 `url` 来源 |
 | `OFD_ENTRY_NOT_FOUND` | ZIP 内条目缺失（页面/资源/字体/图片） |
 | `OFD_UNSUPPORTED_COMPRESSION` | ZIP 压缩方法不支持/加密条目 |
 | `OFD_ENCRYPTED` | 加密文档 |
@@ -898,7 +958,7 @@ interface OFDWarning {
 
 | `code` | 含义 |
 | --- | --- |
-| `W_FONT_MISSING` | 缺少字体，或字体来源不可用/加载失败（含 `path`/`filePath` 无 loader）；使用回退/替代字体 |
+| `W_FONT_MISSING` | 缺少字体，或字体来源不可用/加载失败（如旧 `url`/`path`/`filePath` 变体、`data` 为空）；使用回退/替代字体 |
 | `W_GLYPH_MISSING` | 字体缺字形，跳过或使用 .notdef |
 | `W_IMAGE_DECODE` | 图片无法解码/读取，跳过该图 |
 | `W_UNSUPPORTED_PAINT` | 不支持/无法实现的填充，降级 |
@@ -1034,10 +1094,9 @@ P0/P1/P2 UI API 还会产生以下扩展码（`OFDWarning.code` 类型允许 `st
 
 | 名称 | 说明 |
 | --- | --- |
-| `ByteSource` | 随机字节源 |
-| `FontInput` | 宿主字体来源 |
-| `FontInputLoader` | 字体来源字节加载器（`OFDOpenOptions.loadInput`） |
-| `FontProvider` | 字体匹配接口 |
+| `ByteSource` | 宿主提供的随机字节源（支持可选 `ready`/`close`） |
+| `FontInput` | 宿主字体来源（只含 `data`/`family`） |
+| `FontProvider` | 字体匹配接口（按需读取的唯一入口） |
 | `FontMatchRequest` | 字体匹配请求 |
 | `ImageDecoder` | 宿主图片解码器 |
 | `ImageDecoderPlugin` | 图片解码插件 |
@@ -1177,10 +1236,11 @@ P0/P1/P2 UI API 还会产生以下扩展码（`OFDWarning.code` 类型允许 `st
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
+| Unreleased | 2026-10-23 | **breaking（不升级版本号，包仍为 0.1.0）**：网络/文件读取委托给宿主。删除 `OFDSource.url`/`node-file`/`wechat-file`（URL 改为宿主 `fetch` → `arraybuffer` 或 `custom ByteSource`；本地文件改为宿主读取），删除 `FontInput.url/path/filePath`、`FontInputLoader`、`OFDOpenOptions.loadInput`/`fontInputLoader`（字体只收 `{ data }`，按需读取用 `FontProvider.match()`）；`document:open:start.sourceKind` 对 URL 文档由 `url` 变为 `custom`；engine 不再内置 HTTP Range/Node 文件/微信文件适配器。迁移示例见 §3.2、§8.1 |
 | v1.2-r1 | 2026-10-23 | 新增 `VERSION` 常量与 `getVersion()`，供 CLI/UI 与宿主在故障排查时读取引擎版本；版本内置于产物，不依赖 `package.json` |
 | v1.1-r12 | 2026-10-23 | 新增页面级事件系统：`OFDEventBus`、`document.events` 与 `document/page` 的 `on/once/off/addEventListener/removeEventListener`；`OFDOpenOptions.eventBus/signal`、`getPage(index,{signal})`、`RenderTask.id`；14 个事件与载荷类型；入口校验失败不派发事件，`close:end` 后静默 |
 | v2.0-r1 | 2026-10-23 | 新增 `VirtualContainer`/`VirtualFileMeta`/`VirtualReadOptions`/`VirtualContainerFactory`/`openZipVirtualContainer`/`OpenZipVirtualContainerOptions`；`OFDOpenOptions.source` 保持必填，新增 `OFDOpenFromContainerOptions`（`container` 必填、`source` 可选上下文）与 `OFDDocument.open` 重载；新增 `container`（借用）与 `containerFactory`（engine 拥有）；明确 raw/明文容器边界与 `AbortSignal` 透传；默认 ZIP 行为不变 |
-| v1.0-r11 | 2026-10-22 | 新增可选 `OFDOpenOptions.loadInput` / `FontInputLoader`：不传时 Web 默认 `url` fetch、`path`/`filePath` 不支持；Node CLI `--font-dir` 注入 `node:fs` loader，真正读取并展开 TTF/OTF/TTC/OTC，按实际 family 匹配；999.ofd `W_FONT_MISSING` 归零。兼容旧版，无行为变化 |
+| v1.0-r11 | 2026-10-22 | 新增可选 `OFDOpenOptions.loadInput` / `FontInputLoader`：不传时 Web 默认 `url` fetch、`path`/`filePath` 不支持；Node CLI `--font-dir` 注入 `node:fs` loader，真正读取并展开 TTF/OTF/TTC/OTC，按实际 family 匹配；999.ofd `W_FONT_MISSING` 归零。**（该能力已在 Unreleased 中移除，见上）** |
 | v1.0-r10 | 2026-10-22 | 同步 P2：`getPermissions`（只读声明，不做 DRM）、`getAttachments`/`getAttachmentData`（原始字节，不解析内容）、`exportImage.rotation`（仅导出方向，90/270 宽高互换）；登记 `W_PERMISSION_FIELD`/`W_ATTACHMENT_FIELD`/`W_ATTACHMENT_RESOURCE`；`page.renderRegion` 暂不实现/无排期且不导出 |
 | v1.0-r9 | 2026-10-22 | 同步 P0/P1 阅读器 UI API：getPageInfos/getOutline/getBookmarks/getMetadata/getSignatureEntries/getSignedValue/page.prepare/page.getTextContent；新增 PageInfo/Outline/Bookmark/签章/SignedValue/Metadata/TextContent 类型与 `CacheOptions.textPages`；明确不解析 ASN.1/不暴露 Seal.esl/P2 延后 |
 | v1.0-r8 | 2026-10-22 | 初版公开 API 文档：document/page/render/exportImage、平台注入、错误/warning、限制/缓存、类型附录；建立与 `src/index.ts` 的同步检查 |

@@ -1,6 +1,6 @@
 ---
 name: ofdrw-viewer-cli
-description: Convert OFD documents into per-page PNG/JPEG/WebP images with the ofdrw-viewer-cli executable, query package/encryption/signature metadata with info, and verify anti-smuggling integrity plus all signatures with verify. Use when an agent needs OFD page images, spatial text JSON, encrypted-document conversion, or signature/chain verification.
+description: Convert OFD documents into per-page PNG/JPEG/WebP images with the ofdrw-viewer-cli executable, query package/encryption/signature metadata with info, and verify anti-smuggling integrity plus all signatures with verify. Use when an agent needs OFD page images, spatial text JSON, encrypted-document conversion, or signature/chain verification. Covers local file input, system/--font-dir font discovery where the CLI reads font bytes itself (engine does not fetch or read paths), memory-only decryption, and offline behavior.
 ---
 
 # OFD 转图片、查询与验签（ofdrw-viewer-cli）
@@ -184,6 +184,8 @@ OFD 版本: 未知
 - `--no-system-fonts`：关闭自动发现，仅使用 `--font-dir`，与旧版本行为一致。
 
 发现数量以一行日志写入 stderr（如 `自动发现系统字体 6 个（扫描 46 个文件）`），不污染 stdout 的摘要/JSON；使用 `--no-system-fonts` 时不扫描、也不输出该行。系统目录不存在或不可读时视为未发现，不报错；仍然找不到字体时按原有 `W_FONT_MISSING`/`W_GLYPH_MISSING` 处理。
+
+字体读取完全由 CLI 完成：扫描/排序/去重后，`fonts.ts` 的 `loadFontInputs()` 预读字体文件字节为 `FontInput[]`（`{ data }`），转图片时以 `supplementaryFonts: [{ data }]` 注入 engine。单个文件读取失败仍上报 `W_FONT_MISSING` 并跳过，不影响其余字体与转换。engine 不再提供 `loadInput`，也不读取字体 URL/路径；CLI 不联网、不自动下载字体。
 
 ## 输出（图片与文本）
 

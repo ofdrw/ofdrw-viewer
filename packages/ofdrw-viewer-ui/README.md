@@ -7,6 +7,8 @@
 
 **ofdrw-viewer-ui** 是一款产品级的 Web OFD 阅读器组件，内置连续滚动、缩放/旋转、缩略图、大纲、书签、全文查找、文本选择、打印与图片导出等功能。组件基于 ofdrw-viewer-engine 实现高质量的 OFD 页面绘制，同时提供 Web Component 与 React、Vue API适配，可直接嵌入现有应用在线预览 OFD 文件，并自适应桌面、平板与手机。
 
+> **网络获取由 UI 负责，engine 只消费字节。** URL 来源在 UI 内部转换为 `HttpByteSource`（HTTP Range、整包回退、取消），解密与渲染共用同一字节源；engine 不再联网或读取本地文件。部署时需服务端允许 CORS 与 `Range`，并暴露 `Content-Range`。
+
 ![OFD Web 阅读器演示](../../docs/img/ofdrw-viewer-ui-showcase.gif)
 
 ## 🚀 在线体验
@@ -40,6 +42,8 @@ const viewer = new OFDViewer({
 
 await viewer.ready;
 ```
+
+URL 来源由 UI 下载：内部创建 `HttpByteSource` 按 Range 读取，engine 只收字节。服务端需允许 CORS 并暴露 `Content-Range`；鉴权头用来源 `headers` 或 `requestInit.headers`（来源优先，`credentials` 不转发）。`HttpByteSource`/`HttpByteSourceOptions` 也从公共入口导出，供宿主复用同一套 HTTP 读取逻辑，详见 [SKILL.md 网络来源与字节源](skills/SKILL.md#网络来源与字节源)。
 
 完整选项、方法、事件与使用边界见 [SKILL.md](skills/SKILL.md)。
 
