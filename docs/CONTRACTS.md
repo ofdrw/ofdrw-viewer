@@ -1,982 +1,430 @@
-# OFD 渲染引擎跨模块契约（v1.0-r12，T1 冻结）
+# OFD Viewer 跨包契约
 
-> 适用范围：`@ofdrw/ofdrw-viewer-engine` v1（Web 优先）。
-> 依据：`docs/OFD渲染引擎设计方案.md` v0.5-r12 第 6/8/10/14/15/19 节。
-> 冻结时间：T1 完成时。冻结后本文件与下列公共契约文件只读；变更必须先由架构负责人（architect）评估并同步 captain。
-> 最近修订：v1.0-r12（2026-10-23，R1 文档同步）。
+## 1. 目的与范围
 
-## 1. 冻结范围与变更规则
+本文定义 `@ofdrw/ofdrw-viewer-engine`、`@ofdrw/ofdrw-viewer-crypto`、`@ofdrw/ofdrw-viewer-ui` 与 `@ofdrw/ofdrw-viewer-cli` 之间的稳定边界：包和目录归属、依赖方向、公共入口、跨模块不变式、错误与 warning 注册表、测试目录以及密码能力范围。
 
-本文件冻结以下内容：
+本文只记录当前实现中必须共同遵守的契约。公共 API 的完整签名、参数默认值和返回值以各包 `skills/API.md` 为准；fixture、黄金图、命令、CI 与测试矩阵以 `docs/测试方案.md` 为准；模块内部算法和时序以对应设计文档为准。实现与本文冲突时，先修实现或先修本文，不能靠口头约定绕过。
 
-- pnpm workspace、包名、目录骨架、构建/测试命令；
-- 各模块职责、依赖方向、文件所有权；
-- 跨模块公共类型与函数签名；
-- 错误码/warning 码；
-- 并行开发规则与测试目录约定。
-
-冻结文件（其他成员只读，不得直接修改）：
-
-| 文件 | 内容 |
-| --- | --- |
-| `src/common/types.ts` | 矩阵/颜色/路径/样式/渐变/底纹/图片/Viewport 公共类型 |
-| `src/common/display-list.ts` | `DrawCommand`、`DisplayList` |
-| `src/model/types.ts` | OFD 文档/页/对象/资源/注释/模板/颜色空间模型 |
-| `src/style/types.ts` | `ResolvedStyle` |
-| `src/renderer/types.ts` | `Renderer`、`CanvasRenderingContext2DLike`、Canvas 工厂入参 |
-| `src/platform/byte-source.ts` | `ByteSource` |
-| `src/platform/image-decoder.ts` | `ImageDecoderPlugin`、`ImageDecoder` |
-| `src/platform/font-provider.ts` | `FontInput`、`FontProvider` |
-| `src/xml/types.ts` | `XmlNode`、`XmlParser` |
-| `src/api/types.ts` | 打开参数、渲染参数、资源限制、缓存预算 |
-| `src/errors.ts` | `OFDError`、`OFDErrorCode` |
-| `src/warnings.ts` | `WarningCode`、`OFDWarning`、`WarningCollector` |
-| `src/index.ts` | 公共导出面（T12 只可在不破坏既有导出的前提下追加） |
-
-**变更流程**：开发中发现契约缺口 → 发消息给 architect，说明“缺什么/为什么/建议签名” → architect 修改冻结文件并更新本文件 → 重新跑 typecheck + smoke → 通知相关成员。不得自行改冻结文件，不得用 `as any`、二次解码、隐藏字段绕过契约。
+本文不用于介绍产品用法。CLI 用法见 `packages/ofdrw-viewer-cli/skills/SKILL.md`，阅读器接入见 `packages/ofdrw-viewer-ui/skills/SKILL.md`，引擎接入见 `packages/ofdrw-viewer-engine/skills/SKILL.md`。
 
 ## 2. 包、目录与命令
 
-- 包名统一使用 `@ofdrw/` 作用域：`@ofdrw/ofdrw-viewer-engine`、`@ofdrw/ofdrw-viewer-ui`、`@ofdrw/ofdrw-viewer-cli`；禁止无作用域或简写别名（如 `ofdrw-viewer-engine`、`ofdrw-engine`、`@ofdrw/engine`）。目录名保持 `packages/ofdrw-viewer-*`。
-- workspace：`packages/*`、`examples/*`。
-- T1 架构 smoke 测试位于仓库根 `test/smoke/`（任务契约路径）；各开发任务的单测位于 `packages/ofdrw-viewer-engine/test/<module>/`（如 `test/common`、`test/model`）；QA 黄金图/回归位于 `packages/ofdrw-viewer-engine/test/golden|e2e|acceptance/`。
-- vitest 根为仓库根，`include` 同时覆盖 `test/**` 与 `packages/ofdrw-viewer-engine/test/**`；CLI 过滤 `test/smoke` 可命中两者。
-- 测试通过包名 `@ofdrw/ofdrw-viewer-engine` 引入源码（vitest alias 指向 `src/index.ts`）。
-- 测试产物写入仓库根 `test/.artifacts/<task-id>/`（或对应包内 `test/.artifacts/`），不得提交。
-- 根命令：
+### 2.1 仓库布局
 
-| 命令 | 语义 |
+| 路径 | 角色 | 是否 workspace 包 |
+| --- | --- | --- |
+| `packages/ofdrw-viewer-engine` | 与平台无关的 OFD 解析、布局与渲染核心 | 是 |
+| `packages/ofdrw-viewer-crypto` | 加密检测/解密、签章与完整性校验、证书/SM 基础能力 | 是 |
+| `packages/ofdrw-viewer-ui` | 浏览器阅读器、文本层、打印/导出、签章展示、Web Component 与框架适配 | 是 |
+| `packages/ofdrw-viewer-cli` | 本地文件转图片、`info`、`verify`、SEA 可执行文件 | 是 |
+| `site` | 演示站，消费已构建的包 | 是 |
+| `examples` | 独立示例工程，各自安装依赖 | 否 |
+| `ofd_pdf_match` | 回归样本与 PDF 参考 | 否，样本资产 |
+| `test/smoke` | 跨包架构与公共 API 文档同步检查 | 根级测试目录 |
+| `docs` | 跨包契约、设计方案、测试方案 | 文档 |
+
+机器要求：Node.js `>=22`，仓库固定 `pnpm@11.24.0`。四个发布包版本同为 `0.1.0`；engine、crypto、UI 的 `VERSION` 常量与 CLI 的 `CLI_VERSION` 必须与各自 `package.json` 的 `version` 一致。UI 的 `getVersions()` 返回实际加载的 UI、engine、crypto 三个版本。
+
+### 2.2 常用命令
+
+命令均在仓库根执行。根脚本只覆盖声明过的入口，不能把某个包的脚本当成全仓脚本。
+
+| 命令 | 实际行为 |
 | --- | --- |
-| `pnpm install` | 安装 workspace 依赖 |
-| `pnpm typecheck` | 对所有包执行 `tsc --noEmit` |
-| `pnpm test` | 运行引擎全部 vitest |
-| `pnpm test:smoke` | 只跑 `test/smoke` |
-| `pnpm test:golden` | 只跑 `test/golden`（无测试时通过） |
-| `pnpm build` | 构建引擎 ESM+CJS+d.ts（及后续 examples） |
+| `pnpm install --frozen-lockfile` | 按锁文件安装 workspace 依赖 |
+| `pnpm build` | 递归执行所有包的 `build` |
+| `pnpm -r --if-present run typecheck` | 递归执行所有包的类型检查 |
+| `pnpm test` | 执行 engine 的全部 vitest 用例；不等于四包全量测试 |
+| `pnpm test:smoke` | 执行 engine 的 `test/smoke` |
+| `pnpm test:golden` | 执行 engine 的 `test/golden`，无用例时通过 |
+| `pnpm cli:typecheck` / `pnpm cli:test` / `pnpm cli:build` | 转发 CLI 的类型检查、单元测试、构建 |
+| `pnpm cli:test:acceptance` | 构建普通 CLI 与 SEA 后跑黑盒验收 |
+| `pnpm cli:build:sea` / `pnpm cli:package:sea` | 构建/打包 SEA 可执行文件 |
 
-- 引擎源码只能用 ES2022 + 严格 TS；`verbatimModuleSyntax`、`isolatedModules` 开启。类型导入必须 `import type`。
-- 不在共享工作区启动长期服务；演示/验收服务仅按需启动，用完关闭。
+包级入口：
+
+| 包 | 构建 | 测试 | 其他 |
+| --- | --- | --- | --- |
+| engine | `pnpm -C packages/ofdrw-viewer-engine build`（tsup + CDN） | `pnpm -C packages/ofdrw-viewer-engine test` | `test:golden`、`test:audit`、`typecheck` |
+| crypto | `pnpm -C packages/ofdrw-viewer-crypto build`（tsup + CDN） | `pnpm -C packages/ofdrw-viewer-crypto test` | `typecheck` |
+| UI | `pnpm -C packages/ofdrw-viewer-ui build` | `pnpm -C packages/ofdrw-viewer-ui test` | `typecheck`；Playwright 用包内 `playwright test` |
+| CLI | `pnpm -C packages/ofdrw-viewer-cli build` | `pnpm -C packages/ofdrw-viewer-cli test` | `test:acceptance`、`build:sea`、`package:sea` |
+
+构建产物入口：engine、crypto 只有包根 ESM/CJS/类型入口；UI 另有 `./react`、`./vue`、`./element`、`./component`、`./style.css`；CLI 只有 `bin`，不作为库导入。各包 `tsconfig` 均开启 `strict`、`isolatedModules`、`verbatimModuleSyntax`；engine、crypto、CLI 的编译目标为 ES2022，UI 为 ES2020。
 
 ## 3. 模块职责与所有权
 
-按设计方案的 9 层职责展开为 12 个源码目录（common/container/xml/model/resource/style/font/image/render/renderer/platform/api），职责与所有权如下：
+### 3.1 包级职责
 
-| 模块 | 职责 | 实现 owner | 主要文件 |
-| --- | --- | --- | --- |
-| `common/` | 矩阵、颜色、纯函数、DisplayList 数据结构；无 I/O | T2（`matrix.ts` 等）；T1 冻结类型 | `types.ts`、`matrix.ts`、`color.ts`、`display-list.ts`、`not-implemented.ts` |
-| `container/` | ByteSource 适配、ZIP 随机读取、包内路径安全 | T2 | `byte-source.ts`、`zip-reader.ts`、`path.ts` |
-| `xml/` | saxes 封装、DOM 化、属性/数字解析、warning | T2 | `parser.ts`、`numbers.ts` |
-| `model/` | OFD.xml/Document.xml/Page/Content/Res/Annotations 解码、页树、资源 ID | T3 | `types.ts`、`decode.ts`、`page-tree.ts`、`resource-id.ts` |
-| `resource/` | 资源索引、页级作用域合并、LRU 缓存 | T3 | `types.ts`、`store.ts`、`cache.ts` |
-| `style/` | DrawParam 继承、颜色/线型结算、`PaintSpec` 生成 | T3 | `types.ts`、`draw-param.ts`、`resolve.ts` |
-| `font/` | fontkit 封装、字体匹配、字形轮廓提取、轮廓缓存 | T4 | `types.ts`、`face.ts`、`glyph.ts` |
-| `image/` | 图片格式识别、尺寸读取、JBIG2/TIFF 插件适配 | T6 | `format.ts`、`jbig2.ts`、`tiff.ts` |
-| `render/` | 准备阶段与绘制管线、路径/裁剪/图片/底纹/文字/块/页编排 | T7（路径/裁剪/图片/底纹/块/DisplayList）、T10（prepare/page/object/annotation） | `path.ts`、`clip.ts`、`image.ts`、`paint.ts`、`block.ts`、`display-list.ts`、`prepare.ts`、`page.ts`、`object.ts`、`annotation.ts`、`text.ts`（T4）、`gouraud.ts`（T5） |
-| `renderer/` | H5 Canvas2D 默认渲染器、RecordingRenderer、渲染器抽象 | T5 | `types.ts`、`canvas2d.ts`、`recording.ts` |
-| `platform/` | 宿主注入接口：字节源、字体、图片解码 | T1 冻结接口；T4/T6 使用 | `byte-source.ts`、`font-provider.ts`、`image-decoder.ts` |
-| `api/` | `OFDDocument`/`OFDPage`/`RenderTask`、打开/缓存/取消/错误映射 | T12 | `document.ts`、`page.ts`、`render-task.ts`、`source.ts`、`viewport.ts`、`types.ts` |
-| `examples/web/` | 最小 Web 验证页 | T13 | `index.html`、`src/main.ts` 等 |
+- **engine**：消费已经可读的字节，解析 OFD/ZIP/XML/资源，构建布局与 DisplayList，驱动 Canvas2D 渲染，导出页面图片与文本内容；不发起网络请求，不读取本地文件，不处理密码学。
+- **crypto**：检测加密包、恢复明文容器、校验签名/完整性/证书链、解析时间戳、提供 SM2/SM3/SM4/ASN.1/证书基础函数；解密结果以 engine 的 `VirtualContainer` 交给 engine。
+- **UI**：负责浏览器交互、页面编排、渲染队列、文本层、查找、打印、导出、签章展示与宿主来源适配；不实现 OFD 解析和密码算法。
+- **CLI**：负责 Node 参数解析、本地文件读取、字体/根证书预读、批量转图、`info`/`verify` 输出与退出码；通过 engine/crypto 公共入口完成业务，不自行实现密码逻辑。
 
-文件所有权规则：成员只修改自己任务 inScope 内的文件。`src/common/matrix.ts` 由 T2 实现与维护；T1 已提供基线实现，T2 可改实现但不得改签名。`render/text.ts` 归 T4；`render/gouraud.ts` 归 T5；`render/` 其余文件归 T7/T10。相邻文件如确需改动，先发消息给 owner 与 architect。
+### 3.2 engine 模块
+
+| 目录 | 职责 |
+| --- | --- |
+| `common` | 纯工具、单位/矩阵、颜色、DisplayList 类型、LRU 与断言 |
+| `container` | `ByteSource` 适配、ZIP 读取、容器路径规范化 |
+| `xml` | XML 解析、数字/单位解析 |
+| `model` | 文档、页面树、资源、权限、签章与附件的结构化解码 |
+| `resource` | 资源缓存与资源存储 |
+| `style` | 默认样式、绘制参数、页面样式与 paint 解析 |
+| `font` | 字体别名、face、字形、字体 provider |
+| `image` | 图片格式识别与 GIF/JBIG2/TIFF 解码（含受限实现） |
+| `render` | 页面/对象/路径/文本/图片/裁剪/注释/组合/网格的布局与绘制命令生成 |
+| `renderer` | Canvas2D 渲染器、网格近似、录制与渲染器类型 |
+| `platform` | `ByteSource`、`VirtualContainer`、`FontProvider`、`ImageDecoder` 等宿主注入接口 |
+| `api` | 文档、页面、RenderTask、事件、来源/容器、viewport、缓存与公共类型 |
+
+### 3.3 crypto 模块
+
+| 目录 | 职责 |
+| --- | --- |
+| `asn1` | DER、OID、X.509 与 SM2Cipher 结构解析 |
+| `cert` | 证书格式转换、加载、解析与摘要 |
+| `container` | 内存明文容器与容器路径工具 |
+| `credentials` | 口令/私钥凭据、PKCS#8 解码 |
+| `decrypt` | `Encryptions.xml`、条目映射、多层解密 |
+| `integrity` | OFDEntries 与 GB/T 35275 完整性校验 |
+| `seal` | 印章数据解析 |
+| `sign` | SES、Signature.xml、Reference 校验与签名验证 |
+| `sm` | SM2/SM3/SM4、KDF、曲线与私钥 |
+| `source` | `CryptoSource` 到容器/字节源的适配 |
+| `timestamp` | GM/T 0033 时间戳解析 |
+| `types` | 公共类型、限制、状态与 warning |
+| `util` | 参数、字节、比较、哈希、PEM、来源与 warning 工具 |
+| `verify` | 证书链与验证报告 |
+
+包根另有 `inspect.ts`、`errors.ts`、`version.ts` 与统一导出 `index.ts`。
+
+### 3.4 UI 模块
+
+| 目录/文件 | 职责 |
+| --- | --- |
+| 根级 `viewer.ts`、`document-controller.ts`、`state.ts`、`history.ts` | 阅读器门面、文档生命周期、状态快照、浏览记录 |
+| 根级 `options.ts`、`features.ts`、`feature-gate.ts` | 选项归一化、功能开关与可用性判定 |
+| 根级 `page-layout.ts`、`page-view.ts`、`render-queue.ts` | 页面布局、页面视图、渲染队列 |
+| 根级 `event-bus.ts`、`keyboard.ts`、`errors.ts`、`version.ts` | 事件、快捷键、错误与版本 |
+| `ui` | 工具栏、侧栏、查找栏、对话框、菜单、提示与 shell |
+| `views` | 缩略图、大纲、书签、导航、签章视图 |
+| `text` | 文本层、几何、选择、查找 |
+| `print` / `export` | 打印与图片/压缩包导出 |
+| `signature` / `crypto` | 签章映射、验证服务、凭据弹窗、印章图 |
+| `a11y` / `i18n` / `theme` | 无障碍、国际化、主题 |
+| `source` | URL/查询参数来源、`HttpByteSource` |
+| `component` / `react` / `vue` | Web Component、React、Vue 适配 |
+
+### 3.5 CLI 模块
+
+`src` 为扁平结构：`bin.ts`/`cli.ts` 入口与参数解析，`convert.ts`/`info.ts`/`verify.ts` 三个业务路径，`pages.ts`、`output.ts`、`fonts.ts`、`text.ts`、`canvas.ts`、`image-decoder.ts` 负责输出与资源，`credentials.ts`、`crypto-output.ts`、`safe-text.ts` 负责凭据/安全输出，`node-file-source.ts` 负责本地随机读，`sea.ts` 负责 SEA 资源准备，`errors.ts`/`log.ts` 负责错误与日志。
 
 ## 4. 依赖方向（硬约束）
 
-```text
-common           （无运行时模块依赖；仅允许对 model/style 的 type-only 前向引用）
-  ↑
-model  ← container/xml
-  ↑
-resource
-  ↑
-style
-  ↑
-render  ← font（render/text） / image（render/image） / renderer/types
-  ↑
-api
-
-renderer ──→ common（只允许 common + 自身；不依赖 model/style/render/api）
-platform ──→ common（接口独立，供 api/font/image 注入）
-```
-
-- `container`/`xml` 只依赖 `common`、`errors`、`warnings`。
-- `model` 不产生对 `render`/`renderer`/`api` 的运行时依赖。
-- `style` 不依赖 `render`/`renderer`/`api`；颜色解析只产出 `PaintSpec`，不得创建 Canvas 对象。
-- `render` 不 import 具体渲染器实现，只能 import `renderer/types`。
-- `renderer` 不 import `model`/`style`/`render`/`api`；渲染器只认 `common` 的 `DrawStyle`、`PaintSpec`、`Matrix`、`ImageHandle`。
-- `api` 可以依赖下层全部模块，但下层不得反向依赖 `api`。
-- 禁止运行时循环依赖。`common/types.ts` 对 `PageBlock`、`ResolvedStyle` 的引用，以及 `model/types.ts` 对 `DisplayList`、`ResolvedStyle` 的引用必须是 `import type`，已由 `test/smoke/import-boundaries.test.ts` 守护。
-- 引擎核心（common/model/resource/style/render/font/image/xml/api）不得 import `node:*`、`fs`/`path` 等 Node 内置模块，不得引用 `document`/`window` 等 DOM 全局；平台差异只能通过 `platform/` 注入。`renderer` 默认工厂可以检测 `globalThis.document`，但不得直接 import Node/原生 canvas。
-
-## 5. 公共 API（包根导出）
-
-只有 `src/index.ts` 是包根公共入口。以下为稳定导出（T12 可追加，不破坏）：
-
-```ts
-// 类
-OFDDocument.open(options: OFDOpenOptions): Promise<OFDDocument>
-OFDDocument#pageCount: number
-OFDDocument#getPage(index: number): Promise<OFDPage>
-OFDDocument#getPageInfos(options?: PageInfoOptions): Promise<readonly PageInfo[]>
-OFDDocument#getOutline(options?: { signal?: AbortSignal }): Promise<readonly OutlineNode[]>
-OFDDocument#getBookmarks(options?: { signal?: AbortSignal }): Promise<readonly BookmarkItem[]>
-OFDDocument#getSignatureEntries(options?: { signal?: AbortSignal }): Promise<readonly SignatureEntryInfo[]>
-OFDDocument#getSignedValue(signatureId: string, options?: { signal?: AbortSignal }): Promise<SignedValueFile | undefined>
-OFDDocument#getMetadata(options?: { signal?: AbortSignal }): Promise<DocumentMetadata>
-OFDDocument#close(): Promise<void>
-
-OFDPage#index: number
-OFDPage#getSize(): PageSize                 // mm
-OFDPage#getViewport(options?: ViewportOptions): Viewport // px
-OFDPage#render(params: PageRenderParameters): RenderTask
-OFDPage#exportImage(options?: PageImageExportOptions): Promise<PageImageResult>
-OFDPage#getTextContent(options?: TextContentOptions): Promise<TextContent>
-OFDPage#prepare(options?: PagePrepareOptions): Promise<void>
-
-RenderTask#promise: Promise<void>
-RenderTask#cancel(): void
-
-H5Canvas2DRenderer(options?: H5Canvas2DRendererOptions)
-
-// 纯函数
-getPageViewport(size: PageSize, options?: ViewportOptions): Viewport
-getPageTransform(area: Box, dpi?: number): Matrix
-
-// 常量
-MM_PER_INCH = 25.4
-DEFAULT_DPI = 96
-DEFAULT_RESOURCE_LIMITS
-DEFAULT_CACHE_OPTIONS
-WARNING_CODES
-
-// 错误
-OFDError、isOFDError、toOFDError
-```
-
-公共类型包括 `OFDOpenOptions`、`OFDSource`、`PageRenderParameters`、`PageImageExportOptions`、`PageImageResult`、`PageImageFormat`、`PageImageMime`、`CanvasImageEncodeSource`、`EncodeImage`、`ResourceLimits`、`CacheOptions`、`FontInput`、`FontProvider`、`ImageDecoderPlugin`、`Renderer`/`Canvas2DLike`/`CanvasRenderingContext2DLike`、`Viewport`、`Matrix`、`Box`、`DrawStyle`、`PaintSpec`、`ResolvedPaint`、`PatternSpec`、`PatternPaint`、`DisplayList`、`DrawCommand`、`OFDWarning`、`OFDErrorCode`、`WarningCode` 等；UI API 类型见 §5.3（`PageInfo`、`OutlineNode`、`SignatureEntryInfo`、`SignedValueFile`、`DocumentMetadata`、`TextContent` 等）。`FontInputLoader` 已在 v1.0-r13 删除。
-
-**不导出** `CanvasFactory`（渲染器内部结构）。自定义画布的两个公共入口：
-
-- 直接构造渲染器时传 `H5Canvas2DRendererOptions.createCanvas`；
-- 使用默认 H5 渲染器或 `page.exportImage` 时传 `OFDOpenOptions.createCanvas`（v1.0-r7/r8，见 §5.1、§5.2）。
-
-### 5.1 `OFDOpenOptions.createCanvas`（v1.0-r7，r8 扩展）
-
-```ts
-interface OFDOpenOptions {
-  /** 临时画布工厂；供默认 H5、嵌套矢量章与 exportImage 使用；单位像素。 */
-  createCanvas?: (width: number, height: number) => Canvas2DLike;
-}
-```
-
-- **向后兼容**：字段可选；未提供时 `OFDDocument.open` 仍创建 `new H5Canvas2DRenderer()`，H5CanvasFactory 继续按 `globalThis.document.createElement('canvas')` → `OffscreenCanvas` 兜底；页面 render 行为与 r6 一致。
-- **接线**：`OFDDocument.open` 未收到 `renderer` 时，把该函数作为 `H5Canvas2DRendererOptions.createCanvas` 传给内部 H5 渲染器；最终由 `H5CanvasFactory.create(width,height)` 使用，并统一写入像素宽高。`CanvasFactory` 仍不导出，宿主只接触 `Canvas2DLike`。
-- **`exportImage` 复用（r8）**：`page.exportImage` 不经过 `Renderer`，而是直接用 `OFDOpenOptions.createCanvas` 创建整页离屏 canvas。显式 `renderer` 只接管 `page.render`；即使传了自定义 renderer，Node 宿主仍必须提供 `createCanvas`，否则导出走 document/OffscreenCanvas 兜底。
-- **优先级**：页面 render 以显式 `renderer` 为准；`exportImage` 始终以 `createCanvas` 为准，不读取 `H5Canvas2DRendererOptions.createCanvas`。
-- **矢量签章嵌套渲染**：t55 打开 `Seal.esl`/`SignedValue.dat` 内嵌 OFD 时，必须把同一 `createCanvas` 继续传给嵌套 `OFDDocument.open`；父/子文档共用宿主工厂，不另建 DOM/Node 工厂，也不把 Canvas 暴露给 engine 渲染层。
-- **缺省回退**：浏览器/Worker 未注入时仍走 document/OffscreenCanvas；两者都不可用时由 H5CanvasFactory 抛既有 `OFD_RENDERER_UNSUPPORTED`，不新增错误码。
-
-### 5.2 页面图片导出（v1.0-r8）
-
-```ts
-export type PageImageFormat = 'png' | 'jpeg' | 'webp';
-export type PageImageMime = 'image/png' | 'image/jpeg' | 'image/webp';
-
-export interface PageImageExportOptions {
-  dpi?: number;                 // 默认 96；非有限/<=0 回退 96
-  format?: PageImageFormat;     // 默认 png
-  quality?: number;             // jpeg/webp 0..1，默认 0.92；png 忽略
-  background?: string | null;   // 默认 #ffffff；png null 透明；jpeg/webp null 视为白
-  signal?: AbortSignal;
-}
-
-export interface PageImageResult {
-  data: Uint8Array;
-  mime: PageImageMime;
-  width: number;                // 设备像素
-  height: number;               // 设备像素
-  dpi: number;
-}
-
-export interface CanvasImageEncodeSource extends Canvas2DLike {
-  convertToBlob?(options?: { type?: string; quality?: number }): Promise<Blob>;
-  toBlob?(callback: (blob: Blob | null) => void, type?: string, quality?: number): void;
-}
-
-export type EncodeImage = (
-  canvas: CanvasImageEncodeSource,
-  format: PageImageFormat,
-  quality: number,
-) => Promise<Uint8Array>;
-
-// OFDOpenOptions
-encodeImage?: EncodeImage;      // 不传时浏览器默认 convertToBlob/toBlob；Node 宿主注入
-
-// OFDPage
-exportImage(options?: PageImageExportOptions): Promise<PageImageResult>;
-```
-
-- **整页**：使用 `page.getViewport({ dpi })` 的整个 viewport；`width = Math.ceil(viewport.width)`、`height = Math.ceil(viewport.height)`，输出完整页面内容，不含阅读器缩放/旋转/裁剪/UI。`width*height > limits.maxCanvasPixels` 时在创建画布前抛 `OFD_CANVAS_TOO_LARGE`。
-- **画布**：用 `OFDOpenOptions.createCanvas(width,height)` 创建独立离屏 canvas；创建后写入并校验尺寸，不足/不符抛 `OFD_CANVAS_SIZE_MISMATCH`。不经过 `Renderer`；显式 `renderer` 只影响 `page.render`。Node/小程序必须注入 `createCanvas`（或依赖 document/OffscreenCanvas 兜底）；未注入且无兜底时抛 `OFD_RENDERER_UNSUPPORTED`。
-- **背景**：默认 `#ffffff`；先在 identity 变换下填满背景，再调用 `page.render`（其 `M_page` 覆盖 CTM）。PNG 传 `background: null` 时先 `clearRect` 保证透明（复用画布也透明）；JPEG/WebP 不支持 alpha，`null` 按白底处理。非法 CSS 颜色按白底处理，不沿用旧 `fillStyle`。
-- **格式/质量**：`format` 默认 `png`；`quality` 仅 JPEG/WebP 使用，0..1，默认 `0.92`；PNG 忽略质量。MIME 固定映射为 `image/png`/`image/jpeg`/`image/webp`。`encodeImage` 的 `quality` 参数：PNG 传 1，JPEG/WebP 传规范化后的值。
-- **编码**：优先 `encodeImage(canvas,format,quality)`；未提供时浏览器默认优先 `canvas.convertToBlob({type,quality})`，否则 `canvas.toBlob(cb,type,quality)`；不使用 `toDataURL`。编码器返回必须是非空 `Uint8Array`。编码器缺失、格式不支持、抛错/空结果/类型错误统一抛 `OFD_RENDERER_UNSUPPORTED`，原始异常放 `cause`。engine 不新增编码运行时依赖。
-- **取消**：开始、render 前后、encode 前后检查 `signal`；中止抛 `OFD_ABORTED`，不返回部分结果。`encodeImage` 无 signal 参数，已开始的编码不可中断，但结束后仍以取消状态拒绝。
-- **close**：调用前文档已关闭抛 `OFD_CLOSED`；导出期间 close 与 render 竞争时按现有 close 语义以 `OFD_CLOSED` 拒绝，绝不返回编码结果。`close()` 可重复。
-- **错误**：`page.render` 的尺寸/像素/资源限制/取消错误原样传播；编码阶段不新增错误码，不裸抛第三方异常。结果 `data` 归调用方，engine 不缓存。
-- **导出面**：`PageImageExportOptions`、`PageImageResult`、`PageImageFormat`、`PageImageMime`、`CanvasImageEncodeSource`、`EncodeImage` 与 `OFDPage#exportImage` 属于 T15b 实现面；`src/index.ts` 由 T12/T15b 在不破坏既有导出的前提下追加。
-
-### 5.2.1 字体来源委托（v1.0-r13，Unreleased）
-
-```ts
-interface FontInput {
-  data: ArrayBuffer | Uint8Array;
-  family?: string;
-}
-
-interface FontProvider {
-  match(request: FontMatchRequest): Promise<FontInput | FontInput[] | null>;
-}
-
-interface OFDOpenOptions {
-  defaultFonts?: readonly FontInput[];  // 只收 { data }
-  supplementaryFonts?: FontInput[];     // 只收 { data }
-  fontProvider?: FontProvider;          // 按需读取的唯一入口
-}
-```
-
-- **移除**：`FontInput.url`/`path`/`filePath`、`OFDOpenOptions.loadInput`、`FontInputLoader`、`fontInputLoader`、`createFontInputLoader()`；engine 不再读取字体 URL/路径。
-- **接线**：`defaultFonts`/`supplementaryFonts` 的 `data` 直接交给 fontkit；需要按需读取时由 `FontProvider.match()` 在宿主侧读文件/网络并返回 `{ data }`。`provider` 返回 `null` 表示无匹配，多个候选按顺序回退。
-- **错误**：来源不可用、`data` 为空或旧变体降级为 `W_FONT_MISSING`，不中断打开；字节超过 `maxFontBytes` 仍按既有字体 warning 处理。
-- **CLI**：`--font-dir` 与系统字体扫描结果由 CLI 的 `loadFontInputs()` 预读为 `{ data }[]` 后加入 `supplementaryFonts`；TTC/OTC 展开全部字体面，按实际 family 匹配。扫描、realpath 去重、96 MiB 预算与 warning 口径不变。
-- **范围**：engine 不做系统字体发现、不下载字体、不新增运行时依赖；Web/Node/小程序都只消费字节。
-- **设计依据**：[网络获取委托设计.md](./网络获取委托设计.md)；engine 实现提交见 `packages/ofdrw-viewer-engine/CHANGELOG.md`。
-
-### 5.3 UI API 类型与签名（v1.0-r9/r10）
-
-本组类型依据 `docs/ofdrw-viewer-ui-engine-api.md` 与 `docs/text-content-api.md`，由 `src/api/ui-types.ts` 定义并从 `src/index.ts` 导出；t67/t68/t70/t71 已实现，t72 接线文本层，t73 同步 P0/P1 文档；t86/t87/t89 实现 P2 权限/附件/导出旋转，t90 同步 P2 文档。
-
-**边界**：引擎只读取 OFD XML 与 `SignedValue.dat` 原始字节；不解析 ASN.1/DER/X.509/CMS、不验签、不判断签章有效性；`Seal.esl` 不进入公开 API。`getSignatureEntries` 只返回 `Signature.xml` 元数据；`getSignedValue` 只返回 `SignedValue.dat` 字节。
-
-```ts
-// P0/P1/P2 文档与页面
-interface PageInfoOptions { start?: number; count?: number; signal?: AbortSignal }
-interface PageInfo { index; widthMm; heightMm; xMm?; yMm?; source?: 'page'|'template'|'default' }
-type DestinationType = 'XYZ' | 'Fit' | 'FitH' | 'FitV' | 'FitR';
-interface DocumentDestination { type; pageIndex; leftMm?; topMm?; rightMm?; bottomMm?; zoom? }
-interface OutlineNode { title; expanded?; children: readonly OutlineNode[]; dest? }
-interface BookmarkItem { name; dest? }
-interface SignatureProvider { name?; company?; version? }
-interface SignatureReferenceInfo { fileRef }
-interface SignatureStampInfo { id?; pageId; pageIndex?; boundary: Box; clip?: Box }
-interface SignatureEntryInfo { id; type; baseLoc; provider?; signatureDateTime?; references; stamps; signedValuePath?; hasSignedValue }
-interface SignedValueFile { signatureId; path; data: Uint8Array; byteLength }
-interface DocumentMetadata { version; pageCount; packageSize?; title?; author?; subject?; abstract?; creationDate?; modDate?; creator?; creatorVersion?; keywords?; docId?; customData? }
-interface DocumentPermissions { edit; annot; export; signature; watermark; printScreen; print?: { printable; copies? }; validPeriod?: { start?; end? } }
-interface AttachmentInfo { id; name; format?; size?: number /* byte */; creationDate?; modDate?; visible?; usage? }
-interface PagePrepareOptions { signal?: AbortSignal }
-
-// P0 文本层：全部几何单位 px，原点 PhysicalBox 左上角，y 向下
-type TextUnit = 'px';
-interface TextPoint { x; y }
-interface TextRect { x; y; width; height }
-type TextQuad = readonly [TextPoint, TextPoint, TextPoint, TextPoint];
-interface TextFontInfo { resourceId; family; postscriptName?; weightClass?; italic }
-type TextLayer = 'template' | 'page' | 'annotation';
-interface TextItem { order; objectId?; templateId?; annotationId?; blockId?; layer; layerType; zOrder?; visible; alpha; text; font; size; transform; origin; rect; quad; advance; charCount; chars? }
-interface TextChar { text; codePoint; glyphId?; faceKey?; fallback; origin; advance; rect; quad; approximate }
-interface TextContent { pageIndex; dpi; unit; pageWidth; pageHeight; items: TextItem[]; itemCount; charCount; truncated: { items; chars } }
-interface TextContentOptions { dpi?; includeChars?; includeAnnotations?; includeInvisible?; layerOrder?; signal?; maxTextItems?; maxTextChars? }
-```
-
-文本公开类型统一在 `src/api/ui-types.ts`；`src/render/text-content.ts` 只定义内部 mm 结构并提供 `collectTextPageMm`/`toTextPagePx`，不得反向 import `api/**`。
-
-`OFDDocumentApi`/`OFDPageApi` 通过 class/interface 声明合并挂到 `OFDDocument`/`OFDPage`，P0/P1/P2 方法已实现：
-
-- `OFDDocument#getPageInfos(options?)`：页尺寸/页区域，mm；不加载页面内容。
-- `OFDDocument#getOutline(options?)` / `getBookmarks(options?)`：保持 XML 顺序；无结果返回空数组。
-- `OFDDocument#getSignatureEntries(options?)` / `getSignedValue(id, options?)`：只读签章 XML/原始字节。
-- `OFDDocument#getMetadata(options?)`：文档属性，日期保留原文。
-- `OFDDocument#getPermissions(options?)`：只读权限声明，不做 DRM 强制；缺省全部允许。
-- `OFDDocument#getAttachments(options?)` / `getAttachmentData(id, options?)`：附件元信息/原始字节；不解析内容，不暴露 FileLoc。
-- `OFDPage#getTextContent(options?)`：px 文本层，复用 `layoutText`；不调用 Canvas 文字 API。
-- `OFDPage#prepare(options?)`：预取页面资源，不创建 canvas、不绘制。
-
-**缓存与错误**：
-
-- `CacheOptions.textPages?: number`：文本层 mm 数据缓存页数，默认 4；t71/t72 已实现按页 LRU，缓存键不含 `dpi`。现有缓存字段/行为不变。
-- 取消统一 `OFD_ABORTED`，关闭后统一 `OFD_CLOSED`；可选结果缺失（无大纲/书签/签章/附件）返回空数组/`undefined`，不是错误。
-- 文本超限按页截断并走 `W_TEXT_ITEM_LIMIT`/`W_TEXT_CHAR_LIMIT`，不抛错；`W_LAYER_ORDER` 沿用绘制口径。
-- P0/P1 已实现：`getPageInfos`/`prepare`（t67）、`getOutline`/`getBookmarks`/`getMetadata`（t68）、签章条目/SignedValue（t71）、`getTextContent`（t70/t72）。P2 已实现权限/附件/`exportImage.rotation`（t86/t87/t89）；`page.renderRegion` 按用户决定不实现、不导出、无排期。
-
-## 6. 单元/分层签名索引
-
-### 6.1 container
-
-```ts
-// byte-source.ts（engine 只内置以下两种；HTTP/Node/微信由宿主实现 ByteSource）
-class ArrayBufferSource/BlobSource implements ByteSource
-
-// zip-reader.ts
-ZipReader.open(source: ByteSource, limits?: Partial<ZipLimits>): Promise<ZipReader>
-#listEntries(): readonly ZipEntryMeta[]
-#getEntry(path: string): ZipEntryMeta | undefined
-#hasEntry(path: string): boolean
-#readEntry(path, options?: ReadEntryOptions): Promise<Uint8Array>
-#close(): void
-
-// path.ts
-normalizePackagePath(path: string): string
-resolvePackagePath(baseDir: string, relative: string): string
-assertSafePackagePath(path: string): void
-dirnameOf(path: string): string
-```
-
-### 6.2 xml
-
-```ts
-parseXml(xml: string | Uint8Array, options?: XmlParseOptions): XmlNode
-getAttr(node: XmlNode, name: string): string | undefined
-getRequiredAttr(node: XmlNode, name: string): string
-getChild(node: XmlNode, name: string): XmlNode | undefined
-getChildren(node: XmlNode, name: string): XmlNode[]
-getText(node: XmlNode): string
-toNumber(raw, fallback, onBad?): number
-toNumberArray(raw, fallback, onBad?): number[]
-toBoolean(raw, fallback, onBad?): boolean
-```
-
-### 6.2.1 ST_Array 与 `g` 压缩组（TextCode.DeltaX/DeltaY）
-
-OFD 的 `ST_Array` 是空白/逗号分隔的数值数组，支持 `g <count> <value>` 压缩组：
-
-- 语义：`g N V` 表示把数值 `V` 重复展开 `N` 次；
-- 示例：`0 g 3 5 2` → `0,5,5,5,2`；`g 3 3.1305` → `3.1305, 3.1305, 3.1305`；
-- `N` 必须是 **≥0 的整数**；`N=0` 是合法空展开（例如 `g 0 0 3.175` → `3.175`，`g 0 0` → 空），不产生 warning；展开后总长度上限 `100_000`（`MAX_EXPANDED_ARRAY_LENGTH`），超限按 `W_BAD_NUMBER` 处理并停止展开；
-- 非法的 `g` 组（缺 count/value、count 为负或非整数、value 非数值）按 `W_BAD_NUMBER` 跳过，不得让整页失败；合法的 `g` 组（含 `N=0`）不能当坏 token 丢弃；
-- `g` 只作用于数值数组，不改变 XML 其他属性。
-
-实现分层约定：
-
-- `xml/numbers.ts` 的 `toNumberArray` 在 XML 解析层完成 `g` 展开（T2）；
-- `TextCode.DeltaX/DeltaY` 的消费方必须**先展开为数值队列，再按字符位置消费**（T4）：
-  - 字符位置按 Unicode 码点计数（`Array.from(text)`），不按 UTF-16 `string.length`；
-  - `DeltaX[i]` 是从第 i 个字符推进到第 i+1 个字符的步进；最后一个值只描述最后一个字位，多余值忽略并 warning；
-  - 数量不足时后面的字符回退字体 advance；缺失/全 0 时按字体 advance × `Size/upem` × `HScale`；
-  - `DeltaY` 同理，竖排常用。
-
-### 6.3 model / resource / style
-
-```ts
-// decode.ts（所有函数末位均有可选 DecodeOptions，见 §7.5）
-decodeOfdRoot(root: XmlNode): OfdRootInfo
-decodeDocument(root, filePath, options?): DocumentModel
-decodePageContent(root, pageId, filePath, options?): PageModel
-decodePageResources(root, filePath, options?): ResourceDefinitionSet
-decodeAnnotations(root, pageIds, options?): Annotation[]
-decodeAnnotationsIndex(root, baseDir, options?): DecodedAnnotationsIndex
-attachPageTree(model: DocumentModel, tree: PageTree): DocumentModel
-flattenPageTree(pagesRoot, baseDir, options?): PageTree
-
-// resource
-ResourceStore#getFont/getImage/getDrawParam/getComposite/getPattern(id): ... | undefined
-ResourceStore#createPageScope(input: CreatePageScopeInput): PageResourceScope
-LruCache<K,V>#get/set/delete/clear/stats
-
-// style
-createDefaultStyle(options?): ResolvedStyle
-StyleResolver#resolveStyle(input: ResolveStyleInput): ResolvedStyle
-flattenDrawParam(...): ...
-resolvePaint(...): PaintSpec | undefined
-```
-
-### 6.4 render / renderer / font / image
-
-```ts
-// 准备阶段
-preparePage(input: PreparePageInput): Promise<PreparedPageBundle>
-drawPage(prepared: PreparedPageBundle, renderer, canvasContext, viewport, options?): void
-
-// 准备阶段契约（T6b；loader 由 T12 注入）
-interface PreparePageInput {
-  page: PageModel;
-  resources: PageResourceScope;
-  loader: PreparePageLoader;
-  strictImageCtm?: boolean;
-  signal?: AbortSignal;
-  onWarning?: WarningHandler;
-}
-interface PreparePageLoader {
-  loadFontFaces(resources: readonly FontResource[]): Promise<ReadonlyMap<ResourceId, FontFaceSet>>;
-  decodeImage(resource: ImageResource): Promise<DecodedImage>;
-  loadTemplatePage(ref: TemplateRef): Promise<PageModel>;
-  loadAnnotations(page: PageModel): Promise<readonly Annotation[]>;
-}
-interface PreparedPageBundle {
-  page: PreparedPage;                         // styles + annotationBlocks
-  templates: readonly PageModel[];            // 按 page.templates 顺序
-  fonts: ReadonlyMap<ResourceId, FontFaceSet>;
-  images: ReadonlyMap<ResourceId, DecodedImage>; // 主图/替换图/蒙版
-  blocks: ReadonlyMap<string, IndependentBlock>;  // composite/pattern，key=资源 ID
-}
-
-// 绘制管线
-parseAbbreviatedData(data: string): PathCommand[]
-emitPathCommands(renderer: Renderer, commands: readonly PathCommand[]): void
-replayDisplayList(renderer, list, resolveImage?): void   // 可选 resolver 物化 deferred ImageHandle
-drawPathObject(context: PathDrawContext, object: PathObject, style: ResolvedStyle): void
-applyClips(context: ClipContext, clips): void
-computeImageTransform(object: ImageObject, strictImageCtm: boolean): Matrix
-drawImageObject(context: ImageDrawContext, object: ImageObject, style: ResolvedStyle): void
-// ImageDrawContext { renderer; image; mask?; substitutionImage?; substitutionMode?: 'auto'|'always'|'never'; dpi?; strictImageCtm?; smoothing?; onWarning? }
-createPaintBinder(renderer, context?): PaintBinder
-buildIndependentBlock(input: BuildBlockInput, buildDisplayList): IndependentBlock
-drawIndependentBlock(context, block): void
-buildAnnotationBlocks(annotations: readonly Annotation[], context: AnnotationBuildContext): IndependentBlock[]
-drawAnnotationBlocks(renderer: Renderer, binder: PaintBinder, blocks: readonly IndependentBlock[]): void
-layoutText(object: TextObject, faces: FontFaceSet): TextLayout
-drawTextObject(context: TextDrawContext, object: TextObject, style: ResolvedStyle): void
-rasterizeMeshShading(request: GouraudRasterRequest): ImageDataLike
-
-// 渲染器
-interface Renderer { beginPage/endPage/save/restore/setTransform/transform/translate/
-  multiplyAlpha/clear/beginPath/moveTo/lineTo/quadraticCurveTo/cubicCurveTo/rect/
-  closePath/clip/fill/stroke/createImage/drawImage/beginGroup/endGroup/close }
-
-// 字体
-createFontFace(data: Uint8Array, options?): FontFace
-createFontFaces(data: Uint8Array, options?): FontFace[]
-disposeFontFace(face): void
-GlyphOutlineCache#get(face, glyphId): PathCommand[] | null
-glyphToObjectPath(glyph, unitsPerEm, size, hScale): PathCommand[]
-
-// 图片
-detectImageFormat(data: Uint8Array, path?: string): ImageFormat
-readImageSize(data: Uint8Array, format: ImageFormat): ImageHeaderSize | null
-decodeJbig2/decodeTiff(...): Promise<...>
-```
-
-## 7. 已裁决的跨模块契约（T1 冻结）
-
-### 7.1 坐标与矩阵
-
-- 矩阵为列向量约定 `[a,b,c,d,e,f]`，点变换 `x' = a*x + c*y + e`，`y' = b*x + d*y + f`。
-- 页面矩阵：`M_page = S(dpi/25.4) × T(-PhysicalBox.x, -PhysicalBox.y)`。
-- 对象矩阵：`M_obj = M_page × M_parent × CTM`；文字/图片局部变换按设计方案 §10 顺序右乘。
-- 注释放置：`M_annot = M_page × T(Appearance.Boundary.x, Appearance.Boundary.y)`。
-- 页面/对象长度在模型中统一为 mm；OFD 的 `0.3528 mm` 单位在解码时换算，渲染层不再做单位猜测。
-- 矩阵工具只在 `common/matrix.ts` 实现，任何模块不得复制一份。
-
-### 7.2 文字：只走字形轮廓
-
-- 渲染器 `Renderer` 不提供 `fillText`/`strokeText`/`measureText`。
-- 文字必须由 `font/` 取字形轮廓，转成 `PathCommand[]`，再由 `render/text.ts` 发路径命令。
-- 无 cmap 的剥离子集必须支持按 `CGTransform.Glyphs` 的显式 gid 取轮廓；不得依赖 `glyphForCodePoint`。
-- 缺字体/缺字形分别上报 `W_FONT_MISSING`/`W_GLYPH_MISSING`，并按设计方案降级（不静默失败）。
-
-### 7.3 底纹（Pattern）tile 流程
-
-样式层不依赖 `render`/`model` 的具体实现，因此 `PatternSpec` 携带解析底纹所需的结构：
-
-```ts
-PatternSpec {
-  patternId?: string;        // 底纹资源 ID
-  width, height, xStep, yStep, reflect, relativeTo, ctm?;
-  cell: PageBlock;           // CellContent
-  styleRoot: ResolvedStyle;  // tile 内对象继承起点
-  tile?: DisplayList;        // 绑定前可空
-}
-```
-
-流程：
-
-1. 样式层 `resolvePaint()` 填 `patternId` + `cell` + `styleRoot`；
-2. 准备阶段按 `styleRoot` 结算 cell 内对象，构建 `IndependentBlock`（`source: 'pattern-cell'`，必须带 `displayList`），放入 `PreparedPageBundle.blocks`；
-3. `createPaintBinder(renderer, { patterns: { resolvePatternTile(patternId) } })` 把 tile 绑定为 `PatternPaint`；
-4. 渲染器只消费 `PatternPaint`，不解析 `Pattern` 资源 XML。
-
-### 7.4 注释块
-
-- `Annotation.appearance` 为 `PageBlock`；`boundary?: Box` 对应 `Appearance.Boundary`（mm）。
-- 准备阶段把每个可见注释转成 `IndependentBlock`：
-  - `source: 'annotation'`；
-  - `boundary` = Appearance.Boundary；
-  - `displayList` 必填，且不含放置平移；
-  - `visible=false` 或空 Appearance 的注释不进入 `PreparedPage.annotationBlocks`；空 Appearance 在**模型解码阶段**上报一次 `W_ANNOT_EMPTY`，渲染阶段跳过时不再重复上报。
-- 绘制：`save(); translate(boundary.x, boundary.y); drawIndependentBlock(...); restore()`。
-
-### 7.5 DecodeOptions（末位可选参数）
-
-所有 `decode*` 与 `flattenPageTree` 把 `options?: DecodeOptions` 放在参数末位，保持既有参数兼容：
-
-```ts
-interface DecodeOptions {
-  onWarning?: (warning: OFDWarning) => void;
-  colorSpaces?: ReadonlyMap<ResourceId, ColorSpaceDef>;
-  defaultColorSpaceId?: ResourceId;
-}
-```
-
-约定：
-
-- 不得用隐藏字段、全局状态或二次解码绕过 options；
-- warning 必须带稳定 code 与上下文（pageIndex/objectId/resourceId），由 `warnings.ts` 统一去重；
-- 资源 XML 解码时填充 `ResourceIndex.colorSpaces`；颜色值解析优先用 `defaultColorSpace`（资源 ID），缺省才回退 RGB。
-
-### 7.6 文档级模板与注释索引
-
-```ts
-interface TemplatePageDef { id: ResourceId; baseLoc: string; zOrder?: 'Background'|'Body'|'Foreground' }
-
-interface CommonData {
-  pageArea?: Box; publicRes?: string[]; documentRes?: string[]; defaultRes?: string;
-  maxUnitId?: ResourceId;
-  defaultColorSpaceId?: ResourceId;                 // CommonData/DefaultCS
-  templatePages?: Record<ResourceId, TemplatePageDef>;
-}
-
-interface DocumentModel {
-  // ... id/version/docRoot/ofdFile/pages/pageCount/commonData
-  templatePages: Record<ResourceId, TemplatePageDef>; // 文档级模板索引
-  annotationsFile?: string;                           // Annotations.xml 包内路径
-  pageAnnotIndex: Record<ResourceId, string>;         // PageID → FileLoc
-}
-```
-
-- T3 解码 Document.xml/CommonData 时建立 `templatePages`；`PageModel.templates` 仍为 `TemplateRef`（ID + loc），通过 `DocumentModel.templatePages` 解析。
-- T3 在文档解码阶段只解析 `Annotations.xml` 索引，不加载页面注释内容；`PageModel.annotationFile` 由 `pageAnnotIndex[page.id]` 填充。
-- T10 在 prepare 中调用 `loader.loadAnnotations(page)` 懒加载注释；T12 实现 loader（读取 `PageModel.annotationFile`）并返回文件顺序的 `Annotation[]`，T10 负责构建注释块。
-
-### 7.7 资源颜色空间
-
-```ts
-interface ResourceIndex {
-  fonts/images/drawParams/compositeGraphicUnits/patterns: ReadonlyMap<...>;
-  colorSpaces: ReadonlyMap<ResourceId, ColorSpaceDef>;
-  defaultColorSpace?: ResourceId;   // DefaultCS 资源 ID
-}
-```
-
-颜色必须查表解析；禁止按 RGB 猜测颜色空间。
-
-### 7.8 DisplayList 与命令
-
-- `DisplayList` 是目标无关的绘制命令序列，`bounds` 为对象空间 mm。
-- `DisplayListBuilder` 只记录命令；`build()` 返回快照，后续追加不影响已构建列表。
-- 命令中的矩阵为 `Matrix`；填充/描边携带已结算 `DrawStyle` + `ResolvedPaint`。
-- 渲染器实现负责把 `DrawCommand` 映射到 Canvas2D；不允许把 OFD 模型对象塞进 DisplayList。
-
-### 7.9 图片与模板字段
-
-- `ImageObject.substitution?: ResourceId`、`ImageObject.imageMask?: ResourceId`：对应 XML `Substitution`/`ImageMask`，两者均为 `ST_RefID`（GB/T 33190—2016 CT_ImageObject），不是布尔。
-  - `substitution` 是高分辨率替换图资源 ID；T6a 通过 `ImageDrawContext.substitutionMode?: 'auto' | 'always' | 'never'`（默认 `auto`）与 `dpi?: number` 选择：auto 时 dpi>200 用替换图，否则主图；always/never 强制；
-  - `imageMask` 是蒙版图片资源 ID；解码为 mask `ImageHandle` 后由 context 传给渲染器，H5 在内部 scratch 走 `destination-in`，engine 不接触 scratch；
-  - 替换图/蒙版都按单位正方形 + CTM 绘制。
-- `TemplateRef.zOrder?: 'Background' | 'Body' | 'Foreground'`：页面 `Template/@ZOrder` 优先于 `TemplatePage/@ZOrder`；页面引用缺省为 **Background**（GB/T 33190—2016 默认值，设计 10.4）。`Body` 仅为设计兼容扩展，只有显式出现时才使用；`PageModel.templates` 保持 ID + 可选 loc，loc 通过 `DocumentModel.templatePages` 解析。
-- `CommonData.templatePages` 与 `DocumentModel.templatePages` 使用 `Record<ResourceId, TemplatePageDef>`，避免数组线性查找。
-
-### 7.10 渲染器能力子集
-
-`CanvasRenderingContext2DLike` 是 Canvas2D 的 14.1 子集，故意不含文字 API、不含 `filter`/`letterSpacing` 等新 API。实现时：
-
-- `setTransform/transform/translate/multiplyAlpha` 要正确维护状态栈；
-- `fill/stroke` 只接受 `ResolvedPaint`；
-- `beginGroup/endGroup` 用离屏画布实现混合/裁切，结束再合成；
-- 图片通过 `createImage/ drawImage` 走 `ImageHandle`；
-- 不直接依赖 DOM；默认工厂用 `globalThis.document.createElement('canvas')`，Node 由 `createCanvas` 注入。
-- `page.exportImage` 的整页离屏 canvas 同样由文档级 `OFDOpenOptions.createCanvas` 提供，不经过 `Renderer`；编码由 `OFDOpenOptions.encodeImage` 或浏览器 `convertToBlob`/`toBlob` 完成。
-- `createImageData?(width,height)` / `putImageData?(data,dx,dy)` 是可选像素读写能力，供 Gouraud/LaGouraud 软件光栅化使用；缺失时 H5 渲染器降级为平均色并上报 `W_GOURAUD_APPROX`，最小 Canvas mock 不强制实现。
-- **画布状态唯一入口**：engine/绘制管线只能通过 `Renderer` 方法（`setTransform/transform/translate/multiplyAlpha/save/restore/clip/...`）改变画布状态，禁止直接操作 `canvasContext` 的 CTM、`globalAlpha`、`globalCompositeOperation` 或 clip。`H5Canvas2DRenderer` 自行维护 CTM/alpha/clip 栈，用于 group AABB 求交、底纹像素密度和 shading 设备空间光栅化；`beginPage` 后由 renderer 统一接管并重置状态，`endPage` 恢复。
-
-### 7.11 准备阶段运行时（T6b）
-
-`PreparedPage` 保持 model 形状（`page/styles/annotationBlocks`）；所有运行时资源放入显式 `PreparedPageBundle`，不使用 WeakMap：
-
-- `templates`：`loader.loadTemplatePage` 按 `page.templates` 顺序解码，供 drawPage 按图层类型合并；
-- `fonts`：`loader.loadFontFaces` 并行加载，key 为 Font 资源 ID；
-- `images`：`loader.decodeImage` 并行解码，key 为 Image 资源 ID（含主图/Substitution/ImageMask）；`ImageHandle` 在 drawPage 内按 Renderer 创建并缓存，prepare 不碰 Renderer；
-- `blocks`：composite/pattern 的 `IndependentBlock`（displayList 必填），key 为资源 ID；注释块仍在 `page.annotationBlocks`；
-- 递归收集 composite/pattern 内部字体/图片，深度 16、循环检测；单资源失败 warning 后跳过，不整页失败；
-- `loader` 由 T12 用 document/font/image 服务实现，render 不解析 XML、不 import container。
-
-
-### 7.12 显示列表中的图像与嵌套块
-
-`DisplayList` 保持目标无关，不新增 `group` 命令；以下为 render 内部实现约定（不改变公共字段）：
-
-- **图像 deferred 句柄**：prepare 构建 block 显示列表时还没有 Renderer，无法得到真实 `ImageHandle`。仅允许 render 内部的 block DisplayList 放入带有效 `width/height` 的 deferred 占位句柄，并通过 render 内部 `WeakMap<ImageHandle, DeferredImagePlan>` 关联主图/替换图/蒙版与 `ImageObject`；`DeferredImagePlan` 不进入 `common` 类型。任何公开回放/自定义渲染器路径必须先 resolver 物化，不能把占位句柄暴露出去。
-- **回放期物化**：`replayDisplayList(renderer, list, resolveImage?)` 增加可选 resolver；遇到 `drawImage` 时对 `image` 与 `mask` 调用 resolver。resolver 在 `drawPage` 闭包内按 renderer 缓存 `renderer.createImage(DecodedImage)` 结果；Substitution 的 auto/always/never 与 dpi 在 resolver 中决定，不使用 prepare 阶段未知的 dpi。不得修改或按 renderer 重写原 DisplayList；用 resolver 保持 list 不可变。
-- 占位句柄必须带有效像素宽高；没有 resolver 就到达 `renderer.drawImage` 视为实现错误（assert/warning），不得静默把假句柄交给渲染器。
-- **嵌套 composite**：不允许用“逐子对象 `multiplyAlpha`”近似嵌套 composite 的组 alpha；重叠区域会叠加变深，isolated/blend/mask 也无法表达。规则：
-  - 嵌套 composite 的 alpha=255 且无需 isolation/blend/mask 时，可 flatten 进父 DisplayList（结果等价）；
-  - alpha<1、isolated、blend、mask 或子块自身需要 group 时，标记该 block 为“绘制期递归”，由 `drawIndependentBlock`/`drawObject` 在 draw 期递归并 `beginGroup`，组 alpha 只在 `endGroup` 乘一次；该 block 的父 DisplayList 复用降级为 best-effort，正确性优先；
-  - 外层 block 的 alpha 仍按 §11.7 在 `drawIndependentBlock` 统一开 group，不能预先乘到父 list 的子命令上。
-
-### 7.13 `Clips@TransFlag` 兼容扩展（v1.0-r10）
-
-`Clips` 是图元对象的裁剪区容器；标准语义见 GB/T 33190—2016 §8.1.4、§8.4 和 §8.5 表 34：裁剪区数据以对象空间（Boundary 左上角为原点、mm）表达，图元数据在对象空间内经 CTM 变换，再由 Boundary 映射到页面空间。标准 `CT_Clip` schema 只有 `Area`/`DrawParam`/`CTM`，**没有 `TransFlag` 属性**。
-
-为兼容 zsbk 等生成器的写法，引擎识别非标准属性 `Clips@TransFlag`：
-
-```ts
-interface Clip {
-  /** 裁剪区是否受外部对象 CTM 影响；来自 Clips@TransFlag，缺省 false。 */
-  transFlag?: boolean;
-  // ctm/drawParam/areas 语义不变
-}
-```
-
-- `TransFlag` 是**兼容扩展，不是 GB/T 33190 标准属性**；不得据此声称符合标准，也不要求其他 OFD 生成器输出。
-- 缺省或 `false`：裁剪区**不受外部对象 CTM 影响**，保持标准对象空间路径，在对象 `CTM` **之前**应用，即 `translate(Boundary) → Clips → transform(obj.ctm)`。图片的 t48 manual 逆 CTM 是独立兼容例外，仍按下方优先级后置。
-- `true`：裁剪区**受外部对象 CTM 影响**，在对象 `CTM` **之后**应用，即 `translate(Boundary) → transform(obj.ctm) → Clips`。此时 Clips 内部仍按 `Clip.CTM × T(Boundary) × Area/Path/Text.CTM` 计算，只是外层 Canvas 已带对象 CTM；因此 zsbk 图片的单位正方形裁剪会随图片 CTM 覆盖整图。
-- 模型解码时把容器级 `Clips@TransFlag` 复制到该容器下每个 `Clip`；缺省 `false`，显式 `true`/`false` 原样，非法值按 `false` 并上报 `W_BAD_NUMBER`。渲染以“任一 `Clip.transFlag === true`”为整组 Clips 后置条件；混合值只可能来自手工构造模型，仍按 true 处理。
-- 该顺序适用于所有带 `Clips` 的图元对象（path/text/image/composite），不是仅图片。
-- `Clip.CTM`、`Area` 的并集/交集规则、`Path`/`Text` 轮廓与 `Fill`/`Stroke` 降级均不变；变化仅是整组 Clips 相对对象 CTM 的应用时机。
-
-**与 t48 manual 逆 CTM 路径的优先级**（自高到低）：
-
-1. `TransFlag=true`：整组 Clips 在对象 CTM 之后；**不再**尝试 manual 逆 CTM 判定，避免二次变换。
-2. `TransFlag=false`/缺省且对象是 `ImageObject`，`Clips`（含 `Clip.CTM`/`Area.CTM` 的合成）与图片 CTM 的面积比落在 `0.2–5`（典型 manual 样本≈1）：按 t48 兼容路径在对象 CTM 之后应用；仅图片，不推广到其他图元。
-3. 其余：按标准对象空间路径在对象 CTM 之前应用。
-
-因此 `TransFlag=true` 的优先级高于 t48 manual 启发式；`false` 不会关闭 manual 对图片的兼容，只会保持标准默认。`TransFlag` 不改变 `Boundary` 裁剪：Boundary 始终先于对象 CTM 应用。
-
-验证口径：zsbk p1 背景图（true、单位 1×1 clip）完整覆盖；intro p12（无 TransFlag、图片 manual 逆 CTM）保持通过；显式 false/true 的通用对象与图片用例见 `test/render/page.test.ts`，zsbk 真实像素见 `test/pipeline/zsbk-background.test.ts`。本扩展不进入公开 API，属于 P2 实现/文档口径。
-
-### 7.14 页尺寸回退与 warning（v1.0-r11）
-
-- 回退链固定为：页面 `Area/PhysicalBox` → 按 Template 引用顺序第一个有效模板 `Area` → `CommonData/PageArea` → A4（210×297 mm）。
-- 缺失页面 `Area`/`PhysicalBox` 在解码阶段**不提示**；回退到模板或 `CommonData` 成功时**不产生 warning**；只有最终回退 A4 才上报一次 `W_BAD_NUMBER`（消息含 A4 尺寸）。
-- 显式声明但宽/高非正的 `Area` 仍按 `W_BAD_NUMBER` 提示并进入回退链；非法模板 `Area` 也提示后跳过。
-- `getPage` 与 `getPageInfos` 必须复用同一 `resolvePageArea` 口径，不因轻量读取路径产生不同 warning。
-- 回退使用模板/`CommonData` 时页面原点归零（`x/y=0`），尺寸取 `w/h`。
-
-## 8. 错误码与 warning 码
-
-### 8.1 错误码（`OFDErrorCode`）
-
-| code | 触发 |
+1. engine 不得依赖 crypto、UI、CLI 或任何宿主应用；运行时依赖仅为纯 JS 库。
+2. crypto 只依赖 engine 的包根公共入口，不得依赖 UI/CLI，不得导入 engine 的 `src/*` 内部路径。
+3. UI 只依赖 engine、crypto 的包根公共入口，不得依赖 CLI；不得直接实现 SM2/SM3/SM4、ASN.1 或加解密。
+4. CLI 只依赖 engine、crypto 的包根公共入口与 Node/原生 Canvas；不得依赖 UI；不得直接依赖 `sm-crypto` 或自实现密码算法。
+5. UI 与 CLI 互不依赖；`site` 只消费已发布的公共入口，不能反向成为库依赖。
+6. 包外消费者只能导入包根（UI 可用其声明的子路径）；任何 `@ofdrw/*/src/...` 深导入都不属于公共契约。
+7. engine 核心模块不得依赖 DOM、Node 内置模块或原生 Canvas；`container` 与 `platform` 是实现宿主适配的边界层，不得把宿主 I/O 扩散进 `model`/`render`/`api`。
+8. engine 内部方向由根级 `test/smoke/import-boundaries.test.ts` 强制：`common`/`model`/`resource`/`style`/`render`/`renderer`/`font`/`image`/`xml`/`api` 不导入 DOM/Node/原生 Canvas；`renderer` 只依赖 `common`/`renderer`；`render` 只通过 `renderer/types` 使用渲染器；`common` 对 `model`/`style` 只允许 type-only 前向引用；`model` 不产生对 `render`/`renderer`/`api` 的运行时依赖。
+9. UI 可以使用 DOM、Canvas、`fetch`、Web API；CLI 可以使用 Node 内置模块与 `@napi-rs/canvas`；这些能力不得下沉到 engine 或 crypto 的公共实现。
+10. 依赖方向改变属于公共契约变化，必须同时更新本文件、对应 `skills/API.md` 和边界测试。
+
+## 5. 公共 API 边界
+
+### 5.1 engine
+
+包根导出是唯一公共入口，完整签名见 [engine API](../packages/ofdrw-viewer-engine/skills/API.md)。
+
+- 文档与渲染：`OFDDocument`、`OFDPage`、`RenderTask`、`OFDEventBus`、`H5Canvas2DRenderer`。
+- 版本：`VERSION`、`getVersion()`。
+- 错误：`OFDError`、`isOFDError`、`toOFDError` 及错误码类型。
+- warning：`WarningCollector`、`OFDWarning`、`WarningCode`、`WARNING_CODES`。
+- 资源限制与缓存：`DEFAULT_RESOURCE_LIMITS`、`DEFAULT_CACHE_OPTIONS` 及类型。
+- 打开与来源：`OFDOpenOptions`、`OFDOpenFromContainerOptions`、`OFDSource`、`FontInput`。
+- 宿主接口：`ByteSource`、`VirtualContainer`、`VirtualContainerFactory`、`ImageDecoder`、`FontProvider`；`openZipVirtualContainer`。
+- UI 数据：`PageInfo`、`TextContent`、`TextItem`、`TextChar`、`DocumentMetadata`、`OutlineNode`、`BookmarkItem`、`DocumentPermissions` 等。
+- 渲染器与视口：`Canvas2DLike`、`CanvasRenderingContext2DLike`、`PageRenderParameters`、`Viewport`、`getPageViewport`、`getPageTransform`。
+
+engine 的每个根导出名必须出现在自身 `skills/API.md` 附录中，由 `test/smoke/public-api-doc.test.ts` 检查。
+
+### 5.2 crypto
+
+包根导出是唯一公共入口，完整签名见 [crypto API](../packages/ofdrw-viewer-crypto/skills/API.md)。
+
+- 业务入口：`inspect`、`openDecryptingContainer`、`verifyOfd`。
+- 输入/容器：`CryptoSource`、`CryptoCredential`、`Sm2PrivateKeyInput`、`CryptoOptions`、`CryptoLimits`；容器参数使用 engine 的 `VirtualContainer` 类型。
+- 解析：`parseSignatureXml`、`parseSignaturesXml`、`parseSignedValue`、`parseSeal`、`parseOfdEntriesXml`、`parseTimestamp` 等签名/完整性/时间戳解析入口。
+- 证书：`CertificateDer`、`parseCertificate`、`parseCertificates`、`loadCertificate`、`loadCertificates`、`certificatesToDer`。
+- SM/ASN.1：`sm2Sign`、`sm2Verify`、`sm2Encrypt`、`sm2Decrypt`、`sm3Digest`、`sm4EncryptCbc`、`kdfSm3`、`parseDer`、`parseX509Certificate`、`parseSm2Cipher` 等底层函数。
+- 错误与 warning：`CryptoError`、`isCryptoError`、`CRYPTO_ERROR_CODES`、`CryptoWarning`、`CRYPTO_WARNING_CODES`。
+
+crypto 可以重导出 engine 的 `ByteSource` 类型，但不得借此扩大 engine 的运行时公共面。
+
+### 5.3 UI
+
+包根导出 `OFDViewer`、`registerViewerExtension`、构造选项与事件/状态类型、`HttpByteSource`、`readPreviewSourceFromLocation`、`DEFAULT_MAX_BASE64_BYTES`、`VERSION`/`getVersions` 与错误类型。框架入口使用 `./react`、`./vue`、`./element`（`./component` 为兼容别名），样式使用 `./style.css`。完整签名见 [UI API](../packages/ofdrw-viewer-ui/skills/API.md)。
+
+UI 的包根导入会安装 UI shell，并加载文本、导航、签章、打印、导出等副作用模块；React/Vue/Web Component 入口复用同一 `OFDViewer` 内核，不建立第二套文档生命周期。
+
+### 5.4 CLI
+
+CLI 只提供可执行文件 `ofdrw-viewer-cli`，不导出库 API。命令、参数、输出字段和退出码以 [CLI SKILL](../packages/ofdrw-viewer-cli/skills/SKILL.md) 为准；CLI 内部源码不是给其他包调用的公共接口。
+
+### 5.5 公共类型与版本
+
+公共类型按上述包归属，不跨包复制同名类型。UI 的 `ViewerOptions`、`ViewerState`、`ViewerEvent` 等只属于 UI；engine 的 `OFDOpenOptions`/`OFDSource` 不得被 crypto/UI/CLI 重新定义。四个包版本保持同一发布号；engine/crypto/UI 的 `VERSION` 不从 `package.json` 运行时读取，CLI 普通构建可从自身 `package.json` 读取 `CLI_VERSION`，SEA 使用构建时嵌入的版本。
+
+## 6. 跨包调用面
+
+当前四个包之间没有深导入，也没有跨包调用的内部实现签名。跨包调用只发生在包根导出上：
+
+| 调用方 | 被调用方 | 使用的公共面 |
+| --- | --- | --- |
+| crypto | engine | `ByteSource`、`VirtualContainer`、`OFDError`/`isOFDError`、`openZipVirtualContainer` 及公共类型 |
+| UI | engine | `OFDDocument`、`OFDPage`、渲染器/视口、错误、文档/文本/权限/签章类型 |
+| UI | crypto | `inspect`、`openDecryptingContainer`、`verifyOfd`、证书/SM 类型与错误类型 |
+| CLI | engine | `OFDDocument`、图片导出、文本内容、字体/解码器注入、错误与 warning |
+| CLI | crypto | `inspect`、`openDecryptingContainer`、`verifyOfd`、`certificatesToDer`、凭据/报告类型 |
+
+因此 engine/crypto 内部模块之间的函数签名不是跨包契约，不应复制到本文；改动这些内部签名只需通过各自包测试，除非同时改变了包根导出或上述行为。
+
+## 7. 跨模块契约与不变式
+
+### 7.1 来源与字节所有权
+
+- engine 的 `OFDSource` 只有 `arraybuffer`、`blob`、`custom` 三种；`url`、`node-file`、`wechat-file` 都不合法。URL、路径、小程序文件必须先由宿主读成字节或实现 `ByteSource`。
+- `ByteSource.size` 是总字节数，单位 byte；`read(offset, length)` 返回调用方拥有的字节；`close()` 幂等，由拥有它的容器调用。异步探测大小用 `ready()`。
+- `openZipVirtualContainer(source)` 适配来源并创建 ZIP 容器；容器关闭时关闭它拥有的字节源。来源是 `custom` 时，所有权按容器契约移交，调用方不得在容器关闭前重复关闭同一源。
+- 已构造容器注入 `OFDDocument` 时是借用语义：engine 不关闭容器，宿主在 `doc.close()` 后自行关闭；同一明文容器可被多个文档复用（是否支持并发由容器实现决定，engine 不额外加锁）。
+- `OFDOpenOptions.containerFactory` 的容器归 engine 所有：打开失败或 `doc.close()` 时 engine 关闭；`source` 作为工厂输入，来源所有权随工厂/容器。`container` 与 `containerFactory` 互斥。
+- 纯容器入口 `OFDOpenFromContainerOptions` 不要求 `source`，不提供工厂；`source` 只作为宿主上下文，engine 不打开、不关闭。
+- engine 只接受明文容器：`encrypted=false` 且 `read()` 返回明文；`encrypted=true` 的 raw package container 只能交给 crypto 检查/解密，直接打开报 `OFD_ENCRYPTED`。
+- crypto 的 `CryptoSource` 支持 `arraybuffer`、`blob`、`url`、`byte-source`。`byte-source` 由调用方拥有，crypto 只读、不关闭；`url` 由 crypto 使用全局 `fetch` 读取完整响应，遵守 `maxSourceBytes`，不实现 Range/重试/缓存。
+- `openDecryptingContainer` 的返回容器固定 `encrypted=false`；调用方负责关闭。多重解密时，中间层容器在返回前关闭，明文结果不残留 `Encryptions.xml`/`decryptseed.dat`/`entriesmap.dat` 等元数据；输入 `byte-source` 不被关闭。
+- `inspect` 只读取包结构/加密头/用户/签章与完整性存在性，不解密、不验签，因此不能替代 `verifyOfd`。
+
+### 7.2 生命周期、取消与关闭
+
+- engine 的取消信号在入口和读取边界透传；中止抛 `OFD_ABORTED`，不能吞掉后继续返回部分页面。`doc.close()` 幂等；关闭后取页/渲染抛 `OFD_CLOSED`。RenderTask 取消后不得再完成渲染。
+- crypto 的 `signal` 在读取、解密、验证入口检查；中止抛 `CRYPTO_ABORTED`，已构造的容器必须关闭，不返回半成品。取消不能被映射成普通解密失败。
+- UI 取消当前加载/渲染/验证时，必须结束对应操作并保持状态一致；`destroy()` 后不得再触发渲染或改写 DOM。UI 事件与生命周期以 [生命周期与事件设计](OFD渲染引擎生命周期与事件设计.md) 为准。
+- CLI 收到 `SIGINT` 以 `130` 退出；已写出的页可以保留，未完成的页不得写成成功结果。
+
+### 7.3 错误映射
+
+- engine 统一抛 `OFDError`，带稳定 `code`、可读 `message` 和可选 `cause`；不得把宿主 HTTP/文件系统错误码直接暴露给上层。
+- crypto 统一抛 `CryptoError`，错误码见 §8；`message` 只能包含路径、用户名、算法、OID 等诊断信息，不得包含口令、私钥、PEM、`EncryptedWK` 或密钥字节。crypto 内部遇到 engine 错误时用 `isOFDError` 识别并按自身边界转换。
+- UI 在功能守卫处抛 `OFD_FEATURE_DISABLED`（带 `feature`），其余错误使用 `ViewerErrorCode`；密码能力失败映射为 `OFD_CRYPTO_FAILED` 并保留 `cause`，取消映射为 `OFD_CRYPTO_CANCELLED`，未提供凭据映射为 `OFD_CRYPTO_CREDENTIAL_REQUIRED`。
+- CLI 使用 `CliError` 与 §8.5 的退出码；engine/crypto 错误必须映射到稳定的进程退出码，不能把内部码直接当退出码。
+- 任何层都不得在错误消息、日志或 DOM 中输出凭据、私钥、解密密钥或明文正文。
+
+### 7.4 Warning 透传与去重
+
+- engine 通过 `onWarning` 回调输出 `OFDWarning`，`WarningCollector` 按 `(code, pageIndex, objectId)` 去重后转发；`resourceId` 不参与去重键。
+- crypto 通过独立的 `onWarning` 输出 `CryptoWarning`，不得复用 engine 的 warning 码。
+- UI 的阅读器 warning 与密码能力 warning 是两个回调；UI 不把 crypto warning 改写成 engine 码。
+- CLI 在文本输出中呈现 warning；`info` 等结构化结果保留 warning，不得因 warning 把成功结果改成错误退出码。
+
+### 7.5 字体输入
+
+- engine 的 `FontInput` 只接受已经读好的 `data`（`ArrayBuffer`/`Uint8Array`）与可选 `family`；`defaultFonts` 与 `supplementaryFonts` 都不接受 URL/路径。
+- 需要按需读取字体时，宿主实现 `FontProvider.match()`，在 `match()` 内读取并返回 `FontInput`；这是 engine 唯一的字体 I/O 入口。
+- UI/CLI 负责把本地目录、系统字体或宿主资源读成字节后注入；engine 不扫描文件系统、不解析字体 URL。
+- 字体匹配、默认字体优先级、缺字回退和字重/字形策略以 [渲染字体缺省方案设计](渲染字体缺省方案设计.md) 为准；engine 不使用 Canvas `fillText` 作为生产文本路径。
+
+### 7.6 证书输入与 DER 边界
+
+- crypto 的公共证书接口只接收 `CertificateDer`（X.509 DER 字节）。`parseCertificate`、`loadCertificate(s)` 与 `VerifyOfdOptions.roots` 的每项都必须是单张证书 DER，不识别 PEM/Base64；`parseCertificates` 额外接受多张 DER 直接拼接，按 TLV 边界逐张解析。
+- CER 字节本身就是 DER，可直接作为 `CertificateDer` 使用；PEM、Base64、多证书文本必须经 `certificatesToDer` 转为逐张 DER；拼接 DER 可直接传给 `parseCertificates`，也可选用 `certificatesToDer` 拆分。转换器做 DER 顶层结构与 X.509 最小解析校验，但不校验证书链、有效期或 KeyUsage。
+- UI 的 `CertificateSource` 四态（`data`/`url`/`path`/`filePath`）由 UI 读取后统一转 DER；CLI 读取根证书文件后同样转 DER。读取失败与解析失败的处理以 [证书输入 DER 化设计](证书输入DER化设计.md) 为准。
+- 未配置信任根时证书链状态是 `unknown`，不是 `invalid`；验证报告必须保留这一区分。
+
+### 7.7 网络与宿主 I/O 委托
+
+- engine 不发起网络请求、不读取文件、不实现 HTTP Range/重试/缓存/鉴权；这些均由宿主完成，engine 只把底层错误映射为 `OFDError`。
+- UI 负责 URL 规范化、`HttpByteSource`、HEAD/Range、请求头合并、进度、取消与关闭；CLI 只接受本地文件路径并用 `NodeFileByteSource` 随机读；小程序宿主自行下载并交出字节或 `ByteSource`。
+- 谁实现 I/O，谁负责错误、取消和资源释放。跨层不得把 URL 字符串继续向下传，也不得让 engine 认识 `file://` 或小程序临时路径。详细边界见 [网络与文件获取委托设计](网络获取委托设计.md)。
+
+### 7.8 文本、坐标与单位
+
+- engine 内部以毫米描述页面几何，渲染时按 DPI 转成像素；图片导出、viewport、文本层使用像素坐标。
+- `TextContent`/`TextItem`/`TextChar` 的坐标、尺寸、基线、四角点均为页面像素坐标，原点在页面左上角，单位 px；UI 文本层与 CLI `--text` JSON 使用同一口径。
+- 文本内容 API 的遍历顺序、可见性、排除规则、上限、缓存与取消以 [文本内容 API 设计](text-content-api.md) 为准；UI/CLI 不得自行解析 Content.xml 生成另一套文本。
+- 页面旋转、缩放、裁剪后的坐标转换由 engine 的视口/变换函数负责；宿主只组合矩阵，不复制单位换算公式。
+
+### 7.9 事件边界
+
+- engine 提供 `OFDEventBus` 与 `RenderTask` 事件；事件名、字段、单位、派发顺序和失败/取消语义以 [生命周期与事件设计](OFD渲染引擎生命周期与事件设计.md) 为准。
+- UI 把 engine 事件映射成 `ViewerEvent`，不得改变单位和页面索引基准；UI 的加载结束/错误边界必须清理旧操作监听器。
+- crypto 与 CLI 不提供事件总线；CLI 只在进程输出中呈现结果。
+
+### 7.10 密码能力边界
+
+- crypto 负责：加密检测、口令/证书解密、多层/多用户、签名与完整性验证、证书链、印章解析、时间戳解析。
+- crypto 不负责：生成/修改 OFD、加密包、签章、制章、证书签发、吊销查询（CRL/OCSP）、TSA 签名验证；时间戳只解析并标注“已解析，未验证”。
+- UI 的 `crypto.enabled=false` 时加密文档以 `OFD_CRYPTO_UNSUPPORTED` 拒绝；`verification` 功能变为 unsupported；`autoPrompt=false` 且无预置凭据时直接拒绝，不调用 `onCredentialRequired`。
+- CLI 不提供独立 `decrypt` 子命令；需要解密时通过 `convert` 的凭据参数或 `verify` 的凭据参数完成。CLI 不自行实现 SM 算法，只调用 crypto 公共入口。
+- 凭据只在调用栈/内存中使用，不写入日志、DOM、URL、浏览器存储或输出文件；测试证书/私钥只能用于测试，不构成生产信任材料。
+
+## 8. 错误码与 warning 码注册表
+
+这些码是公共契约。新增、删除或改名必须同步本文件、对应 `skills/API.md` 和消费方映射。
+
+### 8.1 engine 错误码
+
+| 码 | 语义 |
 | --- | --- |
-| `OFD_INVALID_PACKAGE` | ZIP/OFD 包结构非法、缺 OFD.xml |
-| `OFD_ENTRY_NOT_FOUND` | 必需条目不存在 |
-| `OFD_UNSUPPORTED_COMPRESSION` | 非 0/8 压缩方法或加密 |
-| `OFD_ENCRYPTED` | 加密条目/文档 |
-| `OFD_XML_PARSE` | XML 解析失败 |
-| `OFD_PAGE_NOT_FOUND` | 页索引越界 |
-| `OFD_CANVAS_TOO_LARGE` | render/exportImage 的 viewport 超过 `maxCanvasPixels` |
-| `OFD_CANVAS_SIZE_MISMATCH` | 传入 canvas 尺寸与 viewport 不一致，或 exportImage 工厂返回尺寸不符 |
-| `OFD_RENDERER_UNSUPPORTED` | 渲染器/导出缺少必需能力；exportImage 无画布/编码器、格式不支持或编码失败 |
-| `OFD_ABORTED` | 渲染/打开/exportImage 被取消 |
-| `OFD_CLOSED` | 文档已关闭后继续 render/exportImage |
-| `OFD_LIMIT_EXCEEDED` | 资源限制超限 |
+| `OFD_INVALID_PACKAGE` | 包结构/ZIP/OFD 入口非法，或来源形状非法 |
+| `OFD_ENTRY_NOT_FOUND` | 包内条目缺失 |
+| `OFD_UNSUPPORTED_COMPRESSION` | ZIP 压缩方式不支持 |
+| `OFD_ENCRYPTED` | 打开到未解密的加密容器 |
+| `OFD_XML_PARSE` | XML/结构解析失败 |
+| `OFD_PAGE_NOT_FOUND` | 页索引越界或页面不存在 |
+| `OFD_CANVAS_TOO_LARGE` | 画布像素超过限制 |
+| `OFD_CANVAS_SIZE_MISMATCH` | 传入画布尺寸与视口不一致 |
+| `OFD_RENDERER_UNSUPPORTED` | 渲染器/绘制能力不支持 |
+| `OFD_ABORTED` | 操作被取消 |
+| `OFD_CLOSED` | 文档或容器已关闭 |
+| `OFD_LIMIT_EXCEEDED` | 包/条目/解压/资源超过限制 |
 | `OFD_FONT_PARSE` | 字体解析失败 |
 | `OFD_IMAGE_DECODE` | 图片解码失败 |
 
-约定：公共 API 的 rejected promise 只抛 `OFDError`；第三方异常用 `toOFDError` 包装并保留 `cause`。
+### 8.2 engine warning 码
 
-### 8.2 warning 码（`WarningCode`）
+| 码 | 语义 |
+| --- | --- |
+| `W_FONT_MISSING` | 文档字体缺失，使用替代字体 |
+| `W_GLYPH_MISSING` | 字体缺字，绘制替代/空白 |
+| `W_IMAGE_DECODE` | 图片解码失败，跳过图片 |
+| `W_UNSUPPORTED_PAINT` | paint 类型不支持 |
+| `W_UNSUPPORTED_CLIP` | 裁剪类型不支持 |
+| `W_BAD_NUMBER` | 数值字段非法，使用默认/跳过 |
+| `W_BAD_PATH` | 路径命令非法 |
+| `W_DUPLICATE_RESOURCE` | 资源 ID/路径重复 |
+| `W_COMPOSITE_DEPTH` | 组合对象嵌套超限 |
+| `W_PATTERN_LIMIT` | pattern 复杂度/数量超限 |
+| `W_ZERO_BOUNDARY` | Boundary 宽或高为 0 |
+| `W_PHYSICALBOX_ORIGIN` | PhysicalBox 原点非 0 |
+| `W_IMAGE_NO_CTM` | 图片缺 CTM，按约定处理 |
+| `W_NEGATIVE_BOUNDARY` | Boundary 为负 |
+| `W_LAYER_ORDER` | 图层顺序异常 |
+| `W_BLEND_MODE` | 混合模式不支持 |
+| `W_RADIAL_UNSUPPORTED` | 径向渐变不支持 |
+| `W_GOURAUD_APPROX` | Gouraud 网格使用近似 |
+| `W_ANNOT_EMPTY` | 注释内容为空 |
+| `W_JBIG2_DECODE` | JBIG2 解码降级/失败 |
 
-`W_FONT_MISSING`、`W_GLYPH_MISSING`、`W_IMAGE_DECODE`、`W_UNSUPPORTED_PAINT`、`W_UNSUPPORTED_CLIP`、`W_BAD_NUMBER`、`W_BAD_PATH`、`W_DUPLICATE_RESOURCE`、`W_COMPOSITE_DEPTH`、`W_PATTERN_LIMIT`、`W_ZERO_BOUNDARY`、`W_PHYSICALBOX_ORIGIN`、`W_IMAGE_NO_CTM`、`W_NEGATIVE_BOUNDARY`、`W_LAYER_ORDER`、`W_BLEND_MODE`、`W_RADIAL_UNSUPPORTED`、`W_GOURAUD_APPROX`、`W_ANNOT_EMPTY`、`W_JBIG2_DECODE`、`W_PERMISSION_FIELD`、`W_ATTACHMENT_FIELD`、`W_ATTACHMENT_RESOURCE`。
+### 8.3 crypto 错误码
 
-约定：warning 不中断渲染；同一 `(code,pageIndex,objectId)` 由 `WarningCollector` 去重；未安装 handler 时静默。
+| 分组 | 码 |
+| --- | --- |
+| 输入/API | `CRYPTO_INVALID_ARGUMENT`、`CRYPTO_CREDENTIALS_REQUIRED`、`CRYPTO_SOURCE_UNSUPPORTED`、`CRYPTO_LIMIT_EXCEEDED`、`CRYPTO_ABORTED` |
+| 包/加密结构 | `CRYPTO_INVALID_PACKAGE`、`CRYPTO_NOT_ENCRYPTED`、`CRYPTO_UNSUPPORTED_ENCRYPTION`、`CRYPTO_ENTRY_MAP_INVALID`、`CRYPTO_DECRYPT_FAILED`、`CRYPTO_DECRYPT_LAYER_LIMIT`、`CRYPTO_LAYER_LOOP` |
+| 凭据 | `CRYPTO_USER_NOT_FOUND`、`CRYPTO_USER_AMBIGUOUS`、`CRYPTO_WRONG_PASSWORD`、`CRYPTO_PRIVATE_KEY_INVALID`、`CRYPTO_PRIVATE_KEY_PASSPHRASE_REQUIRED`、`CRYPTO_PRIVATE_KEY_UNSUPPORTED_ENCRYPTION`、`CRYPTO_PRIVATE_KEY_MISMATCH` |
+| ASN.1/验证 | `CRYPTO_ASN1_INVALID`、`CRYPTO_UNSUPPORTED_SES_VERSION`、`CRYPTO_UNSUPPORTED_ALGORITHM`、`CRYPTO_CERTIFICATE_INVALID`、`CRYPTO_TRUST_ROOT_INVALID`、`CRYPTO_INTEGRITY_INVALID`、`CRYPTO_SIGNATURE_INVALID`、`CRYPTO_TIMESTAMP_PARSE` |
 
-999 修复后的 warning 口径补充：`g` 组 `count=0` 是合法空展开、不报 `W_BAD_NUMBER`（§6.2.1）；页面积回退到模板/`CommonData` 成功不提示、仅最终 A4 提示（§7.14）；空注释 `Appearance` 只在模型解码阶段提示一次 `W_ANNOT_EMPTY`（§7.4）。
+### 8.4 crypto warning 码
 
-## 9. 并行开发规则
+| 码 | 语义 |
+| --- | --- |
+| `W_CRYPTO_DUPLICATE_USER` | 加密包内用户名重复 |
+| `W_CRYPTO_CREDENTIAL_IGNORED` | 凭据与当前包/路径不适用，被忽略 |
+| `W_CRYPTO_ENTRIES_MAP_PLAINTEXT` | 加密层 entriesmap 为明文 XML，按明文映射继续 |
+| `W_CRYPTO_ENTRY_MAP_INVALID` | 条目映射非法/不完整 |
+| `W_CRYPTO_KEY_USAGE_MISSING` | 证书缺少 KeyUsage 扩展，无法确认签名用途 |
+| `W_CRYPTO_MULTI_LAYER` | 解密涉及多层加密 |
+| `W_CRYPTO_TIMESTAMP_PARSE` | 时间戳解析降级/失败 |
+| `W_CRYPTO_TIMESTAMP_IMPRINT_MISMATCH` | 时间戳 imprint 与签名值不一致 |
+| `W_CRYPTO_UNKNOWN_SES_VERSION` | SES 版本未知 |
+| `W_CRYPTO_REFERENCE_UNSUPPORTED` | Reference 类型/算法不支持 |
+| `W_CRYPTO_SEAL_PICTURE_INVALID` | 印章图片数据非法 |
+| `W_CRYPTO_TRUST_UNKNOWN` | 未配置信任根，链状态为 unknown |
+| `W_CRYPTO_CERT_SOURCE_UNSUPPORTED` | 证书来源格式不支持，跳过 |
 
-1. **只改自己 inScope**；需要跨文件修改先发消息给 owner 与 architect。
-2. 冻结文件只读；新增公共字段/签名必须由 architect 更新并通知。
-3. 不新增依赖（T1 已完成依赖表）；如确需，先报告 captain，由 captain 决策。
-4. 不启动长期服务；Web 验证页按需启动，测试结束关闭。
-5. 不执行 `git add/commit/push`；所有 git 操作由 captain 在里程碑统一执行。
-6. 测试放自己的目录（开发：`packages/ofdrw-viewer-engine/test/<module>/`；QA：`test/golden|e2e|acceptance`）；不要修改他人的测试；产物放仓库根 `test/.artifacts/<task-id>/`。
-7. 公共模块实现必须通过 `test/smoke/import-boundaries.test.ts`；新增 import 前先看依赖方向。
-8. 错误码/warning 码是公共契约，新增需同步 `errors.ts`/`warnings.ts` 与本文件。
-9. 跨模块联调以本文件与冻结类型为准；口头约定无效。
-10. 完成时提交 `changedPaths`、真实 `commandsRun`、`acceptanceResults`；验证命令必须实际执行。
+### 8.5 UI 与 CLI 错误
 
-## 10. 测试目录与黄金图
+UI 的 `ViewerErrorCode`：`OFD_FEATURE_DISABLED`、`OFD_INVALID_OPTION`、`OFD_INVALID_PAGE`、`OFD_NOT_OPENED`、`OFD_DESTROYED`、`OFD_UNSUPPORTED`、`OFD_EXPORT_FAILED`、`OFD_PRINT_FAILED`、`OFD_SIGNATURE_PARSE_FAILED`、`OFD_CLIPBOARD_FAILED`、`OFD_CRYPTO_CREDENTIAL_REQUIRED`、`OFD_CRYPTO_CANCELLED`、`OFD_CRYPTO_UNSUPPORTED`、`OFD_CRYPTO_FAILED`。`OFD_FEATURE_DISABLED` 同时携带 `feature`。
 
-- 架构 smoke：仓库根 `test/smoke/`（完整 AST 边界检查）与 `packages/ofdrw-viewer-engine/test/smoke/`（包内快速回归）双层守护。
-- 单元测试：`packages/ofdrw-viewer-engine/test/<module>/`。
-- 黄金图/回归：`packages/ofdrw-viewer-engine/test/golden|e2e|acceptance/`；fixture/基准图放对应 `test/fixtures/` 或 `test/.fixtures/`（不提交大文件时写脚本生成）。
-- Node 端画布：`@napi-rs/canvas` + `pngjs` + `pixelmatch`，由 QA 建 harness；引擎核心不得直接依赖 Node canvas。
-- 浏览器端：H5 `CanvasRenderingContext2DLike` 适配 `CanvasRenderingContext2D`；Web 验证页只做打开/翻页/缩放/渲染。
-- 55 对真实回归样本位于仓库根 `ofd_pdf_match/`，只读；QA 生成 `docs/回归报告.md`。
-- 像素阈值、忽略区域、字体回退策略由 QA 在 `docs/测试方案.md` 固化；引擎行为变更需同步基线。
+CLI 的 `CliErrorCode` 按用途分组：
 
-## 11. M0 结论摘要
+- 用法/路径：`CLI_USAGE`、`CLI_INVALID_FORMAT`、`CLI_INVALID_DPI`、`CLI_INVALID_PAGES`、`CLI_INPUT_NOT_FOUND`、`CLI_INPUT_NOT_FILE`、`CLI_INPUT_UNREADABLE`、`CLI_OUTPUT_NOT_DIRECTORY`、`CLI_OUTPUT_CREATE_FAILED`、`CLI_FONT_DIR_INVALID`、`CLI_FONT_DIR_UNREADABLE`。
+- 输出：`CLI_IMAGE_WRITE_FAILED`、`CLI_TEXT_WRITE_FAILED`、`CLI_TEXT_UNSUPPORTED`、`CLI_PAGE_TOO_LARGE`。
+- 凭据/根证书：`CLI_CREDENTIALS_INCOMPLETE`、`CLI_CREDENTIALS_CONFLICT`、`CLI_CREDENTIALS_REQUIRED`、`CLI_CREDENTIAL_FILE_NOT_FOUND`、`CLI_CREDENTIAL_FILE_UNREADABLE`、`CLI_ROOT_FILE_NOT_FOUND`、`CLI_ROOT_FILE_UNREADABLE`。
+- 未预期：`CLI_UNEXPECTED`。
 
-详见 `docs/M0-技术验证.md`。要点：
+CLI 进程退出码：`0` 成功；`1` 用法/参数/路径/页码错误；`2` 文档级失败；`3` 至少一页失败且至少一页成功；`4` 加密/凭据失败；`5` 验证未通过（`invalid`/`unknown`/`unsupported`/`not-applicable`）；`130` 用户中断。
 
-- 自研 ZIP 读取路径可行：`1.ofd` 28 条目，`Document.xml` 299→646 bytes，native `DecompressionStream('deflate-raw')` 与 fflate 字节一致。
-- fontkit 2.0.4 可解析内嵌 TTF/CFF；无 cmap 剥离子集必须按显式 gid 取轮廓（样本 gid=11 有 11 条命令）。
-- `@napi-rs/canvas` 1.0.13 可将字形轮廓绘成 PNG（320×240，3079 bytes，已人工确认“中”字形正确）。
-- 55 个样本共 60 个字体条目，55 个可解析、5 个扩展名与内容不符（`Unknown font format`）；字体加载必须容错并上报 warning，不能假定扩展名可信。
-- 样本无 TTC；TTC 选面留待 T4 用合成 fixture 覆盖。
+## 9. 测试目录与黄金图所有权
 
-## 12. 变更记录
+### 9.1 目录归属
 
-| 版本 | 日期 | 变更 |
+| 目录 | 所有者与用途 |
+| --- | --- |
+| `test/smoke` | 根级架构测试：engine 导入边界、公共 API 文档同步、公共 API 形状、DisplayList |
+| `test/fixtures/reference` | 权威参考图，供 engine 回归使用；不复制到各包 |
+| `packages/ofdrw-viewer-engine/test/{api,common,container,xml,model,resource,style,font,image,render,renderer,pipeline,gouraud,text-content,text-layout,smoke}` | engine 单元/集成测试 |
+| `packages/ofdrw-viewer-engine/test/golden` | 样本 manifest、比较器、容差、严格基线 |
+| `packages/ofdrw-viewer-engine/test/e2e` | 批量 PDF 参考回归、稳定性/取消/内存回归 |
+| `packages/ofdrw-viewer-engine/test/acceptance` | engine 公共 API 验收 |
+| `packages/ofdrw-viewer-engine/test/performance` | 文本性能门禁 |
+| `packages/ofdrw-viewer-engine/test/verification` | 生命周期、错误、字体等独立验证 |
+| `packages/ofdrw-viewer-crypto/test/{cert,container,core,decrypt,integrity,seal,sign,timestamp,verify}` | crypto 单元/集成测试 |
+| `packages/ofdrw-viewer-crypto/test/verification` | OpenSSL/Java 向量、证书 DER 边界、Node/browser 来源 |
+| `packages/ofdrw-viewer-crypto/test/fixtures/crypto` | 受保护 OFD、证书/私钥、manifest 与 SHA-256 |
+| `packages/ofdrw-viewer-ui/test/{unit,integration,verification}` | UI jsdom 单元、集成、独立验证 |
+| `packages/ofdrw-viewer-ui/test/e2e` | Playwright 真实 Chrome 端到端 |
+| `packages/ofdrw-viewer-ui/test/acceptance` | E2E fixture 生成与 Playwright 产物 |
+| `packages/ofdrw-viewer-cli/test/{unit,e2e,verification}` | CLI 单元、端到端、独立验证 |
+| `packages/ofdrw-viewer-cli/test/acceptance` | 构建后 CLI 与 SEA 黑盒验收 |
+| `packages/ofdrw-viewer-cli/test/fixtures` | CLI 字体/文档夹具 |
+
+`test/.artifacts` 与各包 `test/.artifacts` 是运行产物目录，已被忽略；不得把产物当基准提交。`docs/测试方案.md` 负责 fixture 生成、样本清单、命令、CI、报告与矩阵；本文只固定目录所有者和黄金图所有权。
+
+### 9.2 黄金图所有权
+
+- `packages/ofdrw-viewer-engine/test/golden/samples.json` 是样本清单的唯一权威：58 个样本、169 个比较页；PDF 参考位于 `ofd_pdf_match`，样本当前全部在仓库内。
+- `packages/ofdrw-viewer-engine/test/golden/baseline/strict-baseline.json` 是严格审计基线：必须保持 58 个样本、169 页；`scripts/audit-strict.mjs` 以 58/169 作为完整性断言。
+- `packages/ofdrw-viewer-engine/test/golden/baseline` 下的 PNG 目录约定用于人工确认的页面基线；没有 PNG 的页不参与该比较，当前是否启用由测试方案说明。
+- 样本 manifest、比较器、容差、基线与批量回归 harness 归 engine 所有；其他包只消费样本或通过公共 API 复现，不得另建一套黄金图基线。
+- crypto 的受保护 OFD、证书/私钥和 manifest 归 crypto 所有；UI/CLI 复用该目录，不复制夹具。
+- UI 的 `thousand.ofd`、`broken-page.ofd`、`signature-missing-value.ofd` 由 `test/acceptance/generate-fixtures.mjs` 生成，归 UI 所有且不提交。
+
+## 10. 密码能力范围
+
+### 10.1 当前能力
+
+| 能力 | 入口 | 结果 |
 | --- | --- | --- |
-| v1.0-r13（Unreleased） | 2026-10-23 | **breaking**：网络/文件读取委托给宿主。删除 `OFDSource.url/node-file/wechat-file`、`HttpRangeSource`/`NodeFileSource`/`WechatFileSource`、`FontInput.url/path/filePath`、`OFDOpenOptions.loadInput`/`FontInputLoader`/`fontInputLoader`。`OFDSource` 仅 `arraybuffer/blob/custom`；`FontInput` 仅 `{ data, family? }`，按需读取用 `FontProvider.match()`；`document:open:start.sourceKind` 对 URL 文档由 `url` 变 `custom`。UI 用 `HttpByteSource` 承接 URL（Range/取消/整包回退），crypto 映射为 `byte-source` 并与 engine 共用同一源；CLI 预读字体字节以 `{ data }` 注入。engine 包版本保持 `0.1.0`（未发布）。 |
-| v1.0-r11 | 2026-10-22（t94/t96） | 新增可选 `OFDOpenOptions.loadInput` / `FontInputLoader`：不传时 Web 默认 url/fetch、path/filePath 不支持；Node CLI `--font-dir` 注入 node:fs loader，真正读取并展开 TTF/OTF/TTC/OTC 的 family。同步 999 修复 warning 口径：`g N V` 的 N=0 为合法空展开；页面积缺失时模板/CommonData 回退成功不提示、仅最终 A4 提示；空注释 Appearance 仅在模型解码提示一次。公开 API 兼容增量。**（该能力已在 v1.0-r13 移除）** |
-| v1.0-r10 | 2026-10-22（T18e/P2） | 记录 `Clips@TransFlag` 非标准兼容扩展：标准 `CT_Clip` 无此属性；缺省/false 按对象空间在对象 CTM 前裁剪，true 在对象 CTM 后裁剪；true 优先于 t48 图片 manual 逆 CTM 兼容；模型 `Clip.transFlag?` 容器级复制、非法值 `W_BAD_NUMBER` 后 false。不涉及公开 API。同时登记 P2 公开 API：权限只读声明不做 DRM、附件元信息/原始字节不解析内容、`exportImage.rotation` 仅导出方向；`renderRegion` 不实现/不导出；新增 `W_PERMISSION_FIELD`/`W_ATTACHMENT_FIELD`/`W_ATTACHMENT_RESOURCE`。 |
-| v1.0-r9 | T17a/T17h | 冻结并落地 ofdrw-viewer-ui 引擎 P0/P1 API：PageInfo/Outline/Bookmark/签章 XML 元数据/SignedValueFile/DocumentMetadata/PagePrepareOptions/TextContent 全家族；`CacheOptions.textPages?` 默认 4（按页 LRU，键不含 dpi）；ASN.1/Seal.esl 不进入公共 API，P2 权限/附件/局部渲染/导出旋转延后。t67/t68/t70/t71 实现，t72 接线文本，t73 同步文档。 |
-| v1.0-r8 | T15a | 新增 `OFDPage.exportImage(options)` 与 `OFDOpenOptions.encodeImage(canvas,format,quality)`；整页 + dpi + 白底/PNG 透明；浏览器默认 convertToBlob/toBlob，Node 注入，不新增编码依赖；错误码复用 OFD_CANVAS_TOO_LARGE/OFD_CANVAS_SIZE_MISMATCH/OFD_RENDERER_UNSUPPORTED/OFD_ABORTED/OFD_CLOSED。 |
-| v1.0-r7 | T14m | 新增可选 `OFDOpenOptions.createCanvas`（`Canvas2DLike`），用于默认 H5 渲染器与矢量签章嵌套 OFD 离屏渲染；未注入保持 document/OffscreenCanvas 兜底。r8 起也供 `exportImage` 使用。 |
-| v1.0-r6 | T6c 复审 | 修正 §7.9 模板 `ZOrder` 口径：页面 `Template/@ZOrder` 优先，页面引用缺省 `Background`（标准/设计 10.4）；`Body` 仅显式使用 |
-| v1.0-r5 | T6b | 明确 displayList deferred 图像句柄/replay resolver 与嵌套 composite group 规则；不新增公共字段，group 不进入 DisplayList |
-| v1.0-r4 | T6b | 明确准备阶段运行时：`PreparePageLoader`（字体/图片/模板/注释）注入，`PreparedPageBundle` 携带 page/templates/fonts/images/blocks，`drawPage` 接收 bundle；`PreparedPage` 保持 model 形状，不用 WeakMap |
-| v1.0-r3 | T2/T4 | 记录 ST_Array `g N V` 重复展开语义（`0 g 3 5 2` → `0,5,5,5,2`）与 DeltaX/DeltaY “先展开、再按码点消费”约定 |
-| v1.0-r2 | T6a | 依据 GB/T 33190—2016 CT_ImageObject 与设计方案 8.2，纠正 `ImageObject.substitution/imageMask` 为可选 `ResourceId`（`ST_RefID`）；T6a 通过 `ImageDrawContext.substitutionMode/dpi` 实现 auto/always/never |
-| v1.0-r1 | T1 | 按 T3 反馈补齐：`PatternSpec.cell/styleRoot/tile`、`IndependentBlock.boundary/displayList`、`CommonData.defaultColorSpaceId`、`DocumentModel.templatePages/pageAnnotIndex/annotationsFile`、`ResourceIndex.colorSpaces/defaultColorSpace`、`DecodeOptions` 末位参数、`decodeAnnotationsIndex`、`flattenPageTree` options；`ImageObject.substitution/imageMask` 定为 boolean；`TemplateRef.zOrder` 改为可选 |
-| v1.0 | T1 | 初始冻结：工程骨架、模块接口、错误/warning 码、并行规则 |
+| 加密检测 | `inspect` | 包版本、大小、层数、用户、方法、签名/完整性存在性；不解密 |
+| 口令解密 | `openDecryptingContainer` | 明文 `VirtualContainer`；支持多用户/多层 |
+| 证书解密 | `openDecryptingContainer` | SM2 私钥恢复 FEK；私钥支持 PEM/DER、PKCS#8、加密 PKCS#8 |
+| 签名验证 | `verifyOfd` | SESv1/v4/v5、Signature.xml、Reference、SignedValue、印章、证书链 |
+| 完整性验证 | `verifyOfd` | OFDEntries/GB/T 35275 防夹带；无保护时 `integrity=null`，不能当作通过 |
+| 证书链 | `verifyOfd` | 配置根时 `valid`/`invalid`/`expired` 等；未配置根通常 `unknown` |
+| 时间戳 | `parseTimestamp`、`verifyOfd` | 只解析时间/TSA/策略/序列号，状态固定 `parsed-not-verified` |
+| UI 集成 | `OFDViewer` 的 `crypto` 选项 | 自动/手动凭据、验证面板、签章状态、下载/打印权限 |
+| CLI | `info`/`verify`/`convert` | 查询、验证、带凭据转图；无独立 `decrypt` 子命令 |
 
-## 13. 密码能力模块契约（v2.0-r1，R1 冻结）
+### 10.2 安全与限制
 
-> 本章为 `@ofdrw/ofdrw-viewer-crypto` 的增量契约，不改变第 1–12 章已冻结的 engine/UI/CLI 行为。详细设计、算法分支、UI 交互、CLI 输出与验收见 `docs/ofdrw-viewer-crypto设计方案.md`；两者冲突时以本章的接口/依赖/归属约束为准，算法细节以设计方案为准并由 architect 同步修正。
+- 加密算法、KDF、ASN.1/X.509、SM2 曲线和签名格式以 crypto API/设计文档为准；其他包不得另写实现或绕过 `verifyOfd` 自行判定“有效”。
+- 私钥、口令、FEK、`EncryptedWK`、明文包内容不得出现在日志、错误消息、DOM、URL、导出 JSON 或测试快照中；crypto 的错误消息只允许诊断性元数据。
+- 资源限制（来源字节、ASN.1 深度/字节、证书数、解密层数、解压总量等）由 `CryptoLimits`/`DEFAULT_CRYPTO_LIMITS` 统一管理，调用方用 `limits` 覆盖；UI/CLI 不复制默认值。
+- 时间戳只解析，不验证 TSA 签名；不实现 CRL/OCSP；证书链的吊销状态不在当前范围。
+- 受保护夹具的证书/私钥是公开测试材料，禁止用于生产、真实签章或任何需要保密性的场景。
+- 跨包密码能力测试矩阵（engine/crypto/UI/CLI、口令/证书/多层/无根/篡改）由 `docs/测试方案.md` 维护；新增能力必须同时补矩阵和对应包的 API 文档。
 
-### 13.1 包与职责
+### 10.3 非能力
 
-| 项 | 冻结值 |
-|---|---|
-| 包名 | `@ofdrw/ofdrw-viewer-crypto` |
-| 目录 | `packages/ofdrw-viewer-crypto/` |
-| 版本 | `0.1.0`，与 engine/UI/CLI 同批发布 |
-| 职责 | 加密 OFD 检测/解密、SES v1/v4/v5 与 SignedValue 解析验签、电子印章解析、防夹带完整性、证书链/信任根/有效期、时间戳仅解析、明文 `VirtualContainer` 工厂 |
-| 非职责 | 页面渲染、Canvas、字体/图片解码、UI 组件、CLI 参数解析、独立 decrypt 命令、时间戳 TSA 验签、CRL/OCSP |
-| 公共入口 | `src/index.ts`；内部模块不得从包根导出 |
+以下不属于当前契约，不得由 UI/CLI 私自补实现：
 
-### 13.2 依赖方向（硬约束）
-
-```text
-@ofdrw/ofdrw-viewer-engine
-          ↑
-@ofdrw/ofdrw-viewer-crypto
-          ↑
-@ofdrw/ofdrw-viewer-ui      @ofdrw/ofdrw-viewer-cli
-```
-
-- engine **不得**依赖/导入 crypto，不得包含 SM2/SM3/SM4/ASN.1 验签实现；engine 只定义并消费 `VirtualContainer`。
-- crypto **不得**依赖 ui/cli，不得导入 DOM、`node:*`、`fs`、`path`、Canvas；只依赖 engine 公共 API + `sm-crypto`/`fflate`/ASN.1/XML 纯 JS 库。
-- UI/CLI 依赖 crypto；UI 迁移后不得保留第二套 ASN.1 验签路径；CLI 不直接调用 `sm-crypto`。
-- 新增依赖只能来自设计方案 §1.3；新增依赖须先改本章与设计方案并通知 captain/architect。
-
-### 13.3 engine 公共 `VirtualContainer`（冻结）
-
-文件：`packages/ofdrw-viewer-engine/src/platform/virtual-container.ts`，从包根导出。
-
-```ts
-export interface VirtualFileMeta {
-  readonly path: string;
-  readonly size: number;
-  readonly compressedSize?: number;
-  readonly compression?: 'stored' | 'deflate';
-  readonly origin?: 'package' | 'decrypted' | 'generated';
-}
-
-export interface VirtualReadOptions {
-  readonly maxBytes?: number;
-  readonly signal?: AbortSignal;
-  readonly onWarning?: (warning: OFDWarning) => void;
-  readonly verifyChecksum?: boolean;
-}
-
-export interface VirtualContainer {
-  readonly packageSize: number;
-  readonly encrypted: boolean;
-  list(): readonly VirtualFileMeta[];
-  has(path: string): boolean;
-  stat(path: string): VirtualFileMeta | undefined;
-  read(path: string, options?: VirtualReadOptions): Promise<Uint8Array>;
-  close(): Promise<void>;
-}
-
-export type VirtualContainerFactory = (
-  source: OFDSource,
-) => Promise<VirtualContainer>;
-
-export interface OpenZipVirtualContainerOptions {
-  limits?: Partial<ResourceLimits>;
-}
-
-export function openZipVirtualContainer(
-  source: OFDSource,
-  options?: OpenZipVirtualContainerOptions,
-): Promise<VirtualContainer>;
-```
-
-- 容器有两种角色：**raw package container**（`encrypted=true`，`read()` 返回存仓原始字节，加密包可能为密文，只能检查/解密）与**明文容器**（`encrypted=false`，`read()` 返回明文，可注入 engine）。不得把 raw 容器直接注入 `OFDDocument`。
-- `packageSize` 为原始包字节数；解密容器保留加密源大小；`metadata.packageSize` 取该值。
-- `list()` 按规范化 path 升序、不含目录；明文容器 `read()` 返回明文；raw 容器 `read()` 可能返回密文。
-- `has/stat` 对非法/不存在路径返回 false/undefined；`read/list` 关闭后抛 `OFD_CLOSED`；缺失抛 `OFD_ENTRY_NOT_FOUND`；超限抛 `OFD_LIMIT_EXCEEDED`；取消抛 `OFD_ABORTED`。
-- `VirtualReadOptions.signal` 透传取消；engine 高层读取合并宿主 signal，单个等待方取消只影响本次等待，不得中止其他调用方的共享加载；`close()` 中止全部。`close()` 幂等；关闭后 `read/list` 抛 `OFD_CLOSED`。
-- `encrypted` 仅表示容器内存在 `Encryptions.xml`（未解密 OFD 加密元数据）；crypto 解密容器固定 `false`。
-- 默认 ZIP 容器由 `openZipVirtualContainer` 构造（包装 `ByteSource`/`ZipReader`，保留资源限制/CRC/warning）；`encrypted=true` 的容器 `OFDDocument.open` 在解析 XML 前抛 `OFD_ENCRYPTED`；明文包 `encrypted=false` 可直接注入。
-- `openZipVirtualContainer` 拥有传入的 `ByteSource`，`close()` 会调用其 `close`（如有）；crypto 的 `byte-source` 使用不转发 `close` 的隔离视图，因此调用方原始字节源不会被 engine 关闭，仍由调用方释放。
-
-### 13.4 注入、所有权与生命周期（冻结）
-
-`OFDOpenBaseOptions` 是 engine 既有公共基础选项（`documentIndex`/`limits`/字体/图片解码/渲染器/缓存/warning 等），本处不重复展开，只冻结 source/container 注入差异。
-
-```ts
-export interface OFDOpenOptions extends OFDOpenBaseOptions {
-  /** 默认 ZIP/容器工厂的字节来源；必填。 */
-  source: OFDSource;
-  /** 已构造好的明文容器；与 containerFactory 互斥。 */
-  container?: VirtualContainer;
-  /** engine 调用并拥有的容器工厂；与 container 互斥，source 作为工厂输入。 */
-  containerFactory?: VirtualContainerFactory;
-}
-
-export interface OFDOpenFromContainerOptions extends OFDOpenBaseOptions {
-  /** 宿主借用的明文容器；必填，encrypted=false 且 read() 返回明文。 */
-  container: VirtualContainer;
-  /** 可选宿主上下文；engine 不打开、不关闭。 */
-  source?: OFDSource;
-  containerFactory?: never;
-}
-
-static open(options: OFDOpenOptions | OFDOpenFromContainerOptions): Promise<OFDDocument>;
-```
-
-规则：
-
-1. `OFDOpenOptions.source` 必填，保持既有 `source` 调用兼容；纯容器打开使用 `OFDOpenFromContainerOptions`，其 `container` 必填、`source` 可选。
-2. `container` 与 `containerFactory` 互斥；同时出现抛 `OFD_INVALID_PACKAGE`。纯容器模式不提供工厂。
-3. 无注入时 engine 打开 source 并创建默认 ZIP 容器，行为与既有版本完全一致；默认 ZIP 容器由 engine 拥有并在 `close()` 关闭。
-4. `container` 为**宿主借用**：engine 不关闭；宿主在 `doc.close()` 后自行 `await container.close()`；同一容器可复用。
-5. `containerFactory` 返回的容器归 engine 拥有；打开失败/`doc.close()` 时 engine 关闭容器；source 所有权随工厂。
-6. `container` + `source` 同时出现时 engine 不打开 source，只用容器；source 不由 engine 关闭。
-7. engine 只在 `OFDDocument.close()` 中先中止渲染/读取，再关闭自有容器，再释放字体/图片/渲染器；借用容器只清引用。
-8. 注入 `encrypted=true` 容器抛 `OFD_ENCRYPTED`，要求先用 crypto 解密；所有 engine 读取路径（OFD.xml/Document.xml/资源/页面/字体/图片/签名/印章/附件/嵌套章）必须经 `container.read`，不得保留 `ZipReader` 直读旁路。
-
-### 13.5 crypto 公共 API（冻结签名）
-
-```ts
-export type CryptoSource =
-  | { readonly kind: 'arraybuffer'; readonly data: ArrayBuffer | Uint8Array }
-  | { readonly kind: 'blob'; readonly blob: Blob }
-  | { readonly kind: 'url'; readonly url: string; readonly headers?: Record<string, string> }
-  | {
-      /** 宿主提供的 engine `ByteSource`；调用方拥有，crypto 不 close。 */
-      readonly kind: 'byte-source';
-      readonly source: ByteSource;
-    };
-
-export type CryptoCredential = PasswordCredential | PrivateKeyCredential;
-
-/** X.509 证书 DER 字节；crypto 证书接口只接收该类型。 */
-export type CertificateDer = Uint8Array;
-
-/** 证书入口转换选项；`maxBytes` 单位 byte，`maxCertificates` 单位张。 */
-export interface CertificatesToDerOptions {
-  readonly maxBytes?: number;
-  readonly maxCertificates?: number;
-}
-
-/** PEM/Base64/DER/CER（含多证书）→ 逐张 DER；转换只发生在 UI/CLI 入口。 */
-export function certificatesToDer(
-  input: ArrayBuffer | Uint8Array | string,
-  options?: CertificatesToDerOptions,
-): readonly CertificateDer[];
-
-export function loadCertificates(
-  inputs: readonly CertificateDer[],
-  options?: CertificateLoadOptions,
-): Promise<X509Certificate[]>;
-
-export function loadCertificate(
-  input: CertificateDer,
-  options?: CertificateLoadOptions,
-): Promise<X509Certificate>;
-
-export function inspect(
-  source: CryptoSource,
-  options?: CryptoOptions,
-): Promise<OfdInspection>;
-
-export function openDecryptingContainer(
-  options: OpenDecryptingContainerOptions,
-): Promise<DecryptingContainerResult>;
-
-export function verifyOfd(options: VerifyOfdOptions): Promise<VerificationReport>;
-
-export function parseSignedValue(
-  data: Uint8Array,
-  options?: ParseOptions,
-): ParsedSignedValue;
-
-export function parseSeal(data: Uint8Array, options?: ParseOptions): ParsedSeal;
-
-export function parseTimestamp(
-  data: Uint8Array,
-  options?: ParseOptions,
-): TimestampParseResult;
-```
-
-关键类型名冻结：`CryptoOptions`、`CryptoLimits`、`DEFAULT_CRYPTO_LIMITS`、`CryptoSource`、`ByteSource`、`CryptoCredential`、`Sm2PrivateKeyInput`、`CertificateDer`、`CertificatesToDerOptions`、`OfdInspection`、`DecryptingContainerResult`、`VerificationReport`、`VerificationStatus`、`ChainStatus`、`TimestampStatus`、`SignatureVerification`、`IntegrityVerification`、`CertificateChainVerification`、`SealVerification`、`ParsedSeal`、`SealPictureInfo`、`ParsedSignedValue`、`TimestampParseResult`、`CertificateSummary`、`X509Certificate`、`CryptoWarning`。
-
-`byte-source` 约束：
-
-- `source` 必须实现 engine 公共 `ByteSource`（`size` 为非负安全整数，单位 byte；`read(offset,length)` 返回 `Uint8Array`），由宿主拥有；crypto 只通过隔离视图读取，**绝不调用调用方 `close`**。
-- crypto 先按 `source.size` 对 `maxSourceBytes` 预检，不读取内容；再经 engine `openZipVirtualContainer({ kind:'custom' })` 按需读取 ZIP 中央目录/条目，不整包 `readFile`。
-- `arraybuffer`/`blob`/`byte-source` 均为按需容器读；`url` 为兼容既有 fetch 语义由 crypto 流式读取整包。浏览器用 `arraybuffer`/`blob`/`url`，Node/CLI 优先 `byte-source`（CLI 使用 `NodeFileByteSource`，基于 `fs.promises.open` 随机读）。UI 对 URL 来源使用 `HttpByteSource` 并映射为 `{ kind: 'byte-source' }`，检测/解密与 engine 渲染共用同一字节源。
-- 所有权：`inspect`/`verifyOfd` 关闭内部容器；`openDecryptingContainer` 明文包返回 source-backed 容器并转移给调用方，加密包返回内存容器并在返回前关闭内部源容器；调用方 ByteSource 始终由调用方关闭。
-- `CryptoOptions.signal` 透传到每次读取，取消抛 `CRYPTO_ABORTED`；字节源结构非法或 `read()` 返回非 `Uint8Array` 抛 `CRYPTO_SOURCE_UNSUPPORTED`，底层读取异常/包结构损坏按 `CRYPTO_INVALID_PACKAGE`，`size` 超限抛 `CRYPTO_LIMIT_EXCEEDED`。crypto 不 import `node:*`；`byte-source` 是宿主提供的随机读源，与 engine 已删除的 `node-file`/`wechat-file` 无关。
-
-入口语义：
-
-- `inspect` 只查询，不解密/不验证；加密包也返回层/用户。
-- `openDecryptingContainer` 明文包返回 source-backed 原始 ZIP 容器（不复制包体）；加密包需要凭据并返回内存容器；两者均 `encrypted=false`、`packageSize` 保留原始大小，容器所有权归调用方。
-- `verifyOfd` 的 `source`/`container` 二选一；`container.encrypted=true` 拒绝，要求先解密；加密 source 内部解密后验证。
-- `parseSeal` 返回 `ParsedSeal`：含 `picture?`、`timestamp`、`warnings`（图片损坏等用 `W_CRYPTO_SEAL_PICTURE_INVALID`）与 `byteLength`；`ParsedSeal.warnings` 不改变 `hasSignature`，解析成功不等于验签通过。`X509Certificate.subjectDer/issuerDer` 为链匹配保留原始 Name DER，不进入 `CertificateSummary`。
-- `parseTimestamp` 固定 `status='parsed-not-verified'`（或 `not-present`/`parse-error`），永不返回“已验证”。
-- 验证报告 `overall` 仅用 `valid/invalid/unknown/not-applicable/unsupported`；时间戳不参与聚合。
-- 无 `OFDEntries.xml`+`signedvalue.dat` 时 `integrity=null`（未保护），`package.integrityPresent=false`；不得把它当成 valid。
-- 证书边界：crypto 公共证书接口只收 DER（`CertificateDer`），PEM/Base64/CER/多证书必须先经 `certificatesToDer` 在 UI/CLI 入口转换；`loadCertificates` 的数组每项只含一张证书。
-- 未配置信任根时 `rootsConfigured=false`、链状态 `unknown`；配置根但缺 issuer/中间证书为 `incomplete`，终点不是配置根为 `untrusted`。
-
-### 13.6 错误码、warning 与 UI/CLI 映射（冻结）
-
-`CryptoErrorCode` 冻结为设计方案 §3.7 的并集，包括：`CRYPTO_INVALID_ARGUMENT`、`CRYPTO_CREDENTIALS_REQUIRED`、`CRYPTO_SOURCE_UNSUPPORTED`、`CRYPTO_LIMIT_EXCEEDED`、`CRYPTO_ABORTED`、`CRYPTO_INVALID_PACKAGE`、`CRYPTO_NOT_ENCRYPTED`、`CRYPTO_UNSUPPORTED_ENCRYPTION`、`CRYPTO_ENTRY_MAP_INVALID`、`CRYPTO_DECRYPT_FAILED`、`CRYPTO_DECRYPT_LAYER_LIMIT`、`CRYPTO_LAYER_LOOP`、`CRYPTO_USER_NOT_FOUND`、`CRYPTO_USER_AMBIGUOUS`、`CRYPTO_WRONG_PASSWORD`、`CRYPTO_PRIVATE_KEY_INVALID`、`CRYPTO_PRIVATE_KEY_PASSPHRASE_REQUIRED`、`CRYPTO_PRIVATE_KEY_UNSUPPORTED_ENCRYPTION`、`CRYPTO_PRIVATE_KEY_MISMATCH`、`CRYPTO_ASN1_INVALID`、`CRYPTO_UNSUPPORTED_SES_VERSION`、`CRYPTO_UNSUPPORTED_ALGORITHM`、`CRYPTO_CERTIFICATE_INVALID`、`CRYPTO_TRUST_ROOT_INVALID`、`CRYPTO_INTEGRITY_INVALID`、`CRYPTO_SIGNATURE_INVALID`、`CRYPTO_TIMESTAMP_PARSE`。
-
-`CryptoWarningCode` 冻结为设计方案 §3.7 的并集，含 `W_CRYPTO_DUPLICATE_USER`、`W_CRYPTO_CREDENTIAL_IGNORED`、`W_CRYPTO_ENTRIES_MAP_PLAINTEXT`、`W_CRYPTO_ENTRY_MAP_INVALID`、`W_CRYPTO_KEY_USAGE_MISSING`、`W_CRYPTO_MULTI_LAYER`、`W_CRYPTO_TIMESTAMP_PARSE`、`W_CRYPTO_TIMESTAMP_IMPRINT_MISMATCH`、`W_CRYPTO_UNKNOWN_SES_VERSION`、`W_CRYPTO_REFERENCE_UNSUPPORTED`、`W_CRYPTO_SEAL_PICTURE_INVALID`、`W_CRYPTO_TRUST_UNKNOWN`、`W_CRYPTO_CERT_SOURCE_UNSUPPORTED`。
-
-映射：
-
-- UI 新增 `OFD_CRYPTO_CREDENTIAL_REQUIRED`、`OFD_CRYPTO_CANCELLED`、`OFD_CRYPTO_UNSUPPORTED`、`OFD_CRYPTO_FAILED`；凭据弹窗重试，取消保留旧文档。
-- CLI 新增退出码 4（加密/凭据失败）与 5（验证未通过：invalid/unknown/unsupported/not-applicable）；既有 0/1/2/3/130 不变。
-- CLI `info` 只查询，不接受凭据/根参数；`verify` 一次性执行完整性+签名；不提供 `decrypt` 子命令。
-- 任何错误/报告/日志不得包含口令、私钥、PEM、`EncryptedWK`；UI/DOM/localStorage 同样禁止。
-
-### 13.7 UI/CLI 契约要点（冻结）
-
-- UI 新选项 `crypto?: CryptoViewerOptions`，含 `enabled/credentials/autoPrompt/rootCertificates/certificateLoader/autoVerify/onVerification/onCredentialRequired`；`CertificateSource` 是 **UI/证书**自身的 `data/url/path/filePath` 四态与 loader，和 engine `FontInput` 无关（engine 字体只收 `{ data }`）。
-- UI 打开流程：`inspect` → 加密则登录弹窗/预置凭据 → `openDecryptingContainer` → `OFDDocument.open({ container })`；失败可重试/取消；取消 `OFD_CRYPTO_CANCELLED`。
-- UI 工具栏新增 `verification` feature、验证面板、印章点击浮层、根证书配置；时间戳固定 `parsed-not-verified` +“已解析，未验证”；无根显示 `unknown`。
-- UI `setRootCertificates`/`getRootCertificates`/`verify`/`getVerificationReport` 与 `verificationcompleted` 事件按设计方案 §6.1。
-- CLI 命令：`info <input> [--json]`、`verify <input> [凭据/--root] [--json]`、既有 `<input> [转图片参数] [凭据]`；加密转图片参数为 `--user/--password/--key/--key-passphrase`。
-- CLI `info` 加密包退出 0（查询成功）；`verify` 只有 `overall=valid` 退出 0；无根 unknown 退出 5。
-
-### 13.8 测试、夹具与文档
-
-- 夹具固定 `packages/ofdrw-viewer-crypto/test/fixtures/crypto/`：12 case、20 证书/私钥、`manifest.json`/`manifest.sha256`；SHA-256 以 `manifest.sha256` 校验为准（原生成/校验脚本随 `scripts/` 移除）。
-- 夹具全部为测试材料，README/manifest 标注 `testOnly`；生产密钥禁止入库；过期证书由测试内生成，不提交过期私钥。
-- engine 新增 VirtualContainer/所有权/OFD_ENCRYPTED/读取路径测试；既有 engine 测试必须全绿且默认行为不变。
-- UI Playwright 覆盖加密打开、错误重试、取消、验证面板、印章点击、根证书四态、无障碍；CLI acceptance 覆盖 JSON/退出码/无 decrypt。
-- 文档同步范围见设计方案 §9；新包 README 按 engine README 章节结构；根 README 必须增加 crypto 模块入口；CONTRACTS 本章为冻结依据。
-
-### 13.9 变更规则（v2.0-r1）
-
-1. 本章由 architect 维护；实现者只改 inScope，新增/修改公共字段、签名、错误码、warning 码、注入语义必须先改本章与设计方案并通知 captain/architect。
-2. 冻结文件只读；不得为实现方便回退既有 engine 公共行为（`source` 调用、错误码、packageSize、页面结果）。
-3. 跨模块修改先发消息给 owner 与 architect；不得直接改 `.agent-teams/`、`references/`、`src_material/`。
-4. 不新增未经批准的依赖；不执行 `git push`；测试结束关闭浏览器/服务并清理临时文件。
-5. 任何“time stamp verified/有效”的 UI/CLI 文案、把 unknown 当 invalid/valid、或无根却返回 valid 的实现，均视为验收失败。
-
-### 13.10 变更记录
-
-| 版本 | 任务 | 说明 |
-|---|---|---|
-| v2.0-r1 | R1/T2 | 新增 `@ofdrw/ofdrw-viewer-crypto` 模块契约；冻结 engine `VirtualContainer` 注入/所有权、crypto API/错误码、UI/CLI 密码能力与测试夹具要求 |
+- 生成、修改、加密 OFD 包，创建签名/印章/时间戳。
+- 独立 `decrypt` 子命令或独立解密库。
+- 证书签发、吊销查询、TSA 签名验证。
+- 在 engine 内识别 URL/文件路径或执行网络 I/O。
+- 在 UI/CLI 内直接实现 SM2/SM3/SM4、ASN.1 或 PKCS#8 解析。
