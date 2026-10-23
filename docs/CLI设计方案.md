@@ -1000,7 +1000,7 @@ ofdrw-viewer-cli encrypted.ofd -o out --key encrypt.key.pem --key-passphrase '**
 | 能力 | 实现 | 测试 |
 | --- | --- | --- |
 | 子命令/参数/退出码 | `src/cli.ts` | `test/unit/cli.test.ts`、`test/unit/crypto-cli.test.ts` |
-| info 文本/JSON/明文元数据 | `src/info.ts` | `test/unit/info-document.test.ts`、`test/unit/crypto-cli.test.ts`、`test/verification/cli-info-verify.test.ts`、`test/acceptance/crypto.acceptance.ts` |
+| info 文本/JSON/明文元数据 | `src/info.ts` | `test/unit/info-document.test.ts`、`test/unit/crypto-cli.test.ts`、`test/verification/cli-info-verify.test.ts`、`test/verification/cli-info-document.verify.test.ts`、`test/acceptance/crypto.acceptance.ts` |
 | verify 文本/JSON | `src/verify.ts` | 同上 + `test/acceptance/crypto.acceptance.ts` |
 | 凭据/根证书读取 | `src/credentials.ts` | `test/unit/crypto-cli.test.ts` |
 | warning 呈现/净化 | `src/crypto-output.ts`、`src/log.ts`、`src/safe-text.ts` | `test/unit/stderr-safety.test.ts` |
