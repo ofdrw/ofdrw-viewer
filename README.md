@@ -1,6 +1,6 @@
 # OFDRW-Viewer
 
-[![在线体验](https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E4%BD%93%E9%AA%8C-GitHub%20Pages-2563eb)](https://ofdrw.github.io/ofdrw-viewer/) [![engine](https://img.shields.io/npm/v/@ofdrw/ofdrw-viewer-engine?label=engine)](https://www.npmjs.com/package/@ofdrw/ofdrw-viewer-engine) [![GB/T 33190-2016](https://img.shields.io/badge/GB%2FT%2033190--2016-%E7%AC%A6%E5%90%88-1f6feb)](https://openstd.samr.gov.cn/bzgk/std/newGbInfo?hcno=3AF6682D939116B6F5EED53D01A9DB5D) [![支持平台](https://img.shields.io/badge/%E6%94%AF%E6%8C%81%E5%B9%B3%E5%8F%B0-Browser%20%7C%20Node.js%20%7C%20%E5%B0%8F%E7%A8%8B%E5%BA%8F-2ea44f)](packages/ofdrw-viewer-engine/README.md) [![license](https://img.shields.io/github/license/ofdrw/ofdrw-viewer?label=license)](LICENSE) [![node](https://img.shields.io/badge/node-%3E%3D22-339933)](https://nodejs.org/)
+[![build](https://img.shields.io/github/actions/workflow/status/ofdrw/ofdrw-viewer/ci.yml?branch=main&label=build)](https://github.com/ofdrw/ofdrw-viewer/actions/workflows/ci.yml) [![在线体验](https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E4%BD%93%E9%AA%8C-GitHub%20Pages-2563eb)](https://ofdrw.github.io/ofdrw-viewer/) [![version](https://img.shields.io/npm/v/@ofdrw/ofdrw-viewer-engine?label=version)](https://www.npmjs.com/package/@ofdrw/ofdrw-viewer-engine) [![GB/T 33190-2016](https://img.shields.io/badge/GB%2FT%2033190--2016-%E7%AC%A6%E5%90%88-1f6feb)](https://openstd.samr.gov.cn/bzgk/std/newGbInfo?hcno=3AF6682D939116B6F5EED53D01A9DB5D) [![支持平台](https://img.shields.io/badge/%E6%94%AF%E6%8C%81%E5%B9%B3%E5%8F%B0-Browser%20%7C%20Node.js%20%7C%20%E5%B0%8F%E7%A8%8B%E5%BA%8F-2ea44f)](packages/ofdrw-viewer-engine/README.md) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![node](https://img.shields.io/badge/node-%3E%3D22-339933)](https://nodejs.org/)
 
 ## ✨ 功能概述
 
@@ -79,5 +79,6 @@ Please read before using this project: [Disclaimer (Chinese & English)](DISCLAIM
 
 ## 📄 许可证
 
-本项目采用 [MIT License](LICENSE) 开源。
+本项目全部开源开放，采用 [MIT License](LICENSE)，允许免费商用。使用时请在任何副本或作品的实质部分保留原始版权声明与许可声明；本许可仅涵盖版权授权，不包含商标、名称或背书授权；软件按“原样”提供，不附带任何明示或暗示担保。
+
 Copyright (c) 2026 Quan Guanyu
