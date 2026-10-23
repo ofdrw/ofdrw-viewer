@@ -65,6 +65,17 @@ supplementaryFonts: [{ data }]
 - 渲染、解析、ZIP 容器、资源限制与 warning 口径不变。
 - 包版本保持 `0.1.0`（尚未发布，不升级版本号）。
 
-## 早期版本
+## 版本历史
 
-历史版本记录见 [skills/API.md](./skills/API.md) §14「变更记录」。
+Unreleased 见上方章节；下表保留原 API 文档「变更记录」中的已发布历史。
+
+| 版本 | 日期 | 变更 |
+| --- | --- | --- |
+| v1.2-r1 | 2026-10-23 | 新增 `VERSION` 常量与 `getVersion()`，供 CLI/UI 与宿主在故障排查时读取引擎版本；版本内置于产物，不依赖 `package.json` |
+| v1.1-r12 | 2026-10-23 | 新增页面级事件系统：`OFDEventBus`、`document.events` 与 `document/page` 的 `on/once/off/addEventListener/removeEventListener`；`OFDOpenOptions.eventBus/signal`、`getPage(index,{signal})`、`RenderTask.id`；14 个事件与载荷类型；入口校验失败不派发事件，`close:end` 后静默 |
+| v2.0-r1 | 2026-10-23 | 新增 `VirtualContainer`/`VirtualFileMeta`/`VirtualReadOptions`/`VirtualContainerFactory`/`openZipVirtualContainer`/`OpenZipVirtualContainerOptions`；`OFDOpenOptions.source` 保持必填，新增 `OFDOpenFromContainerOptions`（`container` 必填、`source` 可选上下文）与 `OFDDocument.open` 重载；新增 `container`（借用）与 `containerFactory`（engine 拥有）；明确 raw/明文容器边界与 `AbortSignal` 透传；默认 ZIP 行为不变 |
+| v1.0-r11 | 2026-10-22 | 新增可选 `OFDOpenOptions.loadInput` / `FontInputLoader`：不传时 Web 默认 `url` fetch、`path`/`filePath` 不支持；Node CLI `--font-dir` 注入 `node:fs` loader，真正读取并展开 TTF/OTF/TTC/OTC，按实际 family 匹配；999.ofd `W_FONT_MISSING` 归零。**（该能力已在 Unreleased 中移除，见上）** |
+| v1.0-r10 | 2026-10-22 | 同步 P2：`getPermissions`（只读声明，不做 DRM）、`getAttachments`/`getAttachmentData`（原始字节，不解析内容）、`exportImage.rotation`（仅导出方向，90/270 宽高互换）；登记 `W_PERMISSION_FIELD`/`W_ATTACHMENT_FIELD`/`W_ATTACHMENT_RESOURCE`；`page.renderRegion` 暂不实现/无排期且不导出 |
+| v1.0-r9 | 2026-10-22 | 同步 P0/P1 阅读器 UI API：getPageInfos/getOutline/getBookmarks/getMetadata/getSignatureEntries/getSignedValue/page.prepare/page.getTextContent；新增 PageInfo/Outline/Bookmark/签章/SignedValue/Metadata/TextContent 类型与 `CacheOptions.textPages`；明确不解析 ASN.1/不暴露 Seal.esl/P2 延后 |
+| v1.0-r8 | 2026-10-22 | 初版公开 API 文档：document/page/render/exportImage、平台注入、错误/warning、限制/缓存、类型附录；建立与 `src/index.ts` 的同步检查；同版增加 `page.exportImage` 与 `encodeImage` |
+| v1.0-r7 | 2026-10-22 | 增加 `OFDOpenOptions.createCanvas`（矢量签章/导出） |
