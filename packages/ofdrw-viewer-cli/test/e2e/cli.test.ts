@@ -63,7 +63,6 @@ async function runCli(
   args: readonly string[],
   cwd: string,
   signal?: AbortSignal,
-  stderrIsTTY?: boolean,
 ): Promise<CliResult> {
   const capture = createStreamCapture();
   const code = await main(args, {
@@ -71,7 +70,6 @@ async function runCli(
     stdout: capture.stdout,
     stderr: capture.stderr,
     ...(signal === undefined ? {} : { signal }),
-    ...(stderrIsTTY === undefined ? {} : { stderrIsTTY }),
   });
   return { code, stdout: capture.stdoutText(), stderr: capture.stderrText() };
 }
@@ -356,18 +354,24 @@ describe('CLI 图片导出 e2e', () => {
     expect(existsSync(outDir)).toBe(false);
   });
 
-  it('TTY 时 stderr 输出逐页进度并清理，非 TTY 保持安静', async () => {
+  it('stderr 按行保留逐页进度，重定向到管道时同样输出', async () => {
     const cwd = await createTempDir();
-    const input = join(SAMPLE_DIR, 'helloworld.ofd');
+    const input = join(SAMPLE_DIR, '999.ofd');
+    const outDir = join(cwd, 'out');
 
-    const tty = await runCli([input, '-o', join(cwd, 'tty')], cwd, undefined, true);
-    expect(tty.code).toBe(EXIT_CODES.OK);
-    expect(tty.stderr).toContain('\r[1/1]');
-    expect(tty.stderr).toContain(`\r${' '.repeat(32)}\r`);
+    const result = await runCli([input, '-o', outDir, '--pages', '2,4'], cwd);
 
-    const quiet = await runCli([input, '-o', join(cwd, 'quiet')], cwd, undefined, false);
-    expect(quiet.code).toBe(EXIT_CODES.OK);
-    expect(quiet.stderr).not.toContain('[1/1]');
+    expect(result.code).toBe(EXIT_CODES.OK);
+    const progressLines = result.stderr
+      .split('\n')
+      .filter((line) => line.startsWith('['));
+    expect(progressLines).toEqual([
+      '[1/2] 第 2 页 开始',
+      '[1/2] 第 2 页 完成',
+      '[2/2] 第 4 页 开始',
+      '[2/2] 第 4 页 完成',
+    ]);
+    expect(result.stderr).not.toContain('\r');
   });
 
   it('超大 --pages 区间快速退出 1 且不创建输出目录', async () => {

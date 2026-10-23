@@ -16,6 +16,7 @@ import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { convertDocument } from './convert.js';
+import type { PageProgress } from './convert.js';
 import { buildCryptoCredential } from './credentials.js';
 import type { CliCredentialOptions } from './credentials.js';
 import {
@@ -178,14 +179,8 @@ export interface CliRuntime {
   readonly cwd?: string;
   /** 普通信息输出流，默认 `process.stdout`。 */
   readonly stdout?: OutputStream;
-  /** 错误/warning 输出流，默认 `process.stderr`。 */
+  /** 错误/warning/进度输出流，默认 `process.stderr`。 */
   readonly stderr?: OutputStream;
-  /**
-   * stderr 是否为 TTY；默认读取 `process.stderr.isTTY`。
-   *
-   * 为 true 时向 stderr 输出单行逐页进度，重定向/管道保持安静。
-   */
-  readonly stderrIsTTY?: boolean;
   /** 平台名，默认 `process.platform`。 */
   readonly platform?: string;
   /** CPU 架构，默认 `process.arch`。 */
@@ -200,10 +195,10 @@ export interface CliRuntime {
 
 /** 逐页进度回调；TTY 与非 TTY 都由 `convert.ts` 统一调用。 */
 export interface ProgressReporter {
-  /** 更新当前页进度；`current` 为页号（1 起），`total` 为计划总页数。 */
-  onProgress?: (current: number, total: number) => void;
-  /** 清理进度行。 */
-  onProgressEnd?: () => void;
+  /** 单页开始处理。 */
+  onPageStart?: (progress: PageProgress) => void;
+  /** 单页处理结束；`ok` 为 false 表示该页有失败项。 */
+  onPageEnd?: (progress: PageProgress, ok: boolean) => void;
 }
 
 /** 一次命令执行的取消作用域。 */
@@ -247,22 +242,19 @@ function createInterruptScope(runtime: CliRuntime): InterruptScope {
 /**
  * 创建逐页进度输出器。
  *
+ * 每页开始与结束各写一行到 stderr，行内容持久保留；不使用 `\r` 覆盖，
+ * 因此终端回滚与管道日志都能逐行追踪进度。TTY 与非 TTY 行为一致。
+ *
  * @param stream 目标输出流（stderr）
- * @param enabled 是否为 TTY；false 时返回空实现
  * @returns 进度回调
  */
-export function createProgressReporter(
-  stream: OutputStream,
-  enabled: boolean,
-): ProgressReporter {
-  if (!enabled) return {};
+export function createProgressReporter(stream: OutputStream): ProgressReporter {
   return {
-    onProgress(current: number, total: number): void {
-      stream.write(`\r[${current}/${total}]`);
+    onPageStart({ index, total, pageNumber }: PageProgress): void {
+      stream.write(`[${index}/${total}] 第 ${pageNumber} 页 开始\n`);
     },
-    onProgressEnd(): void {
-      // 用空格覆盖整行后回到行首，避免残留字符；不依赖 ANSI 控制序列。
-      stream.write(`\r${' '.repeat(32)}\r`);
+    onPageEnd({ index, total, pageNumber }: PageProgress, ok: boolean): void {
+      stream.write(`[${index}/${total}] 第 ${pageNumber} 页 ${ok ? '完成' : '失败'}\n`);
     },
   };
 }
@@ -715,10 +707,7 @@ export async function main(
 ): Promise<number> {
   const stderr = runtime.stderr ?? process.stderr;
   const logger = new Logger({ stdout: runtime.stdout, stderr });
-  const progress = createProgressReporter(
-    stderr,
-    runtime.stderrIsTTY ?? process.stderr.isTTY === true,
-  );
+  const progress = createProgressReporter(stderr);
 
   try {
     const parsed = parseCliArgs(argv, runtime.cwd ?? process.cwd());

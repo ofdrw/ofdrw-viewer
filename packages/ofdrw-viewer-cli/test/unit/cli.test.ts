@@ -357,7 +357,7 @@ describe('main 帮助/版本与退出码', () => {
 });
 
 
-describe('CLI 版本与 TTY 进度', () => {
+describe('CLI 版本与逐页进度', () => {
   it('CLI_VERSION 与 package.json 一致，--version 使用该版本', async () => {
     const pkg = JSON.parse(
       readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
@@ -411,29 +411,21 @@ describe('CLI 版本与 TTY 进度', () => {
     });
   });
 
-  it('TTY 进度写 stderr 并清理，非 TTY 保持安静', () => {
-    const ttyWrites: string[] = [];
-    const tty = createProgressReporter(
-      { write: (chunk) => { ttyWrites.push(String(chunk)); return true; } },
-      true,
-    );
-    tty.onProgress?.(1, 2);
-    tty.onProgress?.(2, 2);
-    tty.onProgressEnd?.();
-    expect(ttyWrites).toEqual([
-      '\r[1/2]',
-      '\r[2/2]',
-      `\r${' '.repeat(32)}\r`,
-    ]);
+  it('每页按行追加进度，不覆盖历史行', () => {
+    const writes: string[] = [];
+    const reporter = createProgressReporter({
+      write: (chunk) => { writes.push(String(chunk)); return true; },
+    });
+    reporter.onPageStart?.({ index: 1, total: 2, pageNumber: 1 });
+    reporter.onPageEnd?.({ index: 1, total: 2, pageNumber: 1 }, true);
+    reporter.onPageStart?.({ index: 2, total: 2, pageNumber: 5 });
+    reporter.onPageEnd?.({ index: 2, total: 2, pageNumber: 5 }, false);
 
-    const quietWrites: string[] = [];
-    const quiet = createProgressReporter(
-      { write: (chunk) => { quietWrites.push(String(chunk)); return true; } },
-      false,
-    );
-    expect(quiet).toEqual({});
-    quiet.onProgress?.(1, 2);
-    quiet.onProgressEnd?.();
-    expect(quietWrites).toEqual([]);
+    expect(writes).toEqual([
+      '[1/2] 第 1 页 开始\n',
+      '[1/2] 第 1 页 完成\n',
+      '[2/2] 第 5 页 开始\n',
+      '[2/2] 第 5 页 失败\n',
+    ]);
   });
 });

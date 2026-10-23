@@ -1,10 +1,10 @@
-Output "packages/ofdrw-viewer-cli/demo/demo.gif"
+Output "packages/ofdrw-viewer-cli/docs/img/demo.gif"
 
 Set Shell "bash"
 Set FontFamily "Noto Sans Mono CJK SC"
-Set FontSize 24
+Set FontSize 22
 Set Width 620
-Set Height 240
+Set Height 400
 Set Padding 20
 Set Theme "Catppuccin Mocha"
 Set TypingSpeed 40ms

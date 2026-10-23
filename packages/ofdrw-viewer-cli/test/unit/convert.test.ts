@@ -559,19 +559,48 @@ describe('convertDocument 空间文本链路', () => {
 });
 
 describe('convertDocument 进度回调', () => {
-  it('逐页开始/完成时回调，并在 finally 清理进度行', async () => {
+  it('逐页开始/结束时各回调一次，进度序号与实际页号分开', async () => {
     const outDir = await createTempDir();
     const logger = new Logger({ stderr: createStreamCapture().stderr });
-    const document = createFakeDocument(2, [{}, {}]);
+    const document = createFakeDocument(5, [{}, {}, {}, {}, {}]);
     const events: string[] = [];
 
-    await convertDocument(createOptions(outDir), {
+    await convertDocument(createOptions(outDir, { pageNumbers: [3, 5] }), {
       logger,
       openDocument: createOpenMock(async () => document),
-      onProgress: (current, total) => events.push(`${current}/${total}`),
-      onProgressEnd: () => events.push('end'),
+      onPageStart: ({ index, total, pageNumber }) =>
+        events.push(`start ${index}/${total} page=${pageNumber}`),
+      onPageEnd: ({ index, total, pageNumber }, ok) =>
+        events.push(`end ${index}/${total} page=${pageNumber} ok=${ok}`),
     });
 
-    expect(events).toEqual(['1/2', '1/2', '2/2', '2/2', 'end']);
+    expect(events).toEqual([
+      'start 1/2 page=3',
+      'end 1/2 page=3 ok=true',
+      'start 2/2 page=5',
+      'end 2/2 page=5 ok=true',
+    ]);
+  });
+
+  it('页面失败时结束回调 ok 为 false', async () => {
+    const outDir = await createTempDir();
+    const logger = new Logger({ stderr: createStreamCapture().stderr });
+    const document = createFakeDocument(2, [
+      {},
+      {
+        exportImage: async () => {
+          throw new OFDError('OFD_IMAGE_DECODE', '图片坏了');
+        },
+      },
+    ]);
+    const events: string[] = [];
+
+    await convertDocument(createOptions(outDir, { pageNumbers: [1, 2] }), {
+      logger,
+      openDocument: createOpenMock(async () => document),
+      onPageEnd: ({ index }, ok) => events.push(`${index}:${ok}`),
+    });
+
+    expect(events).toEqual(['1:true', '2:false']);
   });
 });

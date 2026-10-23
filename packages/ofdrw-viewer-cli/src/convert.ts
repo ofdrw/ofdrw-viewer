@@ -82,16 +82,26 @@ export interface ConvertSummary {
   readonly message: string;
 }
 
+/** 单页处理进度。 */
+export interface PageProgress {
+  /** 当前是本次计划的第几页（1 起）。 */
+  readonly index: number;
+  /** 本次计划导出的总页数。 */
+  readonly total: number;
+  /** 文档中的页号（1 起）；指定 `--pages` 时可能大于 `index`。 */
+  readonly pageNumber: number;
+}
+
 /** 转换流程的可注入运行环境。 */
 export interface ConvertRuntime {
   /** 日志器。 */
   readonly logger: Logger;
   /** 取消信号；SIGINT 时由 CLI 主流程触发。 */
   readonly signal?: AbortSignal;
-  /** 逐页进度回调；仅 TTY 时由 CLI 注入。 */
-  readonly onProgress?: (current: number, total: number) => void;
-  /** 转换结束（含异常/取消）时清理进度行。 */
-  readonly onProgressEnd?: () => void;
+  /** 单页开始处理时回调；用于输出逐页进度。 */
+  readonly onPageStart?: (progress: PageProgress) => void;
+  /** 单页处理结束时回调；`ok` 为 false 表示该页有失败项。 */
+  readonly onPageEnd?: (progress: PageProgress, ok: boolean) => void;
   /** 打开文档的实现，默认 `OFDDocument.open`（单元测试可替换）。 */
   readonly openDocument?: typeof OFDDocument.open;
 }
@@ -176,6 +186,7 @@ export async function convertDocument(
     let succeededPages = 0;
     let failedPages = 0;
     let interrupted = false;
+    let processedPages = 0;
 
     if (options.text) {
       await assertTextApiAvailable(document, pageNumbers[0]);
@@ -187,7 +198,9 @@ export async function convertDocument(
         break;
       }
 
-      runtime.onProgress?.(pageNumber, totalPages);
+      processedPages += 1;
+      const progress: PageProgress = { index: processedPages, total: totalPages, pageNumber };
+      runtime.onPageStart?.(progress);
       let page: OFDPage;
       try {
         page = await document.getPage(pageNumber - 1);
@@ -198,7 +211,7 @@ export async function convertDocument(
         }
         failedPages += 1;
         logger.pageError(pageNumber, totalPages, errorCodeOf(error), errorMessage(error));
-        runtime.onProgress?.(pageNumber, totalPages);
+        runtime.onPageEnd?.(progress, false);
         continue;
       }
 
@@ -278,9 +291,10 @@ export async function convertDocument(
         logger.pageError(pageNumber, totalPages, errorCodeOf(error), errorMessage(error));
       }
 
-      if (!textOk || !imageOk) failedPages += 1;
-      else succeededPages += 1;
-      runtime.onProgress?.(pageNumber, totalPages);
+      const pageOk = textOk && imageOk;
+      if (pageOk) succeededPages += 1;
+      else failedPages += 1;
+      runtime.onPageEnd?.(progress, pageOk);
     }
 
     const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
@@ -300,11 +314,6 @@ export async function convertDocument(
       }),
     };
   } finally {
-    try {
-      runtime.onProgressEnd?.();
-    } catch {
-      // 进度清理失败不应覆盖真正的转换错误。
-    }
     if (document !== undefined) {
       try {
         await document.close();
