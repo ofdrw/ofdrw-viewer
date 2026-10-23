@@ -390,7 +390,7 @@ describe('discoverSystemFonts', () => {
     expect(result.scannedFiles).toBe(5);
   });
 
-  it('总字节预算超出即停止扫描，TTC 按文件字节计', async () => {
+  it('总字节预算在优先级排序后应用，放不下的字体跳过', async () => {
     const root = await createTempDir();
     await createSizedFontFile(join(root, 'a.ttf'), 400);
     await createSizedFontFile(join(root, 'b.ttc'), 400);
@@ -398,8 +398,19 @@ describe('discoverSystemFonts', () => {
 
     const result = await discoverSystemFonts({ directories: [root], maxTotalBytes: 1000 });
     expect(result.fonts.map((font) => basename(font.path))).toEqual(['a.ttf', 'b.ttc']);
-    expect(result.scannedFiles).toBe(2);
+    expect(result.scannedFiles).toBe(3);
     expect(result.scannedBytes).toBe(800);
+  });
+
+  it('预算先于遍历顺序：CJK 路径靠后仍优先入选', async () => {
+    const root = await createTempDir();
+    await createSizedFontFile(join(root, 'aaa-latin.ttf'), 600);
+    await createSizedFontFile(join(root, 'zzz-NotoSansCJK.ttf'), 600);
+
+    const result = await discoverSystemFonts({ directories: [root], maxTotalBytes: 1000 });
+    expect(result.fonts.map((font) => basename(font.path))).toEqual(['zzz-NotoSansCJK.ttf']);
+    expect(result.scannedFiles).toBe(2);
+    expect(result.scannedBytes).toBe(600);
   });
 
   it('同一目录与限额复用进程内缓存，清除后重新扫描', async () => {

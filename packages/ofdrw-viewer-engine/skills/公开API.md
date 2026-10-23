@@ -1,9 +1,9 @@
 # @ofdrw/ofdrw-viewer-engine 公开 API
 
 > 使用说明与示例：`SKILL.md`（同目录）
-> 版本：v1.0（契约 r11）
-> 更新：2026-10-22
-> 状态：v1 稳定接口；P0/P1/P2 与 r11 字体加载器已收录；`page.renderRegion` 暂不实现/不导出
+> 版本：v1.1（契约 r12）
+> 更新：2026-10-23
+> 状态：v1 稳定接口；P0/P1/P2、r11 字体加载器与 r12 页面级事件系统已收录；`page.renderRegion` 暂不实现/不导出
 > 适用包：`@ofdrw/ofdrw-viewer-engine`（npm 作用域 `@ofdrw`）
 > 公共入口：`packages/ofdrw-viewer-engine/src/index.ts`
 > 设计依据：`docs/OFD渲染引擎设计方案.md` §15
@@ -114,6 +114,11 @@ Node/小程序没有浏览器 `document`/`OffscreenCanvas` 时必须注入 `crea
 | `page.renderRegion(...)` | — | **暂不实现/无排期，未导出** |
 | `RenderTask.promise` | `Promise<void>` | 渲染完成/失败/取消 |
 | `RenderTask.cancel()` | `void` | 请求取消，可重复调用 |
+| `RenderTask.id` | `number` | 渲染操作 ID，与 `page:render:*` 事件 `operationId` 相同 |
+| `OFDEventBus` | class | 同步派发的页面级事件总线；可注入 `OFDOpenOptions.eventBus` |
+| `document.events` | `OFDEventBus` | 文档生命周期事件总线 |
+| `document.on/once/off/addEventListener/removeEventListener` | subscribe | 订阅文档与页面事件 |
+| `page.on/once/off/addEventListener/removeEventListener` | subscribe | 按 `pageIndex` 过滤的页面事件 |
 | `H5Canvas2DRenderer` | class | 默认 Canvas 2D 渲染器，可显式构造 |
 | `getPageViewport(size, options?)` | `Viewport` | 纯函数，同 `page.getViewport` |
 | `getPageTransform(area, dpi?)` | `Matrix` | mm→设备像素变换 |
@@ -137,9 +142,10 @@ Node/小程序没有浏览器 `document`/`OffscreenCanvas` 时必须注入 `crea
 | `documentIndex` | `number` | `0` | 多文档包时的文档索引；按带 `DocRoot` 的 `DocBody` 顺序计数；必须为非负整数，越界抛 `OFD_INVALID_PACKAGE` |
 | `limits` | `Partial<ResourceLimits>` | `DEFAULT_RESOURCE_LIMITS` | 资源限制覆盖；浅合并；单位见 §11 |
 | `cache` | `Partial<CacheOptions>` | `DEFAULT_CACHE_OPTIONS` | 缓存预算覆盖；浅合并；单位见 §11 |
+| `defaultFonts` | `readonly FontInput[]` | 无 | 用户默认字体：文档字体缺省时的替代来源，优先级高于 `supplementaryFonts`；仅作替代，显式 GID 不可信（走 cmap）；不传时不加载；`path`/`filePath` 需配合 `loadInput` |
 | `supplementaryFonts` | `FontInput[]` | 无 | 宿主补充字体；引擎不内置 CJK 字体；按需用于缺字/缺字体回退；`path`/`filePath` 需配合 `loadInput` |
 | `loadInput` | `FontInputLoader` | 无 | 字体来源字节加载器；不传时 Web 默认 `url` fetch、`data` 直读，`path`/`filePath` 不支持；Node CLI 注入 `node:fs` |
-| `fontProvider` | `FontProvider` | 无 | 宿主按需提供字体；优先于 `supplementaryFonts` 的匹配流程见 §8.1 |
+| `fontProvider` | `FontProvider` | 无 | 宿主按需提供字体；优先于 `defaultFonts`/`supplementaryFonts` 的匹配流程见 §8.1 |
 | `imageDecoders` | `ImageDecoderPlugin[]` | 无 | JBIG2/TIFF 等插件；PNG/JPEG/GIF 内置路径优先 |
 | `onWarning` | `(warning: OFDWarning) => void` | 无（不打印） | 非致命 warning 回调；同一 `(code,pageIndex,objectId)` 去重；回调抛错不影响渲染 |
 | `strictImageCtm` | `boolean` | `true` | 图片缺 CTM 时：`true` 按 identity 1×1；`false` 铺满 Boundary |
@@ -147,6 +153,8 @@ Node/小程序没有浏览器 `document`/`OffscreenCanvas` 时必须注入 `crea
 | `createCanvas` | `(width,height)=>Canvas2DLike` | 浏览器默认 | 临时画布工厂，单位像素；默认 H5 渲染器、矢量签章嵌套 OFD、`exportImage` 使用；显式 `renderer` 不覆盖 `exportImage` |
 | `encodeImage` | `EncodeImage` | 浏览器 Canvas 原生 | 图片编码钩子；Node/自定义 canvas 必须注入；未注入且 Canvas 无 `convertToBlob/toBlob` 时 `exportImage` 抛 `OFD_RENDERER_UNSUPPORTED` |
 | `renderer` | `Renderer` | 内部 `H5Canvas2DRenderer` | 页面绘制扩展点；只接管 `page.render`，`exportImage` 仍用文档级 `createCanvas` |
+| `eventBus` | `OFDEventBus` | engine 创建 | 打开阶段与后续文档生命周期使用的事件总线；注入后 `document.events` 为同一对象；一个总线只对应一个文档 |
+| `signal` | `AbortSignal` | 无 | 打开取消信号；中止时 `open()` 以 `OFD_ABORTED` 拒绝并派发 `document:open:abort(cause='caller')` |
 
 `open` 有两个重载：`OFDOpenOptions` 要求 `source`（默认 ZIP/工厂），`OFDOpenFromContainerOptions` 要求 `container`、`source` 仅作宿主上下文。两者共享 `limits/cache/fonts/renderer` 等基础选项：
 
@@ -196,11 +204,12 @@ function openZipVirtualContainer(
 
 打开后立即固定的页数；只读。用于 `getPage` 边界检查。
 
-### 3.4 `document.getPage(pageIndex: number): Promise<OFDPage>`
+### 3.4 `document.getPage(pageIndex: number, options?: { signal?: AbortSignal }): Promise<OFDPage>`
 
 | 参数 | 类型 | 约束 |
 | --- | --- | --- |
 | `pageIndex` | `number` | 从 0 开始的整数；`0 <= pageIndex < pageCount` |
+| `options.signal` | `AbortSignal` | 只取消本次等待；中止后 Promise 以 `OFD_ABORTED` 拒绝并派发 `page:load:abort(cause='caller')` |
 
 返回页句柄；页尺寸已按“页 → 模板 → CommonData → A4”回退链解析。越界抛 `OFD_PAGE_NOT_FOUND`；文档已关闭抛 `OFD_CLOSED`；页面 XML/资源损坏抛对应 `OFD_*`。
 
@@ -435,6 +444,20 @@ interface AttachmentInfo {
 
 约束：`close()` 后再调用 `getPage`/`render`/`exportImage` 以 `OFD_CLOSED` 拒绝；`close()` 不应与尚未 `await` 的 `render` 竞争同一 canvas 的后续绘制。
 
+### 3.15 `document.events` 与事件订阅
+
+`document.events` 是本文档使用的事件总线：`OFDOpenOptions.eventBus` 注入时与注入对象相同，否则由 engine 创建。总线提供 `on/once/off/emit/removeAllListeners/listenerCount` 与 `addEventListener/removeEventListener`（支持 `{ once, signal }`）。
+
+- 派发同步；派发前快照监听器集合，派发中新增的监听器不参与本次事件。
+- 单个监听器抛错被隔离，不影响其他监听器与渲染结果；可通过 `OFDEventBusOptions.onListenerError` 上报。
+- 事件名为 `<对象>:<操作>:<后缀>`，共 14 个：`document:open:*`/`document:close:*`/`page:load:*`/`page:render:*`。
+- 公共字段：`type`、`timestamp`（Unix 毫秒）、`sequence`（总线派发序号，从 1 递增）；操作事件含 `operationId`（文档内从 1 递增），页面事件另含从 0 开始的 `pageIndex`。
+- 事件对象是只读契约：引擎不在派发后复用/修改字段。
+- 入口校验失败（文档已关闭、页索引越界、viewport/Canvas 非法、signal 已中止）不派发任何事件，Promise 直接拒绝。
+- `document:close:end` 之后不再派发事件；已注册监听器保留但不再被调用。
+
+`document` 上提供同名便捷方法：`on/once/off/addEventListener/removeEventListener`，语义与总线一致。
+
 ---
 
 ## 4. `OFDPage`
@@ -620,6 +643,7 @@ interface TextChar {
 
 | 成员 | 类型 | 说明 |
 | --- | --- | --- |
+| `id` | `number` | 本次渲染的操作 ID；与 `page:render:*` 事件 `operationId` 相同；入口校验失败时为 `0` |
 | `promise` | `Promise<void>` | 完成 resolve；取消/失败 reject `OFDError` |
 | `cancel()` | `void` | 请求取消；可重复调用；不抛错 |
 
@@ -648,6 +672,15 @@ renderRegion(params: PageRenderRegionParameters): RenderTask;
 
 - 原因：1000 页 A4 @4x 约 14.3MP，低于默认 32MP 画布上限；先降 DPI + CSS 放大可满足当前阅读器。
 - 未来若排期，必须保持与整页渲染相同的图层/对象顺序，仅改变 CTM 与 clip，并重新走契约评审。
+
+### 4.10 `page.on/once/off/addEventListener/removeEventListener`
+
+页面监听器是文档总线的按 `pageIndex` 过滤视图：只接收 `pageIndex` 与当前页一致的 `page:load:*`/`page:render:*` 事件；文档关闭时由引擎自动清理。
+
+- `page:render:start` 在入口校验通过、`render()` 返回前同步派发；宿主可据此建立 `operationId → 用途（主页面/缩略图）` 映射。
+- `page:render:end`/`error`/`abort` 在 `task.promise` resolve/reject 前派发，三者互斥且必有一个。
+- 取消来源区分 `cause='caller'`（`task.cancel()`/宿主 signal）与 `cause='close'`（文档关闭）。
+- 同一 Canvas 的渲染串行执行，但 `start` 仍在各自 `render()` 调用栈内立即派发。
 
 ---
 
@@ -765,13 +798,15 @@ interface FontProvider {
 约束：
 
 - engine 不内置 CJK 字体；缺字/缺字体只 warning，不中断。
+- 主字体优先级：内嵌 `FontFile` → `fontProvider` → `defaultFonts` → `supplementaryFonts`；逐字形回退链为 provider 其余候选 → defaultFonts 其余 → supplementaryFonts。精确来源命中时 `defaultFonts` 不参与主字体选择，但仍进入回退链。
+- `defaultFonts` 是替代来源，显式 GID 一律不可信（忽略 `CGTransform` 的 GID，走 cmap）；不传时不读取、不产生额外开销。
 - `fontProvider` 返回多个候选时按顺序尝试；`null` 表示无匹配。
 - `FontInput.family` 用于诊断/别名匹配；真实字体名以字体文件为准。
 - 字体解析失败抛 `OFD_FONT_PARSE` 的场景限于引擎必须加载的字体；可降级时只 warning。
 - **`OFDOpenOptions.loadInput` 可选（r11 兼容增量）**：不传时保持 Web 默认行为——`data` 直接使用，`url` 走 `fetch`，`path`/`filePath` 不支持并产生字体 warning；传了则所有非 `data` 来源都交给 loader。
 - loader 返回 `null` 表示该来源不可用；抛错/读取失败由字体层降级并上报 `W_FONT_MISSING`，不中断文档打开。
 - Node CLI 注入基于 `node:fs` 的 loader（`path`/`filePath` 用 `readFile`，`url` 仍用 fetch）；`--font-dir` 扫描到的字体以 `path` 来源传入，真正读取字节并解析实际 family。
-- `--font-dir` 递归扫描 `.ttf/.otf/.ttc/.otc`（大小写不敏感）；TTC/OTC 展开全部字体面，按 fontkit 实测 family 参与匹配；不自动扫描系统字体、不下载字体。
+- `--font-dir` 递归扫描 `.ttf/.otf/.ttc/.otc`（大小写不敏感）；TTC/OTC 展开全部字体面，按 fontkit 实测 family 参与匹配；默认自动扫描白名单系统字体（CJK 优先，最多 6 个 / 96 MiB，不跟随目录符号链接），`--no-system-fonts` 可关闭；`--font-dir` 作为追加来源；不下载字体。
 - 浏览器/读者宿主如需本地字体，仍推荐 `data`（`ArrayBuffer`/`Uint8Array`）或 `url`；不要让 engine 直接依赖 Node API。
 
 ### 8.2 图片解码插件
@@ -1104,12 +1139,40 @@ P0/P1/P2 UI API 还会产生以下扩展码（`OFDWarning.code` 类型允许 `st
 | `openZipVirtualContainer` | 默认 ZIP 容器构造器（raw 容器；加密包 `encrypted=true`，`read` 返回存仓字节，解密后再注入 engine），复用 `ByteSource`/`ZipReader` 限制与 warning |
 | `OpenZipVirtualContainerOptions` | 默认 ZIP 容器构造选项（`limits`） |
 
+### 13.9 事件系统类型与类（v1.1-r12）
+
+| 名称 | 说明 |
+| --- | --- |
+| `OFDEventBus` | 事件总线实现；`on/once/off/emit/removeAllListeners/listenerCount` 与 `addEventListener/removeEventListener` |
+| `OFDEventBusOptions` | 总线选项（`onListenerError`） |
+| `OFDEventName` / `OFDEventMap` | 14 个事件名与对应载荷的映射 |
+| `OFDEventHandler` | 指定事件名的监听器类型 |
+| `OFDEventBase` / `OFDOperationEventBase` / `OFDPageOperationEventBase` | 公共字段（`type/timestamp/sequence`、`operationId`、`pageIndex`） |
+| `OFDPageEventName` / `OFDPageEventMap` | 页面事件名与载荷子集 |
+| `OFDAddEventListenerOptions` | `addEventListener` 选项（`once`/`signal`） |
+| `OFDAbortCause` | 取消来源：`'caller'` / `'close'` |
+| `DocumentOpenStartEvent` | `document:open:start`：`sourceKind/documentIndex/viaContainer` |
+| `DocumentOpenEndEvent` | `document:open:end`：`pageCount/version/packageSize/durationMs` |
+| `DocumentOpenErrorEvent` | `document:open:error`：`error/durationMs` |
+| `DocumentOpenAbortEvent` | `document:open:abort`：`cause:'caller'/reason?/durationMs` |
+| `DocumentCloseStartEvent` | `document:close:start`：`operationId` |
+| `DocumentCloseEndEvent` | `document:close:end`：`durationMs/abortedOperations` |
+| `PageLoadStartEvent` | `page:load:start`：`pageIndex` |
+| `PageLoadEndEvent` | `page:load:end`：`pageIndex/widthMm/heightMm/durationMs` |
+| `PageLoadErrorEvent` | `page:load:error`：`pageIndex/error/durationMs` |
+| `PageLoadAbortEvent` | `page:load:abort`：`pageIndex/cause/reason?/durationMs` |
+| `PageRenderStartEvent` | `page:render:start`：`pageIndex/dpi/width/height` |
+| `PageRenderEndEvent` | `page:render:end`：`pageIndex/durationMs` |
+| `PageRenderErrorEvent` | `page:render:error`：`pageIndex/error/durationMs` |
+| `PageRenderAbortEvent` | `page:render:abort`：`pageIndex/cause/reason?/durationMs` |
+
 ---
 
 ## 14. 变更记录
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
+| v1.1-r12 | 2026-10-23 | 新增页面级事件系统：`OFDEventBus`、`document.events` 与 `document/page` 的 `on/once/off/addEventListener/removeEventListener`；`OFDOpenOptions.eventBus/signal`、`getPage(index,{signal})`、`RenderTask.id`；14 个事件与载荷类型；入口校验失败不派发事件，`close:end` 后静默 |
 | v2.0-r1 | 2026-10-23 | 新增 `VirtualContainer`/`VirtualFileMeta`/`VirtualReadOptions`/`VirtualContainerFactory`/`openZipVirtualContainer`/`OpenZipVirtualContainerOptions`；`OFDOpenOptions.source` 保持必填，新增 `OFDOpenFromContainerOptions`（`container` 必填、`source` 可选上下文）与 `OFDDocument.open` 重载；新增 `container`（借用）与 `containerFactory`（engine 拥有）；明确 raw/明文容器边界与 `AbortSignal` 透传；默认 ZIP 行为不变 |
 | v1.0-r11 | 2026-10-22 | 新增可选 `OFDOpenOptions.loadInput` / `FontInputLoader`：不传时 Web 默认 `url` fetch、`path`/`filePath` 不支持；Node CLI `--font-dir` 注入 `node:fs` loader，真正读取并展开 TTF/OTF/TTC/OTC，按实际 family 匹配；999.ofd `W_FONT_MISSING` 归零。兼容旧版，无行为变化 |
 | v1.0-r10 | 2026-10-22 | 同步 P2：`getPermissions`（只读声明，不做 DRM）、`getAttachments`/`getAttachmentData`（原始字节，不解析内容）、`exportImage.rotation`（仅导出方向，90/270 宽高互换）；登记 `W_PERMISSION_FIELD`/`W_ATTACHMENT_FIELD`/`W_ATTACHMENT_RESOURCE`；`page.renderRegion` 暂不实现/无排期且不导出 |

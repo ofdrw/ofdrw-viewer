@@ -50,7 +50,7 @@ CLI 默认自动发现系统字体，用它们渲染文档中未内嵌的文字�
 | macOS | `/System/Library/Fonts`、`/Library/Fonts`、`~/Library/Fonts` |
 | Windows | `%WINDIR%\Fonts`、`%LOCALAPPDATA%\Microsoft\Windows\Fonts` |
 
-发现过程只收集 `ttf/otf/ttc/otc`，按 realpath 去重，CJK 关键字字体优先；最多扫描 2000 个字体文件，并按优先级注入前 6 个、总字节不超过 96 MiB（TTC/OTC 按整个文件字节计），超出即停止扫描。只读上述白名单目录，不写系统目录、不访问网络；不跟随目录符号链接，文件符号链接的真实路径必须仍在白名单目录内。
+发现过程只收集 `ttf/otf/ttc/otc`，按 realpath 去重，CJK 关键字字体优先；最多扫描 2000 个字体文件，并按优先级注入前 6 个、总字节不超过 96 MiB（TTC/OTC 按整个文件字节计，超出预算的字体跳过并继续尝试后续更小字体）。只读上述白名单目录，不写系统目录、不访问网络；不跟随目录符号链接，文件符号链接的真实路径必须仍在白名单目录内。
 
 - 不传 `--font-dir`：只使用自动发现的系统字体；
 - `--font-dir <dir>`：扫描结果作为扩充，参与字体匹配时排在系统字体之前，两者按 realpath 去重；

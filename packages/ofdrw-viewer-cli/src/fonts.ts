@@ -26,7 +26,7 @@ export const MAX_SYSTEM_FONTS = 6;
  * 单次转换注入的系统字体总字节预算（单位：字节，默认 96 MiB）。
  *
  * engine 会读取并解析每个补充字体，按文件字节（TTC/OTC 计整个文件）累计，
- * 超出即停止扫描，避免大字体集推高内存。
+ * 按优先级选取时超出预算的字体跳过，避免大字体集推高内存。
  */
 export const MAX_SYSTEM_FONT_BYTES = 96 * 1024 * 1024;
 
@@ -106,7 +106,7 @@ export interface SystemFontDiscoveryResult {
   readonly fonts: readonly FontFile[];
   /** 去重后扫描到的字体文件总数（含被注入上限截断的部分）。 */
   readonly scannedFiles: number;
-  /** 扫描到的字体文件总字节数（单位：字节，受 `maxTotalBytes` 限制）。 */
+  /** 入选字体的总字节数（单位：字节，不超过 `maxTotalBytes`）。 */
   readonly scannedBytes: number;
 }
 
@@ -366,17 +366,16 @@ interface SystemFontScanState {
   readonly seenFiles: Set<string>;
   /** 已收集字体文件的 realpath。 */
   readonly found: string[];
-  /** 已收集字体文件的总字节数（单位：字节）。 */
-  totalBytes: number;
-  /** 是否因数量或字节预算耗尽而停止扫描。 */
-  stopped: boolean;
+  /** 已收集字体文件的字节数，按 realpath 记录，供排序后应用预算。 */
+  readonly sizes: Map<string, number>;
 }
 
 /**
- * 扫描全部白名单目录，排序并截断。
+ * 扫描全部白名单目录，按优先级排序后应用数量与字节预算。
  *
  * 目录项只跟随普通目录；符号链接目录一律跳过。字体文件（含符号链接）的
- * realpath 必须仍位于某个白名单根之下，防止逃逸白名单。
+ * realpath 必须仍位于某个白名单根之下，防止逃逸白名单。字节预算在排序后
+ * 才应用，避免遍历顺序靠前的西文小字体先占满预算、导致 CJK 字体落选。
  *
  * @param directories 白名单目录
  * @param limits 数量与字节限额
@@ -401,29 +400,53 @@ async function scanSystemFonts(
     seenDirectories: new Set<string>(),
     seenFiles: new Set<string>(),
     found: [],
-    totalBytes: 0,
-    stopped: false,
+    sizes: new Map<string, number>(),
   };
   for (const directory of directories) {
-    if (isSystemScanExhausted(state)) break;
+    if (isSystemScanLimitReached(state)) break;
     await walkSystemFontDirectory(directory, state);
   }
 
   const sorted = [...state.found].sort(compareSystemFontPriority);
+  const selected = selectSystemFonts(sorted, state.sizes, limits);
   return {
-    fonts: sorted.slice(0, limits.maxSystemFonts).map((path) => ({ path })),
+    fonts: selected.fonts,
     scannedFiles: sorted.length,
-    scannedBytes: state.totalBytes,
+    scannedBytes: selected.bytes,
   };
 }
 
-/** 判断扫描是否已达到字体数上限或总字节预算。 */
-function isSystemScanExhausted(state: SystemFontScanState): boolean {
-  return (
-    state.stopped ||
-    state.found.length >= state.limits.maxFonts ||
-    state.totalBytes >= state.limits.maxTotalBytes
-  );
+/**
+ * 按优先级选取系统字体：累计字节不超过预算，最多 `maxSystemFonts` 个。
+ *
+ * 单个字体放不下时跳过并继续尝试后续更小的字体，避免一个大 TTC 占满预算后
+ * 名额未被用满；总字节始终不超过预算。
+ *
+ * @param sorted 已按 CJK 优先级排序的字体 realpath
+ * @param sizes 字体 realpath 到字节数的映射
+ * @param limits 数量与字节限额
+ * @returns 入选字体与总字节数（单位：字节）
+ */
+function selectSystemFonts(
+  sorted: readonly string[],
+  sizes: ReadonlyMap<string, number>,
+  limits: SystemFontScanLimits,
+): { readonly fonts: FontFile[]; readonly bytes: number } {
+  const fonts: FontFile[] = [];
+  let bytes = 0;
+  for (const path of sorted) {
+    if (fonts.length >= limits.maxSystemFonts) break;
+    const size = sizes.get(path) ?? 0;
+    if (bytes + size > limits.maxTotalBytes) continue;
+    fonts.push({ path });
+    bytes += size;
+  }
+  return { fonts, bytes };
+}
+
+/** 判断扫描是否已达到字体文件数上限。 */
+function isSystemScanLimitReached(state: SystemFontScanState): boolean {
+  return state.found.length >= state.limits.maxFonts;
 }
 
 /**
@@ -439,7 +462,7 @@ async function walkSystemFontDirectory(
   directory: string,
   state: SystemFontScanState,
 ): Promise<void> {
-  if (isSystemScanExhausted(state)) return;
+  if (isSystemScanLimitReached(state)) return;
 
   let realDirectory: string;
   try {
@@ -459,7 +482,7 @@ async function walkSystemFontDirectory(
   entries.sort(compareDirentByName);
 
   for (const entry of entries) {
-    if (isSystemScanExhausted(state)) return;
+    if (isSystemScanLimitReached(state)) return;
     const fullPath = join(directory, entry.name);
 
     // 目录符号链接可能指向白名单外，直接跳过；只递归普通目录。
@@ -486,13 +509,9 @@ async function walkSystemFontDirectory(
     } catch {
       continue;
     }
-    if (state.totalBytes + size > state.limits.maxTotalBytes) {
-      state.stopped = true;
-      return;
-    }
     state.seenFiles.add(realFile);
     state.found.push(realFile);
-    state.totalBytes += size;
+    state.sizes.set(realFile, size);
   }
 }
 
