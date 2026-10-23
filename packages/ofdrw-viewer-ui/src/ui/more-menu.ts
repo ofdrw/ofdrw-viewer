@@ -138,13 +138,6 @@ const MENU_ITEMS: readonly MenuItemSpec[] = [
     requiresDocument: false,
   },
   {
-    id: 'menu-properties',
-    labelKey: 'toolbar.documentProperties',
-    feature: 'documentProperties',
-    visibility: 'always',
-    command: () => ({ type: 'document.properties' }),
-  },
-  {
     id: 'menu-about',
     labelKey: 'toolbar.about',
     visibility: 'always',
@@ -157,7 +150,7 @@ const MENU_ITEMS: readonly MenuItemSpec[] = [
 export interface MoreMenuOptions {
   /** 触发按钮。 */
   readonly button: HTMLButtonElement;
-  /** 按钮容器（菜单绝对定位的参照）。 */
+  /** 按钮容器；菜单优先挂到 `.ofd-viewer` 根节点，找不到时回退到该容器。 */
   readonly container: HTMLElement;
   /** 翻译器。 */
   readonly translator: Translator;
@@ -168,6 +161,14 @@ export interface MoreMenuOptions {
   /** 命令回调。 */
   readonly onCommand: UIShellCommandHandler;
 }
+
+/** 菜单与视口边缘的最小间距（px）。 */
+const VIEWPORT_MARGIN = 8;
+
+/** 菜单与触发按钮之间的间距（px）。 */
+const MENU_GAP = 4;
+
+let moreMenuSequence = 0;
 
 /**
  * “更多”菜单。
@@ -181,6 +182,9 @@ export class MoreMenu {
   private viewState: UIShellViewState;
   private menuOpen = false;
   private readonly doc: Document;
+  private readonly portal: HTMLElement;
+  private readonly viewportPortal: boolean;
+  private resizeObserver: ResizeObserver | null = null;
 
   /**
    * 创建菜单。
@@ -192,14 +196,21 @@ export class MoreMenu {
     this.featureStates = options.featureStates;
     this.viewState = options.state;
     this.doc = options.button.ownerDocument;
+    // 菜单必须脱离 `.ofd-viewer__toolbar` 的 overflow 裁剪；优先挂到阅读器根节点，
+    // 脱离组件时回退到按钮容器并使用 fixed 坐标。
+    const viewerRoot = options.button.closest<HTMLElement>('.ofd-viewer');
+    this.portal = viewerRoot ?? options.container;
+    this.viewportPortal = viewerRoot === null;
 
     this.element = this.doc.createElement('div');
+    this.element.id = `ofd-more-menu-${++moreMenuSequence}`;
     this.element.className = 'ofd-more-menu';
+    if (this.viewportPortal) this.element.classList.add('ofd-more-menu--fixed');
     this.element.setAttribute('role', 'menu');
     this.element.setAttribute('aria-label', this.translator.t('toolbar.more'));
     this.element.hidden = true;
     this.buildItems();
-    options.container.appendChild(this.element);
+    this.portal.appendChild(this.element);
 
     options.button.addEventListener('click', this.handleButtonClick);
     options.button.addEventListener('keydown', this.handleButtonKeydown);
@@ -220,8 +231,17 @@ export class MoreMenu {
     if (this.menuOpen) return;
     this.menuOpen = true;
     this.element.hidden = false;
+    this.positionMenu();
+    this.element.scrollTop = 0;
     setExpanded(this.options.button, true);
     this.doc.addEventListener('pointerdown', this.handleOutsidePointer, true);
+    this.doc.defaultView?.addEventListener('resize', this.handleViewportChange);
+    this.doc.defaultView?.addEventListener('scroll', this.handleViewportChange, true);
+    if (typeof ResizeObserver !== 'undefined') {
+      // 断点/文案/功能变化会改变菜单高度，尺寸变化后重新夹紧到视口。
+      this.resizeObserver = new ResizeObserver(() => this.positionMenu());
+      this.resizeObserver.observe(this.element);
+    }
     const [first] = this.getEnabledItems();
     first?.focus();
   }
@@ -237,6 +257,10 @@ export class MoreMenu {
     this.element.hidden = true;
     setExpanded(this.options.button, false);
     this.doc.removeEventListener('pointerdown', this.handleOutsidePointer, true);
+    this.doc.defaultView?.removeEventListener('resize', this.handleViewportChange);
+    this.doc.defaultView?.removeEventListener('scroll', this.handleViewportChange, true);
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
     const active = this.doc.activeElement;
     if (restoreFocus && active instanceof HTMLElement && this.element.contains(active)) {
       this.options.button.focus();
@@ -266,6 +290,8 @@ export class MoreMenu {
         state.fullscreen ? 'toolbar.exitFullscreen' : 'toolbar.fullscreen',
       );
     }
+    // 全屏文案等变化可能改变菜单高度，打开时重新夹紧到视口内。
+    if (this.menuOpen) this.positionMenu();
   }
 
   /**
@@ -277,6 +303,7 @@ export class MoreMenu {
     this.featureStates = states;
     this.applyFeatureStates();
     this.refreshDisabled();
+    if (this.menuOpen) this.positionMenu();
   }
 
   /**
@@ -302,6 +329,40 @@ export class MoreMenu {
     this.element.remove();
   }
 
+  /**
+   * 计算菜单位置：右对齐触发按钮，遇到视口边缘翻转/夹紧，超高时限制高度并允许滚动。
+   *
+   * 坐标先按视口计算，再换算到 `.ofd-viewer` 根节点的绝对定位坐标系。
+   */
+  private positionMenu(): void {
+    const view = this.doc.defaultView;
+    if (!view || !this.menuOpen) return;
+    const maxHeight = Math.max(0, view.innerHeight - VIEWPORT_MARGIN * 2);
+    this.element.style.maxHeight = `${maxHeight}px`;
+    const anchor = this.options.button.getBoundingClientRect();
+    const size = this.element.getBoundingClientRect();
+    const left = Math.min(
+      Math.max(anchor.right - size.width, VIEWPORT_MARGIN),
+      Math.max(VIEWPORT_MARGIN, view.innerWidth - size.width - VIEWPORT_MARGIN),
+    );
+    let top = anchor.bottom + MENU_GAP;
+    if (top + size.height > view.innerHeight - VIEWPORT_MARGIN) {
+      const above = anchor.top - MENU_GAP - size.height;
+      top =
+        above >= VIEWPORT_MARGIN
+          ? above
+          : Math.max(VIEWPORT_MARGIN, view.innerHeight - VIEWPORT_MARGIN - size.height);
+    }
+    if (this.viewportPortal) {
+      this.element.style.left = `${Math.round(left)}px`;
+      this.element.style.top = `${Math.round(top)}px`;
+      return;
+    }
+    const origin = this.portal.getBoundingClientRect();
+    this.element.style.left = `${Math.round(left - origin.left - this.portal.clientLeft)}px`;
+    this.element.style.top = `${Math.round(top - origin.top - this.portal.clientTop)}px`;
+  }
+
   /** 创建菜单项。 */
   private buildItems(): void {
     for (const spec of MENU_ITEMS) {
@@ -313,7 +374,8 @@ export class MoreMenu {
       item.dataset.menuVisibility = spec.visibility;
       item.textContent = this.translator.t(spec.labelKey);
       item.addEventListener('click', () => {
-        this.close(false);
+        // 先关闭并把焦点还给触发按钮，后续对话框/侧栏关闭时可恢复到该按钮。
+        this.close();
         this.options.onCommand(spec.command(this.viewState));
       });
       this.element.appendChild(item);
@@ -372,6 +434,13 @@ export class MoreMenu {
     this.toggle();
   };
 
+  /** 窗口尺寸/滚动变化时重算位置；菜单内部滚动不重算。 */
+  private readonly handleViewportChange = (event: Event): void => {
+    if (!this.menuOpen) return;
+    if (event.type === 'scroll' && event.target === this.element) return;
+    this.positionMenu();
+  };
+
   /** 触发按钮键盘：ArrowDown 直接打开。 */
   private readonly handleButtonKeydown = (event: KeyboardEvent): void => {
     if (event.key !== 'ArrowDown') return;
@@ -414,12 +483,23 @@ export class MoreMenu {
     }
   };
 
-  /** 点击菜单外关闭。 */
+  /** 点击菜单外关闭；未点击可聚焦控件时把焦点还给触发按钮。 */
   private readonly handleOutsidePointer = (event: Event): void => {
     const target = event.target;
     if (!(target instanceof Node)) return;
     if (this.element.contains(target)) return;
     if (this.options.button.contains(target)) return;
+    const focusable =
+      target instanceof Element
+        ? target.closest(
+            'button, a[href], input:not([type="hidden"]), select, textarea, [contenteditable="true"]',
+          )
+        : null;
     this.close(false);
+    if (focusable) return;
+    // 等待指针事件的默认焦点处理结束后再还给触发按钮，避免点击文档区域后焦点落到 body。
+    this.doc.defaultView?.setTimeout(() => {
+      if (!this.menuOpen) this.options.button.focus();
+    }, 0);
   };
 }

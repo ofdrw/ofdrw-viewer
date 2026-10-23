@@ -149,6 +149,8 @@ describe('工具栏命令', () => {
     expect(commands).toContainEqual({ type: 'print.open' });
     (shell.toolbar.getControl('export') as HTMLButtonElement).click();
     expect(commands).toContainEqual({ type: 'export.open' });
+    (shell.toolbar.getControl('document-properties') as HTMLButtonElement).click();
+    expect(commands).toContainEqual({ type: 'document.properties' });
 
     const findButton = shell.toolbar.getControl('find') as HTMLButtonElement;
     findButton.click();
@@ -225,6 +227,38 @@ describe('功能门控', () => {
     expect(print.hasAttribute('aria-disabled')).toBe(false);
     expect(print.title).toBe('');
     expect(find.hidden).toBe(false);
+  });
+
+  it('文档属性常驻按钮按 documentProperties 功能隐藏或禁用', () => {
+    const hiddenShell = createShell({
+      featureStates: resolveFeatureStates({ documentProperties: false }),
+      state: { pageCount: 10 },
+    });
+    const hiddenButton = hiddenShell.shell.toolbar.getControl(
+      'document-properties',
+    ) as HTMLButtonElement;
+    expect(hiddenButton.hidden).toBe(true);
+    expect(hiddenButton.disabled).toBe(true);
+
+    const disabledShell = createShell({
+      featureStates: resolveFeatureStates(
+        { documentProperties: false },
+        {},
+        { documentProperties: 'disable' },
+      ),
+      state: { pageCount: 10 },
+    });
+    const disabledButton = disabledShell.shell.toolbar.getControl(
+      'document-properties',
+    ) as HTMLButtonElement;
+    expect(disabledButton.hidden).toBe(false);
+    expect(disabledButton.disabled).toBe(true);
+    expect(disabledButton.getAttribute('aria-disabled')).toBe('true');
+    expect(disabledButton.title).toContain('文档属性不可用');
+    // 菜单中不再保留重复入口。
+    expect(
+      disabledShell.shell.root.querySelector('[data-ofd-control="menu-properties"]'),
+    ).toBeNull();
   });
 
   it('查找栏容器初始隐藏，且显隐只由打开/关闭控制', () => {
@@ -354,7 +388,7 @@ describe('断点布局', () => {
   it('工具栏保留精简后的核心控件，其余进入更多菜单', () => {
     const { shell } = createShell({ width: 400, state: { pageCount: 10 } });
     expect(shell.viewport).toBe('narrow');
-    const more = shell.elements.toolbar.querySelector('.ofd-more-menu');
+    const more = shell.root.querySelector('.ofd-more-menu');
     expect(more).not.toBeNull();
     const menuIds = [...(more?.querySelectorAll('[data-ofd-control]') ?? [])].map(
       (element) => element.getAttribute('data-ofd-control'),
@@ -362,6 +396,14 @@ describe('断点布局', () => {
     expect(menuIds).toContain('menu-print');
     expect(menuIds).toContain('menu-zoom-in');
     expect(menuIds).toContain('menu-previous');
+    expect(menuIds).not.toContain('menu-properties');
+    // 文档属性改为工具栏常驻 info 图标，不再依赖菜单打开。
+    const properties = shell.elements.toolbar.querySelector<HTMLElement>(
+      '[data-ofd-control="document-properties"]',
+    );
+    expect(properties).not.toBeNull();
+    expect(properties?.getAttribute('aria-label')).toBe('文档属性');
+    expect(properties?.hidden).toBe(false);
     const print = shell.elements.toolbar.querySelector<HTMLElement>('[data-ofd-control="print"]');
     expect(print?.dataset.overflow).toBe('compact');
     const previous = shell.elements.toolbar.querySelector<HTMLElement>(
@@ -395,7 +437,7 @@ describe('断点布局', () => {
     more!.focus();
     more!.click();
     expect(more!.getAttribute('aria-expanded')).toBe('true');
-    const menu = shell.elements.toolbar.querySelector<HTMLElement>('.ofd-more-menu');
+    const menu = shell.root.querySelector<HTMLElement>('.ofd-more-menu');
     expect(menu?.hidden).toBe(false);
     const first = document.activeElement as HTMLElement;
     expect(menu!.contains(first)).toBe(true);

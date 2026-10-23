@@ -20,6 +20,7 @@ export type IconName =
   | 'shield'
   | 'fullscreen'
   | 'fullscreen-exit'
+  | 'info'
   | 'more'
   | 'close';
 
@@ -102,6 +103,11 @@ const ICONS: Readonly<Record<IconName, IconSpec>> = Object.freeze({
       'M3 16h3a2 2 0 0 1 2 2v3',
       'M16 21v-3a2 2 0 0 1 2-2h3',
     ],
+  },
+  info: {
+    circles: [[12, 12, 9]],
+    lines: [[12, 11, 12, 16]],
+    paths: ['M12 8h.01'],
   },
   more: {
     paths: ['M5 12h.01M12 12h.01M19 12h.01'],
