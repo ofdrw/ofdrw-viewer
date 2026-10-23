@@ -1,7 +1,7 @@
 /**
  * 宿主字体提供接口。
  *
- * Engine 不内置任何 CJK 字体；字体来源为内嵌 FontFile、FontProvider 与 supplementaryFonts。
+ * Engine 不内置任何 CJK 字体；字体来源为内嵌 FontFile、FontProvider、defaultFonts 与 supplementaryFonts。
  * Provider 只负责找到字体字节/URL/路径，解析仍由 fontkit 完成。
  */
 
