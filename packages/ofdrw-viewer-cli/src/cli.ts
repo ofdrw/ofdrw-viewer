@@ -25,7 +25,7 @@ import {
   isErrnoError,
   toCliError,
 } from './errors.js';
-import { loadSupplementaryFonts, loadSystemFonts } from './fonts.js';
+import { loadSupplementaryFonts, loadSystemFonts, mergeFontFiles } from './fonts.js';
 import type { FontFile } from './fonts.js';
 import { runInfo } from './info.js';
 import { Logger } from './log.js';
@@ -663,14 +663,7 @@ async function collectFontFiles(
   if (!options.systemFonts) return fontFiles;
 
   const systemFonts = await loadSystemFonts(logger);
-  const seen = new Set(fontFiles.map((font) => font.path));
-  const merged = [...fontFiles];
-  for (const font of systemFonts) {
-    if (seen.has(font.path)) continue;
-    seen.add(font.path);
-    merged.push(font);
-  }
-  return merged;
+  return mergeFontFiles(fontFiles, systemFonts);
 }
 
 /**

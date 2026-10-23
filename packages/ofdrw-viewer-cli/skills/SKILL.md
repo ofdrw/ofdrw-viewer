@@ -51,8 +51,11 @@ CLI="${OFDRW_VIEWER_CLI:-ofdrw-viewer-cli}"
 # 同时导出空间文本 JSON
 "$CLI" input.ofd --text
 
-# 补充字体目录
+# 补充字体目录（默认已自动发现系统字体，这里仅追加自定义字体）
 "$CLI" input.ofd -o ./out --font-dir ./fonts
+
+# 关闭系统字体自动发现，仅使用 --font-dir（复现旧版行为）
+"$CLI" input.ofd -o ./out --no-system-fonts
 
 # 只查询，不解密/不验签
 "$CLI" info input.ofd
@@ -84,7 +87,8 @@ CLI="${OFDRW_VIEWER_CLI:-ofdrw-viewer-cli}"
 | `-f, --format <fmt>` | `png` | 转图片 | `png` / `jpeg` / `webp` |
 | `-d, --dpi <n>` | `96` | 转图片 | 图片与文本共用的 DPI |
 | `-p, --pages <ranges>` | 全部 | 转图片 | 1 起闭区间，如 `1-3,5`；总跨度上限 100000 页 |
-| `--font-dir <dir>` | 无 | 转图片 | 补充字体目录 |
+| `--font-dir <dir>` | 无 | 转图片 | 补充字体目录；默认已自动发现系统字体，此处结果优先参与匹配 |
+| `--no-system-fonts` | 关闭 | 转图片 | 关闭系统字体自动发现，仅使用 `--font-dir`（旧版行为） |
 | `--text` | 关闭 | 转图片 | 每页额外导出空间文本 JSON |
 | `--user <name>` | 无 | 转图片 / verify | 指定加密文档的 `UserInfo@UserName` |
 | `--password <password>` | 无 | 转图片 / verify | 口令用户；与 `--key` 互斥 |
@@ -97,7 +101,7 @@ CLI="${OFDRW_VIEWER_CLI:-ofdrw-viewer-cli}"
 | `-V, --version` | — | 全部 | 版本与平台 |
 
 `info` 只接受 `--json`；带 `--user/--password/--key/--key-passphrase/--root/--sm2-user-id` 或转图片参数会报用法错误（1）。
-`verify` 不接受转图片参数（`-o`/`--format`/`--dpi`/`--pages`/`--font-dir`/`--text`）；需要导出图片时不要使用 `verify` 子命令。
+`verify` 不接受转图片参数（`-o`/`--format`/`--dpi`/`--pages`/`--font-dir`/`--no-system-fonts`/`--text`）；需要导出图片时不要使用 `verify` 子命令。
 转图片不接受 `--root`/`--sm2-user-id`/`--json`。
 
 ## `info` 输出
@@ -204,7 +208,7 @@ out/
 4. **预览**：转图片先 `--pages 1`，检查 PNG 是否正常。
 5. **坐标**：需要时加 `--text`，读取 JSON，按 `text` 搜索并用 `x/y/w/h` 定位。
 6. **加密转换**：带 `--password` 或 `--key`；不要把口令写进脚本日志或提交到仓库。
-7. **缺字/乱码**：检查 stderr 的 `W_FONT_MISSING`/`W_GLYPH_MISSING`；向用户询问字体目录并用 `--font-dir` 重试。不要自动下载字体。
+7. **缺字/乱码**：CLI 默认会自动发现系统字体（stderr 有「自动发现系统字体 N 个（扫描 M 个文件）」）；若仍有 `W_FONT_MISSING`/`W_GLYPH_MISSING`，向用户询问字体目录并用 `--font-dir` 追加。不要自动下载字体；`--no-system-fonts` 仅用于复现旧版行为或强制只用指定目录。
 8. **大文档**：优先按页码范围分批，避免一次生成过多图片与 JSON。
 
 ## 退出码与错误
@@ -237,7 +241,7 @@ out/
 
 - 路径可能含中文/空格，始终加引号；文件名恰为 `info`/`verify`/`decrypt` 时加 `./`；
 - 只对可信的 OFD 文件运行；超大页面/高 DPI 可能占用大量内存；
-- 不自动扫描系统字体，不自动下载字体或二进制；
+- 默认自动扫描白名单系统字体目录（只读、不联网，注入上限 6 个 / 96 MiB，目录符号链接不跟随）；`--no-system-fonts` 可关闭；不自动下载字体或二进制；
 - `--password`/`--key-passphrase` 可能进入 shell 历史或进程列表；不要记录、回显或提交凭据；
 - 不提供独立 `decrypt`，不写明文文件；
 - 不支持批量/目录、PDF、OCR、注释文字、Linux musl；

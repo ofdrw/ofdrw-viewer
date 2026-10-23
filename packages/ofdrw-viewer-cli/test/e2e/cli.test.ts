@@ -8,7 +8,7 @@ import { loadImage } from '@napi-rs/canvas';
 import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
 import { main } from '../../src/cli.js';
 import { EXIT_CODES } from '../../src/errors.js';
-import { discoverSystemFonts } from '../../src/fonts.js';
+import { discoverSystemFonts, isCjkFontFileName } from '../../src/fonts.js';
 import { NodeFileByteSource } from '../../src/node-file-source.js';
 import { createStreamCapture } from '../unit/helpers.js';
 
@@ -37,15 +37,6 @@ const CJK_FONT_CANDIDATES = [
 
 /** 首个存在的 CJK 字体；全部缺失时跳过对应用例。 */
 const CJK_FONT = CJK_FONT_CANDIDATES.find((candidate) => existsSync(candidate));
-
-/**
- * 系统字体文件名中可能提供 CJK 覆盖的关键字。
- *
- * 仅用于 e2e 条件断言：只有发现结果含 CJK 字体时，才断言中文示例不再报
- * `W_FONT_MISSING`，避免仅安装西文字体的机器误报。
- */
-const CJK_FONT_NAME_PATTERN =
-  /cjk|noto|sourcehan|source-han|simsun|simhei|msyh|pingfang|fangsong|kaiti|heiti|songti|yahei|wqy|wenquanyi|uming|ukai|arphic|hiragino|droid/i;
 
 const tempDirs: string[] = [];
 
@@ -244,7 +235,7 @@ describe('CLI 图片导出 e2e', () => {
     expect(await listEntries(join(cwd, 'helloworld'))).toEqual(['helloworld-p001.png']);
   });
 
-  it('--font-dir 注入补充字体后仍正常出图', async () => {
+  it('--font-dir 与默认系统字体合并后仍正常出图', async () => {
     const cwd = await createTempDir();
     const fontDir = join(cwd, 'fonts');
     const outDir = join(cwd, 'out');
@@ -259,6 +250,8 @@ describe('CLI 图片导出 e2e', () => {
     expect(result.code).toBe(EXIT_CODES.OK);
     expect(await listEntries(outDir)).toEqual(['helloworld-p001.png']);
     expect(result.stdout).toContain('完成：1/1 页');
+    // 用户目录与系统字体同时生效：默认发现日志仍应出现，且转换不报错。
+    expect(result.stderr).toMatch(/自动发现系统字体 \d+ 个（扫描 \d+ 个文件）/);
   });
 
   it('默认自动发现系统字体并注入转换', async (context) => {
@@ -284,9 +277,7 @@ describe('CLI 图片导出 e2e', () => {
 
     // 发现结果含 CJK 字体时，中文示例应不再缺字体且文本非空；仅安装西文
     // 字体的机器不做该断言，避免平台差异导致误报。
-    const hasCjkFont = discovered.fonts.some((font) =>
-      CJK_FONT_NAME_PATTERN.test(basename(font.path)),
-    );
+    const hasCjkFont = discovered.fonts.some((font) => isCjkFontFileName(font.path));
     if (hasCjkFont) {
       expect(result.stderr).not.toContain('W_FONT_MISSING');
       const records = await readTextJson(join(outDir, 'helloworld-p001.json'));

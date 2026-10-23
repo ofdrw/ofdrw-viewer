@@ -50,13 +50,13 @@ CLI 默认自动发现系统字体，用它们渲染文档中未内嵌的文字�
 | macOS | `/System/Library/Fonts`、`/Library/Fonts`、`~/Library/Fonts` |
 | Windows | `%WINDIR%\Fonts`、`%LOCALAPPDATA%\Microsoft\Windows\Fonts` |
 
-发现过程只收集 `ttf/otf/ttc/otc`，按 realpath 去重，CJK 关键字字体优先；最多扫描 2000 个字体文件，并按优先级注入前 16 个。只读上述白名单目录，不写系统目录、不访问网络。
+发现过程只收集 `ttf/otf/ttc/otc`，按 realpath 去重，CJK 关键字字体优先；最多扫描 2000 个字体文件，并按优先级注入前 6 个、总字节不超过 96 MiB（TTC/OTC 按整个文件字节计），超出即停止扫描。只读上述白名单目录，不写系统目录、不访问网络；不跟随目录符号链接，文件符号链接的真实路径必须仍在白名单目录内。
 
 - 不传 `--font-dir`：只使用自动发现的系统字体；
 - `--font-dir <dir>`：扫描结果作为扩充，参与字体匹配时排在系统字体之前，两者按 realpath 去重；
 - `--no-system-fonts`：关闭自动发现，仅使用 `--font-dir`，与旧版本行为一致。
 
-发现数量以一行日志写入 stderr（如 `自动发现系统字体 16 个（扫描 93 个文件）`），不污染 stdout 的摘要/JSON；使用 `--no-system-fonts` 时不扫描、也不输出该行。系统目录不存在或不可读时视为未发现，不报错；仍然找不到字体时按原有 `W_FONT_MISSING`/`W_GLYPH_MISSING` 处理。
+发现数量以一行日志写入 stderr（如 `自动发现系统字体 6 个（扫描 46 个文件）`），不污染 stdout 的摘要/JSON；使用 `--no-system-fonts` 时不扫描、也不输出该行。系统目录不存在或不可读时视为未发现，不报错；仍然找不到字体时按原有 `W_FONT_MISSING`/`W_GLYPH_MISSING` 处理。
 
 ### 导出文字位置
 
@@ -183,7 +183,7 @@ CLI 的 OFD 文件输入统一走 `NodeFileByteSource`（`fs.promises.open` + �
 
 - `--password` 和 `--key-passphrase` 可能出现在 shell 历史或进程列表中，请使用安全的方式传递；
 - CLI 不打印口令、私钥、PEM 或 `EncryptedWK`；
-- 系统字体发现只读上述白名单目录，不写、不下载、不联网；字体路径经 realpath 规范化后才读取；
+- 系统字体发现只读上述白名单目录，不写、不下载、不联网；不跟随目录符号链接，文件符号链接经 realpath 校验仍在白名单内才读取；
 - 只对可信来源的 OFD 运行；超大页面或高 DPI 可能占用大量内存；
 - 未配置根证书时无法判断信任链，`verify` 会明确返回 `unknown` 而不是误报成功。
 

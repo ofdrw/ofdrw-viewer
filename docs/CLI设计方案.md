@@ -55,7 +55,7 @@ OFD 文件
 - 注释/签章文字（`includeAnnotations=false`）；
 - 多文档包的文档选择（只处理第一个文档）；
 - 并行渲染（固定串行）；
-- 自动扫描系统字体；
+- ~~自动扫描系统字体~~（由 [渲染字体缺省方案设计](./渲染字体缺省方案设计.md) 实现并默认开启，见 §7.4）；
 - 图片 DPI 元数据（PNG pHYs / JPEG density）写入；
 - 纯文本模式（不渲染图片）；
 - 独立 `decrypt` 子命令（加密文档请直接带凭据转图片；`decrypt` 固定退出 1）；
@@ -201,7 +201,8 @@ ofdrw-viewer-cli signed-encrypted.ofd --password '***' --root root-ca.crt.pem
 | `-f, --format <fmt>` | `png` | `png` / `jpeg` / `webp` |
 | `-d, --dpi <n>` | `96` | 图片与文本共用的输出 DPI，正整数 |
 | `-p, --pages <ranges>` | 全部 | 1 起闭区间，如 `1-3,5`；重复/重叠自动去重排序；总跨度上限 100000 页 |
-| `--font-dir <dir>` | 无 | 补充字体目录；递归扫描 ttf/otf/ttc/otc |
+| `--font-dir <dir>` | 无 | 补充字体目录；递归扫描 ttf/otf/ttc/otc，结果排在系统字体之前 |
+| `--no-system-fonts` | 关闭 | 关闭系统字体自动发现，仅使用 `--font-dir`（旧版行为） |
 | `--text` | 关闭 | 每页额外导出空间文本 JSON |
 | `--user <name>` | 无 | 加密文档用户名；转图片/verify |
 | `--password <password>` | 无 | 口令用户；与 `--key` 互斥；转图片/verify |
@@ -216,7 +217,7 @@ ofdrw-viewer-cli signed-encrypted.ofd --password '***' --root root-ca.crt.pem
 参数上下文：
 
 - `info` 只接受输入与 `--json`；带凭据、`--root`、`--sm2-user-id` 或转图片参数 → 用法错误（1）；
-- `verify` 接受凭据/`--root`/`--sm2-user-id`/`--json`；拒绝 `-o`/`--format`/`--dpi`/`--pages`/`--font-dir`/`--text`（1）；
+- `verify` 接受凭据/`--root`/`--sm2-user-id`/`--json`；拒绝 `-o`/`--format`/`--dpi`/`--pages`/`--font-dir`/`--no-system-fonts`/`--text`（1）；
 - 转图片接受凭据，但拒绝 `--root`/`--sm2-user-id`/`--json`（1）；
 - `--password` 与 `--key` 互斥；`--user` 必须与二者之一同用；`--key-passphrase` 必须与 `--key` 同用。
 
@@ -483,7 +484,7 @@ export function loadCanvas(): typeof import('@napi-rs/canvas') {
 - 递归扫描 `.ttf` / `.otf` / `.ttc` / `.otc`，大小写不敏感；
 - 文件按路径字典序排列，去重（`realpath`）；
 - 以 `{ path }[]` 传给 `supplementaryFonts`，由 engine 匹配；
-- 默认不扫描系统字体；
+- **默认自动扫描白名单系统字体**（Linux/macOS/Windows 各自目录；CJK 优先，最多注入 6 个、总字节预算 96 MiB，不跟随目录符号链接、文件符号链接不得逃逸白名单），发现结果排在 `--font-dir` 之后并按 `realpath` 去重；`--no-system-fonts` 关闭自动发现、仅用 `--font-dir`（恢复旧版行为）；
 - 缺字体由 engine 产生 `W_FONT_MISSING`；文本仍保留，图片可能少字形。
 
 ### 7.5 图片解码
@@ -955,7 +956,7 @@ ofdrw-viewer-cli encrypted.ofd -o out --key encrypt.key.pem --key-passphrase '**
 - 流程：`NodeFileByteSource` → `{ kind:'byte-source', source }` → `openDecryptingContainer` → 明文 `VirtualContainer` → `OFDDocument.open({ container })` → 既有页面导出；容器由 CLI 关闭，明文不落盘。
 - 字节源由 CLI 拥有，成功、异常、取消/SIGINT 后关闭；crypto 不关闭调用方字节源。明文包时 `openDecryptingContainer` 返回 source-backed 容器，仍由 CLI 关闭。
 - 未提供凭据/凭据错误：不进入渲染、不产出页面，退出 4。
-- 明文文档不加凭据时行为、输出命名、页码、DPI、`--text`、`--font-dir` 完全兼容旧版。
+- 明文文档不加凭据时行为、输出命名、页码、DPI、`--text`、`--font-dir` 完全兼容旧版；字体来源除外：默认自动发现系统字体（可用 `--no-system-fonts` 恢复旧版渲染基线）。
 - 转图片不接受 `--root`/`--sm2-user-id`/`--json`；需要验签请使用 `verify`。
 - 页面级失败仍退出 3；文档/包错误 2；SIGINT 130。
 

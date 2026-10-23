@@ -44,9 +44,29 @@ describe('parseCliArgs', () => {
         dpi: DEFAULT_DPI,
         pageNumbers: undefined,
         fontDir: undefined,
+        systemFonts: true,
         text: false,
       },
     });
+  });
+
+  it('--no-system-fonts 关闭系统字体自动发现', () => {
+    expect(parseCliArgs(['input.ofd'], cwd).command).toMatchObject({
+      kind: 'convert',
+      options: { systemFonts: true },
+    });
+    expect(parseCliArgs(['input.ofd', '--no-system-fonts'], cwd).command).toMatchObject({
+      kind: 'convert',
+      options: { systemFonts: false },
+    });
+  });
+
+  it.each(['info', 'verify'])('%s 拒绝 --no-system-fonts', (subcommand) => {
+    const error = captureCliError(() =>
+      parseCliArgs([subcommand, 'input.ofd', '--no-system-fonts'], cwd),
+    );
+    expect(error.code).toBe('CLI_USAGE');
+    expect(error.message).toContain('--no-system-fonts');
   });
 
   it('解析全部参数', () => {
@@ -63,6 +83,7 @@ describe('parseCliArgs', () => {
         '1-3,5',
         '--font-dir',
         'fonts',
+        '--no-system-fonts',
         '--text',
       ],
       cwd,
@@ -76,6 +97,7 @@ describe('parseCliArgs', () => {
         dpi: 300,
         pageNumbers: [1, 2, 3, 5],
         fontDir: resolve(cwd, 'fonts'),
+        systemFonts: false,
         text: true,
       },
     });

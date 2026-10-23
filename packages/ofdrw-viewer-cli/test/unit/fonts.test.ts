@@ -5,6 +5,7 @@ import {
   readFile,
   realpath,
   rm,
+  stat,
   symlink,
   writeFile,
 } from 'node:fs/promises';
@@ -15,13 +16,16 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Logger } from '../../src/log.js';
 import {
   MAX_SCANNED_FONTS,
+  MAX_SYSTEM_FONT_BYTES,
   MAX_SYSTEM_FONTS,
   clearSystemFontCache,
   createNodeFontInputLoader,
   discoverSystemFonts,
+  isCjkFontFileName,
   isFontFileName,
   loadSupplementaryFonts,
   loadSystemFonts,
+  mergeFontFiles,
   scanFontDirectory,
   systemFontDirectories,
 } from '../../src/fonts.js';
@@ -49,6 +53,12 @@ async function createFontFile(path: string): Promise<void> {
 async function createFontFixture(path: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await copyFile(FIXTURE_FONT, path);
+}
+
+/** 在指定目录写一个指定字节数的文件（扫描器不解析字体内容）。 */
+async function createSizedFontFile(path: string, size: number): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, Buffer.alloc(size));
 }
 
 afterEach(async () => {
@@ -236,9 +246,10 @@ describe('systemFontDirectories', () => {
 });
 
 describe('discoverSystemFonts', () => {
-  it('默认限额为扫描 2000 个、注入 16 个', () => {
+  it('默认限额为扫描 2000 个、注入 6 个、总字节 96 MiB', () => {
     expect(MAX_SCANNED_FONTS).toBe(2000);
-    expect(MAX_SYSTEM_FONTS).toBe(16);
+    expect(MAX_SYSTEM_FONTS).toBe(6);
+    expect(MAX_SYSTEM_FONT_BYTES).toBe(96 * 1024 * 1024);
   });
 
   it('递归扫描注入目录、过滤扩展名并返回 realpath', async () => {
@@ -260,6 +271,10 @@ describe('discoverSystemFonts', () => {
     ]);
     expect(result.fonts.every((font) => font.path.startsWith(realRoot))).toBe(true);
     expect(result.scannedFiles).toBe(4);
+    const expectedBytes = (
+      await Promise.all(result.fonts.map(async (font) => (await stat(font.path)).size))
+    ).reduce((sum, size) => sum + size, 0);
+    expect(result.scannedBytes).toBe(expectedBytes);
   });
 
   it('目录不存在、不是目录时返回空结果而不报错', async () => {
@@ -270,7 +285,7 @@ describe('discoverSystemFonts', () => {
     const result = await discoverSystemFonts({
       directories: [join(root, 'missing'), filePath],
     });
-    expect(result).toEqual({ fonts: [], scannedFiles: 0 });
+    expect(result).toEqual({ fonts: [], scannedFiles: 0, scannedBytes: 0 });
   });
 
   it('按 realpath 对符号链接去重', async () => {
@@ -282,6 +297,42 @@ describe('discoverSystemFonts', () => {
     const result = await discoverSystemFonts({ directories: [root] });
     expect(result.fonts).toHaveLength(1);
     expect(result.fonts[0]?.path).toBe(join(await realpath(root), 'real.ttf'));
+  });
+
+  it('不跟随目录符号链接逃逸白名单', async () => {
+    if (process.platform === 'win32') return;
+    const root = await createTempDir();
+    const outside = await createTempDir();
+    await createFontFixture(join(root, 'inside.ttf'));
+    await createFontFixture(join(outside, 'outside.ttf'));
+    await symlink(outside, join(root, 'linked-outside'));
+
+    const result = await discoverSystemFonts({ directories: [root] });
+    expect(result.fonts.map((font) => basename(font.path))).toEqual(['inside.ttf']);
+  });
+
+  it('文件符号链接指向白名单外时跳过', async () => {
+    if (process.platform === 'win32') return;
+    const root = await createTempDir();
+    const outside = await createTempDir();
+    await createFontFixture(join(root, 'inside.ttf'));
+    const outsideFont = join(outside, 'outside.ttf');
+    await createFontFixture(outsideFont);
+    await symlink(outsideFont, join(root, 'escape.ttf'));
+
+    const result = await discoverSystemFonts({ directories: [root] });
+    expect(result.fonts.map((font) => basename(font.path))).toEqual(['inside.ttf']);
+  });
+
+  it('目录符号链接成环时跳过且不重复收集', async () => {
+    if (process.platform === 'win32') return;
+    const root = await createTempDir();
+    await createFontFixture(join(root, 'inside.ttf'));
+    await symlink(root, join(root, 'loop'));
+
+    const result = await discoverSystemFonts({ directories: [root] });
+    expect(result.fonts.map((font) => basename(font.path))).toEqual(['inside.ttf']);
+    expect(result.scannedFiles).toBe(1);
   });
 
   it('重复注入同一目录只扫描一次', async () => {
@@ -339,6 +390,18 @@ describe('discoverSystemFonts', () => {
     expect(result.scannedFiles).toBe(5);
   });
 
+  it('总字节预算超出即停止扫描，TTC 按文件字节计', async () => {
+    const root = await createTempDir();
+    await createSizedFontFile(join(root, 'a.ttf'), 400);
+    await createSizedFontFile(join(root, 'b.ttc'), 400);
+    await createSizedFontFile(join(root, 'c.ttf'), 400);
+
+    const result = await discoverSystemFonts({ directories: [root], maxTotalBytes: 1000 });
+    expect(result.fonts.map((font) => basename(font.path))).toEqual(['a.ttf', 'b.ttc']);
+    expect(result.scannedFiles).toBe(2);
+    expect(result.scannedBytes).toBe(800);
+  });
+
   it('同一目录与限额复用进程内缓存，清除后重新扫描', async () => {
     const root = await createTempDir();
     await createFontFixture(join(root, 'a.ttf'));
@@ -376,4 +439,43 @@ describe('loadSystemFonts', () => {
     expect(fonts).toEqual([]);
     expect(capture.stderrText()).toBe('自动发现系统字体 0 个（扫描 0 个文件）\n');
   });
+});
+
+describe('mergeFontFiles', () => {
+  it('用户字体在前、系统字体在后并按 realpath 去重', () => {
+    const userFonts = [{ path: '/fonts/user.ttf' }, { path: '/fonts/shared.ttc' }];
+    const systemFonts = [
+      { path: '/usr/share/fonts/a.ttf' },
+      { path: '/fonts/shared.ttc' },
+      { path: '/usr/share/fonts/b.ttc' },
+    ];
+
+    expect(mergeFontFiles(userFonts, systemFonts)).toEqual([
+      { path: '/fonts/user.ttf' },
+      { path: '/fonts/shared.ttc' },
+      { path: '/usr/share/fonts/a.ttf' },
+      { path: '/usr/share/fonts/b.ttc' },
+    ]);
+  });
+
+  it('没有系统字体时原样返回用户字体', () => {
+    const userFonts = [{ path: '/fonts/user.ttf' }];
+    expect(mergeFontFiles(userFonts, [])).toEqual(userFonts);
+  });
+});
+
+describe('isCjkFontFileName', () => {
+  it.each(['NotoSansCJK-Regular.ttc', 'simsun.ttc', 'SourceHanSans.otf', 'msyhbd.ttc'])(
+    '命中 CJK 关键字：%s',
+    (name) => {
+      expect(isCjkFontFileName(name)).toBe(true);
+    },
+  );
+
+  it.each(['DejaVuSans.ttf', 'LiberationSerif.otf', 'font.ttf'])(
+    '不命中 CJK 关键字：%s',
+    (name) => {
+      expect(isCjkFontFileName(name)).toBe(false);
+    },
+  );
 });

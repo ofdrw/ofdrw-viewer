@@ -53,7 +53,15 @@ describe('图片 CLI 黑盒验收：帮助与版本', () => {
 
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('用法: ofdrw-viewer-cli <input.ofd> [options]');
-    for (const option of ['--out', '--format', '--dpi', '--pages', '--font-dir', '--text']) {
+    for (const option of [
+      '--out',
+      '--format',
+      '--dpi',
+      '--pages',
+      '--font-dir',
+      '--no-system-fonts',
+      '--text',
+    ]) {
       expect(result.stdout).toContain(option);
     }
     expect(result.stderr).toBe('');
@@ -88,7 +96,8 @@ describe('图片 CLI 黑盒验收：图片导出', () => {
       height: Math.ceil(viewport.height),
     });
     expect(image.cornerIsWhite).toBe(true);
-    // helloworld 的文字字体缺失，页面本身为空白；非空白与内容绘制改由 999 样本验证。
+    // helloworld 的文字字体未内嵌：默认由系统字体替代渲染，具体效果由 e2e
+    // 自动发现用例验证；这里只校验页面尺寸、白底与不生成 JSON。
     expect(await findTempArtifacts(outDir)).toEqual([]);
     // 不传 --text 时不生成 JSON。
     expect((await listFiles(outDir)).some((name) => name.endsWith('.json'))).toBe(false);
@@ -543,11 +552,12 @@ describe('图片 CLI 黑盒验收：--text 空间文本', () => {
     expect(await findTempArtifacts(outDir)).toEqual([]);
   });
 
-  it('helloworld 空文本页写 []，仍输出图片', async () => {
+  it('helloworld 空文本页写 []，仍输出图片（--no-system-fonts）', async () => {
     const cwd = await createTempDir();
     const outDir = join(cwd, 'out');
 
-    const result = await runCli([HELLO_OFD, '-o', outDir, '--text'], { cwd });
+    // 关闭系统字体以保持 r11 的“无字体 → 文本为空”基线。
+    const result = await runCli([HELLO_OFD, '-o', outDir, '--text', '--no-system-fonts'], { cwd });
 
     expect(result.code).toBe(0);
     expect(await listFiles(outDir)).toEqual([
