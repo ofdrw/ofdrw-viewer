@@ -11,9 +11,9 @@
 
 ## 🧩 应用生态
 
-### 📖 OFD Web阅读器
+### 📖 OFD Web阅读器 | [*ofdrw-viewer-ui*](packages/ofdrw-viewer-ui/README.md) 
 
- [**ofdrw/ofdrw-viewer-ui**](packages/ofdrw-viewer-ui/README.md) **HTML5 OFD阅读器**，功能完备的产品级别的HTML5 OFD阅读器，支持可视化浏览、书签、缩略图、解密、验证等阅读器功能，可以用于快速接入实现OFD在线预览；
+**HTML5 OFD阅读器**，功能完备的产品级别的HTML5 OFD阅读器，支持可视化浏览、书签、缩略图、解密、验证等阅读器功能，可以用于快速接入实现OFD在线预览；
 
 [**👉 在线体验**： *https://ofdrw.github.io/ofdrw-viewer/index.html*](https://ofdrw.github.io/ofdrw-viewer/index.html)
 
@@ -22,17 +22,17 @@
 
 [👉 *进入了解 ofdrw-viewer-ui*🔗](packages/ofdrw-viewer-ui/README.md)
 
-### 🛠️ CLI图片转换工具
+### 🛠️ CLI图片转换工具 | [*ofdrw-viewer-cli*](packages/ofdrw-viewer-cli/README.md)
 
-[**ofdrw/ofdrw-viewer-cli**](packages/ofdrw-viewer-cli/README.md) **多平台终端图片转换命令**，CLI命令把 OFD 转换为图片格式（PNG/JPEG/WebP），并支持可导出文字位置，适用于终端环境OFD图片转换、智能体协作；
+**多平台终端图片转换命令**，CLI命令把 OFD 转换为图片格式（PNG/JPEG/WebP），并支持可导出文字位置，适用于终端环境OFD图片转换、智能体协作；
 
 ![ofdrw-viewer-cli 演示](packages/ofdrw-viewer-cli/docs/img/demo.gif)
 
 [👉 *进入了解 ofdrw-viewer-cli*🔗](packages/ofdrw-viewer-cli/README.md)
 
-### 🎨 OFD渲染引擎库
+### 🎨 OFD渲染引擎库 | [*ofdrw-viewer-engine*](packages/ofdrw-viewer-engine/README.md)
 
-[**ofdrw/ofdrw-viewer-engine**](packages/ofdrw-viewer-engine/README.md) **OFD 渲染引擎库**，通过 API 控制 OFD 页面绘制、文档信息获取，支持浏览器、Node.js 和小程序等多平台；
+ **OFD 渲染引擎库**，通过 API 控制 OFD 页面绘制、文档信息获取，支持浏览器、Node.js 和小程序等多平台；
 
 ```ts
 import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
@@ -52,13 +52,13 @@ await doc.close();
 
 
 
-### 🔐 OFD密码工具库
+### 🔐 OFD密码工具库 | [*ofdrw-viewer-crypto*](packages/ofdrw-viewer-crypto/README.md)
 
-[**ofdrw/ofdrw-viewer-crypto**](packages/ofdrw-viewer-crypto/README.md) **OFD 密码能力包**，检测/解密加密文档，解析电子印章与时间戳，提供 SM2/SM3/SM4 签名验证、证书链/信任根校验与防夹带完整性检查；
+**OFD 密码能力包**，检测/解密加密文档，解析电子印章与时间戳，提供 SM2/SM3/SM4 签名验证、证书链/信任根校验与防夹带完整性检查；
 
 [👉 *进入了解 ofdrw-viewer-crypto*🔗](packages/ofdrw-viewer-crypto/README.md)
 
-## 🤖 智能体集成
+## 🤖 智能体集成（SKILL）
 
 ofdrw-viewer 提供了系列智能体协作指南（SKILL），若你是智能体，请按照以下指南完成接入与调用：
 
