@@ -2,11 +2,11 @@
 
 | 项 | 内容 |
 |---|---|
-| 状态 | 已实现；v2 密码能力增量已同步 |
-| 版本 | 0.2-r1 |
+| 状态 | 已实现；v2 密码能力增量已同步；加载动画需求已补充（待实现） |
+| 版本 | 0.2-r2 |
 | 日期 | 2026-10-23 |
 | 目标包 | `packages/ofdrw-viewer-ui`，包名 `ofdrw-viewer-ui` |
-| 依赖 | `@ofdrw/ofdrw-viewer-engine`、`@ofdrw/ofdrw-viewer-crypto`、[v1.1 文本内容 API 设计](./text-content-api.md)、[OFD 渲染引擎设计方案](./OFD渲染引擎设计方案.md)、[密码能力总体设计](./ofdrw-viewer-crypto设计方案.md) |
+| 依赖 | `@ofdrw/ofdrw-viewer-engine`、`@ofdrw/ofdrw-viewer-crypto`、[v1.1 文本内容 API 设计](./text-content-api.md)、[OFD 渲染引擎设计方案](./OFD渲染引擎设计方案.md)、[OFD 渲染引擎生命周期与事件设计](./OFD渲染引擎生命周期与事件设计.md)、[密码能力总体设计](./ofdrw-viewer-crypto设计方案.md) |
 | 参考实现 | pdf.js 6.x viewer（`viewer.html` / `viewer.css` / `app.js` / component 层） |
 | 明确不做 | OFD 渲染、PDF 导出、OCR、在线批注编辑；密码学算法/ASN.1/验签由 crypto 包实现，UI 不重复实现 |
 
@@ -20,6 +20,7 @@
 6. **签章与密码能力（v2 增量）**：engine 只返回 `Signature.xml` 元数据和 `SignedValue.dat`/`Seal.esl` 原始字节；UI 统一调用 `@ofdrw/ofdrw-viewer-crypto` 的 `parseSignedValue`/`parseSeal`/`verifyOfd`，不再维护第二套 ASN.1 解析器。验证面板和印章浮层展示签名数学结果、Reference、证书链、防夹带完整性和印章结果；**时间戳只解析、不验证**，无根证书时链状态为 `unknown`，绝不把“有签章”表述为“文档有效”。
 7. **打印/导出**：支持当前页、页码范围、全部页；打印用图片 + `@page`，导出支持 PNG/JPEG/WebP，多页导出打包 ZIP；1000 页大任务采用自适应 DPI 和进度/取消。
 8. **框架集成**：核心不依赖 React/Vue；提供 React 18/19、Vue 3 的薄 wrapper；按纯 SPA 设计，不做 SSR；单包 + 子路径导出；默认内置 UI，同时提供 `features.toolbar=false` + 命令/事件，允许宿主自绘工具栏。详见 §14.6。
+9. **加载动画由引擎事件驱动**：文档全屏 loading 在页壳布局完成后撤；页面首次渲染用骨架，重渲染保留旧画面；缩略图只对渲染窗口显示骨架；不新增公开 UI 事件。详见 §6.9。
 
 ---
 
@@ -267,6 +268,8 @@ open(source)
 | `verificationcompleted` | 一次验证完成（成功） | `VerificationReport` |
 | `statechange` | 任意视图状态变化 | `ViewerState` |
 
+> 加载动画不新增公开事件，也不改变 `documentopen` / `pagerendered` / `pagesloaded` 的载荷；`pagesloaded` 不作为 loading 的结束条件。当前实现中 `pagesloaded` 在 `renderVisible` 前派发，名称保留、派发时机本次不变。
+
 ### 4.4 Web Component 薄壳
 
 - 标签：`<ofd-viewer>`。
@@ -296,6 +299,9 @@ open(source)
 | `--ofd-selection` | 文本选区 | `rgba(11, 102, 208, .25)` | `rgba(106, 169, 255, .3)` |
 | `--ofd-signature-outline` | 签章框 | `rgba(11, 102, 208, .65)` | `rgba(106, 169, 255, .7)` |
 | `--ofd-danger` | 错误 | `#b3261e` | `#ff8a80` |
+| `--ofd-loading-skeleton` | 骨架底色 | `rgba(0,0,0,.06)` | `rgba(255,255,255,.08)` |
+| `--ofd-loading-skeleton-strong` | 骨架脉冲高光 | `rgba(0,0,0,.12)` | `rgba(255,255,255,.16)` |
+| `--ofd-loading-spinner` | spinner 主色 | `var(--ofd-accent)` | `var(--ofd-accent)` |
 
 - `data-theme="light|dark"` 切换；`auto` 用 `matchMedia('(prefers-color-scheme: dark)')`。
 - 不依赖 `light-dark()`、`:has()` 等新语法；用 class/属性选择器。
@@ -456,8 +462,12 @@ new OFDViewer({
 
 - 纸面：`background: var(--ofd-page-bg)`；阴影 `var(--ofd-page-shadow)`；圆角 2 px（可选 0，贴合 pdf.js 的硬边）。
 - 页面外边距：桌面 16–24 px，移动 8 px；连续滚动时页间 8 px。
-- 加载态：页面中心骨架/进度环，避免闪烁。
-- 错误态：页内错误占位 + “重试”按钮，不阻断其他页。
+- 加载态：
+  - 首次渲染：页面中心低对比骨架脉冲 + 20 px spinner；`page:render:start` 后 150 ms 仍未完成才显示。
+  - 重渲染：保留旧 canvas，叠加半透明遮罩 + 20 px spinner，避免缩放/旋转闪白。
+  - 加载层阻断该页点击和文本选择，但不阻断主滚动容器。
+- 错误态：页内错误占位 + “重试”按钮，不阻断其他页；取消/关闭不显示错误。
+- 缩略图加载态：只对渲染窗口内、尚无 canvas 的项显示骨架；不单独放 spinner。
 - 当前页不明显加边框（避免干扰阅读）；侧栏缩略图/大纲高亮当前项。
 - 缩略图/书签/签章侧栏宽度 200 px；缩略图卡片宽 140 px，页码在下方。
 - 打印时隐藏所有 chrome，页面无阴影、无外边距。
@@ -484,7 +494,9 @@ new OFDViewer({
 
 - 页面切换/缩放以即时为主，不做大幅动画；`prefers-reduced-motion: reduce` 时关闭过渡。
 - 侧栏滑入 150–200 ms；查找栏淡入 100 ms；对话框 150 ms。
-- 加载骨架用低对比度脉冲，避免闪烁。
+- 加载骨架用低对比度脉冲（约 1.6 s），spinner 约 0.9 s 线性旋转；只动画 `opacity` / `transform` / `background-position`。
+- 文档全屏 loading：延迟 150 ms 显示、最短 300 ms、淡出 150 ms；页面 loading：延迟 150 ms、最短 200 ms、淡出 120 ms。
+- `prefers-reduced-motion: reduce` 时关闭脉冲、旋转和淡出，保留静态骨架/静态圆环和文字。
 
 ---
 
@@ -493,11 +505,11 @@ new OFDViewer({
 ### 6.1 打开流程
 
 1. 规范化 `source`：ArrayBuffer/Uint8Array/Blob/URL 转为引擎 `OFDSource`。
-2. `OFDDocument.open`；显示全屏 loading；支持取消/关闭。
+2. `OFDDocument.open`；`document:open:start` 后 150 ms 仍未完成才显示全屏 loading；支持取消/关闭。
 3. 取 `pageCount`；调用 `getPageInfos()` 拿全部页尺寸（P0 新 API）。
 4. `PageLayout` 建立 1000 个页壳（仅 DOM 壳，不含 canvas），计算总高度。
 5. 初始页（默认第 1 页，或 hash/选项）；计算可见页。
-6. 渲染可见页；`pagesloaded` 后隐藏 loading。
+6. 页壳布局完成（UI `documentopen`）后隐藏全屏 loading，页面骨架接管；再渲染可见页。`pagesloaded` 不作为 loading 结束条件。
 7. 异步加载缩略图/大纲/书签摘要；签章摘要按需。
 8. 若 `getPageInfos` 不可用：先 `getPage(0..N)` 取前若干页，剩余按 A4 估算并后台补齐；**这会滚动跳动，仅作为降级，不作为 1000 页正式方案**。
 
@@ -520,6 +532,9 @@ empty → queued → preparing → rendering → rendered → evicted
 - 离屏页取消渲染；已渲染页进入 LRU；被淘汰时释放 canvas（`canvas.width = 0`）并移除 DOM 引用。
 - 同一页重复进入可见区时，若缓存命中直接复用；否则重新入队。
 - 单页失败：标记 error，显示重试；不影响其他页；重试递增 generation。
+- 加载视觉：`page:render:start` 后 150 ms 仍未终止才显示；首次无 canvas 用骨架 + spinner，重渲染保留旧 canvas + 半透明遮罩。
+- 事件归属：主页面和缩略图共用 `page.render()`，UI 在调用前登记 `purpose`，再用 `operationId` 区分；缩略图事件不能触发主页面 loading。
+- 同一页多个主页面操作以最新 `operationId` 为准；旧操作晚到的 `abort` 不得关闭新操作的 loading。
 
 ### 6.4 渲染队列
 
@@ -577,15 +592,126 @@ empty → queued → preparing → rendering → rendered → evicted
 
 ### 6.9 加载/错误/空态
 
-| 状态 | UI |
+加载动画由引擎事件驱动；事件归属、过滤和时序见 [引擎生命周期文档 §6](./OFD渲染引擎生命周期与事件设计.md)。本节定义 UI 视觉、动效、无障碍和验收。
+
+#### 6.9.1 状态总表
+
+| 层级 | 状态 | 进入条件 | 视觉 | 退出 |
+|---|---|---|---|---|
+| 文档 | `idle` | 初始/关闭后 | 空态 | `open()` |
+| 文档 | `opening` | `document:open:start` | 150 ms 后显示全屏 loading | `documentopen` / error / abort |
+| 文档 | `ready` | 页壳布局完成 | 全屏撤下，页面骨架接管 | 关闭 |
+| 文档 | `error` | `document:open:error` | 全屏错误卡 + 重试/关闭 | 重试/关闭 |
+| 文档 | `closed` | 取消/关闭 | 空态 | 重新打开 |
+| 页面 | `empty` | 页壳创建 | 空白纸面 | 入队 |
+| 页面 | `queued` | 进入渲染队列 | 不显示 loading | `page:render:start` |
+| 页面 | `rendering` | `page:render:start` | 150 ms 后骨架/遮罩 + spinner | end/error/abort |
+| 页面 | `rendered` | `page:render:end` | canvas | 淘汰/重渲染 |
+| 页面 | `error` | `page:render:error` | 页内错误卡 + 重试 | 重试/重渲染 |
+| 缩略图 | `idle` | 窗口外 | 静态页码占位 | 进入窗口 |
+| 缩略图 | `queued` | 窗口内、无 canvas | 低对比骨架 + 页码 | 开始渲染 |
+| 缩略图 | `rendering` | 开始 `page.render` | 骨架保持 | 成功/失败/取消 |
+| 缩略图 | `rendered` | 渲染成功 | canvas | 淘汰 |
+| 缩略图 | `failed` | 渲染失败 | 灰色占位 + 页码 | 点击重试 |
+
+#### 6.9.2 文档全屏 loading
+
+- 触发：`document:open:start` 后启动 150 ms 计时；150 ms 内完成（UI `documentopen`）则不显示，避免小文件闪屏。
+- 显示后最短 300 ms，淡出 150 ms；结束点是 **UI `documentopen`**，不是引擎 `document:open:end`。取消或错误立即隐藏，不受最短展示限制。
+- 全屏遮罩阻断阅读器交互，仅保留取消按钮；失败时保留重试/关闭。
+- 内容：文档名/文件名（`File.name`、URL basename，缺失时“文档”）、不确定进度环、“正在打开文档…”和“取消”按钮。
+- 不显示百分比；引擎没有字节进度，不做假进度。
+- 取消：调用本次 `open()` 的 `AbortController.abort()`；按钮变“正在取消…”并禁用；取消后回空态，不弹错误 toast；如果引擎文档已经打开但 UI 未完成布局，必须调用 `document.close()` 清理。
+- 错误：`document:open:error` 立即切换为全屏错误卡，显示 `OFD_*` 错误码和可读消息；提供“重试”和“关闭”。错误不等待 150 ms。`getPageInfos()` 或页壳布局失败也走同一全屏错误卡，不能停留在半成品页壳。
+- 关闭：`document:close:start` 立即停止计时器并隐藏全屏，避免关闭后残留 loading。
+- 无障碍：容器 `role="status"`、`aria-live="polite"`、`aria-busy="true"`；错误卡 `role="alert"`；取消按钮可键盘聚焦，但不自动抢焦点。
+
+#### 6.9.3 页面 loading
+
+- 触发：主页面 `page:render:start` 后启动 150 ms 计时；150 ms 内 end/error/abort 则不显示。
+- 首次渲染（无 canvas）：页面中心低对比骨架脉冲 + 20 px spinner；骨架保持页面宽高比，避免布局跳动。
+- 重渲染（有旧 canvas）：保留旧画面，叠加半透明遮罩 + 20 px spinner；完成后再替换 canvas，避免缩放/旋转闪白。
+- 显示后最短 200 ms，淡出 120 ms；遮罩阻断该页点击和文本选择，但不阻断主滚动容器。
+- 同一页多个主页面操作以最新 `operationId` 为准；旧操作晚到的 `abort` 不得关闭新操作的 loading。
+- `page:render:end`：清除计时器，满足最短展示后隐藏；`PageView.completeRender()`；UI `pagerendered` 仍等 `task.promise` resolve。
+- `page:render:error`：清除计时器，隐藏 loading，显示页内错误卡 + 重试；派发 UI `error`。
+- `page:render:abort`：清除计时器，静默隐藏 loading；取消/关闭不显示错误。
+- 缩略图渲染的 `page:render:*` 不得触发主页面 loading；主页面渲染也不更新缩略图项。
+
+#### 6.9.4 缩略图骨架
+
+- 只对渲染窗口内、尚无 canvas 的项显示骨架；窗口外 `idle` 项只显示静态页码，避免 1000 项同时动画。
+- 状态：`idle`（静态页码）、`queued`（骨架）、`rendering`（骨架保留）、`rendered`（canvas）、`failed`（灰色占位 + 页码）。
+- 缩略图不单独放 spinner；骨架是布局占位，不是模态 loading，立即显示，不做 150 ms 延迟。
+- 失败不自动无限重试；用户点击该项重试。
+- 骨架 `aria-hidden="true"`，按钮的页码 `aria-label` 保持可读。
+- 缩略图事件与主页面事件按 `operationId` 分离；缩略图队列暂停/恢复不与主页面 loading 联动。
+
+#### 6.9.5 视觉变量与文案
+
+新增/复用 CSS 变量：
+
+| 变量 | 用途 |
 |---|---|
-| 打开中 | 全屏骨架 + 文档名/进度；可取消 |
-| 首页渲染中 | 页面骨架；工具栏可用（页码/缩放），打印/导出禁用 |
-| 单页失败 | 页内错误卡片 + 重试；warning toast |
-| 文档打开失败 | 全屏错误 + 重试/关闭；显示 `OFD_*` 错误码 |
-| 无签章/无大纲/无书签 | 侧栏空态文案 |
-| 无文本层 | 查找禁用并提示“该文档没有可提取文字” |
-| 文档关闭 | 清空 DOM、缓存、事件；容器保留 |
+| `--ofd-loading-skeleton` | 骨架底色 |
+| `--ofd-loading-skeleton-strong` | 骨架脉冲高光 |
+| `--ofd-loading-spinner` | spinner 主色，默认 `var(--ofd-accent)` |
+| `--ofd-page-overlay` | 页面遮罩，复用现有变量 |
+| `--ofd-scrim` | 文档全屏遮罩，复用现有变量 |
+
+新增文案键（zh-CN / en-US 同步）：
+
+| 键 | zh-CN 示例 |
+|---|---|
+| `loading.document` | 正在打开文档… |
+| `loading.cancel` | 取消 |
+| `loading.cancelling` | 正在取消… |
+| `loading.page` | 正在渲染页面… |
+| `loading.pageNumber` | 第 {page} 页正在渲染… |
+
+错误文案继续使用引擎 `OFDError.message`；UI 只补标题/按钮，不复制错误码表。
+
+#### 6.9.6 动效与无障碍
+
+- 骨架脉冲约 1.6 s；spinner 约 0.9 s 线性旋转；只动画 `opacity`、`transform`、`background-position`。
+- `prefers-reduced-motion: reduce` 时关闭脉冲、旋转和淡出，保留静态骨架/圆环和文字。
+- 全屏 `role="status"` + `aria-live="polite"` + `aria-busy="true"`；错误 `role="alert"`。
+- 页面只在 `.ofd-page` 上设置 `aria-busy="true"`；不逐页创建 `aria-live`，避免 1000 页朗读轰炸。当前页如需播报，去抖 ≥ 500 ms。
+- 骨架和 spinner 不得作为唯一状态表达；必须有文字或 `aria-busy`。
+- 加载层对比度按 WCAG 2.1 AA；骨架是非文本装饰，不参与对比度门槛，但 spinner 和文案必须可辨识。
+
+#### 6.9.7 验收用例
+
+- 打开小文件 <150 ms：不出现全屏 loading，直接进入页壳。
+- 打开慢文件 >150 ms：全屏 loading 出现；点击取消后回空态，无错误 toast，已打开文档被关闭。
+- 打开失败：全屏错误卡出现，错误码/消息可见，重试可再次打开。
+- 页面渲染 <150 ms：不出现页面 loading。
+- 页面首次渲染 >150 ms：骨架 + spinner 出现；完成后淡出。
+- 缩放/旋转重渲染：旧画面保留，遮罩 + spinner 出现，完成后替换，不闪白。
+- 页面渲染失败：页内错误卡 + 重试；取消/关闭无错误卡。
+- 缩略图：仅窗口内项播放骨架；1000 页不出现批量动画；失败项灰色占位，点击可重试。
+- 主页面渲染时缩略图不出现主页面遮罩；缩略图渲染时主页面不出现遮罩。
+- `prefers-reduced-motion` 下无脉冲/旋转/淡出。
+- axe 扫描阅读器加载态/错误态 0 serious/critical。
+- 不新增公开 UI 事件；`documentopen` / `pagerendered` / `pagesloaded` 载荷不变。
+
+#### 6.9.8 实现落点
+
+| 文件 | 职责 |
+|---|---|
+| `src/viewer.ts` | 创建 `OFDEventBus`、传 `eventBus`/`signal`；全屏 loading；`pendingStarts` 与 `operationId` 映射；取消清理 |
+| `src/page-view.ts` | 页面骨架/遮罩、150 ms 计时、最短展示、错误卡片、latest operation |
+| `src/views/thumbnails.ts` | 缩略图 `data-state`、窗口内骨架、失败占位、重试 |
+| `src/style.css` | 新增 token、骨架/spinner keyframes、`prefers-reduced-motion` |
+| `src/i18n/locales/zh-CN.ts` / `en-US.ts` | 新增 `loading.*` 文案键 |
+
+#### 6.9.9 本期不做
+
+- 不做字节/百分比进度；引擎事件不提供。
+- 不做 phase/缓存命中/队列等待文案。
+- 不新增公开 loading 事件或 `loading` 配置；颜色/尺寸走 CSS 变量。
+- 不做大纲、书签、签章侧栏的加载动画；本期只覆盖主阅读区 + 缩略图。
+- 不改 `pagesloaded` 的现有派发时机；加载动画不以它作为结束条件。
 
 ---
 
@@ -603,7 +729,10 @@ empty → queued → preparing → rendering → rendered → evicted
 - 目标宽度 `thumbWidthPx`；DPI = `thumbWidthPx / pageWidthMm * 25.4`，clamp 到 24–96；设备像素比可乘 1–2。
 - 用 `page.render`（或 `exportImage`，但 render 更省编码开销）绘制；`RenderTask.cancel` 取消离屏任务。
 - 缓存：`Map<pageIndex, {canvas, url?}>`，LRU 100；淘汰时释放 canvas。
+- 加载态：渲染窗口内、尚无 canvas 的项用低对比骨架 + 页码；窗口外只显示静态页码，不播放动画；缩略图不单独放 spinner。
+- 状态：`data-state="idle|queued|rendering|rendered|failed"`；`queued`/`rendering` 显示骨架，`rendered` 显示 canvas，`failed` 灰色占位 + 页码。
 - 失败：灰色占位 + 页码，不重试轰炸；用户点击可重试。
+- 缩略图渲染的 `page:render:*` 事件只更新缩略图项，不能触发主页面 loading。
 - 旋转：缩略图容器应用当前旋转；90/270 时交换宽高。
 - 1000 页：只渲染可见项；不预生成全部。
 

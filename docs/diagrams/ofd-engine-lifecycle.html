@@ -102,6 +102,16 @@
 
   <!-- spine -->
   <line x1="600" y1="216" x2="600" y2="1460" stroke="#cbd5e1" stroke-width="2.5"/>
+  <g fill="#94a3b8">
+    <path d="M 594 246 L 600 256 L 606 246 Z"/>
+    <path d="M 594 376 L 600 386 L 606 376 Z"/>
+    <path d="M 594 506 L 600 516 L 606 506 Z"/>
+    <path d="M 594 636 L 600 646 L 606 636 Z"/>
+    <path d="M 594 766 L 600 776 L 606 766 Z"/>
+    <path d="M 594 871 L 600 881 L 606 871 Z"/>
+    <path d="M 594 1214 L 600 1224 L 606 1214 Z"/>
+    <path d="M 594 1344 L 600 1354 L 606 1344 Z"/>
+  </g>
 
   <!-- start -->
   <rect x="440" y="140" width="320" height="76" rx="18" fill="var(--start)" filter="url(#shadow)"/>
@@ -149,7 +159,6 @@
   <text x="868" y="554" class="event-name mono" fill="var(--danger)">page:load:error / abort</text>
   <text x="868" y="575" class="event-sub">取页失败或取消</text>
   <path d="M 780 563 H 846" fill="none" stroke="var(--danger)" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#arrow-danger)"/>
-  <text x="810" y="550" class="branch-label">失败 / 取消</text>
 
   <!-- stage 4 -->
   <rect x="420" y="650" width="360" height="86" rx="16" fill="var(--stage)" filter="url(#shadow)"/>
@@ -168,7 +177,6 @@
   <text x="868" y="684" class="event-name mono" fill="var(--danger)">page:render:error / abort</text>
   <text x="868" y="705" class="event-sub">渲染失败或取消</text>
   <path d="M 780 693 H 846" fill="none" stroke="var(--danger)" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#arrow-danger)"/>
-  <text x="808" y="680" class="branch-label">失败 / 取消</text>
 
   <!-- stage 5 -->
   <rect x="420" y="780" width="360" height="86" rx="16" fill="var(--stage)" filter="url(#shadow)"/>
@@ -192,8 +200,8 @@
   <text x="614" y="1072" font-size="12.5" font-weight="650" fill="#475569">是</text>
 
   <!-- loop: continue -->
-  <path d="M 750 960 H 1150 V 610 H 700 V 646" fill="none" stroke="var(--loop)" stroke-width="2.2" stroke-dasharray="7 5" marker-end="url(#arrow-loop)"/>
-  <text x="920" y="598" class="loop-label">否：继续渲染 / 其他页面</text>
+  <path d="M 750 960 H 1150 V 620 H 700 V 646" fill="none" stroke="var(--loop)" stroke-width="2.2" stroke-dasharray="7 5" marker-end="url(#arrow-loop)"/>
+  <text x="930" y="610" class="loop-label">否：继续渲染 / 其他页面</text>
 
   <!-- stage 6 -->
   <rect x="420" y="1100" width="360" height="86" rx="16" fill="var(--stage)" filter="url(#shadow)"/>
@@ -209,10 +217,9 @@
 
   <!-- branch: active operations aborted -->
   <rect x="850" y="1110" width="280" height="62" rx="12" fill="#fff7f9" stroke="var(--danger)" stroke-width="1.8" stroke-dasharray="6 4" filter="url(#soft-shadow)"/>
-  <text x="868" y="1134" class="event-name mono" fill="var(--danger)">page:*:abort</text>
-  <text x="868" y="1155" class="event-sub">活动操作中止，cause=close</text>
+  <text x="868" y="1134" class="event-name mono" fill="var(--danger)">page:render:abort</text>
+  <text x="868" y="1155" class="event-sub">close 中止活动操作</text>
   <path d="M 780 1143 H 846" fill="none" stroke="var(--danger)" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#arrow-danger)"/>
-  <text x="812" y="1130" class="branch-label">中止</text>
 
   <!-- stage 7 -->
   <rect x="420" y="1230" width="360" height="86" rx="16" fill="var(--stage)" filter="url(#shadow)"/>
@@ -234,6 +241,7 @@
   <!-- footnotes -->
   <text x="600" y="1490" text-anchor="middle" class="footnote">事件只观察，不参与控制流；取消仍由 AbortSignal / RenderTask.cancel() 驱动。</text>
   <text x="600" y="1514" text-anchor="middle" class="footnote">P1 的 prepare / text / export 复用同样的 start → end / error / abort 模式，不再细分阶段。</text>
+  <text x="600" y="1538" text-anchor="middle" class="footnote">图中不展示 phase / cache / queue 等内部状态。</text>
 </svg>
 </div>
 </body>
