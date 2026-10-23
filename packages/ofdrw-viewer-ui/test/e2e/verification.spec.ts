@@ -24,9 +24,6 @@ const ENCRYPT_KEY_DER_PATH = `${CRYPTO_DIR}certs/encrypt.key.der`;
 const SIGNER_KEY_PATH = `${CRYPTO_DIR}certs/signer.key.pem`;
 const ENCRYPT_KEY_PEM = readFileSync(ENCRYPT_KEY_PATH, 'utf8');
 
-/** 阅读器 verify 方法类型；用于测试内临时替换并恢复。 */
-type ViewerVerify = NonNullable<typeof window.__viewer>['verify'];
-
 /** 读取当前验证总体状态。 */
 async function overall(page: Page): Promise<string | undefined> {
   return page.evaluate(() => window.__viewer!.getVerificationReport()?.overall);
@@ -353,21 +350,30 @@ test('验证面板：未验证空态、加载态、重复验证', async ({ page,
   await expect(panel.locator('.ofd-verification-signature')).toHaveCount(0);
   await expect(reverify).toBeEnabled();
 
-  // 让验证完成前保持 pending，以验证加载态与按钮禁用。
+  // 面板按钮经 viewer.verify 转发到 CryptoService.verify；只挂起外层
+  // viewer.verify 时内部验证仍会完成并复位 loading，reverify 随即恢复可用。
+  // 因此门控 CryptoService.verify 内、verifyOfd 之前的 ensureRoots 等待点：
+  // 验证停在加载态，报告保持 undefined，reverify 维持禁用。
   await page.evaluate(() => {
-    const viewer = window.__viewer!;
-    (window as unknown as { __originalVerify?: unknown }).__originalVerify = viewer.verify;
-    const original = viewer.verify.bind(viewer);
+    const service = (
+      window.__viewer as unknown as {
+        cryptoService: { ensureRoots: () => Promise<void> };
+      }
+    ).cryptoService;
+    const original = service.ensureRoots;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     (window as unknown as { __releaseVerify?: (() => void) | null }).__releaseVerify = null;
-    viewer.verify = ((options?: Parameters<typeof viewer.verify>[0]) =>
-      original(options).then(
-        (report) =>
-          new Promise<typeof report>((resolve) => {
-            (
-              window as unknown as { __releaseVerify: (() => void) | null }
-            ).__releaseVerify = () => resolve(report);
-          }),
-      )) as typeof viewer.verify;
+    service.ensureRoots = () => {
+      (window as unknown as { __releaseVerify: (() => void) | null }).__releaseVerify = release;
+      return held.then(() => original.call(service));
+    };
+    // 恢复原型上的真实实现，供后续再次验证。
+    (window as unknown as { __restoreVerify?: () => void }).__restoreVerify = () => {
+      delete (service as unknown as { ensureRoots?: () => Promise<void> }).ensureRoots;
+    };
   });
   await reverify.click();
   await expect(panel.locator('.ofd-verification-loading')).toBeVisible();
@@ -385,11 +391,9 @@ test('验证面板：未验证空态、加载态、重复验证', async ({ page,
   expect(await eventCount(page, 'verificationcompleted')).toBe(1);
 
   // 恢复真实入口后再次验证，报告与事件均更新。
-  await page.evaluate(() => {
-    window.__viewer!.verify = (
-      window as unknown as { __originalVerify: ViewerVerify }
-    ).__originalVerify;
-  });
+  await page.evaluate(() =>
+    (window as unknown as { __restoreVerify: () => void }).__restoreVerify(),
+  );
   await reverify.click();
   await expect.poll(() => eventCount(page, 'verificationcompleted')).toBe(2);
   await expect(panel).toContainText('总体状态：有效');
