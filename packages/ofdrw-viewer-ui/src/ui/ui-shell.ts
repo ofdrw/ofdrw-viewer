@@ -54,6 +54,7 @@ const DIALOG_FEATURES: Readonly<Record<string, ViewerFeature>> = Object.freeze({
   export: 'export',
   documentProperties: 'documentProperties',
   signatureDetail: 'signatures',
+  verification: 'verification',
 });
 
 let shellSequence = 0;

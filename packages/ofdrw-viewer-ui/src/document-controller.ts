@@ -26,6 +26,7 @@ import type {
   TextContent,
   TextContentOptions,
   Viewport,
+  VirtualContainer,
 } from '@ofdrw/ofdrw-viewer-engine';
 import type { ViewerWarning } from './state';
 import type { ViewerSource } from './types';
@@ -279,6 +280,37 @@ export class DocumentController {
    */
   async open(source: ViewerSource): Promise<OpenedDocumentInfo> {
     const normalized = normalizeViewerSource(source, this.options.requestInit);
+    return this.openWithOptions(normalized, { source: normalized });
+  }
+
+  /**
+   * 用外部明文容器打开文档；容器所有权仍归调用方，引擎借用不关闭。
+   *
+   * @param container 明文虚拟容器。
+   * @param source 原始来源；仅用于状态展示与诊断。
+   * @returns 打开结果。
+   * @throws {OFDViewerError|Error} 引擎打开失败或打开被取消（AbortError）。
+   */
+  async openContainer(
+    container: VirtualContainer,
+    source: ViewerSource,
+  ): Promise<OpenedDocumentInfo> {
+    const normalized = normalizeViewerSource(source, this.options.requestInit);
+    // engine 要求 source 必填，但提供 container 时只把 source 作为宿主上下文。
+    return this.openWithOptions(normalized, { source: normalized, container });
+  }
+
+  /**
+   * 统一打开流程：关闭旧文档、代次校验与结果组装。
+   *
+   * @param normalized 规范化来源。
+   * @param extra 引擎打开参数补丁（`source` 或 `container`）。
+   * @returns 打开结果。
+   */
+  private async openWithOptions(
+    normalized: OFDSource,
+    extra: { readonly source: OFDSource; readonly container?: VirtualContainer },
+  ): Promise<OpenedDocumentInfo> {
     await this.closeInternal();
     // closeInternal 会递增 openToken；打开代次必须在关闭之后捕获。
     const token = ++this.openToken;
@@ -291,7 +323,7 @@ export class DocumentController {
     let document: EngineDocument;
     try {
       document = await openDocument({
-        source: normalized,
+        ...extra,
         ...(this.options.onWarning ? { onWarning: this.options.onWarning } : {}),
       });
     } catch (error) {

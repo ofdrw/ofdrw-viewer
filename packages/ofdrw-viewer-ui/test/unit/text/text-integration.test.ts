@@ -103,6 +103,7 @@ afterEach(() => {
 describe('文本模块与 OFDViewer 集成', () => {
   it('自动挂载服务、构建文本层并完成查找/高亮/当前项滚动', async () => {
     const viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
     });
@@ -149,6 +150,7 @@ describe('文本模块与 OFDViewer 集成', () => {
 
   it('getSelectedText 读取页文本；选区事件回写状态', async () => {
     const viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
     });
@@ -178,6 +180,7 @@ describe('文本模块与 OFDViewer 集成', () => {
 
   it('textLayer=false 时查找/选区抛 OFD_FEATURE_DISABLED 并清空文本层', async () => {
     const viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
     });
@@ -212,6 +215,7 @@ describe('文本模块与 OFDViewer 集成', () => {
 
   it('selection=false 时文本层 user-select 关闭', async () => {
     const viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
     });
@@ -233,6 +237,7 @@ describe('文本模块与 OFDViewer 集成', () => {
 
   it('find=false 时 Ctrl+F 不打开查找栏', async () => {
     const viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
     });

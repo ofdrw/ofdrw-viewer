@@ -6,6 +6,10 @@
  * 引擎已经公开的页面/大纲/书签/签章/文本类型直接复用，避免 UI 另造模型。
  */
 
+import type {
+  SignatureVerification,
+  VerificationReport,
+} from '@ofdrw/ofdrw-viewer-crypto';
 import type { PageImageFormat, SignatureEntryInfo } from '@ofdrw/ofdrw-viewer-engine';
 import type { ViewerFeatureStates } from './features';
 import type {
@@ -306,6 +310,8 @@ export interface SignatureDetail {
   readonly validation: SignatureValidation;
   /** 非致命解析降级信息。 */
   readonly warnings?: readonly ViewerWarning[];
+  /** 最近一次验证中该签名的结果；未验证时省略。 */
+  readonly verification?: SignatureVerification;
 }
 
 // ---------------------------------------------------------------------------
@@ -415,6 +421,9 @@ export type PrintStartEvent = PrintProgressEvent;
 /** 打印结束。 */
 export type PrintEndEvent = PrintProgressEvent;
 
+/** 验证完成；只包含报告，不含凭据。 */
+export type VerificationCompletedEvent = VerificationReport;
+
 /** 诊断 warning。 */
 export type WarningEvent = ViewerWarning;
 
@@ -442,6 +451,7 @@ export type ViewerEventMap = {
   findcurrent: FindCurrentEvent;
   selectionchange: SelectionChangeEvent;
   signatureclick: SignatureClickEvent;
+  verificationcompleted: VerificationCompletedEvent;
   printstart: PrintStartEvent;
   printprogress: PrintProgressEvent;
   printend: PrintEndEvent;

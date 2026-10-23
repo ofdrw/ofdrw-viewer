@@ -5,6 +5,9 @@ const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const engineEntry = fileURLToPath(
   new URL('../ofdrw-viewer-engine/src/index.ts', import.meta.url),
 );
+const cryptoEntry = fileURLToPath(
+  new URL('../ofdrw-viewer-crypto/src/index.ts', import.meta.url),
+);
 const packageEntry = fileURLToPath(new URL('./src/index.ts', import.meta.url));
 
 /**
@@ -22,6 +25,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@ofdrw/ofdrw-viewer-engine': engineEntry,
+      '@ofdrw/ofdrw-viewer-crypto': cryptoEntry,
       '@ofdrw/ofdrw-viewer-ui': packageEntry,
     },
   },

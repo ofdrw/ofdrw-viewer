@@ -81,6 +81,8 @@ export interface UIShellHost {
   exportImages(options?: ExportImagesOptions): unknown;
   /** 进入/退出全屏。 */
   setFullscreen(value: boolean): unknown;
+  /** 打开验证面板；未启用密码能力时省略。 */
+  openVerificationPanel?(): unknown;
 }
 
 /** 扩展注册函数；`registerViewerExtension` 结构兼容。 */
@@ -605,6 +607,9 @@ function dispatchCommand(
       return;
     case 'signatures.open':
       settle(viewer.openSidebar('signatures'), shell);
+      return;
+    case 'verification.open':
+      settle(viewer.openVerificationPanel?.(), shell);
       return;
     case 'fullscreen.set':
       settle(viewer.setFullscreen(command.value), shell);

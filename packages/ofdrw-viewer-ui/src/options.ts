@@ -4,6 +4,12 @@
  * 这里只处理纯数据解析，不访问 DOM/`window`，便于在模块顶层安全导入。
  */
 
+import type {
+  CryptoCredential,
+  CryptoOptions,
+  OfdInspection,
+  VerificationReport,
+} from '@ofdrw/ofdrw-viewer-crypto';
 import type { FeatureDisplay, ViewerFeatures } from './features';
 import {
   DEFAULT_LOCALE,
@@ -56,6 +62,50 @@ export const ZOOM_LEVELS: readonly number[] = Object.freeze([
   20, 25,
 ]);
 
+/**
+ * 根证书来源；UI 宿主层保留 data/url/path/filePath 四态。
+ *
+ * `url` 由浏览器 `fetch` 读取；`path`/`filePath` 必须由宿主
+ * `certificateLoader` 读取。传给 crypto 前统一收敛为 `CertificateInput`
+ * 的 data/pem/der 三态字节输入。
+ */
+export type CertificateSource =
+  | { readonly data: ArrayBuffer | Uint8Array; readonly name?: string }
+  | {
+      readonly url: string;
+      readonly headers?: Record<string, string>;
+      readonly name?: string;
+    }
+  | { readonly path: string; readonly name?: string }
+  | { readonly filePath: string; readonly name?: string };
+
+/** 宿主证书加载器；`path`/`filePath` 由宿主平台实现。 */
+export type CertificateInputLoader = (
+  source: CertificateSource,
+) => Uint8Array | ArrayBuffer | null | Promise<Uint8Array | ArrayBuffer | null>;
+
+/** 阅读器密码能力选项（设计 §6.1）。 */
+export interface CryptoViewerOptions extends CryptoOptions {
+  /** 是否启用密码能力；默认 true。 */
+  readonly enabled?: boolean;
+  /** 预置凭据；提供时不弹内置登录框。 */
+  readonly credentials?: CryptoCredential | readonly CryptoCredential[];
+  /** 无预置凭据时是否弹登录框；默认 true。 */
+  readonly autoPrompt?: boolean;
+  /** 初始信任根；默认 []，即链状态 unknown。 */
+  readonly rootCertificates?: readonly CertificateSource[];
+  /** path/filePath/url 根证书字节加载器。 */
+  readonly certificateLoader?: CertificateInputLoader;
+  /** 打开成功后是否自动验证；默认 true。 */
+  readonly autoVerify?: boolean;
+  /** 验证完成回调；实现不得记录凭据。 */
+  readonly onVerification?: (report: VerificationReport) => void;
+  /** 自定义凭据获取；返回 null 表示取消。 */
+  readonly onCredentialRequired?: (
+    inspection: OfdInspection,
+  ) => Promise<CryptoCredential | null>;
+}
+
 /** 阅读器构造选项。 */
 export interface OFDViewerOptions {
   /** 挂载点；字符串按 CSS 选择器解析。 */
@@ -94,6 +144,8 @@ export interface OFDViewerOptions {
   readonly onWarning?: (warning: ViewerWarning) => void;
   /** 打开/渲染等错误回调。 */
   readonly onError?: (error: ViewerErrorInfo) => void;
+  /** 密码能力选项；省略时按默认启用。 */
+  readonly crypto?: CryptoViewerOptions;
 }
 
 /** 展开默认值后的构造选项；由 `OFDViewer` 内部持有。 */
@@ -116,6 +168,7 @@ export interface ResolvedViewerOptions {
   readonly requestInit?: RequestInit;
   readonly onWarning?: (warning: ViewerWarning) => void;
   readonly onError?: (error: ViewerErrorInfo) => void;
+  readonly crypto?: CryptoViewerOptions;
 }
 
 /** 解析默认值时可用的宿主环境信息。 */
@@ -167,6 +220,7 @@ export function resolveViewerOptions(
     requestInit: options.requestInit,
     onWarning: options.onWarning,
     onError: options.onError,
+    crypto: options.crypto,
   };
 }
 

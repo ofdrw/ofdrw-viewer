@@ -88,6 +88,12 @@ export const VIEWER_EVENT_BRIDGES = [
     react: 'onSignatureClick',
     vue: 'signature-click',
   },
+  {
+    event: 'verificationcompleted',
+    dom: 'ofd-verification-completed',
+    react: 'onVerificationCompleted',
+    vue: 'verification-completed',
+  },
   { event: 'printstart', dom: 'ofd-print-start', react: 'onPrintStart', vue: 'print-start' },
   {
     event: 'printprogress',

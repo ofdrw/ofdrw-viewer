@@ -5,19 +5,5 @@
  * `SignatureService` 与解析入口。
  */
 
-export {
-  DEFAULT_SIGNATURE_PARSE_LIMITS,
-  MAX_ASN1_DEPTH,
-  MAX_ASN1_NODES,
-  MAX_SIGNED_VALUE_BYTES,
-  isSignatureParseError,
-  parseSignedValue,
-  SignatureParseError,
-} from './asn1';
-export type {
-  SignatureParseErrorCode,
-  SignatureParseLimits,
-  SignedValueParseOptions,
-  SignedValueParseResult,
-} from './asn1';
 export { groupEntries, SIGNATURE_NOT_VERIFIED_NOTE, SignatureService } from './service';
+export { parseSubject, subjectCN, toAlgorithm, toCertificateInfo, toSealInfo, toSignerInfo } from './mapping';

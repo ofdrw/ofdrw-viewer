@@ -16,11 +16,14 @@ import {
 import type { PropType } from 'vue';
 import {
   OFDViewer as CoreOFDViewer,
+  type CertificateSource,
+  type CertificateSummary,
   type ExportImageOptions,
   type ExportImageResult,
   type FeatureState,
   type FindOptions,
   type OFDViewerOptions,
+  type VerificationReport,
   type ViewerFeature,
   type ViewerSource,
   type ViewerState,
@@ -55,6 +58,7 @@ const EMITS = [
   'find-current',
   'selection-change',
   'signature-click',
+  'verification-completed',
   'print-start',
   'print-progress',
   'print-end',
@@ -80,6 +84,7 @@ const VUE_EVENT_NAMES: Readonly<Record<string, (typeof EMITS)[number]>> = {
   findcurrent: 'find-current',
   selectionchange: 'selection-change',
   signatureclick: 'signature-click',
+  verificationcompleted: 'verification-completed',
   printstart: 'print-start',
   printprogress: 'print-progress',
   printend: 'print-end',
@@ -324,6 +329,24 @@ export const OFDViewer = defineComponent({
         viewer.value?.getFeatureState(feature) ?? null,
       isFeatureEnabled: (feature: ViewerFeature): boolean =>
         viewer.value?.isFeatureEnabled(feature) ?? false,
+      verify: async (options?: {
+        readonly signatureIds?: readonly string[];
+        readonly signal?: AbortSignal;
+      }): Promise<VerificationReport> => {
+        if (!viewer.value) throw new Error('阅读器尚未挂载');
+        return viewer.value.verify(options);
+      },
+      getVerificationReport: (): VerificationReport | undefined =>
+        viewer.value?.getVerificationReport(),
+      setRootCertificates: async (
+        roots: readonly CertificateSource[],
+      ): Promise<readonly CertificateSummary[]> =>
+        (await viewer.value?.setRootCertificates(roots)) ?? [],
+      getRootCertificates: (): readonly CertificateSummary[] =>
+        viewer.value?.getRootCertificates() ?? [],
+      openVerificationPanel: (): void => {
+        run(() => viewer.value?.openVerificationPanel());
+      },
     });
 
     return () =>

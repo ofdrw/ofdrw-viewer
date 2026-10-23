@@ -337,8 +337,6 @@ async function renderCurrentPage(generation = openGeneration): Promise<void> {
   viewportSize.textContent = `${canvas.width} × ${canvas.height} px @ ${dpi} DPI`;
 
   context.setTransform(1, 0, 0, 1, 0, 0);
-  context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, canvas.width, canvas.height);
 
   const started = performance.now();
   cancelButton.disabled = false;

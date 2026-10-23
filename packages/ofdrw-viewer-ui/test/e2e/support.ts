@@ -20,6 +20,16 @@ export const FIXTURES = {
   signatureMissing: '/packages/ofdrw-viewer-ui/test/acceptance/fixtures/signature-missing-value.ofd',
   /** 1000 页性能夹具。 */
   thousand: '/packages/ofdrw-viewer-ui/test/acceptance/fixtures/thousand.ofd',
+  /** 口令加密 OFD（口令 FixturePass123，用户 fixture-password-user）。 */
+  cryptoPassword: '/packages/ofdrw-viewer-crypto/test/fixtures/crypto/password-encrypted.ofd',
+  /** SM2 证书加密 OFD（用户 fixture-cert-user，私钥 certs/encrypt.key.pem）。 */
+  cryptoCert: '/packages/ofdrw-viewer-crypto/test/fixtures/crypto/cert-encrypted.ofd',
+  /** 口令加密 + 签名 + 完整性。 */
+  cryptoCombined: '/packages/ofdrw-viewer-crypto/test/fixtures/crypto/combined-password-encrypted.ofd',
+  /** 真实 SESv4 签章（含时间戳）。 */
+  cryptoSigned: '/packages/ofdrw-viewer-crypto/test/fixtures/crypto/signed-sesv4.ofd',
+  /** 测试信任根证书。 */
+  cryptoRoot: '/packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/root-ca.crt.pem',
 } as const;
 
 /** 打开参数。 */
@@ -40,6 +50,16 @@ export interface OpenOptions {
   readonly sidebar?: 'thumbnails' | 'outline' | 'bookmarks' | 'signatures';
   /** 是否等待首个 pagerendered；默认 true。 */
   readonly waitForRender?: boolean;
+  /** 口令凭据；缺省且 autoPrompt 时由内置弹窗收集。 */
+  readonly password?: string;
+  /** 口令用户；省略时仅在唯一用户时自动选择。 */
+  readonly userName?: string;
+  /** 信任根 URL；由 UI 侧 fetch 后以字节交给 crypto。 */
+  readonly rootCertificate?: string;
+  /** 无预置凭据时是否弹内置凭据框。 */
+  readonly autoPrompt?: boolean;
+  /** 打开成功后是否自动验证；默认 true。 */
+  readonly autoVerify?: boolean;
 }
 
 /**
@@ -58,6 +78,11 @@ export function viewerUrl(fixture: string, options: OpenOptions = {}): string {
   if (options.display) params.set('display', options.display);
   if (options.hostWidth) params.set('w', String(options.hostWidth));
   if (options.sidebar) params.set('sidebar', options.sidebar);
+  if (options.password) params.set('password', options.password);
+  if (options.userName) params.set('userName', options.userName);
+  if (options.rootCertificate) params.set('root', options.rootCertificate);
+  if (options.autoPrompt) params.set('prompt', '1');
+  if (options.autoVerify !== undefined) params.set('autoVerify', options.autoVerify ? '1' : '0');
   return `/packages/ofdrw-viewer-ui/test/e2e/index.html?${params.toString()}`;
 }
 

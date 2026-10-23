@@ -8,6 +8,7 @@ const fixtureTypes = {
   '.ttf': 'font/ttf',
   '.ttc': 'font/collection',
   '.otf': 'font/otf',
+  '.pem': 'application/x-pem-file',
 };
 
 /**
@@ -19,7 +20,7 @@ const fixtureTypes = {
  */
 function serveFixture(req, res, next) {
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-  if (!url.pathname.endsWith('.ofd')) {
+  if (!/(?:\.ofd|\.pem)$/i.test(url.pathname)) {
     next();
     return;
   }

@@ -56,6 +56,7 @@ const FEATURE_LABEL_KEYS: Readonly<Record<ViewerFeature, MessageKey>> = Object.f
   print: 'feature.print',
   export: 'feature.export',
   signatures: 'feature.signatures',
+  verification: 'feature.verification',
   documentProperties: 'feature.documentProperties',
   keyboardShortcuts: 'feature.keyboardShortcuts',
 });

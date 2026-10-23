@@ -137,7 +137,11 @@ afterEach(() => {
 
 describe('打印/导出与 OFDViewer 接线', () => {
   it('入口自注册后 viewer.exportImage/print 可用，且不修改页面渲染结果', async () => {
-    const viewer = new OFDViewer({ container: document.body, source: new ArrayBuffer(8) });
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+    });
     await viewer.ready;
     expect(viewer.getFeatureState('export').enabled).toBe(true);
 
@@ -155,6 +159,7 @@ describe('打印/导出与 OFDViewer 接线', () => {
 
   it('features=false 时方法抛 OFD_FEATURE_DISABLED，服务不被调用', async () => {
     const viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
       features: { print: false, export: false },
@@ -176,6 +181,7 @@ describe('打印/导出与 OFDViewer 接线', () => {
   it('文档权限禁止导出时有效状态为 disabled，不能强行开启', async () => {
     engineMocks.open.mockImplementation(async () => makeDocument(1, { export: false }));
     const viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
       features: { export: true },

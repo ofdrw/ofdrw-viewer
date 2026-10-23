@@ -17,6 +17,7 @@ export type IconName =
   | 'print'
   | 'export'
   | 'signature'
+  | 'shield'
   | 'fullscreen'
   | 'fullscreen-exit'
   | 'more'
@@ -82,6 +83,9 @@ const ICONS: Readonly<Record<IconName, IconSpec>> = Object.freeze({
   signature: {
     circles: [[12, 12, 9]],
     paths: ['M8 12l3 3 5-6'],
+  },
+  shield: {
+    paths: ['M12 3l7 3v5c0 5-3.2 8.2-7 10-3.8-1.8-7-5-7-10V6z', 'M9 12l2 2 4-4'],
   },
   fullscreen: {
     paths: [

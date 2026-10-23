@@ -35,7 +35,22 @@ export type { ViewerExtension } from './viewer';
 // ---------------------------------------------------------------------------
 // 构造选项
 // ---------------------------------------------------------------------------
-export type { OFDViewerOptions, ResolvedViewerOptions } from './options';
+export type {
+  CertificateInputLoader,
+  CertificateSource,
+  CryptoViewerOptions,
+  OFDViewerOptions,
+  ResolvedViewerOptions,
+} from './options';
+export type {
+  CertificateSummary,
+  CryptoCredential,
+  CryptoOptions,
+  OfdInspection,
+  SignatureVerification,
+  VerificationReport,
+  VerificationStatus,
+} from '@ofdrw/ofdrw-viewer-crypto';
 
 // ---------------------------------------------------------------------------
 // 公共类型：来源、状态、功能、事件、导出/打印/签章选项与详情

@@ -197,6 +197,7 @@ afterEach(() => {
 /** 创建并等待阅读器打开、摘要加载完成。 */
 async function createViewer(): Promise<OFDViewer> {
   const instance = new OFDViewer({
+      crypto: { enabled: false },
     container: document.body,
     source: new ArrayBuffer(8),
     initialScale: 1,

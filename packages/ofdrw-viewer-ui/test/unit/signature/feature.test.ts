@@ -88,6 +88,7 @@ describe('SignatureService 门控', () => {
     const getSignedValue = vi.fn(async () => undefined);
     engineMocks.open.mockImplementation(async () => makeDocument(getSignedValue));
     viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
       initialScale: 1,
@@ -118,6 +119,7 @@ describe('SignatureService 门控', () => {
   it('未知签章 ID 抛 OFD_INVALID_OPTION；destroy 后抛 OFD_DESTROYED', async () => {
     engineMocks.open.mockImplementation(async () => makeDocument());
     viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
       initialScale: 1,
@@ -146,6 +148,7 @@ describe('SignatureService 门控', () => {
     }));
     engineMocks.open.mockImplementation(async () => makeDocument(getSignedValue));
     viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
       initialScale: 1,

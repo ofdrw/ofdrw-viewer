@@ -13,11 +13,14 @@ import {
 import type { CSSProperties } from 'react';
 import {
   OFDViewer as CoreOFDViewer,
+  type CertificateSource,
+  type CertificateSummary,
   type ExportImageOptions,
   type ExportImageResult,
   type FeatureState,
   type FindOptions,
   type OFDViewerOptions,
+  type VerificationReport,
   type ViewerFeature,
   type ViewerSource,
   type ViewerState,
@@ -71,6 +74,21 @@ export interface OFDViewerHandle {
   getFeatureState(feature: ViewerFeature): FeatureState | null;
   /** 功能是否可用。 */
   isFeatureEnabled(feature: ViewerFeature): boolean;
+  /** 重新验证当前文档。 */
+  verify(options?: {
+    readonly signatureIds?: readonly string[];
+    readonly signal?: AbortSignal;
+  }): Promise<VerificationReport>;
+  /** 最近一次验证报告。 */
+  getVerificationReport(): VerificationReport | undefined;
+  /** 设置/替换信任根并重新验证。 */
+  setRootCertificates(
+    roots: readonly CertificateSource[],
+  ): Promise<readonly CertificateSummary[]>;
+  /** 当前信任根摘要。 */
+  getRootCertificates(): readonly CertificateSummary[];
+  /** 打开工具栏验证面板。 */
+  openVerificationPanel(): void;
 }
 
 /** React 组件属性。 */
@@ -198,6 +216,17 @@ export const OFDViewer = forwardRef<OFDViewerHandle, OFDViewerProps>(
           viewerRef.current?.getFeatureState(feature) ?? null,
         isFeatureEnabled: (feature) =>
           viewerRef.current?.isFeatureEnabled(feature) ?? false,
+        verify: async (options) => {
+          if (!viewerRef.current) throw new Error('阅读器尚未挂载');
+          return viewerRef.current.verify(options);
+        },
+        getVerificationReport: () => viewerRef.current?.getVerificationReport(),
+        setRootCertificates: async (roots) =>
+          (await viewerRef.current?.setRootCertificates(roots)) ?? [],
+        getRootCertificates: () => viewerRef.current?.getRootCertificates() ?? [],
+        openVerificationPanel: () => {
+          run(() => viewerRef.current?.openVerificationPanel());
+        },
       }),
       [],
     );

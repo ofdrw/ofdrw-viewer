@@ -93,6 +93,7 @@ describe('核心集成：文档生命周期', () => {
     openMock.mockReset();
     openMock.mockRejectedValueOnce?.(new Error('损坏的 OFD 包'));
     const viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
     });

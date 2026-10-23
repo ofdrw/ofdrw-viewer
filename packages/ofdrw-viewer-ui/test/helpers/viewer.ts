@@ -47,9 +47,13 @@ export function createViewer(
   const document = createMockDocument(documentOptions);
   openMock.mockReset();
   openMock.mockResolvedValue(document);
+  const placeholder = viewerOptions.source === undefined;
   const viewer = new OFDViewer({
     container: documentElementContainer(),
     source: new ArrayBuffer(8),
+    // 占位字节不是可解析 OFD；基线用例统一关闭密码能力，避免 crypto inspect
+    // 先行拒绝。调用方提供真实来源或密码选项时自行决定。
+    ...(placeholder ? { crypto: { enabled: false } } : {}),
     ...viewerOptions,
   });
   return { viewer, document };

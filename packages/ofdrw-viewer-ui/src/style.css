@@ -1506,3 +1506,240 @@
     transform: translate(-50%, -50%);
   }
 }
+
+/* ------------------------------------------------------------------------- */
+/* 密码能力：凭据弹窗、验证面板、印章浮层                                     */
+/* ------------------------------------------------------------------------- */
+
+.ofd-credential-form {
+  display: grid;
+  gap: 12px;
+  min-width: min(360px, 72vw);
+}
+
+.ofd-credential-form__field {
+  display: grid;
+  gap: 6px;
+}
+
+.ofd-credential-form__label {
+  color: var(--ofd-text-muted, #5b6472);
+  font-size: 12px;
+}
+
+.ofd-credential-form__user {
+  margin: 0;
+  font-weight: 600;
+}
+
+.ofd-credential-form__hint,
+.ofd-verification-muted {
+  margin: 0;
+  color: var(--ofd-text-muted, #5b6472);
+  font-size: 12px;
+}
+
+.ofd-credential-form__modes {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.ofd-credential-form__mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ofd-credential-form__error {
+  margin: 0;
+  color: var(--ofd-danger, #b42318);
+}
+
+.ofd-credential-form__status {
+  margin: 0;
+  color: var(--ofd-text-muted, #5b6472);
+}
+
+.ofd-verification-panel {
+  display: grid;
+  gap: 12px;
+  max-height: min(70vh, 640px);
+  overflow: auto;
+}
+
+.ofd-verification-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ofd-verification-header__time {
+  color: var(--ofd-text-muted, #5b6472);
+  font-size: 12px;
+}
+
+.ofd-verification-actions {
+  margin-left: auto;
+}
+
+.ofd-verification-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 12px;
+}
+
+.ofd-verification-badge[data-status='valid'] {
+  color: var(--ofd-success, #067647);
+}
+
+.ofd-verification-badge[data-status='invalid'] {
+  color: var(--ofd-danger, #b42318);
+}
+
+.ofd-verification-badge[data-status='unknown'],
+.ofd-verification-badge[data-status='unsupported'],
+.ofd-verification-badge[data-status='not-applicable'] {
+  color: var(--ofd-text-muted, #5b6472);
+}
+
+.ofd-verification-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--ofd-border, #d0d5dd);
+  border-radius: 8px;
+}
+
+.ofd-verification-card__title {
+  margin: 0;
+  font-size: 14px;
+}
+
+.ofd-verification-pairs {
+  display: grid;
+  grid-template-columns: minmax(96px, auto) 1fr;
+  gap: 4px 12px;
+  margin: 0;
+}
+
+.ofd-verification-pairs dt {
+  color: var(--ofd-text-muted, #5b6472);
+}
+
+.ofd-verification-pairs dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+.ofd-verification-issues,
+.ofd-verification-failures,
+.ofd-verification-warnings {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ofd-danger, #b42318);
+  font-size: 12px;
+}
+
+.ofd-verification-timestamp {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.ofd-verification-timestamp__field {
+  color: var(--ofd-text-muted, #5b6472);
+}
+
+.ofd-verification-root-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ofd-verification-root {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 8px;
+  border: 1px solid var(--ofd-border, #d0d5dd);
+  border-radius: 6px;
+}
+
+.ofd-verification-root__summary {
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.ofd-verification-root-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ofd-verification-root-add {
+  justify-self: start;
+  cursor: pointer;
+}
+
+.ofd-signature-popover {
+  position: absolute;
+  z-index: 30;
+  width: min(320px, 76vw);
+  pointer-events: auto;
+  padding: 12px;
+  border: 1px solid var(--ofd-border, #d0d5dd);
+  border-radius: 8px;
+  background: var(--ofd-surface, #fff);
+  box-shadow: var(--ofd-menu-shadow);
+}
+
+.ofd-signature-popover__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ofd-signature-popover__title {
+  flex: 1;
+  margin: 0;
+  font-size: 14px;
+}
+
+.ofd-signature-popover__close {
+  min-width: 28px;
+  min-height: 28px;
+}
+
+.ofd-signature-popover__pairs {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  margin: 8px 0;
+  font-size: 12px;
+}
+
+.ofd-signature-popover__pairs dt {
+  color: var(--ofd-text-muted, #5b6472);
+}
+
+.ofd-signature-popover__pairs dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+.ofd-signature-popover__full {
+  width: 100%;
+}

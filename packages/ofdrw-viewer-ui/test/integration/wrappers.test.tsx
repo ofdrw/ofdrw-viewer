@@ -56,6 +56,7 @@ describe('适配层集成', () => {
       });
     }
     element.source = source;
+    element.crypto = { enabled: false };
     element.setAttribute('page', '2');
     document.body.append(element);
 
@@ -90,6 +91,7 @@ describe('适配层集成', () => {
       <ReactOFDViewer
         ref={ref}
         source={source}
+        crypto={{ enabled: false }}
         onDocumentOpen={onDocumentOpen}
         onPageRendered={onPageRendered}
         onRotationChange={onRotationChange}
@@ -119,7 +121,7 @@ describe('适配层集成', () => {
 
   it('Vue kebab-case 事件与 expose 命令', async () => {
     const source = new ArrayBuffer(8);
-    const wrapper = mount(VueOFDViewer, { props: { source } });
+    const wrapper = mount(VueOFDViewer, { props: { source, options: { crypto: { enabled: false } } } });
     await flushPromises();
     await waitFor(() => expect(wrapper.emitted('document-open')).toBeTruthy());
     await waitFor(() => expect(wrapper.emitted('page-rendered')).toBeTruthy());

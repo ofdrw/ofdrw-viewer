@@ -166,6 +166,7 @@ afterEach(() => {
 describe('OFDViewer 核心', () => {
   it('缺少原生 Fullscreen API 时使用沉浸式回退并保持一致状态', async () => {
     const viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
     });
@@ -184,6 +185,7 @@ describe('OFDViewer 核心', () => {
 
   it('原生 Fullscreen API 可用时走 requestFullscreen 且不进入 fallback', async () => {
     const viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
     });
@@ -205,6 +207,7 @@ describe('OFDViewer 核心', () => {
 
   it('沉浸式全屏 fallback 下 Escape 退出且不与侧栏 Escape 冲突', async () => {
     const viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
     });
@@ -242,6 +245,7 @@ describe('OFDViewer 核心', () => {
 
   it('公共读取 API 与签章门控一致', async () => {
     const viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
     });
@@ -266,6 +270,7 @@ describe('OFDViewer 核心', () => {
 
   it('创建结构、打开文档并初始化页壳', async () => {
     const viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
     });
@@ -283,7 +288,11 @@ describe('OFDViewer 核心', () => {
   });
 
   it('翻页、缩放和旋转保持状态一致', async () => {
-    const viewer = new OFDViewer({ container: document.body, source: new ArrayBuffer(8) });
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+    });
     await viewer.ready;
 
     viewer.goToPage(3);
@@ -305,7 +314,11 @@ describe('OFDViewer 核心', () => {
   });
 
   it('功能关闭时控件隐藏/API 抛 OFD_FEATURE_DISABLED，并联动查找', async () => {
-    const viewer = new OFDViewer({ container: document.body, source: new ArrayBuffer(8) });
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+    });
     await viewer.ready;
 
     viewer.setFeatures({ toolbar: false, textLayer: false });
@@ -321,7 +334,11 @@ describe('OFDViewer 核心', () => {
   });
 
   it('侧栏打开/关闭与特性门控', async () => {
-    const viewer = new OFDViewer({ container: document.body, source: new ArrayBuffer(8) });
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+    });
     await viewer.ready;
     const states: Array<unknown> = [];
     viewer.on('sidebarviewchanged', (event) => states.push(event.view));
@@ -337,7 +354,11 @@ describe('OFDViewer 核心', () => {
   });
 
   it('挂载查找服务后代理查找与选区', async () => {
-    const viewer = new OFDViewer({ container: document.body, source: new ArrayBuffer(8) });
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+    });
     await viewer.ready;
     const find = vi.fn();
     const getSelectedText = vi.fn(() => 'hello');
@@ -352,7 +373,11 @@ describe('OFDViewer 核心', () => {
 
   it('只给可见区域附近创建 canvas，并在销毁时清理', async () => {
     engineMocks.open.mockImplementation(async () => makeDocument(100));
-    const viewer = new OFDViewer({ container: document.body, source: new ArrayBuffer(8) });
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+    });
     await viewer.ready;
     await vi.waitFor(() => {
       const canvases = viewer
@@ -371,7 +396,11 @@ describe('OFDViewer 核心', () => {
     const addSpy = vi.spyOn(HTMLElement.prototype, 'addEventListener');
     const removeSpy = vi.spyOn(HTMLElement.prototype, 'removeEventListener');
     engineMocks.open.mockImplementation(async () => makeDocument(5));
-    const viewer = new OFDViewer({ container: document.body, source: new ArrayBuffer(8) });
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+    });
     await viewer.ready;
 
     const main = viewer.getElements().main;
@@ -425,6 +454,7 @@ describe('OFDViewer 核心', () => {
   it('A4 小数页高下 goToPage/lastPage 不因整数 scrollTop 落回上一页', async () => {
     engineMocks.open.mockImplementation(async () => makeDocument(5));
     const viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
       initialScale: 1,
@@ -481,6 +511,7 @@ describe('OFDViewer 核心', () => {
 
   it('Ctrl+滚轮以指针为锚点缩放并阻止浏览器默认缩放', async () => {
     const viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
       initialScale: 1,
@@ -533,6 +564,7 @@ describe('OFDViewer 核心', () => {
     viewer.destroy();
 
     const disabled = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
       initialScale: 1,
@@ -557,6 +589,7 @@ describe('OFDViewer 核心', () => {
 
   it('触摸双指捏合以中点为锚点并在结束后释放 pointer capture', async () => {
     const viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
       initialScale: 1,
@@ -607,6 +640,7 @@ describe('OFDViewer 核心', () => {
 
   it('双击在适合宽度与 100% 之间切换并清除文本选区', async () => {
     const viewer = new OFDViewer({
+      crypto: { enabled: false },
       container: document.body,
       source: new ArrayBuffer(8),
       initialScale: 1,

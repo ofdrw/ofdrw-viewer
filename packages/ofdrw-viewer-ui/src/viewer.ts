@@ -11,7 +11,12 @@ import type {
   PageImageFormat,
   PageInfo,
   SignatureEntryInfo,
+  VirtualContainer,
 } from '@ofdrw/ofdrw-viewer-engine';
+import type {
+  CertificateSummary,
+  VerificationReport,
+} from '@ofdrw/ofdrw-viewer-crypto';
 import {
   DocumentController,
   type EngineDocument,
@@ -19,6 +24,7 @@ import {
 } from './document-controller';
 import {
   createFeatureDisabledError,
+  isOFDViewerError,
   OFDViewerError,
   type ViewerErrorCode,
 } from './errors';
@@ -83,6 +89,14 @@ import type {
 import { getUIShell } from './ui';
 import type { UIDialogOptions, UIShellElements } from './ui/types';
 import type { UIShellHost } from './ui';
+import type { CertificateSource } from './options';
+import {
+  CryptoService,
+  type CryptoOpenPreparation,
+  type CryptoServiceHost,
+  type CryptoVerifyOptions,
+  type VerificationTarget,
+} from './crypto';
 
 /** 阅读器扩展：在实例创建/注册时执行，返回清理函数。 */
 export type ViewerExtension = (viewer: OFDViewer) => void | (() => void);
@@ -191,6 +205,24 @@ function createAbortError(): Error {
   return error;
 }
 
+/** 关闭解密容器；重复关闭/关闭失败不影响调用方。 */
+async function closeContainer(container: VirtualContainer): Promise<void> {
+  try {
+    await container.close();
+  } catch {
+    // 容器已关闭或底层释放失败不影响文档状态。
+  }
+}
+
+/** 把打开准备结果转为验证目标。 */
+function toVerificationTarget(preparation: CryptoOpenPreparation): VerificationTarget | null {
+  if (preparation.kind === 'decrypted') {
+    return { kind: 'container', container: preparation.container };
+  }
+  if (preparation.source) return { kind: 'source', source: preparation.source };
+  return null;
+}
+
 /**
  * 注册阅读器扩展。
  *
@@ -220,7 +252,7 @@ function createServices(): ViewerServices {
  * 构造时创建 DOM 并异步打开 `options.source`；`ready` 可用于等待首次打开完成。
  * 同一个实例跨断点、缩放、旋转只重排/重渲染，不重建文档。
  */
-export class OFDViewer implements UIShellHost {
+export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /** 首次打开完成的 Promise；打开失败会 reject。 */
   readonly ready: Promise<void>;
 
@@ -231,6 +263,8 @@ export class OFDViewer implements UIShellHost {
   private readonly controller: DocumentController;
   private readonly eventBus: ViewerEventBus;
   private readonly featureGate: FeatureGate;
+  /** 密码能力服务；打开检测、解密、验证与信任根的唯一入口。 */
+  private readonly cryptoService: CryptoService;
   private readonly layout: PageLayout;
   private readonly queue: RenderQueue;
   private readonly keyboard: KeyboardController;
@@ -249,6 +283,10 @@ export class OFDViewer implements UIShellHost {
   private sidebarLayout: 'inline' | 'overlay' | 'drawer' = 'inline';
   private openToken = 0;
   private openAbort: AbortController | null = null;
+  /** UI 持有的解密容器；关闭文档后由 UI 关闭，engine 只借用。 */
+  private decryptedContainer: VirtualContainer | null = null;
+  /** 最近一次打开准备结果；用于自动验证与错误映射。 */
+  private cryptoPreparation: CryptoOpenPreparation | null = null;
   private scrollFrame: number | null = null;
   private reflowFrame: number | null = null;
   private lastVisibleRange = { start: 0, end: -1 };
@@ -324,6 +362,9 @@ export class OFDViewer implements UIShellHost {
     });
     this.featureGate = new FeatureGate(this.options.features, {
       display: this.options.featureDisplay,
+      ...(this.options.crypto?.enabled === false
+        ? { availability: { unsupported: { verification: true } } }
+        : {}),
     });
     this.layout = new PageLayout({
       pageInfos: [],
@@ -342,6 +383,7 @@ export class OFDViewer implements UIShellHost {
       locale: this.options.locale,
       features: this.featureGate.getStates(),
     });
+    this.cryptoService = new CryptoService(this, this.options.crypto, this.options.requestInit);
     this.queue = new RenderQueue({
       concurrency: this.options.renderConcurrency,
       onTaskError: (error, task) => {
@@ -398,6 +440,21 @@ export class OFDViewer implements UIShellHost {
   /** 最新状态快照。 */
   getState(): ViewerState {
     return this.state;
+  }
+
+  /**
+   * 当前引擎文档；供密码服务读取验证目标。
+   *
+   * @returns 文档实例；未打开时为 null。
+   */
+  /**
+   * 上报密码能力 warning。
+   *
+   * @param code warning 码。
+   * @param message 文案。
+   */
+  warnCrypto(code: string, message: string): void {
+    this.warn(code, message);
   }
 
   /** 阅读器根节点。 */
@@ -540,6 +597,7 @@ export class OFDViewer implements UIShellHost {
    */
   async open(source: ViewerSource = this.options.source): Promise<void> {
     this.assertNotDisposed();
+    const previousSource = this.state.document.source;
     this.openToken += 1;
     const token = this.openToken;
     this.openAbort?.abort();
@@ -548,9 +606,35 @@ export class OFDViewer implements UIShellHost {
     this.queue.cancelAll();
     this.patchDocument({ status: 'opening', source: null });
     this.commit();
+    /** 尚未移交给阅读器的解密容器；取消/失败时必须关闭。 */
+    let pendingContainer: VirtualContainer | null = null;
     try {
-      const opened = await this.controller.open(source);
+      const preparation = await this.cryptoService.prepareOpen(source, abort.signal);
+      if (token !== this.openToken || abort.signal.aborted) {
+        if (preparation.kind === 'decrypted') await closeContainer(preparation.container);
+        throw createAbortError();
+      }
+      this.cryptoPreparation = preparation;
+      let opened;
+      if (preparation.kind === 'decrypted') {
+        pendingContainer = preparation.container;
+        try {
+          opened = await this.controller.openContainer(preparation.container, source);
+        } catch (error) {
+          await closeContainer(preparation.container);
+          pendingContainer = null;
+          throw error;
+        }
+      } else {
+        opened = await this.controller.open(source);
+      }
       if (token !== this.openToken || abort.signal.aborted) throw createAbortError();
+      // 旧文档已由 controller 关闭，此时才能安全关闭旧解密容器。
+      await this.releaseDecryptedContainer();
+      this.decryptedContainer =
+        preparation.kind === 'decrypted' ? pendingContainer : null;
+      pendingContainer = null;
+      this.cryptoService.setTarget(toVerificationTarget(preparation));
       const infos = await this.controller.getPageInfos();
       if (token !== this.openToken || abort.signal.aborted) throw createAbortError();
       this.pageInfos = infos;
@@ -588,13 +672,29 @@ export class OFDViewer implements UIShellHost {
       this.renderVisible(true);
       void this.loadSideData(token);
       this.syncHash();
+      this.maybeAutoVerify();
     } catch (error) {
-      if (token !== this.openToken || isAbort(error)) return;
-      const info = this.toErrorInfo(error, 'OFD_OPEN_FAILED', '打开文档失败');
+      if (token !== this.openToken || isAbort(error)) {
+        if (pendingContainer) {
+          await closeContainer(pendingContainer);
+          pendingContainer = null;
+        }
+        return;
+      }
+      if (isOFDViewerError(error) && error.code === 'OFD_CRYPTO_CANCELLED') {
+        this.patchDocument({
+          status: this.controller.isOpen ? 'ready' : 'closed',
+          source: previousSource,
+        });
+        this.commit();
+        throw error;
+      }
+      const mapped = this.mapOpenFailure(error);
+      const info = this.toErrorInfo(mapped, 'OFD_OPEN_FAILED', '打开文档失败');
       this.patchDocument({ status: 'error' });
       this.reportError(info);
       this.commit();
-      throw error;
+      throw mapped;
     } finally {
       if (this.openAbort === abort) this.openAbort = null;
     }
@@ -609,6 +709,9 @@ export class OFDViewer implements UIShellHost {
     this.queue.cancelAll();
     this.destroyPages();
     await this.controller.close();
+    await this.releaseDecryptedContainer();
+    this.cryptoPreparation = null;
+    this.cryptoService.reset();
     this.pageInfos = [];
     this.patchDocument({
       status: 'closed',
@@ -652,6 +755,8 @@ export class OFDViewer implements UIShellHost {
     for (const cleanup of this.extensionCleanups.splice(0)) this.safeCleanup(cleanup);
     this.appliedExtensions.clear();
     void this.controller.close();
+    void this.releaseDecryptedContainer();
+    this.cryptoService.destroy();
     this.root.remove();
     activeViewers.delete(this);
     this.eventBus.removeAllListeners();
@@ -1031,6 +1136,93 @@ export class OFDViewer implements UIShellHost {
   // -------------------------------------------------------------------------
   // 签章/打印/导出（服务扩展）
   // -------------------------------------------------------------------------
+
+  /**
+   * 重新验证当前文档。
+   *
+   * @param options 签名筛选与取消信号。
+   * @returns 验证报告。
+   * @throws {OFDViewerError} 功能关闭、未打开或验证失败时。
+   */
+  async verify(options: CryptoVerifyOptions = {}): Promise<VerificationReport> {
+    this.assertNotDisposed();
+    this.assertFeature('verification');
+    if (!this.cryptoService.isEnabled) {
+      throw new OFDViewerError('OFD_CRYPTO_UNSUPPORTED', this.cryptoService.strings.cryptoDisabled);
+    }
+    this.assertOpen();
+    const report = await this.cryptoService.verify(options);
+    this.emit('verificationcompleted', report);
+    try {
+      this.options.crypto?.onVerification?.(report);
+    } catch (error) {
+      this.warn(
+        'W_CRYPTO_VERIFICATION_CALLBACK',
+        `验证完成回调抛出异常：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    return report;
+  }
+
+  /**
+   * 当前文档最近一次验证报告。
+   *
+   * @returns 报告；未验证或文档已关闭时为 undefined。
+   */
+  getVerificationReport(): VerificationReport | undefined {
+    return this.cryptoService.getReport();
+  }
+
+  /**
+   * 设置/替换信任根并重新验证当前文档。
+   *
+   * 证书内容无效时按 warning 跳过，可返回空数组；仅密码能力关闭、
+   * path/filePath loader 失败等入口错误抛出 `OFDViewerError`。
+   *
+   * @param roots 根证书来源。
+   * @returns 成功解析的证书摘要；全部无效时为空数组。
+   * @throws {OFDViewerError} 密码能力关闭或 path/filePath loader 失败时。
+   */
+  async setRootCertificates(
+    roots: readonly CertificateSource[],
+  ): Promise<readonly CertificateSummary[]> {
+    this.assertNotDisposed();
+    if (!this.cryptoService.isEnabled) {
+      throw new OFDViewerError('OFD_CRYPTO_UNSUPPORTED', this.cryptoService.strings.cryptoDisabled);
+    }
+    const summaries = await this.cryptoService.setRoots(roots);
+    if (this.controller.isOpen && this.featureGate.isEnabled('verification')) {
+      try {
+        await this.verify();
+      } catch (error) {
+        this.warn(
+          'W_CRYPTO_VERIFY_FAILED',
+          `重新验证失败：${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    return summaries;
+  }
+
+  /**
+   * 当前信任根证书摘要。
+   *
+   * @returns 证书摘要列表；未配置时为空。
+   */
+  getRootCertificates(): readonly CertificateSummary[] {
+    return this.cryptoService.getRoots();
+  }
+
+  /**
+   * 打开工具栏验证面板。
+   *
+   * @throws {OFDViewerError} 功能关闭、密码能力关闭或内置 UI 未挂载时。
+   */
+  openVerificationPanel(): void {
+    this.assertNotDisposed();
+    this.assertFeature('verification');
+    this.cryptoService.openPanel();
+  }
 
   /** 当前签章摘要；未打开时为空。 */
   getSignatures(): readonly SignatureEntryInfo[] {
@@ -1797,6 +1989,7 @@ export class OFDViewer implements UIShellHost {
     if (this.controller.document && typeof this.controller.document.getSignatureEntries !== 'function') {
       unsupported.signatures = true;
     }
+    if (!this.cryptoService.isEnabled) unsupported.verification = true;
     const states = this.featureGate.setAvailability({
       document: documentAvailability,
       unsupported,
@@ -1905,6 +2098,47 @@ export class OFDViewer implements UIShellHost {
     this.elements.toolbar
       .querySelector<HTMLButtonElement>('[data-ofd-control="find"]')
       ?.click();
+  }
+
+  /** 打开成功后按需自动验证；失败只记 warning，不影响文档打开。 */
+  private maybeAutoVerify(): void {
+    if (!this.cryptoPreparation || !this.cryptoService.shouldAutoVerify(this.cryptoPreparation)) {
+      return;
+    }
+    void this.verify().catch((error: unknown) => {
+      this.warn(
+        'W_CRYPTO_VERIFY_FAILED',
+        `自动验证失败：${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  }
+
+  /** 映射引擎打开错误；加密文档在密码能力关闭时给出专用错误码。 */
+  private mapOpenFailure(error: unknown): unknown {
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? (error as { code?: unknown }).code
+        : undefined;
+    if (code !== 'OFD_ENCRYPTED') return error;
+    if (!this.cryptoService.isEnabled) {
+      return new OFDViewerError(
+        'OFD_CRYPTO_UNSUPPORTED',
+        this.cryptoService.strings.cryptoUnsupported,
+        { cause: error },
+      );
+    }
+    return new OFDViewerError(
+      'OFD_CRYPTO_FAILED',
+      this.cryptoService.strings.credentialDecryptFailed,
+      { cause: error },
+    );
+  }
+
+  /** 关闭 UI 持有的解密容器；engine 只借用，不负责关闭。 */
+  private async releaseDecryptedContainer(): Promise<void> {
+    const container = this.decryptedContainer;
+    this.decryptedContainer = null;
+    if (container) await closeContainer(container);
   }
 
   /** 挂载服务并返回卸载函数。 */

@@ -20,7 +20,13 @@ import {
   type SidebarView,
   type ViewerFeatures,
 } from './support';
-import type { ViewerSource } from '../index';
+import type {
+  CertificateSource,
+  CertificateSummary,
+  CryptoViewerOptions,
+  VerificationReport,
+  ViewerSource,
+} from '../index';
 
 /** 需要监听并写回实例的属性。 */
 const OBSERVED_ATTRIBUTES = [
@@ -60,6 +66,9 @@ export class OFDViewerElement extends HTMLElement {
   /** 通过 property 传入的复杂来源（Blob/ArrayBuffer 等）。 */
   private sourceValue: ViewerSource | null = null;
 
+  /** 密码能力配置；创建实例时读取，实例存在后修改不重建。 */
+  private cryptoValue: CryptoViewerOptions | undefined;
+
   /** 取消核心事件订阅。 */
   private unbindEvents: (() => void) | null = null;
 
@@ -89,6 +98,15 @@ export class OFDViewerElement extends HTMLElement {
   set features(value: ViewerFeatures) {
     this.featurePatch = { ...value };
     this.instance?.setFeatures(this.featurePatch);
+  }
+
+  /** 密码能力配置；实例创建前设置生效。 */
+  get crypto(): CryptoViewerOptions | undefined {
+    return this.cryptoValue;
+  }
+
+  set crypto(value: CryptoViewerOptions | undefined) {
+    this.cryptoValue = value;
   }
 
   /** 当前复杂来源 property；未设置时为 null。 */
@@ -213,6 +231,48 @@ export class OFDViewerElement extends HTMLElement {
     await this.instance?.close();
   }
 
+  /**
+   * 重新验证当前文档。
+   *
+   * @param options 签名筛选与取消信号。
+   * @returns 验证报告。
+   */
+  async verify(options?: {
+    readonly signatureIds?: readonly string[];
+    readonly signal?: AbortSignal;
+  }): Promise<VerificationReport> {
+    if (!this.instance) throw new Error('阅读器尚未创建');
+    return this.instance.verify(options);
+  }
+
+  /** 最近一次验证报告。 */
+  getVerificationReport(): VerificationReport | undefined {
+    return this.instance?.getVerificationReport();
+  }
+
+  /**
+   * 设置/替换信任根并重新验证。
+   *
+   * @param roots 根证书来源。
+   * @returns 解析后的证书摘要。
+   */
+  async setRootCertificates(
+    roots: readonly CertificateSource[],
+  ): Promise<readonly CertificateSummary[]> {
+    if (!this.instance) return [];
+    return this.instance.setRootCertificates(roots);
+  }
+
+  /** 当前信任根摘要。 */
+  getRootCertificates(): readonly CertificateSummary[] {
+    return this.instance?.getRootCertificates() ?? [];
+  }
+
+  /** 打开工具栏验证面板。 */
+  openVerificationPanel(): void {
+    this.instance?.openVerificationPanel();
+  }
+
   /** 销毁实例；可重复调用。 */
   destroy(): void {
     this.destroyViewer();
@@ -240,6 +300,7 @@ export class OFDViewerElement extends HTMLElement {
       ...(sidebar === undefined ? {} : { sidebar }),
       ...(Object.keys(this.featurePatch).length > 0 ? { features: this.featurePatch } : {}),
       ...(this.display === undefined ? {} : { featureDisplay: this.display }),
+      ...(this.cryptoValue === undefined ? {} : { crypto: this.cryptoValue }),
     });
     this.unbindEvents = bindViewerEvents(this.instance, (event, payload) => {
       this.dispatchEvent(

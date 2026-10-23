@@ -54,6 +54,11 @@ const initialScale = scale === 'auto' ? 'auto' : Number(scale ?? '1');
 const page = Number(params.get('page') ?? '1');
 const rotation = Number(params.get('rotation') ?? '0');
 const sidebar = params.get('sidebar');
+const password = params.get('password');
+const userName = params.get('userName') ?? undefined;
+const rootCertificate = params.get('root');
+const autoPrompt = params.get('prompt') === '1';
+const autoVerify = params.get('autoVerify') !== '0';
 
 const events: HarnessEvent[] = [];
 const errors: string[] = [];
@@ -69,6 +74,12 @@ const viewer = new OFDViewer({
   locale: params.get('locale') === 'en-US' ? 'en-US' : 'zh-CN',
   features,
   ...(featureDisplay ? { featureDisplay } : {}),
+  crypto: {
+    ...(password ? { credentials: { kind: 'password' as const, password, ...(userName ? { userName } : {}) } } : {}),
+    ...(rootCertificate ? { rootCertificates: [{ url: rootCertificate }] } : {}),
+    ...(autoPrompt ? { autoPrompt: true } : {}),
+    autoVerify,
+  },
   onWarning: (warning) => {
     consoleWarnings.push(`${warning.code}: ${warning.message}`);
   },
@@ -85,6 +96,7 @@ const tracked = [
   'findcurrent',
   'selectionchange',
   'signatureclick',
+  'verificationcompleted',
   'printstart',
   'printprogress',
   'printend',

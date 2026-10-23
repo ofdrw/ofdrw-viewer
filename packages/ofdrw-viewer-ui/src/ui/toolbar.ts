@@ -408,6 +408,18 @@ export class Toolbar {
     });
     viewGroup.appendChild(signatures);
 
+    const verification = this.createButton(
+      'verification',
+      'shield',
+      'toolbar.verification',
+      'verification',
+      'compact',
+    );
+    verification.addEventListener('click', () => {
+      this.options.onCommand({ type: 'verification.open' });
+    });
+    viewGroup.appendChild(verification);
+
     this.fullscreenButton = this.createButton(
       'fullscreen',
       'fullscreen',

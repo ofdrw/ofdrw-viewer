@@ -179,7 +179,7 @@ test('features.signatures=false 时 getSignatures/focusSignature 同步拒绝', 
   await expectNoPageErrors(page, issues);
 });
 
-test('18 个 features 均可独立关闭并同步到有效状态', async ({ page, issues }) => {
+test('19 个 features 均可独立关闭并同步到有效状态', async ({ page, issues }) => {
   await openViewer(page, FIXTURES.multi);
   const features = [
     'toolbar',
@@ -198,6 +198,7 @@ test('18 个 features 均可独立关闭并同步到有效状态', async ({ page
     'print',
     'export',
     'signatures',
+    'verification',
     'documentProperties',
     'keyboardShortcuts',
   ] as const;

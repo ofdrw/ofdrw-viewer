@@ -27,6 +27,7 @@ export const VIEWER_FEATURES = [
   'print',
   'export',
   'signatures',
+  'verification',
   'documentProperties',
   'keyboardShortcuts',
 ] as const;

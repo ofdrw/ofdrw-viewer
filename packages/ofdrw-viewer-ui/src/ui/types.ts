@@ -53,6 +53,7 @@ export type UIShellCommand =
   | { readonly type: 'print.open' }
   | { readonly type: 'export.open' }
   | { readonly type: 'signatures.open' }
+  | { readonly type: 'verification.open' }
   | { readonly type: 'fullscreen.set'; readonly value: boolean }
   | { readonly type: 'document.properties' };
 

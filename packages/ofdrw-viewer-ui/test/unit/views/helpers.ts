@@ -181,9 +181,11 @@ export async function createIntegratedViewer(
 ): Promise<IntegratedViewer> {
   engineMocks.open.mockReset();
   engineMocks.open.mockResolvedValue(makeDocument(documentOptions));
+  const placeholder = viewerOptions.source === undefined;
   const viewer = new OFDViewer({
     container: document.body,
     source: new ArrayBuffer(8),
+    ...(placeholder ? { crypto: { enabled: false } } : {}),
     ...viewerOptions,
   });
   await viewer.ready;

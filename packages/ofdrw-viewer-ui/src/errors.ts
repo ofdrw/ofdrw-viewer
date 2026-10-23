@@ -25,7 +25,11 @@ export type ViewerErrorCode =
   | 'OFD_EXPORT_FAILED'
   | 'OFD_PRINT_FAILED'
   | 'OFD_SIGNATURE_PARSE_FAILED'
-  | 'OFD_CLIPBOARD_FAILED';
+  | 'OFD_CLIPBOARD_FAILED'
+  | 'OFD_CRYPTO_CREDENTIAL_REQUIRED'
+  | 'OFD_CRYPTO_CANCELLED'
+  | 'OFD_CRYPTO_UNSUPPORTED'
+  | 'OFD_CRYPTO_FAILED';
 
 /** UI 错误附加信息。 */
 export interface ViewerErrorOptions {

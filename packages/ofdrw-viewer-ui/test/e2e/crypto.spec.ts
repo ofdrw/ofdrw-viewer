@@ -1,0 +1,86 @@
+/**
+ * 密码能力浏览器验收：加密文档打开、验证面板、印章浮层与时间戳文案。
+ */
+import { expect, expectNoPageErrors, test } from './fixtures';
+import { FIXTURES, openViewer, viewerUrl } from './support';
+
+test('口令加密文档：预置凭据打开后状态就绪', async ({ page, issues }) => {
+  await openViewer(page, FIXTURES.cryptoPassword, {
+    password: 'FixturePass123',
+    userName: 'fixture-password-user',
+    waitForRender: false,
+  });
+  const state = await page.evaluate(() => ({
+    status: window.__viewer!.getState().document.status,
+    pageCount: window.__viewer!.getState().document.pageCount,
+    warnings: window.__viewer!.getState().ui.warnings,
+  }));
+  expect(state.status).toBe('ready');
+  expect(state.pageCount).toBe(2);
+  expect(state.warnings.map((warning) => warning.code)).not.toContain('OFD_CRYPTO_FAILED');
+  await expectNoPageErrors(page, issues);
+});
+
+test('口令加密文档：内置凭据弹窗收集口令后打开', async ({ page, issues }) => {
+  await page.goto(viewerUrl(FIXTURES.cryptoPassword, { autoPrompt: true }));
+  const dialog = page.locator('.ofd-dialog');
+  await expect(dialog).toBeVisible();
+  await page
+    .locator('[data-ofd-control="crypto-credential-password"]')
+    .fill('FixturePass123');
+  await page.locator('.ofd-dialog__action--primary').click();
+  await expect(page.locator('html')).toHaveAttribute('data-e2e-ready', 'true', {
+    timeout: 45_000,
+  });
+  expect(await page.evaluate(() => window.__viewer!.getState().document.status)).toBe('ready');
+  await expect(dialog).toBeHidden();
+  await expectNoPageErrors(page, issues);
+});
+
+test('验证面板：配置根证书后有效，时间戳固定为已解析未验证', async ({ page, issues }) => {
+  await openViewer(page, FIXTURES.cryptoSigned, {
+    rootCertificate: FIXTURES.cryptoRoot,
+    waitForRender: false,
+  });
+  await page.waitForFunction(
+    () => window.__events?.some((event) => event.type === 'verificationcompleted'),
+    null,
+    { timeout: 45_000 },
+  );
+  const overall = await page.evaluate(
+    () => window.__viewer!.getVerificationReport()?.overall,
+  );
+  expect(overall).toBe('valid');
+
+  await page.locator('[data-ofd-control="verification"]').click();
+  const panel = page.locator('.ofd-verification-panel');
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText('有效');
+  await expect(panel).toContainText('已解析，未验证');
+  const text = await panel.textContent();
+  expect(text).not.toMatch(/时间戳验证通过|时间戳有效/);
+  await expectNoPageErrors(page, issues);
+});
+
+test('印章点击：先验证再展示浮层，可进入完整面板', async ({ page, issues }) => {
+  await openViewer(page, FIXTURES.cryptoSigned, {
+    rootCertificate: FIXTURES.cryptoRoot,
+    waitForRender: false,
+  });
+  await page.waitForFunction(
+    () => window.__events?.some((event) => event.type === 'verificationcompleted'),
+    null,
+    { timeout: 45_000 },
+  );
+  const overlay = page.locator('.ofd-signature-box[data-signature-id]');
+  await expect(overlay).toBeVisible();
+  await overlay.click();
+  const popover = page.locator('.ofd-signature-popover');
+  await expect(popover).toBeVisible();
+  await expect(popover).toContainText('有效');
+  await expect(popover).toContainText('已解析，未验证');
+
+  await popover.locator('[data-ofd-control="signature-popover-full"]').click();
+  await expect(page.locator('.ofd-verification-panel')).toBeVisible();
+  await expectNoPageErrors(page, issues);
+});
