@@ -14,19 +14,23 @@ vi.mock('@ofdrw/ofdrw-viewer-engine', () => ({
   toOFDError: (error: unknown) => error,
 }));
 
+import { parseSignedValue } from '@ofdrw/ofdrw-viewer-crypto';
 import { MM_TO_CSS_PX } from '../../src/page-layout';
 import { installDomEnvironment } from '../helpers/environment';
-import {
-  createSignatureEntry,
-  HAS_SIGNATURE_FIXTURES,
-  readSignedValueFixture,
-} from '../helpers/signature';
+import { createSignatureEntry, readSignedValueFixture } from '../helpers/signature';
 import { openViewer, type EngineOpenMock } from '../helpers/viewer';
 
 const openMock = engineMocks.open as unknown as EngineOpenMock;
 
-/** 真实样本缺失时跳过，并在报告中保留 skipped 计数。 */
-const itWithFixture = HAS_SIGNATURE_FIXTURES ? it : it.skip;
+/** V4 签章样本解析结果；期望值取自夹具本身，不硬编码样本内容。 */
+const PARSED_V4 = parseSignedValue(readSignedValueFixture('SignedValueV4.dat'));
+
+/** V4 样本印章名称。 */
+const SEAL_NAME = PARSED_V4.seal?.name ?? '';
+
+/** V4 样本签章者证书 CN。 */
+const SIGNER_CN =
+  PARSED_V4.certificate?.subject.match(/(?:^|,)CN=([^,]+)/)?.[1] ?? '';
 
 beforeEach(() => {
   document.body.innerHTML = '';
@@ -56,7 +60,7 @@ async function waitForSignature(
 }
 
 describe('签章集成：真实 SignedValue', () => {
-  itWithFixture('摘要字段与 V4 详情的印章/签章者映射（不验签）', async () => {
+  it('摘要字段与 V4 详情的印章/签章者映射（不验签）', async () => {
     const data = readSignedValueFixture('SignedValueV4.dat');
     const entry = createSignatureEntry();
     const { viewer } = await openViewer(openMock, {
@@ -78,23 +82,23 @@ describe('签章集成：真实 SignedValue', () => {
     expect(detail.entry.id).toBe('sig-1');
     expect(detail.seal).toMatchObject({
       version: 'v4',
-      esId: '51f044b76510434e9bc67a1185c2fba5',
-      name: 'OFD R&W 测试用印章',
+      esId: PARSED_V4.seal?.esId,
+      name: SEAL_NAME,
       image: { format: 'PNG', widthMm: 40, heightMm: 40 },
     });
     expect(detail.signer).toMatchObject({
-      signedAt: '2020-10-12T11:14:03.000Z',
+      signedAt: PARSED_V4.signedAt,
       signedAtSource: 'timeInfo',
       algorithm: { oid: '1.2.156.10197.1.501', name: 'SM2-with-SM3' },
     });
-    expect(detail.signer?.certificate?.subjectAttributes?.cn).toBe('Test Certificate');
+    expect(detail.signer?.certificate?.subjectAttributes?.cn).toBe(SIGNER_CN);
     expect(detail.validation.status).toBe('not-verified');
     expect(detail.validation.note).toContain('未进行签名验证');
     expect(detail.warnings ?? []).toEqual([]);
     viewer.destroy();
   });
 
-  itWithFixture('覆盖层按 mm→px 定位/裁剪，点击定位并打开详情', async () => {
+  it('覆盖层按 mm→px 定位/裁剪，点击定位并打开详情', async () => {
     const data = readSignedValueFixture('SignedValueV4.dat');
     const entry = createSignatureEntry();
     const { viewer } = await openViewer(openMock, {
@@ -119,7 +123,7 @@ describe('签章集成：真实 SignedValue', () => {
     await vi.waitFor(() => expect(viewer.getPageNumber()).toBe(2));
     await vi.waitFor(() => {
       const body = document.querySelector('.ofd-dialog__body');
-      expect(body?.textContent).toContain('OFD R&W 测试用印章');
+      expect(body?.textContent).toContain(SEAL_NAME);
       expect(body?.textContent).toContain('未验证');
     });
     viewer.destroy();

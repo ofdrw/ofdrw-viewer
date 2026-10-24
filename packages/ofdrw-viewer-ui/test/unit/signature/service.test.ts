@@ -24,6 +24,7 @@ vi.mock('@ofdrw/ofdrw-viewer-engine', () => ({
   toOFDError: (error: unknown) => error,
 }));
 
+import { parseSignedValue } from '@ofdrw/ofdrw-viewer-crypto';
 import { OFDViewer } from '../../../src/viewer';
 import { attachUIShell, getUIShell } from '../../../src/ui';
 import '../../../src/views/signatures';
@@ -33,6 +34,21 @@ import {
   corruptSignedValue,
   readSignedValueFixture,
 } from './fixtures';
+
+/** V4 签章样本解析结果；断言中的印章名/签发时间以此为准，避免硬编码样本值。 */
+const PARSED_V4 = parseSignedValue(readSignedValueFixture('SignedValueV4.dat'));
+
+/** V4 样本印章名称。 */
+const SEAL_NAME = PARSED_V4.seal?.name ?? '';
+
+/** V4 样本签章者证书主题（DN）。 */
+const SIGNER_SUBJECT = PARSED_V4.certificate?.subject ?? '';
+
+/** V4 样本签章者证书 CN。 */
+const SIGNER_CN = SIGNER_SUBJECT.match(/(?:^|,)CN=([^,]+)/)?.[1] ?? '';
+
+/** V4 样本 timeInfo 签发时间。 */
+const SIGNED_AT = PARSED_V4.signedAt ?? '';
 
 /** 页尺寸；A4。 */
 const PAGE_INFOS: PageInfo[] = [
@@ -235,8 +251,8 @@ describe('SignatureService 覆盖层与详情', () => {
       const dialog = document.querySelector('.ofd-dialog');
       expect(dialog).not.toBeNull();
       expect(dialog!.textContent).toContain('未验证');
-      expect(dialog!.textContent).toContain('OFD R&W 测试用印章');
-      expect(dialog!.textContent).toContain('Test Certificate');
+      expect(dialog!.textContent).toContain(SEAL_NAME);
+      expect(dialog!.textContent).toContain(SIGNER_CN);
       expect(dialog!.textContent).toContain('本面板仅展示签章信息，未进行签名验证/证书链校验。');
       expect(dialog!.textContent).toContain('根证书链验证');
       expect(dialog!.textContent).toContain('证书链结果独立展示，不影响签名/完整性验证结果。');
@@ -253,9 +269,9 @@ describe('SignatureService 覆盖层与详情', () => {
     expect(dialog.textContent).not.toContain('签名有效');
 
     const detail = await viewer.getSignatureDetail('s1');
-    expect(detail.seal?.name).toBe('OFD R&W 测试用印章');
+    expect(detail.seal?.name).toBe(SEAL_NAME);
     expect(detail.seal?.image?.data?.byteLength).toBeGreaterThan(0);
-    expect(detail.signer?.certificate?.subjectAttributes?.cn).toBe('Test Certificate');
+    expect(detail.signer?.certificate?.subjectAttributes?.cn).toBe(SIGNER_CN);
     expect(detail.validation).toEqual({
       status: 'not-verified',
       note: '本面板仅展示签章信息，未进行签名验证/证书链校验。',
@@ -373,7 +389,8 @@ describe('SignatureService 覆盖层与详情', () => {
       download!.click();
       await vi.waitFor(() => expect(capture.downloads).toHaveLength(1));
       expect(capture.downloads[0]!.filename).toMatch(/\.der$/);
-      expect(capture.downloads[0]!.filename).toContain('Test Certificate');
+      // 文件名按签章者证书（夹具叶证书）CN 生成，而非报告中回显的 subject。
+      expect(capture.downloads[0]!.filename).toContain(SIGNER_CN);
       expect(capture.downloads[0]!.blob?.type).toBe('application/pkix-cert');
       expect((await capture.downloads[0]!.blob!.arrayBuffer()).byteLength).toBeGreaterThan(0);
     } finally {
@@ -393,13 +410,15 @@ describe('SignatureService 覆盖层与详情', () => {
       });
       const dialog = document.querySelector<HTMLElement>('.ofd-dialog')!;
       const img = dialog.querySelector<HTMLImageElement>('.ofd-seal-image img')!;
-      expect(img.alt).toContain('OFD R&W 测试用印章');
+      expect(img.alt).toContain(SEAL_NAME);
       expect(img.getAttribute('src')).toMatch(/^blob:/);
       expect(dialog.querySelector('.ofd-seal-image__caption')?.textContent).toContain('mm');
       expect(dialog.querySelector<HTMLElement>('.ofd-signature-badge')?.dataset.status).toBe(
         'not-verified',
       );
-      expect(dialog.textContent).toContain('时间戳未包含');
+      // 夹具 V4 SignedValue 自带时间戳令牌；详情未挂验证报告时只标注“含时间戳”，
+      // 既不解析也不验证（解析结果由验证报告的 timestamp 栏给出）。
+      expect(dialog.textContent).toContain('含时间戳（未解析、未验证）');
 
       document.querySelector<HTMLButtonElement>('.ofd-dialog__close')!.click();
       await vi.waitFor(() => expect(capture.revoked.length).toBeGreaterThan(0));
@@ -429,7 +448,7 @@ describe('SignatureService 覆盖层与详情', () => {
 
     const valid = await viewer.getSignatureDetail('s2');
     expect(valid.seal?.version).toBe('v5');
-    expect(valid.signer?.signedAt).toBe('2026-04-24T08:53:26.000Z');
+    expect(valid.signer?.signedAt).toBe(SIGNED_AT);
   });
 
   it('features.signatures=false 时覆盖层清空、方法抛 OFD_FEATURE_DISABLED', async () => {
@@ -495,8 +514,8 @@ describe('SignatureService 侧栏列表', () => {
       ).toEqual(['not-verified', 'not-verified', 'not-verified', 'not-verified', 'not-verified']);
 
       await vi.waitFor(() => {
-        expect(panel!.textContent).toContain('OFD R&W 测试用印章');
-        expect(panel!.textContent).toContain('Test Certificate');
+        expect(panel!.textContent).toContain(SEAL_NAME);
+        expect(panel!.textContent).toContain(SIGNER_CN);
       });
       expect(panel!.textContent).toContain('盖章');
       expect(panel!.textContent).toContain('签名');

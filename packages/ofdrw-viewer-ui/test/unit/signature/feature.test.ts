@@ -14,6 +14,7 @@ vi.mock('@ofdrw/ofdrw-viewer-engine', () => ({
   toOFDError: (error: unknown) => error,
 }));
 
+import { parseSignedValue } from '@ofdrw/ofdrw-viewer-crypto';
 import { OFDViewer } from '../../../src/viewer';
 import { SignatureService } from '../../../src/signature/service';
 import { readSignedValueFixture } from './fixtures';
@@ -162,7 +163,9 @@ describe('SignatureService 门控', () => {
       const second = await service.getSignatureDetail('only');
       expect(first).toBe(second);
       expect(getSignedValue).toHaveBeenCalledTimes(1);
-      expect(first.seal?.name).toBe('OFD R&W 测试用印章');
+      expect(first.seal?.name).toBe(
+        parseSignedValue(readSignedValueFixture('SignedValueV4.dat')).seal?.name,
+      );
     } finally {
       detach();
       service.destroy();

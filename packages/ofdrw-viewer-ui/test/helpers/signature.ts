@@ -1,51 +1,65 @@
 /**
  * 签章集成测试夹具。
  *
- * 真实 `SignedValue.dat` 来自仓库内的 ofdrw 测试资源；资源缺失时用例应显式
- * 跳过，而不是用空数据伪装通过。
+ * 真实 `SignedValue.dat` 取自版本库内已提交的加密夹具（`signed-sesv4.ofd` /
+ * `signed-sesv5.ofd`），与单元测试共用同一来源，不依赖不纳入版本管理的
+ * 仓库根 `references/` 目录。
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { SignatureEntryInfo } from '@ofdrw/ofdrw-viewer-engine';
+import { unzipSync } from 'fflate';
 
-/** 候选仓库根目录：包目录或仓库根。 */
-const CANDIDATE_ROOTS = [
-  process.cwd(),
-  resolve(process.cwd(), '../..'),
-  resolve(process.cwd(), '../../..'),
-];
+/** 夹具目录：`packages/ofdrw-viewer-ui/test/helpers/signature.ts` → crypto 夹具。 */
+const FIXTURE_DIR = resolve(
+  import.meta.dirname,
+  '../../../ofdrw-viewer-crypto/test/fixtures/crypto',
+);
 
-/** 资源相对路径。 */
-const RESOURCE_RELATIVE = 'references/ofdrw/ofdrw-gm/src/test/resources';
+/** 签章样本文件名 → 所属 OFD 包。 */
+const PACKAGE_BY_NAME = {
+  'SignedValueV4.dat': 'signed-sesv4.ofd',
+  'SignedValueV5.dat': 'signed-sesv5.ofd',
+} as const;
 
-/** 定位资源目录；不存在时返回 null。 */
-function resolveResourceDir(): string | null {
-  for (const root of CANDIDATE_ROOTS) {
-    const candidate = resolve(root, RESOURCE_RELATIVE);
-    if (existsSync(candidate)) return candidate;
-  }
-  return null;
+/** 已解压的 OFD 包缓存；键为包文件名。 */
+const packageCache = new Map<string, Record<string, Uint8Array>>();
+
+/**
+ * 解压签章样本所属的 OFD 包。
+ *
+ * @param packageName 包文件名。
+ * @returns 包内路径 → 文件字节。
+ */
+function readPackage(packageName: string): Record<string, Uint8Array> {
+  const cached = packageCache.get(packageName);
+  if (cached) return cached;
+  const entries = unzipSync(
+    new Uint8Array(readFileSync(resolve(FIXTURE_DIR, packageName))),
+  );
+  packageCache.set(packageName, entries);
+  return entries;
 }
-
-/** 资源目录；缺失时为 null。 */
-export const SIGNATURE_RESOURCE_DIR = resolveResourceDir();
-
-/** 是否存在真实签章样本。 */
-export const HAS_SIGNATURE_FIXTURES = SIGNATURE_RESOURCE_DIR !== null;
 
 /**
  * 读取真实 `SignedValue.dat`。
  *
  * @param name 文件名，例如 `SignedValueV4.dat`。
  * @returns 原始字节。
- * @throws {Error} 资源不存在时抛出，便于用例显式跳过。
+ * @throws {Error} 夹具缺失或包内没有签章值文件时抛出。
  */
-export function readSignedValueFixture(name: 'SignedValueV4.dat' | 'SignedValueV5.dat'): Uint8Array {
-  if (!SIGNATURE_RESOURCE_DIR) {
-    throw new Error(`未找到签章样本目录：${RESOURCE_RELATIVE}`);
+export function readSignedValueFixture(
+  name: keyof typeof PACKAGE_BY_NAME,
+): Uint8Array {
+  const entries = readPackage(PACKAGE_BY_NAME[name]);
+  const path = Object.keys(entries).find((entry) =>
+    /(^|\/)Signs\/[^/]+\/SignedValue\.dat$/.test(entry),
+  );
+  if (!path) {
+    throw new Error(`${PACKAGE_BY_NAME[name]} 包内缺少 SignedValue.dat`);
   }
-  return new Uint8Array(readFileSync(resolve(SIGNATURE_RESOURCE_DIR, name)));
+  return new Uint8Array(entries[path]!);
 }
 
 /** 构造签章摘要；戳记默认位于第 2 页。 */
