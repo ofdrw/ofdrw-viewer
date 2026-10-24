@@ -40,6 +40,7 @@ import {
   OFDViewerError,
   type ViewerErrorCode,
 } from './errors';
+import { DiagnosticPrinter, resolveDiagnosticLevel } from './diagnostics';
 import { EventBus, type ViewerEventBus } from './event-bus';
 import { FeatureGate } from './feature-gate';
 import {
@@ -54,7 +55,7 @@ import type {
   ViewerFeatures,
 } from './features';
 import { ViewerHistory, type ViewerHashState } from './history';
-import { createTranslator, type Translator } from './i18n';
+import { createTranslator, type MessageKey, type Translator } from './i18n';
 import { KeyboardController } from './keyboard';
 import {
   DEFAULT_MOBILE_RENDER_CONCURRENCY,
@@ -117,6 +118,7 @@ import {
   type CryptoVerifyOptions,
   type VerificationTarget,
 } from './crypto';
+import { UI_WARNING_CODES } from './diagnostics';
 
 /** 阅读器扩展：在实例创建/注册时执行，返回清理函数。 */
 export type ViewerExtension = (viewer: OFDViewer) => void | (() => void);
@@ -392,6 +394,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private pinchStartScale = 1;
   /** 已执行 pointer capture 的触点，用于手势结束释放。 */
   private readonly capturedPointers = new Set<number>();
+  /** 控制台诊断打印机；负责过滤、去重与 `console.warn`/`console.error` 输出。 */
+  private readonly diagnostics: DiagnosticPrinter;
   private readonly onWheel = (event: WheelEvent): void => this.handleWheel(event);
   private readonly onPointerDown = (event: PointerEvent): void => this.handlePointerDown(event);
   private readonly onPointerMove = (event: PointerEvent): void => this.handlePointerMove(event);
@@ -442,6 +446,12 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.elements.sidebar.hidden = true;
     this.elements.sidebarMask.hidden = true;
     this.translator = createTranslator(this.options.locale);
+    const debug = this.options.debug;
+    this.diagnostics = new DiagnosticPrinter({
+      console: debug?.console !== false,
+      ...(debug?.levels ? { levels: debug.levels } : {}),
+      ...(debug?.codes ? { codes: debug.codes } : {}),
+    });
     this.documentLoading = new DocumentLoadingOverlay({
       root: this.root,
       ownerDocument: this.ownerDocument,
@@ -454,7 +464,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
 
     this.eventBus = new EventBus<ViewerEventMap>({
       onListenerError: (error, event) => {
-        this.warn('W_UI_LISTENER', `事件 ${event} 的监听器抛出异常：${String(error)}`);
+        this.warn(UI_WARNING_CODES.W_UI_LISTENER, `事件 ${event} 的监听器抛出异常：${String(error)}`);
       },
     });
     // 引擎模块可能被测试替身替换（未导出总线）；此时降级为 Promise 驱动的计时。
@@ -469,7 +479,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         ? new EngineEventBus({
             onListenerError: (error, type) => {
               this.warn(
-                'W_ENGINE_EVENT',
+                UI_WARNING_CODES.W_ENGINE_EVENT,
                 `引擎事件 ${type} 的监听器抛出异常：${String(error)}`,
               );
             },
@@ -483,7 +493,12 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
           ...(this.engineEvents ? { eventBus: this.engineEvents } : {}),
         }) as unknown as Promise<EngineDocument>,
       ...(this.options.requestInit ? { requestInit: this.options.requestInit } : {}),
+      ...(this.options.fonts ? { font: this.options.fonts } : {}),
       onWarning: (warning) => this.reportWarning(warning),
+      // 字体下载期间把全屏 loading 的主文案切换为「正在加载字体…」：
+      // 打开流程会等字体就绪后才渲染，因此加载动画与字体加载同始同终。
+      onFontState: (state) =>
+        this.documentLoading.setStatusText(state === 'loading' ? 'loading.fonts' : 'loading.document'),
     });
     this.featureGate = new FeatureGate(this.options.features, {
       display: this.options.featureDisplay,
@@ -775,6 +790,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.openAbort?.abort();
     const abort = new AbortController();
     this.openAbort = abort;
+    // 新文档会话：控制台诊断的去重集合按文档重置。
+    this.diagnostics.reset();
     this.queue.cancelAll();
     this.patchDocument({ status: 'opening', source: null, origin: undefined });
     this.commit();
@@ -1176,6 +1193,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     if (this.reflowFrame !== null) cancelAnimationFrame(this.reflowFrame);
     for (const cleanup of this.extensionCleanups.splice(0)) this.safeCleanup(cleanup);
     this.appliedExtensions.clear();
+    // 先中止进行中的字体读取，再关闭文档。
+    this.controller.dispose();
     void this.controller.close();
     void this.releaseDecryptedContainer();
     void this.releaseSource();
@@ -1407,7 +1426,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     const request = this.getFullscreenRequestMethod();
     if (value && !request) {
       this.applyFullscreenFallback(true);
-      this.warn('W_FULLSCREEN_FALLBACK', '当前环境不支持原生全屏，已使用沉浸式回退');
+      this.warn(UI_WARNING_CODES.W_FULLSCREEN_FALLBACK, '当前环境不支持原生全屏，已使用沉浸式回退');
       return;
     }
     try {
@@ -1428,7 +1447,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       if (value) {
         this.applyFullscreenFallback(true);
         this.warn(
-          'W_FULLSCREEN_FALLBACK',
+          UI_WARNING_CODES.W_FULLSCREEN_FALLBACK,
           `原生全屏失败，已使用沉浸式回退：${error instanceof Error ? error.message : String(error)}`,
         );
         return;
@@ -1635,7 +1654,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       this.options.crypto?.onVerification?.(report);
     } catch (error) {
       this.warn(
-        'W_CRYPTO_VERIFICATION_CALLBACK',
+        UI_WARNING_CODES.W_CRYPTO_VERIFICATION_CALLBACK,
         `验证完成回调抛出异常：${error instanceof Error ? error.message : String(error)}`,
       );
     }
@@ -1674,7 +1693,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         await this.verify();
       } catch (error) {
         this.warn(
-          'W_CRYPTO_VERIFY_FAILED',
+          UI_WARNING_CODES.W_CRYPTO_VERIFY_FAILED,
           `重新验证失败：${error instanceof Error ? error.message : String(error)}`,
         );
       }
@@ -2139,7 +2158,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     }
     const viewport = page.getViewport({ dpi });
     this.warn(
-      'W_CANVAS_LIMIT',
+      UI_WARNING_CODES.W_CANVAS_LIMIT,
       `页面像素超过上限，已降低渲染 DPI 至 ${Math.round(dpi)}。`,
     );
     return {
@@ -2566,7 +2585,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
             this.patchDocument({ metadata });
             this.commit();
           })
-          .catch((error) => this.reportWarningError(error, 'W_METADATA', '文档属性读取失败')),
+          .catch((error) => this.reportWarningError(error, UI_WARNING_CODES.W_METADATA, '文档属性读取失败')),
       );
     }
     if (this.featureGate.isEnabled('outline')) {
@@ -2578,7 +2597,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
             this.patchDocument({ outline });
             this.commit();
           })
-          .catch((error) => this.reportWarningError(error, 'W_OUTLINE', '大纲读取失败')),
+          .catch((error) => this.reportWarningError(error, UI_WARNING_CODES.W_OUTLINE, '大纲读取失败')),
       );
     }
     if (this.featureGate.isEnabled('bookmarks')) {
@@ -2590,7 +2609,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
             this.patchDocument({ bookmarks });
             this.commit();
           })
-          .catch((error) => this.reportWarningError(error, 'W_BOOKMARKS', '书签读取失败')),
+          .catch((error) => this.reportWarningError(error, UI_WARNING_CODES.W_BOOKMARKS, '书签读取失败')),
       );
     }
     if (this.featureGate.isEnabled('signatures')) {
@@ -2602,7 +2621,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
             this.patchDocument({ signaturesSummary: entries });
             this.commit();
           })
-          .catch((error) => this.reportWarningError(error, 'W_SIGNATURE_ENTRIES', '签章列表读取失败')),
+          .catch((error) => this.reportWarningError(error, UI_WARNING_CODES.W_SIGNATURE_ENTRIES, '签章列表读取失败')),
       );
     }
     await Promise.allSettled(jobs);
@@ -2662,7 +2681,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     }
     void this.verify().catch((error: unknown) => {
       this.warn(
-        'W_CRYPTO_VERIFY_FAILED',
+        UI_WARNING_CODES.W_CRYPTO_VERIFY_FAILED,
         `自动验证失败：${error instanceof Error ? error.message : String(error)}`,
       );
     });
@@ -2759,14 +2778,42 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
 
   /** 报告 warning。 */
   private reportWarning(warning: ViewerWarning): void {
-    this.warn(warning.code, warning.message, warning.pageIndex);
+    this.warn(warning.code, warning.message, warning.pageIndex, warning.resourceId);
   }
 
-  /** 记录 warning 并触发回调/事件。 */
-  private warn(code: string, message: string, pageIndex?: number): void {
-    const warning: ViewerWarning = pageIndex === undefined ? { code, message } : { code, message, pageIndex };
+  /**
+   * 记录 warning 并触发回调/事件。
+   *
+   * 级别取自 `resolveDiagnosticLevel(code)`；控制台输出由 `DiagnosticPrinter` 过滤/去重，
+   * 回调与事件每次都触发。
+   *
+   * @param code 诊断码，例如 `W_GLYPH_MISSING`。
+   * @param message 诊断信息。
+   * @param pageIndex 关联页索引，0-based；与页面无关时省略。
+   * @param resourceId 关联资源/对象 ID；用于控制台诊断去重与定位。
+   */
+  private warn(
+    code: string,
+    message: string,
+    pageIndex?: number,
+    resourceId?: string,
+  ): void {
+    const warning: ViewerWarning = {
+      code,
+      message,
+      ...(pageIndex === undefined ? {} : { pageIndex }),
+      ...(resourceId === undefined ? {} : { resourceId }),
+    };
     this.patchUI({ warnings: [...this.state.ui.warnings, warning].slice(-100) });
     this.options.onWarning?.(warning);
+    this.diagnostics.print({
+      code,
+      level: resolveDiagnosticLevel(code),
+      message,
+      ...(pageIndex === undefined ? {} : { pageIndex }),
+      ...(resourceId === undefined ? {} : { resourceId }),
+      source: 'ui',
+    });
     this.emit('warning', warning);
     this.commit();
   }
@@ -2774,6 +2821,15 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /** 记录错误并触发回调/事件。 */
   private reportError(info: ViewerErrorInfo): void {
     this.options.onError?.(info);
+    this.diagnostics.print({
+      code: info.code,
+      level: 'error',
+      message: info.message,
+      ...(info.pageIndex === undefined ? {} : { pageIndex: info.pageIndex }),
+      ...(info.resourceId === undefined ? {} : { resourceId: info.resourceId }),
+      source: 'ui',
+      cause: info.cause,
+    });
     this.emit('error', info);
   }
 
@@ -2797,7 +2853,16 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     };
   }
 
-  /** 把 warning 错误转成 warning。 */
+  /**
+   * 把异常包装为一条 warning。
+   *
+   * 级别由 `code` 决定（`UI_WARNING_LEVELS` 映射，未登记按 `warn`），不随调用点变化；
+   * 实际打印统一走 {@link warn} 中的 `DiagnosticPrinter`。
+   *
+   * @param error 原始异常；文案只取 `message`，不打印堆栈。
+   * @param code 诊断码，例如 `W_METADATA`。
+   * @param message 失败阶段说明，例如“大纲读取失败”。
+   */
   private reportWarningError(error: unknown, code: string, message: string): void {
     this.warn(code, `${message}：${error instanceof Error ? error.message : String(error)}`);
   }
@@ -2807,7 +2872,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     try {
       cleanup();
     } catch (error) {
-      this.reportWarningError(error, 'W_UI_CLEANUP', '扩展清理失败');
+      this.reportWarningError(error, UI_WARNING_CODES.W_UI_CLEANUP, '扩展清理失败');
     }
   }
 
@@ -3185,6 +3250,17 @@ class DocumentLoadingOverlay {
     if (event.key === 'Enter' && !panel.contains(active)) {
       event.preventDefault();
     }
+  }
+
+  /**
+   * 切换状态主文案。
+   *
+   * 用于在打开流程中提示“正在加载字体…”，让用户知道较长的等待来自字体下载。
+   *
+   * @param key 文案键；由调用方传入 `loading.fonts` 或 `loading.document`。
+   */
+  setStatusText(key: MessageKey): void {
+    this.statusText.textContent = this.translator.t(key);
   }
 
   /** 刷新错误卡/按钮文案。 */

@@ -65,12 +65,27 @@ export const FIXTURES = {
   cryptoCombined: '/packages/ofdrw-viewer-crypto/test/fixtures/crypto/combined-password-encrypted.ofd',
   /** 真实 SESv4 签章（含时间戳）。 */
   cryptoSigned: '/packages/ofdrw-viewer-crypto/test/fixtures/crypto/signed-sesv4.ofd',
+  /** 签名条目缺 Type（仓库 ofd_pdf_match/draw_param_ref.ofd 原样副本），用于容错回归。 */
+  signatureNoType: '/packages/ofdrw-viewer-crypto/test/fixtures/crypto/signatures-no-type.ofd',
   /** 签名值被篡改：签名数学/摘要校验失败，用于 invalid 状态验收。 */
   cryptoTamperedSignature:
     '/packages/ofdrw-viewer-crypto/test/fixtures/crypto/negative-tampered-signature.ofd',
+  /** 外部未内嵌字体的 5 页中文发票（仓库 ofd_pdf_match/draw_param_ref.ofd 副本，生成于 test/acceptance/fixtures）。 */
+  externalFont: '/packages/ofdrw-viewer-ui/test/acceptance/fixtures/external-font.ofd',
+  /** 外部未内嵌字体的 2 页中文（鲁迅《拿来主义》）样本，作为 external-font.ofd 的备选。 */
+  externalFontBackup:
+    '/packages/ofdrw-viewer-ui/test/acceptance/fixtures/external-font-backup.ofd',
   /** 测试信任根证书。 */
   cryptoRoot: '/packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/root-ca.crt.pem',
 } as const;
+
+/** 字体来源参数：URL 必填，`family` 用于验证宿主声明的字体族名。 */
+export interface HarnessFontSource {
+  /** 字体文件 URL。 */
+  readonly url: string;
+  /** 宿主声明的字体族名。 */
+  readonly family?: string;
+}
 
 /** 打开参数。 */
 export interface OpenOptions {
@@ -102,6 +117,18 @@ export interface OpenOptions {
   readonly autoVerify?: boolean;
   /** 是否启用密码/签名验证能力；默认 true。 */
   readonly crypto?: boolean;
+  /**
+   * 字体配置；映射为 `fonts` 查询参数（`default=<url>`、`supplementary=<url>`，逗号分隔）。
+   *
+   * 每个 URL 都必须带查询串：Vite 静态服务对同一 URL 的第二次请求直接返回 304，
+   * 会让 `page.route` 的映射失效。
+   */
+  readonly fonts?: {
+    readonly default?: readonly HarnessFontSource[];
+    readonly supplementary?: readonly HarnessFontSource[];
+    /** 宿主追加的字体别名组；以 `aliases=<组分号分隔的逗号分隔名>` 形式传递。 */
+    readonly aliases?: readonly (readonly string[])[];
+  };
 }
 
 /**
@@ -126,7 +153,28 @@ export function viewerUrl(fixture: string, options: OpenOptions = {}): string {
   if (options.autoPrompt) params.set('prompt', '1');
   if (options.autoVerify !== undefined) params.set('autoVerify', options.autoVerify ? '1' : '0');
   if (options.crypto === false) params.set('crypto', '0');
+  if (options.fonts) {
+    const items = [
+      ...(options.fonts.default ?? []).map((source) => `default=${fontItem(source)}`),
+      ...(options.fonts.supplementary ?? []).map((source) => `supplementary=${fontItem(source)}`),
+    ];
+    if (options.fonts.aliases && options.fonts.aliases.length > 0) {
+      const groups = options.fonts.aliases.map((group) => group.join('+'));
+      params.set('aliases', groups.join(';'));
+    }
+    if (items.length > 0) params.set('fonts', items.join(','));
+  }
   return `/packages/ofdrw-viewer-ui/test/e2e/index.html?${params.toString()}`;
+}
+
+/**
+ * 把字体来源编码为 `fonts` 查询参数项。
+ *
+ * @param source 字体来源。
+ * @returns `url` 或 `url|family=<家族名>`。
+ */
+function fontItem(source: HarnessFontSource): string {
+  return source.family ? `${source.url}|family=${source.family}` : source.url;
 }
 
 /**

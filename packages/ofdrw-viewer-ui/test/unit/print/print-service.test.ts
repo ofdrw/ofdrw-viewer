@@ -11,6 +11,7 @@ import {
 } from '../../../src/print/print-document';
 import { isOFDViewerError } from '../../../src/errors';
 import { FakeHost } from '../export/fake-host';
+import { UI_WARNING_CODES } from '../../../src/diagnostics';
 
 let createObjectURL: ReturnType<typeof vi.fn>;
 let revokeObjectURL: ReturnType<typeof vi.fn>;
@@ -291,8 +292,8 @@ describe('打印进度与取消', () => {
     ).rejects.toMatchObject({ name: 'AbortError' });
 
     expect(progress[0]).toEqual({ current: 1, total: 1000 });
-    expect(warnings).toContain('W_OUTPUT_DPI_REDUCED');
-    expect(warnings).toContain('W_OUTPUT_LARGE_TASK');
+    expect(warnings).toContain(UI_WARNING_CODES.W_OUTPUT_DPI_REDUCED);
+    expect(warnings).toContain(UI_WARNING_CODES.W_OUTPUT_LARGE_TASK);
     expect(host.pages[0]!.exportImage).toHaveBeenCalledTimes(1);
     expect(host.pages[0]!.exportImage).toHaveBeenCalledWith(
       expect.objectContaining({ dpi: 96 }),

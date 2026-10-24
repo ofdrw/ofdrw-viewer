@@ -6,6 +6,7 @@ import {
   outlineTitles,
   resetDom,
 } from './helpers';
+import { UI_WARNING_CODES } from '../../../src/diagnostics';
 
 const outline: OutlineNode[] = [
   {
@@ -260,7 +261,7 @@ describe('OutlineView 大纲树', () => {
     expect(invalid.getAttribute('aria-disabled')).toBe('true');
     expect(invalid.closest('.ofd-outline__item')?.getAttribute('data-dest-invalid')).toBe('true');
     invalid.click();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('W_NAV_DEST'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(UI_WARNING_CODES.W_NAV_DEST));
     expect(viewer.getPageNumber()).toBe(3);
     expect(outlineTitles(panel).some((button) => button.textContent === '附录（越界目标）')).toBe(
       true,
@@ -308,7 +309,7 @@ describe('OutlineView 大纲树', () => {
     expect(invalid).toBeDefined();
     expect(invalid.closest('.ofd-outline__item')?.getAttribute('data-dest-invalid')).toBe('true');
     invalid.click();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('W_NAV_DEST'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(UI_WARNING_CODES.W_NAV_DEST));
     expect(viewer.getPageNumber()).toBe(2);
     expect(outlineTitles(panel).some((title) => title.textContent === '损坏目标')).toBe(true);
     viewer.destroy();

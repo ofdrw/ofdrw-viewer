@@ -78,9 +78,11 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 | `renderConcurrency` | `number` | 桌面 `2`，移动 `1` | 同时渲染页数 |
 | `updateHash` | `boolean` | `false` | 把页码/缩放/旋转/侧栏写入 URL hash |
 | `requestInit` | `RequestInit` | 无 | URL 来源的额外请求参数；只使用 `headers` |
+| `debug` | `DebugViewerOptions` | 控制台打印开启 | 诊断输出开关（`console`/`levels`/`codes`），见 [诊断与日志](#诊断与日志) |
 | `onWarning` | `(warning: ViewerWarning) => void` | 无 | 非阻断诊断回调 |
 | `onError` | `(error: ViewerErrorInfo) => void` | 无 | 打开/渲染/交互失败回调 |
 | `crypto` | `CryptoViewerOptions` | 默认启用 | 加密文档与验签配置 |
+| `fonts` | `ViewerFontOptions` | 无 | 字体配置（`default`/`supplementary`/`loader`/`aliases`），见下 |
 
 `container` 是唯一必填项。字符串选择器在构造时解析；找不到元素抛 `OFD_INVALID_OPTION`。
 
@@ -88,7 +90,7 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 
 ### `ResolvedViewerOptions`
 
-`ResolvedViewerOptions` 是内部展开默认值后的完整选项形状，字段与 `OFDViewerOptions` 相同，但除 `source`、`requestInit`、`onWarning`、`onError`、`crypto` 外均为必填。调用方通常不需要构造该类型；它用于需要读取解析结果或编写扩展的 TypeScript 场景。
+`ResolvedViewerOptions` 是内部展开默认值后的完整选项形状，字段与 `OFDViewerOptions` 相同，但除 `source`、`requestInit`、`debug`、`onWarning`、`onError`、`crypto`、`fonts` 外均为必填。调用方通常不需要构造该类型；它用于需要读取解析结果或编写扩展的 TypeScript 场景。
 
 ### 默认值与移动端差异
 
@@ -99,6 +101,75 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 - `maxCanvasPixels` 超限时通常静默降低该页渲染 DPI；只有连续降档仍失败时才产生 `W_CANVAS_LIMIT` warning，不能用它判断每一次降档。
 - `thumbnailCacheSize` 当前只被解析，未接入缩略图缓存实现，实际缓存数量固定；不要依赖该选项控制缩略图内存。
 - `updateHash` 默认关闭，避免嵌入场景污染宿主地址。启用后 hash 形如 `#page=3&zoom=page-width&rotation=90&sidebar=outline`，未知参数会保留；监听 `hashchange`/`popstate` 恢复视图，非法字段忽略。查询串 `?file=`/`?base64=` 与 hash 互不覆盖。
+
+### 诊断与日志
+
+诊断通过三条通道同时可达：`onWarning`/`onError` 回调、`warning`/`error` 事件（Web Component 为 `ofd-warning`/`ofd-error`）、浏览器控制台。回调与事件**每次都触发**；控制台输出默认开启、按下面的规则过滤与去重。完整设计见 [`警告与错误日志方案设计.md`](../../../docs/警告与错误日志方案设计.md)。
+
+#### 码表
+
+引擎与密码能力包的码由各自包提供（引擎 `WARNING_CODES`、crypto `CRYPTO_WARNING_CODES`），UI 不重写码；下表是 UI 自有码，导出为冻结常量 `UI_WARNING_CODES`（`UI_WARNING_CODES.W_METADATA` 可用类型检查拦截拼错，`Object.values(UI_WARNING_CODES)` 得到完整码表）。
+
+| 主题 | 码 | 触发点 |
+| --- | --- | --- |
+| 文档信息 | `W_METADATA`、`W_OUTLINE`、`W_BOOKMARKS` | 元数据/大纲/书签读取失败 |
+| 导航 | `W_NAV_DEST`、`W_NAV_JUMP`、`W_NAV_ZOOM` | 跳转目标无效、跳页/缩放失败 |
+| 缩略图 | `W_THUMBNAIL`、`W_THUMBNAIL_JUMP` | 缩略图渲染/跳转失败 |
+| 文本 | `W_TEXT_LOAD`、`W_TEXT_EMPTY`、`W_TEXT_UNSUPPORTED`、`W_TEXT_LAYER_LIMIT` | 文本层加载、空文本、不支持、超限 |
+| 查找 | `W_FIND_FAILED`、`W_FIND_LIMIT`、`W_FIND_PAGE`、`W_FIND_PAGE_LIMIT` | 查找失败/超限/翻页 |
+| 导出打印 | `W_EXPORT_PARTIAL`、`W_EXPORT_PAGE`、`W_OUTPUT_LARGE_TASK`、`W_OUTPUT_DPI_REDUCED` | 部分导出、单页失败、大任务、DPI 降档 |
+| 签名与附件 | `W_SIGNATURE_ASN1`、`W_SIGNATURE_RESOURCE`、`W_SIGNATURE_TIMESTAMP`、`W_SIGNATURE_ENTRIES`、`W_ATTACHMENT_RESOURCE` | ASN.1、资源、时间戳、条目读取、附件资源 |
+| 密码能力 | `W_CRYPTO_VERIFICATION_CALLBACK`、`W_CRYPTO_VERIFY_FAILED`、`W_CRYPTO_CERT_SOURCE_UNSUPPORTED` | 验证回调异常、自动/重新验证失败、根证书来源不支持 |
+| 界面 | `W_UI_LISTENER`、`W_UI_CLEANUP`、`W_ENGINE_EVENT`、`W_FULLSCREEN_FALLBACK` | 事件监听器异常、清理失败、引擎事件异常、全屏降级 |
+| 来源 | `W_QUERY_SOURCE` | 查询参数来源解析 |
+| 资源限制 | `W_CANVAS_LIMIT` | 画布降档仍失败 |
+
+引擎码（如 `W_FONT_MISSING`、`W_GLYPH_MISSING`）由引擎定义、UI 只转发，**不属于** `UI_WARNING_CODES`；错误码以 `OFDViewerError.code` 抛出，见下文错误与异常章节。
+
+#### 级别
+
+| 级别 | 语义 | 默认输出 |
+| --- | --- | --- |
+| `info` | 有诊断价值但不异常 | 不打印 |
+| `warn` | 可容忍、影响部分内容（缺字、缺字体、部分导出） | `console.warn` |
+| `error` | 阻断或操作失败（打开/渲染/加密失败等） | `console.error` |
+
+级别由码决定，而非调用点：`resolveDiagnosticLevel(code)` 按 `UI_WARNING_LEVELS` 映射取级别，未登记的码（含引擎/crypto 码与宿主扩展码）按 `warn`；`error` 级只来自 `onError` 链路。
+
+#### 控制台格式与去重
+
+```text
+[ofd-viewer] warning W_FONT_MISSING 字体缺失：FontName=宋体 {resourceId: 3}
+[ofd-viewer] warning W_GLYPH_MISSING 缺字：0x20BB7 {pageIndex: 0, resourceId: 12}
+[ofd-viewer] error OFD_CRYPTO_FAILED 读取文档加密信息失败：...
+```
+
+- 三个参数：`label`（`[ofd-viewer] warning|error <code>`）、`message`、`context`（只含 `pageIndex`，0-based，与 `resourceId`）；不打印 `cause` 堆栈，需要时用 `onError` 的 `cause`。
+- 去重键：warning 为 `code` + `pageIndex` + `resourceId`，error 为 `code` + `pageIndex`；同一文档会话内只打印一次，`open()` 时清空。千页文档不会刷屏，重新打开同一文档会再打印一次。
+- 前缀固定为 `[ofd-viewer] `，可在控制台过滤框输入 `[ofd-viewer]` 一次筛出全部诊断。
+
+#### `debug` 选项
+
+| 选项 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `debug.console` | `boolean` | `true` | 整体开关；`false` 时完全不打印，回调与事件不受影响 |
+| `debug.levels` | `readonly ('info'\|'warn'\|'error')[]` | 无（按级别默认输出） | 只打印列出的级别 |
+| `debug.codes` | `readonly string[]` | 无（不过滤码） | 只打印列出的码（引擎/crypto 码也可列） |
+
+````ts
+new OFDViewer({
+  container: '#viewer',
+  source: '/sample.ofd',
+  debug: {
+    console: false,                    // 整体关闭
+    // 或只关心字体问题：
+    // levels: ['warn', 'error'],
+    // codes: ['W_FONT_MISSING', 'W_GLYPH_MISSING'],
+  },
+});
+````
+
+过滤在去重**之前**判断：被过滤的诊断不占用去重键，后续放宽过滤（或同一码在放行配置下出现）时仍能打印。工具函数 `formatDiagnostic(diagnostic)` 返回同样的 `{ label, message, context }`，`DiagnosticPrinter` 可用于宿主自己的诊断管道。
 
 ### 国际化词条
 
@@ -115,6 +186,34 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 `source` 省略时，`open()` 依次检查显式参数、构造来源、`?file=`、`?base64=`；都没有时 `ready` 以 `OFD_INVALID_OPTION` 拒绝。详细解析规则见[通过 URI 参数预览](#通过-uri-参数预览)。
 
 `requestInit` 只对 URL 来源生效，且只读取 `headers`：先合并 `requestInit.headers`，再用来源对象自带 `headers` 覆盖（来源优先）。`credentials`、`mode`、`cache` 等字段不会转发，fetch 使用浏览器默认的 `same-origin` 凭据策略。
+
+### 字体配置
+
+`fonts` 与 `crypto` 同级：只在实例创建时读取，实例存在后修改需重新 `open()`。UI 负责把字体来源读取为字节，再映射到引擎选项：`fonts.default` → `defaultFonts`，`fonts.supplementary` → `supplementaryFonts`，`fonts.aliases` 以内置别名表为基准**追加**后传给引擎 `aliases`；`fonts.loader` 只在 UI 内使用。只传读取成功的来源，且只在结果非空时传字段，全部失败时不传，引擎按无字体处理。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `default` | `readonly FontSource[]` | 默认字体：文档字体完全缺省时的替代字体，优先级高于 `supplementary` |
+| `supplementary` | `readonly FontSource[]` | 补充字体：主字体存在但缺字时逐字形补齐 |
+| `loader` | `FontSourceLoader` | `path`/`filePath` 来源的读取器；未提供时这两类来源被跳过 |
+| `aliases` | `FontAliasTable` | 追加到引擎内置别名组的字体别名组 |
+
+`FontSource` 与 `CertificateSource` 同为四态：`{ data }`（已读好的字节）、`{ url, headers? }`（UI 用 `fetch` 读取，`headers` 与 `requestInit.headers` 合并，来源优先）、`{ path }`/`{ filePath }`（由 `loader` 读取）。只接受**完整字体文件**（单文件覆盖目标字符集，如 `.ttf`/`.otf`/`.woff2`），不接受 CSS 的 unicode-range 子集切片；同一 URL 在一次实例生命周期内只读取一次。
+
+读取失败（非 2xx、网络错误、缺少 `loader`、`loader` 返回 `null`、字节为空）只跳过该来源并通过 `onWarning`/`ofd-warning` 上报 `W_FONT_MISSING`，**只 warning、不上报 `error`、不阻断文档打开**。Web Component 另有 `fonts` property 与 `font-default`/`font-supplementary` 简写属性，见 [Web Component](#web-component)。
+
+```ts
+new OFDViewer({
+  container: '#viewer',
+  source: '/doc.ofd',
+  fonts: {
+    default: [{ url: '/fonts/NotoSerifSC-Regular.woff2', family: 'Noto Serif SC' }],
+    supplementary: [{ url: '/fonts/NotoSansSC-Regular.woff2' }],
+  },
+});
+```
+
+完整设计（格式兼容性、CDN 选型、安全边界）见 [`字体配置方案设计.md`](../../../docs/字体配置方案设计.md)。
 
 ### URL hash 同步
 
@@ -892,6 +991,8 @@ type CertificateInputLoader = (
 - `verify({ signatureIds?, signal? })` 只验证指定签名或全部签名；`signal` 取消本次验证。
 - `features.verification=false` 或 `crypto.enabled=false` 时 `verify()` 与 `openVerificationPanel()` 抛 `OFD_FEATURE_DISABLED`（`feature='verification'`）；旧报告失效。
 - 验证失败统一映射为 `OFD_CRYPTO_FAILED` 并保留 `cause`；取消映射为 `OFD_CRYPTO_CANCELLED`。
+- 打开阶段：加密检测（`inspect`）非取消失败同样映射为 `OFD_CRYPTO_FAILED`（错误码不变），但文案改为「读取文档加密信息失败：<detail>」，说明文档加密信息/包结构读取失败、与凭据无关；只有真正执行解密且凭据不匹配时才是「解密失败，请检查凭据后重试」。
+- 与凭据无关的结构问题不会阻断打开：`Signatures.xml` 中 `Signature` 缺 `Type`/`BaseLoc`（规范中 `Type` 可选）只影响该签名本身——`Type` 为空串、`BaseLoc` 为空串时验证层记 `SIGNATURE_BASELOC_INVALID`；`BaseLoc` 路径穿越等非法值仍抛 `CRYPTO_INVALID_PACKAGE`。
 
 ### `VerificationReport`
 
@@ -958,8 +1059,12 @@ type CertificateInputLoader = (
 | `theme` | `light`/`dark`/`auto` | 仅合法值生效 |
 | `locale` | 字符串 | 非空时生效 |
 | `sidebar` | 侧栏名 / 空 / `none` / `off` | 空、`none`、`off` 关闭侧栏；非法值忽略 |
+| `font-default` | 逗号分隔 URL | 默认字体简写，映射为 `fonts.default: [{ url }]` |
+| `font-supplementary` | 逗号分隔 URL | 补充字体简写，映射为 `fonts.supplementary: [{ url }]` |
 
 `src` 变化会重新打开文档；设置空 `src` 会关闭文档但保留元素。未连接 DOM 时设置属性不会创建实例，连接后按当前属性创建。
+
+`font-default`/`font-supplementary` 按英文逗号切分，逐项去除首尾空白并丢弃空项；属性缺失、空值或全部为空项时不传对应字段。两者都是 `observedAttributes`：值变化时**销毁并按当前属性重建**实例（与 `src` 的解绑重建语义一致），因此已加载的文档需要重新打开；属性是更具体的配置入口，设置时覆盖 `fonts` property 的同名字段，`loader`/`aliases` 仍来自 property。
 
 ### Property
 
@@ -969,8 +1074,9 @@ type CertificateInputLoader = (
 | `source` | `ViewerSource / null` | 复杂来源；优先于 `src` 属性；设为 `null` 关闭 |
 | `features` | `ViewerFeatures` | 功能补丁；设置时立即调用 `setFeatures`，不重建实例 |
 | `crypto` | `CryptoViewerOptions / undefined` | 密码能力配置；只在实例创建时读取，实例存在后修改不重建 |
+| `fonts` | `ViewerFontOptions / undefined` | 字体配置；只在实例创建时读取，实例存在后修改不重建 |
 
-`features` getter 返回补丁副本；`crypto` 在实例创建前设置才生效。
+`features` getter 返回补丁副本；`crypto` 与 `fonts` 在实例创建前设置才生效，且不重建实例。
 
 ### 方法
 
@@ -1122,7 +1228,7 @@ interface ViewerErrorOptions {
 | `OFD_CRYPTO_CREDENTIAL_REQUIRED` | 无预置凭据且 `autoPrompt=false` |
 | `OFD_CRYPTO_CANCELLED` | 用户取消凭据或验证 |
 | `OFD_CRYPTO_UNSUPPORTED` | 加密文档在密码能力关闭时打开、`setRootCertificates()` 等直接密码能力调用；`verification` 关闭时先由功能守卫拦截 |
-| `OFD_CRYPTO_FAILED` | 解密/验签/根证书加载失败 |
+| `OFD_CRYPTO_FAILED` | 解密/验签/根证书加载失败，以及打开阶段的加密信息读取失败（文案区分两者，错误码不变） |
 
 `OFD_FEATURE_DISABLED` 常量值为字符串 `'OFD_FEATURE_DISABLED'`。
 

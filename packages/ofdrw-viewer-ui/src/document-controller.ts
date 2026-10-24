@@ -14,6 +14,8 @@ import type {
   BookmarkItem,
   DocumentMetadata,
   DocumentPermissions,
+  FontAliasTable,
+  FontInput,
   OFDOpenOptions,
   OFDSource,
   OutlineNode,
@@ -33,6 +35,12 @@ import type { ViewerWarning } from './state';
 import type { ViewerSource } from './types';
 import type { ViewerOrigin } from './state';
 import { OFDViewerError } from './errors';
+import {
+  composeFontAliases,
+  FontSourceResolver,
+  type FontSource,
+  type ViewerFontOptions,
+} from './font';
 import { HttpByteSource } from './source/http-byte-source';
 
 /** 引擎渲染任务的最小结构。 */
@@ -103,6 +111,9 @@ export interface OpenedDocumentInfo {
 }
 
 /** 文档控制器选项。 */
+/** 字体加载状态：`loading` 正在读取，`ready` 已结束（成功或失败）。 */
+export type FontLoadState = 'loading' | 'ready';
+
 export interface DocumentControllerOptions {
   /** 引擎打开工厂；默认 `OFDDocument.open`。 */
   readonly openDocument?: (options: OFDOpenOptions) => Promise<EngineDocument>;
@@ -110,6 +121,16 @@ export interface DocumentControllerOptions {
   readonly requestInit?: RequestInit;
   /** 引擎 warning 回调。 */
   readonly onWarning?: (warning: ViewerWarning) => void;
+  /** 字体配置：默认/补充字体、path/filePath 加载器与追加别名组。 */
+  readonly font?: ViewerFontOptions;
+  /**
+   * 字体加载状态回调。
+   *
+   * `loading` 在开始读取字体时触发，`ready` 在字体解析结束（含失败、取消）时触发。
+   * 阅读器据此把加载动画文案切换为「正在加载字体…」，让用户知道等待来自字体下载。
+   * 未声明任何字体来源时不会触发。
+   */
+  readonly onFontState?: (state: FontLoadState) => void;
 }
 
 /** 规范化后的来源与原始来源信息。 */
@@ -307,12 +328,18 @@ export class DocumentController {
   private permissionsPromise: Promise<DocumentPermissions> | null = null;
   private attachmentsPromise: Promise<readonly AttachmentInfo[]> | null = null;
   private signatureEntriesPromise: Promise<readonly SignatureEntryInfo[]> | null = null;
+  /** 字体来源解析器；创建时按 `font.loader` 与 `requestInit` 构造一次。 */
+  private readonly fonts: FontSourceResolver;
 
   /**
-   * @param options 打开工厂、请求参数与 warning 回调。
+   * @param options 打开工厂、请求参数、warning 回调与字体配置。
    */
   constructor(options: DocumentControllerOptions = {}) {
     this.options = options;
+    this.fonts = new FontSourceResolver({
+      ...(options.font?.loader ? { loader: options.font.loader } : {}),
+      ...(options.requestInit ? { requestInit: options.requestInit } : {}),
+    });
   }
 
   /** 当前引擎文档；未打开为 null。 */
@@ -421,6 +448,19 @@ export class DocumentController {
    * @param signal 外部取消信号。
    * @returns 打开结果。
    */
+  /**
+   * 判断是否声明了任何字体来源。
+   *
+   * 只读取已配置的选项，不触发 I/O；为 false 时打开流程保持零字体等待开销。
+   *
+   * @returns 声明了 default 或 supplementary 来源时为 true。
+   */
+  private hasFontSources(): boolean {
+    const font = this.options.font;
+    if (!font) return false;
+    return (font.default?.length ?? 0) > 0 || (font.supplementary?.length ?? 0) > 0;
+  }
+
   private async openWithOptions(
     normalized: OFDSource,
     extra: { readonly source: OFDSource; readonly container?: VirtualContainer },
@@ -434,8 +474,20 @@ export class DocumentController {
       this.options.openDocument ??
       ((options: OFDOpenOptions) =>
         OFDDocument.open(options) as unknown as Promise<EngineDocument>);
+    // 字体与文档打开并行准备，二者都就绪后才真正打开：首次渲染即带完整字体，
+    // 不出现「先渲染缺字页面、字体到达后再跳变」的中间态。字体读取本身不阻塞文档
+    // 解析，节省的是等待时间而非正确性。
+    const hasFonts = this.hasFontSources();
+    if (hasFonts) this.options.onFontState?.('loading');
+    let fonts: Awaited<ReturnType<DocumentController['resolveFonts']>> = {};
+    try {
+      fonts = await this.resolveFonts(signal);
+    } finally {
+      if (hasFonts) this.options.onFontState?.('ready');
+    }
     const document = await openDocument({
       ...extra,
+      ...fonts,
       ...(this.options.onWarning ? { onWarning: this.options.onWarning } : {}),
       ...(signal ? { signal } : {}),
     });
@@ -453,6 +505,49 @@ export class DocumentController {
       document,
       source: normalized,
       pageCount: document.pageCount,
+    };
+  }
+
+  /**
+   * 解析字体配置为引擎打开参数片段。
+   *
+   * 只把非空结果作为 `defaultFonts`/`supplementaryFonts` 传入，避免空数组触发引擎多余的
+   * 加载分支；未配置 `font` 时返回空对象。单个来源读取失败只通过 `onWarning` 报
+   * `W_FONT_MISSING`，不抛错、不阻断打开；本次 open 被取消时返回空对象（由调用方按
+   * 取消流程处理）。
+   *
+   * @param signal 本次 open 的取消信号。
+   * @returns `{ defaultFonts?, supplementaryFonts?, aliases? }`；无可用字体时为空对象。
+   */
+  private async resolveFonts(
+    signal: AbortSignal | undefined,
+  ): Promise<{
+    defaultFonts?: readonly FontInput[];
+    supplementaryFonts?: FontInput[];
+    aliases?: FontAliasTable;
+  }> {
+    const font = this.options.font;
+    if (!font) return {};
+    const report = (source: FontSource, error: unknown): void => {
+      // 取消导致的失败不再上报：打开流程本身会以 AbortError 结束。
+      if (isAbortError(error) || signal?.aborted) return;
+      this.options.onWarning?.({
+        code: 'W_FONT_MISSING',
+        message: `字体读取失败（${describeFontSource(source)}）：${describeError(error)}`,
+      });
+    };
+    const [defaultFonts, supplementaryFonts] = await Promise.all([
+      this.fonts.resolve(font.default ?? [], signal, report),
+      this.fonts.resolve(font.supplementary ?? [], signal, report),
+    ]);
+    if (signal?.aborted) return {};
+    return {
+      ...(defaultFonts.length > 0 ? { defaultFonts } : {}),
+      ...(supplementaryFonts.length > 0 ? { supplementaryFonts } : {}),
+      // 追加语义：宿主别名组与内置别名组合并后再交给引擎。
+      ...(font.aliases && font.aliases.length > 0
+        ? { aliases: composeFontAliases(font.aliases) }
+        : {}),
     };
   }
 
@@ -568,9 +663,22 @@ export class DocumentController {
     return this.requireDocument().getSignedValue(signatureId);
   }
 
-  /** 关闭文档并清缓存；可重复调用。 */
+  /**
+   * 关闭文档并清缓存；可重复调用、可再次打开。
+   *
+   * 字体缓存不在关闭时清理，重新打开同一文档可复用已读取的字体字节。
+   */
   async close(): Promise<void> {
     await this.closeInternal();
+  }
+
+  /**
+   * 释放控制器：中止进行中的字体读取并清空字体缓存。
+   *
+   * 不关闭已打开的文档，文档由 `close()`/`destroy()` 的调用方负责。
+   */
+  dispose(): void {
+    this.fonts.dispose();
   }
 
   /** 关闭实现；递增 token 使进行中的打开结果失效。 */
@@ -607,4 +715,28 @@ export class DocumentController {
     }
     return this.doc;
   }
+}
+
+/**
+ * 生成字体来源的诊断描述；只含 URL/路径，不含字体字节。
+ *
+ * @param source 字体来源。
+ * @returns 形如 `url=<url>` / `path=<path>` / `filePath=<filePath>` / `data` 的描述。
+ */
+function describeFontSource(source: FontSource): string {
+  if (typeof source !== 'object' || source === null) return 'invalid';
+  if ('url' in source) return `url=${source.url}`;
+  if ('path' in source) return `path=${source.path}`;
+  if ('filePath' in source) return `filePath=${source.filePath}`;
+  return 'data';
+}
+
+/**
+ * 提取错误摘要，用于 warning 文案。
+ *
+ * @param error 任意错误。
+ * @returns 错误消息；非 Error 时转为字符串。
+ */
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

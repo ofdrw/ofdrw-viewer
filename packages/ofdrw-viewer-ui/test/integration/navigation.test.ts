@@ -19,6 +19,7 @@ import { getNavigationServices } from '../../src/views/nav';
 import { NAVIGATION_WARNING_EVENT } from '../../src/views/shared';
 import { installDomEnvironment } from '../helpers/environment';
 import { openViewer, type EngineOpenMock } from '../helpers/viewer';
+import { UI_WARNING_CODES } from '../../src/diagnostics';
 
 const openMock = engineMocks.open as unknown as EngineOpenMock;
 
@@ -137,7 +138,7 @@ describe('导航集成', () => {
       .find((element) => element.textContent === '无效目标')!;
     expect(invalidTitle.getAttribute('aria-disabled')).toBe('true');
     invalidTitle.click();
-    expect(warnings.some((warning) => warning.code === 'W_NAV_DEST')).toBe(true);
+    expect(warnings.some((warning) => warning.code === UI_WARNING_CODES.W_NAV_DEST)).toBe(true);
     expect(viewer.getPageNumber()).toBe(3);
 
     // 书签：按 XML 顺序渲染并跳转。
@@ -199,14 +200,16 @@ describe('导航集成', () => {
   });
 
   it('引擎缺少 getOutline/getBookmarks 时显示 unsupported 空态且阅读不中断', async () => {
+    // 控制台诊断默认开启（见 console-diagnostics.test.ts），此处关闭以断言不影响阅读。
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const { viewer } = await openViewer(openMock, {
-      pageCount: 2,
-      omit: { outline: true, bookmarks: true },
-    });
+    const { viewer } = await openViewer(
+      openMock,
+      { pageCount: 2, omit: { outline: true, bookmarks: true } },
+      { debug: { console: false } },
+    );
     await vi.waitFor(() =>
       expect(
-        viewer.getState().ui.warnings.some((warning) => warning.code === 'W_OUTLINE'),
+        viewer.getState().ui.warnings.some((warning) => warning.code === UI_WARNING_CODES.W_OUTLINE),
       ).toBe(true),
     );
     expect(viewer.getState().document.outline).toBeUndefined();

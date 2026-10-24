@@ -235,7 +235,9 @@ test('取消打开立即回空态，无错误卡/toast，且关闭已打开文�
     .poll(() => page.evaluate(() => window.__viewer?.getState().document.status ?? null))
     .toBe('closed');
   expect(await page.evaluate(() => window.__viewer?.getPageCount() ?? -1)).toBe(0);
-  await expectNoPageErrors(page, issues);
+  await expectNoPageErrors(page, issues, {
+    allowedDiagnostics: [/^\[ofd-viewer\] error OFD_ENTRY_NOT_FOUND /],
+  });
 });
 
 test('打开失败显示全屏错误卡；重试后成功打开', async ({ page, issues }) => {
@@ -262,7 +264,10 @@ test('打开失败显示全屏错误卡；重试后成功打开', async ({ page,
   await expect(error).toBeHidden();
   await expect(page.locator('.ofd-viewer__loading')).toBeHidden();
   expect(await page.evaluate(() => window.__viewer?.getPageCount() ?? 0)).toBeGreaterThan(0);
-  await expectNoPageErrors(page, issues, { windowErrors: [/OFDError/] });
+  await expectNoPageErrors(page, issues, {
+    windowErrors: [/OFDError/],
+    allowedDiagnostics: [/^\[ofd-viewer\] error OFD_INVALID_PACKAGE /],
+  });
 });
 
 test('错误卡后公开 open 快速打开新文档：退出模态并恢复工具栏', async ({ page, issues }) => {
@@ -305,7 +310,10 @@ test('错误卡后公开 open 快速打开新文档：退出模态并恢复工�
   // 工具栏恢复可点击：打开侧栏。
   await page.locator('[data-ofd-control="sidebar"]').click();
   await expect(page.locator('.ofd-viewer__sidebar')).toBeVisible();
-  await expectNoPageErrors(page, issues, { windowErrors: [/OFDError/] });
+  await expectNoPageErrors(page, issues, {
+    windowErrors: [/OFDError/],
+    allowedDiagnostics: [/^\[ofd-viewer\] error OFD_INVALID_PACKAGE /],
+  });
 });
 
 test('全屏错误卡背景 inert，Tab 焦点锁在重试/关闭，Enter 不改变背景', async ({ page, issues }) => {
@@ -341,7 +349,10 @@ test('全屏错误卡背景 inert，Tab 焦点锁在重试/关闭，Enter 不改
   await expect(error).toBeHidden();
   await expect(toolbar).not.toHaveAttribute('inert', '');
   await expect(body).not.toHaveAttribute('inert', '');
-  await expectNoPageErrors(page, issues, { windowErrors: [/OFDError/] });
+  await expectNoPageErrors(page, issues, {
+    windowErrors: [/OFDError/],
+    allowedDiagnostics: [/^\[ofd-viewer\] error OFD_INVALID_PACKAGE /],
+  });
 });
 
 test('首次页面渲染 >150ms 显示骨架 + spinner，结束后静默隐藏', async ({ page, issues }) => {
@@ -561,7 +572,14 @@ test('缩略图渲染失败显示灰色占位，点击重试再次触发失败',
   await target.click();
   await expect.poll(warnings, { timeout: 20_000 }).toBeGreaterThan(before);
   await expect(target).toHaveAttribute('data-state', 'failed');
-  await expectNoPageErrors(page, issues);
+  // 该夹具的第 3 页内容缺失：打开时只报 OFD_ENTRY_NOT_FOUND；
+  // 缩略图重试会为同一页上报 OFD_RENDER_FAILED（故意触发），两者显式放行。
+  await expectNoPageErrors(page, issues, {
+    allowedDiagnostics: [
+      /^\[ofd-viewer\] error OFD_ENTRY_NOT_FOUND /,
+      /^\[ofd-viewer\] error OFD_RENDER_FAILED /,
+    ],
+  });
 });
 
 test('主页面与缩略图事件归属隔离', async ({ page, issues }) => {
@@ -725,5 +743,8 @@ test('axe 扫描全屏错误态 0 serious/critical', async ({ page, issues }) =>
   await page.addScriptTag({ path: 'test/e2e/vendor/axe.min.js' });
   const errorViolations = await scanAxe(page, '.ofd-viewer__loading-error');
   expect(errorViolations, JSON.stringify(errorViolations)).toEqual([]);
-  await expectNoPageErrors(page, issues, { windowErrors: [/OFDError/] });
+  await expectNoPageErrors(page, issues, {
+    windowErrors: [/OFDError/],
+    allowedDiagnostics: [/^\[ofd-viewer\] error OFD_INVALID_PACKAGE /],
+  });
 });

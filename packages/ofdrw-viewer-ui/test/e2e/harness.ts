@@ -92,6 +92,66 @@ const rootCertificate = params.get('root');
 const autoPrompt = params.get('prompt') === '1';
 const autoVerify = params.get('autoVerify') !== '0';
 const cryptoEnabled = params.get('crypto') !== '0';
+const rawFonts = params.get('fonts');
+
+/** 测试用字体来源。 */
+interface HarnessFontSource {
+  readonly url: string;
+  readonly family?: string;
+}
+
+/**
+ * 解析字体配置参数。
+ *
+ * 每个来源形如 `default=http://…`、`supplementary=http://…`（逗号分隔同类来源），
+ * 可追加 `|family=<字体族名>` 验证宿主声明；空值（`fonts=`）表示不配置字体，
+ * 行为与未引入 `fonts` 时一致。
+ *
+ * @param raw `fonts` 查询参数。
+ * @returns 阅读器字体配置；未提供或为空时 undefined。
+ */
+function parseFonts(raw: string | null): { default?: HarnessFontSource[]; supplementary?: HarnessFontSource[] } | undefined {
+  if (!raw) return undefined;
+  const groups: { default: HarnessFontSource[]; supplementary: HarnessFontSource[] } = {
+    default: [],
+    supplementary: [],
+  };
+  for (const item of raw.split(',')) {
+    const [kind, ...rest] = item.split('=');
+    const [urlPart, ...modifiers] = rest.join('=').trim().split('|');
+    const url = urlPart?.trim() ?? '';
+    if (!url) continue;
+    const family = modifiers
+      .map((modifier) => /^family=(.*)$/.exec(modifier))
+      .find((match) => match !== null)?.[1];
+    const source: HarnessFontSource = family ? { url, family } : { url };
+    if (kind === 'default') groups.default.push(source);
+    else if (kind === 'supplementary') groups.supplementary.push(source);
+  }
+  if (groups.default.length === 0 && groups.supplementary.length === 0) return undefined;
+  return {
+    ...(groups.default.length > 0 ? { default: groups.default } : {}),
+    ...(groups.supplementary.length > 0 ? { supplementary: groups.supplementary } : {}),
+  };
+}
+
+const fonts = parseFonts(rawFonts);
+const rawAliases = params.get('aliases');
+/** 宿主追加别名组：`a+b;c+d` 形式。 */
+const fontAliases =
+  rawAliases && fonts
+    ? rawAliases
+        .split(';')
+        .map((group) => group.split('+').map((name) => name.trim()).filter(Boolean))
+        .filter((group) => group.length > 0)
+    : undefined;
+const fontOptions =
+  fonts === undefined
+    ? undefined
+    : {
+        ...fonts,
+        ...(fontAliases && fontAliases.length > 0 ? { aliases: fontAliases } : {}),
+      };
 
 const events: HarnessEvent[] = [];
 const errors: string[] = [];
@@ -107,6 +167,7 @@ const viewer = new OFDViewer({
   locale: params.get('locale') === 'en-US' ? 'en-US' : 'zh-CN',
   features,
   ...(featureDisplay ? { featureDisplay } : {}),
+  ...(fontOptions === undefined ? {} : { fonts: fontOptions }),
   crypto: cryptoEnabled
     ? {
         ...(password ? { credentials: { kind: 'password' as const, password, ...(userName ? { userName } : {}) } } : {}),

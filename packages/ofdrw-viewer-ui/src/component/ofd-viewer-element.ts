@@ -12,6 +12,7 @@ import {
   isTheme,
   isUsableSource,
   mergeFeatures,
+  readFontAttribute,
   readNumber,
   readRotationAttribute,
   readScaleAttribute,
@@ -28,7 +29,9 @@ import type {
   CryptoViewerOptions,
   ExportOfdOptions,
   ExportOfdResult,
+  FontSource,
   VerificationReport,
+  ViewerFontOptions,
   ViewerSource,
 } from '../index';
 
@@ -41,6 +44,8 @@ const OBSERVED_ATTRIBUTES = [
   'theme',
   'locale',
   'sidebar',
+  'font-default',
+  'font-supplementary',
 ] as const;
 
 /** 自定义元素标签名。 */
@@ -73,6 +78,9 @@ export class OFDViewerElement extends HTMLElement {
 
   /** 密码能力配置；创建实例时读取，实例存在后修改不重建。 */
   private cryptoValue: CryptoViewerOptions | undefined;
+
+  /** 字体配置；创建实例时读取，实例存在后修改不重建。 */
+  private fontValue: ViewerFontOptions | undefined;
 
   /** 取消核心事件订阅。 */
   private unbindEvents: (() => void) | null = null;
@@ -112,6 +120,15 @@ export class OFDViewerElement extends HTMLElement {
 
   set crypto(value: CryptoViewerOptions | undefined) {
     this.cryptoValue = value;
+  }
+
+  /** 字体配置；实例创建前设置生效。 */
+  get fonts(): ViewerFontOptions | undefined {
+    return this.fontValue;
+  }
+
+  set fonts(value: ViewerFontOptions | undefined) {
+    this.fontValue = value;
   }
 
   /** 当前复杂来源 property；未设置时为 null。 */
@@ -154,6 +171,12 @@ export class OFDViewerElement extends HTMLElement {
     newValue: string | null,
   ): void {
     if (oldValue === newValue) return;
+    // 字体简写属性只在创建实例时生效：变更后销毁并按新属性重建（与 src 行为一致）。
+    if (name === 'font-default' || name === 'font-supplementary') {
+      this.destroyViewer();
+      this.ensureViewer();
+      return;
+    }
     if (name === 'src') {
       if (newValue === null || newValue.trim() === '') {
         this.sourceValue = null;
@@ -304,6 +327,7 @@ export class OFDViewerElement extends HTMLElement {
     const theme = this.getAttribute('theme');
     const locale = this.getAttribute('locale');
     const sidebar = readSidebarAttribute(this);
+    const fonts = this.resolveFonts();
     this.instance = new OFDViewer({
       container: this,
       ...(source === null ? {} : { source }),
@@ -316,6 +340,7 @@ export class OFDViewerElement extends HTMLElement {
       ...(Object.keys(this.featurePatch).length > 0 ? { features: this.featurePatch } : {}),
       ...(this.display === undefined ? {} : { featureDisplay: this.display }),
       ...(this.cryptoValue === undefined ? {} : { crypto: this.cryptoValue }),
+      ...(fonts === undefined ? {} : { fonts }),
     });
     // 省略来源且页面无查询参数时 ready 会拒绝；错误卡已由核心展示，这里避免
     // 未处理的 Promise rejection。
@@ -337,6 +362,27 @@ export class OFDViewerElement extends HTMLElement {
     if (isUsableSource(this.sourceValue)) return this.sourceValue;
     const attribute = this.getAttribute('src');
     return attribute && attribute.trim() !== '' ? attribute : null;
+  }
+
+  /**
+   * 合并 `fonts` property 与两个字体简写属性。
+   *
+   * property 的 `default`/`supplementary` 由属性覆盖（属性是更具体的配置入口），
+   * `loader`/`aliases` 只来自 property；两者都没有时返回 undefined，保持未引入
+   * `fonts` 时的行为。
+   *
+   * @returns 字体配置；没有任何字体配置时 undefined。
+   */
+  private resolveFonts(): ViewerFontOptions | undefined {
+    const defaults = readFontAttribute(this, 'font-default');
+    const supplementary = readFontAttribute(this, 'font-supplementary');
+    const base = this.fontValue;
+    if (defaults === undefined && supplementary === undefined) return base;
+    return {
+      ...base,
+      ...(defaults === undefined ? {} : { default: defaults }),
+      ...(supplementary === undefined ? {} : { supplementary }),
+    };
   }
 
   /** 打开来源；未连接时等待连接后由 `ensureViewer` 读取。 */

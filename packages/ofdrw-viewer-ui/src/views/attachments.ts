@@ -27,6 +27,7 @@ import type { ViewerFeature } from '../features';
 import type { Translator } from '../i18n';
 import type { ViewerOrigin, ViewerState } from '../state';
 import { createEmptyState, ensureNavigationStyle, reportNavigationWarning } from './shared';
+import { UI_WARNING_CODES } from '../diagnostics';
 
 /** 附件视图依赖的阅读器接口；`OFDViewer` 结构兼容。 */
 export interface AttachmentViewer {
@@ -461,7 +462,7 @@ export class AttachmentView {
   private reportError(message: string): void {
     if (this.destroyed) return;
     this.showStatus(message, 'warning');
-    reportNavigationWarning(this.viewer, 'W_ATTACHMENT_RESOURCE', message);
+    reportNavigationWarning(this.viewer, UI_WARNING_CODES.W_ATTACHMENT_RESOURCE, message);
   }
 }
 

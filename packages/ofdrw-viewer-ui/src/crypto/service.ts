@@ -39,6 +39,7 @@ import { getUIShell } from '../ui';
 import { CredentialDialog } from './credentials-dialog';
 import { VerificationPanel } from './panel';
 import { createCryptoText, type CryptoText } from './text';
+import { UI_WARNING_CODES } from '../diagnostics';
 
 /**
  * 验证报告失效事件名。
@@ -277,7 +278,8 @@ export class CryptoService {
   /**
    * 打开前检测并（按需）解密。
    *
-   * 检测非取消失败时抛 `OFD_CRYPTO_FAILED` 并保留 cause；加密检测成功但
+   * 检测非取消失败时抛 `OFD_CRYPTO_FAILED` 并保留 cause（文案为“加密信息读取失败”，
+   * 不含凭据指引）；加密检测成功但
    * 凭据缺失/取消/解密失败时抛 UI 错误，不打开文档。
    *
    * @param source 已规范化的引擎来源；调用方负责 URL → 字节源，仅规范化一次。
@@ -307,11 +309,12 @@ export class CryptoService {
         });
       }
       // inspect 非取消失败一律作为 crypto 打开失败暴露；不再把未知包回退给
-      // 引擎，避免畸形 ZIP/加密元数据错误被通用包错误覆盖。
+      // 引擎，避免畸形 ZIP/加密元数据错误被通用包错误覆盖。此时尚未涉及凭据，
+      // 文案必须指向“加密信息读取失败”，不能引导用户反复输入密码。
       const detail = error instanceof Error ? error.message : String(error);
       throw new OFDViewerError(
         'OFD_CRYPTO_FAILED',
-        `${this.text.credentialDecryptFailed}：${detail}`,
+        `${this.text.cryptoInspectFailed}：${detail}`,
         { cause: error },
       );
     }
@@ -951,7 +954,7 @@ export class CryptoService {
   /** 根证书单项失败只 warning。 */
   private warnRootSource(root: CertificateSource): void {
     this.host.warnCrypto(
-      'W_CRYPTO_CERT_SOURCE_UNSUPPORTED',
+      UI_WARNING_CODES.W_CRYPTO_CERT_SOURCE_UNSUPPORTED,
       `${this.text.rootsInvalid}：${describeRootSource(root)}`,
     );
   }

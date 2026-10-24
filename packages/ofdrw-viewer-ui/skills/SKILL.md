@@ -97,7 +97,7 @@ viewer.destroy();
 
 ## 网络与文件获取委托（UI 侧）
 
-在浏览器中，UI 是 OFD 网络读取的唯一入口：URL 字符串与 `{ url, headers? }` 在打开时被规范化为一个 `HttpByteSource`，crypto 检测与 engine 渲染共用同一实例，只探测/读取一次；`File`/`Blob`/`ArrayBuffer`/`Uint8Array` 不经过网络，直接交给 engine。引擎包不再接受 URL，也不代替宿主读取字体文件；字体字节同样由宿主提供。设计背景与分层边界见 [网络获取委托设计](../../../docs/网络获取委托设计.md)，完整选项见 [API.md 构造选项](./API.md#ofdvieweroptions)。
+在浏览器中，UI 是 OFD 网络读取的唯一入口：URL 字符串与 `{ url, headers? }` 在打开时被规范化为一个 `HttpByteSource`，crypto 检测与 engine 渲染共用同一实例，只探测/读取一次；`File`/`Blob`/`ArrayBuffer`/`Uint8Array` 不经过网络，直接交给 engine。引擎包不再接受 URL；字体字节也由 UI 按 `fonts` 配置读取后交给引擎，见 [字体配置](#字体配置)。设计背景与分层边界见 [网络获取委托设计](../../../docs/网络获取委托设计.md)，完整选项见 [API.md 构造选项](./API.md#ofdvieweroptions)。
 
 ### URL 来源与鉴权
 
@@ -165,6 +165,36 @@ https://viewer.example.com/?base64=UEsDBBQAAAAI
 ## 文档来源
 
 `source` 支持 `File`/`Blob`、`ArrayBuffer`/`Uint8Array`、URL 字符串、`{ url, headers? }`。切换文档直接 `await viewer.open(nextSource)`；`await viewer.open()` 会重新按构造来源或当前查询参数打开。
+
+## 字体配置
+
+引擎不读取字体 URL/路径，字体读取由 UI 完成：构造时传 `fonts`，UI 把每个来源读成字节后映射到引擎的 `defaultFonts`/`supplementaryFonts`。
+
+```ts
+new OFDViewer({
+  container: '#viewer',
+  source: '/sample.ofd',
+  fonts: {
+    // 文档字体完全缺省时的替代字体。
+    default: [{ url: '/fonts/NotoSerifSC-Regular.woff2', family: 'Noto Serif SC' }],
+    // 主字体缺字时逐字形补齐。
+    supplementary: [{ url: '/fonts/NotoSansSC-Regular.woff2' }],
+  },
+});
+```
+
+- 来源四态与证书一致：`{ data }`、`{ url, headers? }`、`{ path }`、`{ filePath }`；后两类需要 `fonts.loader`，UI 自身不访问文件系统。
+- `url` 的 `headers` 与 `requestInit.headers` 合并（来源优先）；同一 URL 在实例生命周期内只读取一次。
+- 只接受**完整字体文件**（`.ttf`/`.otf`/`.woff2`），不接受 CSS 的 unicode-range 子集切片；引擎用字形轮廓绘制，与 CSS 字体加载无关。
+- 读取失败只产生 `W_FONT_MISSING` warning（`onWarning`/`ofd-warning`），不阻断文档打开；`fonts.aliases` 会追加到引擎内置别名组，而不是替换。
+- `fonts` 与 `crypto` 同级：只在实例创建时读取，修改后重新 `open()`；Web Component 还可用 `font-default`/`font-supplementary` 逗号分隔 URL 简写，变更时重建实例。
+- 排查缺字：控制台默认打印 `[ofd-viewer] warning W_FONT_MISSING ...` / `W_GLYPH_MISSING ...`（含 `pageIndex`/`resourceId`，同一文档会话内去重），需要静默时传 `debug: { console: false }`。
+- 典型样本：`ofd_pdf_match/拿来主义_page6.ofd` 的 `PublicRes` 只声明 `FontName="宋体"`、没有 `FontFile`，不配字体时整页空白；配上宋体风格默认字体后正文可见。
+- 在线演示站的字体策略（可复制的宿主示例）：本地兜底 + CDN 回落——`default` 为站点自带思源宋体子集（`fonts/source-han-serif-sc.woff2`，OFL，约 10.6 MiB）再回落 CDN `noto-serif-sc` 简中片；`supplementary` 首位为站点自带文泉驿微米黑子集（`fonts/wqy-microhei.woff2`，Apache-2.0，约 1.07 MiB），其后为 CDN 拉丁/无衬线补字；`aliases` 追加「宋体/simsun/…/notoserifcjksc」与「黑体/simhei/微软雅黑/wenquanyimicrohei」两组，保证宋体与黑体声明都能命中对应字体。本地路径用 `import.meta.env.BASE_URL` 拼接以兼容子路径部署；字体文件不进入 npm 包。
+
+完整设计（引擎兼容性、CDN 选型、安全边界）见 [字体配置方案设计](../../../docs/字体配置方案设计.md)，字段与类型见 [API.md 字体配置](./API.md#字体配置)。
+
+`source` 取值补充说明：
 
 - 空字节、空 Blob、空 URL 以 `OFD_INVALID_OPTION` 拒绝。
 - URL 由 UI 在内部转换为 `HttpByteSource`；引擎只接收字节，不联网。
@@ -252,7 +282,7 @@ const viewer = new OFDViewer({ container: '#viewer', source: '/api/doc.ofd' });
 - 取消：`signal` 与 `close()` 合并生效；关闭后 `read()` 抛 `OFD_CLOSED`，`close()` 可重复调用。
 - CORS：跨域需要服务端允许 `Range`，并暴露 `Content-Range`。
 - 进度：`onProgress` 只在整包读取时可用；UI 不额外暴露字节级进度。
-- 字体：引擎不读取字体 URL/路径，UI 也没有字体配置项；需要补充字体时由宿主直接向引擎提供字体字节。
+- 字体：引擎不读取字体 URL/路径；UI 通过 `fonts.default`/`fonts.supplementary` 的 `{ url }` 来源读取字体字节（也可用 `data` 或 `loader`），读取失败只产生 `W_FONT_MISSING` warning，不阻断打开。
 
 完整构造参数、默认值与错误语义见 [API.md HttpByteSource](./API.md#httpbytesource)。
 
@@ -277,7 +307,7 @@ const viewer = new OFDViewer({ container: '#viewer', source: '/api/doc.ofd' });
 </script>
 ```
 
-标签默认是 `ofd-viewer`，采用 light DOM，不创建 Shadow DOM。基础属性为 `src`、`page`、`scale`、`rotation`、`theme`、`locale`、`sidebar`；复杂配置用 `features`、`crypto`、`source` property。省略 `src` 时仍会创建实例并读取查询参数；断开连接销毁实例，重新连接按当前属性重建。事件名为 `ofd-*`，`event.detail` 为对应载荷，`reader.viewer` 是底层只读实例。`sidebar` 属性只接受 `thumbnails`/`outline`/`bookmarks`/`signatures`（空、`none`、`off` 关闭），暂不接受 `attachments`；要打开附件侧栏，用 `reader.viewer.openSidebar('attachments')`。
+标签默认是 `ofd-viewer`，采用 light DOM，不创建 Shadow DOM。基础属性为 `src`、`page`、`scale`、`rotation`、`theme`、`locale`、`sidebar`、`font-default`、`font-supplementary`；复杂配置用 `features`、`crypto`、`fonts`、`source` property。`font-default`/`font-supplementary` 是逗号分隔的字体 URL 简写，变更时销毁并按新属性重建实例。省略 `src` 时仍会创建实例并读取查询参数；断开连接销毁实例，重新连接按当前属性重建。事件名为 `ofd-*`，`event.detail` 为对应载荷，`reader.viewer` 是底层只读实例。`sidebar` 属性只接受 `thumbnails`/`outline`/`bookmarks`/`signatures`（空、`none`、`off` 关闭），暂不接受 `attachments`；要打开附件侧栏，用 `reader.viewer.openSidebar('attachments')`。
 
 完整属性/property/方法/事件见 [API.md Web Component](./API.md#web-component)。
 
@@ -464,7 +494,8 @@ console.log(report.overall);
 
 - **纯 SPA**：不承诺 SSR/水合；不提供局部/瓦片渲染。
 - **网络在 UI 层**：URL 由 `HttpByteSource` 读取（Range + 整包回退），跨域需要 CORS 与 `Content-Range` 暴露头；鉴权头由宿主提供。
-- **字体在宿主机**：引擎不读取字体 URL/路径，UI 无字体配置项；需要补充字体时由宿主直接使用引擎。
+- **字体在 UI 层读取**：引擎不读取字体 URL/路径，UI 层可用 `fonts.default`/`fonts.supplementary` 的 `{ url }` 直接配置，读取由 UI 完成；只接受完整字体文件，不接受 CSS 切片，读取失败只产生 `W_FONT_MISSING` warning。设计见 [字体配置方案设计](../../../docs/字体配置方案设计.md)。
+- **控制台诊断默认开启**：缺字体 `W_FONT_MISSING`、缺字 `W_GLYPH_MISSING`、`W_CANVAS_LIMIT` 等 warning 与错误会以 `[ofd-viewer] warning <code>` / `[ofd-viewer] error <code>` 前缀打印到浏览器控制台，附 `{ pageIndex, resourceId }` 上下文；同一 `code` + `pageIndex` + `resourceId` 在一个文档会话内只打印一次，`open()` 时重置。`onWarning`/`onError` 语义不变；`debug: { console: false }` 可整体关闭，`debug.levels`/`debug.codes` 可只保留指定级别或码（过滤先于去重）。UI 自有码表导出为 `UI_WARNING_CODES`（错误码前缀为 `OFD_*`）。见 [API.md 诊断与日志](./API.md#诊断与日志)。
 - **URI 参数预览只读查询串**：`?file=` 仅接受 `http(s)`；`?base64=` 默认上限 64 MiB，且会进入历史/日志/Referer，敏感文档不应使用。
 - **打印/导出范围**：打印调用浏览器对话框，不生成 PDF；图片导出不合并为 PDF；原 OFD 导出是字节拷贝，不重新打包或修正文档。
 - **加密边界**：`crypto.enabled=false` 时加密文档直接拒绝；吊销状态不检查，固定为未检查；时间戳只解析、不验证，不参与整体结论。

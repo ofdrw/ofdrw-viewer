@@ -74,6 +74,8 @@ export interface ViewerWarning {
   readonly message: string;
   /** 关联页索引，0-based；与页面无关时省略。 */
   readonly pageIndex?: number;
+  /** 关联资源/对象 ID（引擎 `OFDWarning.resourceId`）；与资源无关时省略。 */
+  readonly resourceId?: string;
 }
 
 /** 打开/渲染等失败信息。 */

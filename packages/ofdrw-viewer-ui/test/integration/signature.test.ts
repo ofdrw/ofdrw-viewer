@@ -19,6 +19,7 @@ import { MM_TO_CSS_PX } from '../../src/page-layout';
 import { installDomEnvironment } from '../helpers/environment';
 import { createSignatureEntry, readSignedValueFixture } from '../helpers/signature';
 import { openViewer, type EngineOpenMock } from '../helpers/viewer';
+import { UI_WARNING_CODES } from '../../src/diagnostics';
 
 const openMock = engineMocks.open as unknown as EngineOpenMock;
 
@@ -146,7 +147,7 @@ describe('签章集成：降级与门控', () => {
     expect(detail.seal).toBeUndefined();
     expect(detail.signer).toMatchObject({ signedAt: entry.signatureDateTime });
     expect((detail.warnings ?? []).map((warning) => warning.code)).toContain(
-      'W_SIGNATURE_RESOURCE',
+      UI_WARNING_CODES.W_SIGNATURE_RESOURCE,
     );
     expect(
       (detail.warnings ?? []).some((warning) => warning.message.includes('签章信息不完整')),

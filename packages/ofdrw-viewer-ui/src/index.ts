@@ -41,6 +41,7 @@ export type {
   CertificateInputLoader,
   CertificateSource,
   CryptoViewerOptions,
+  DebugViewerOptions,
   OFDViewerOptions,
   ResolvedViewerOptions,
 } from './options';
@@ -53,6 +54,41 @@ export type {
   VerificationReport,
   VerificationStatus,
 } from '@ofdrw/ofdrw-viewer-crypto';
+
+// ---------------------------------------------------------------------------
+// 诊断体系：UI 码表、级别映射、格式化与控制台打印机
+// ---------------------------------------------------------------------------
+export {
+  DiagnosticPrinter,
+  UI_WARNING_CODES,
+  UI_WARNING_LEVELS,
+  formatDiagnostic,
+  resolveDiagnosticLevel,
+} from './diagnostics';
+export type {
+  DiagnosticLevel,
+  DiagnosticPrinterOptions,
+  DiagnosticSource,
+  ViewerDiagnostic,
+  UIWarningCode,
+} from './diagnostics';
+
+// ---------------------------------------------------------------------------
+// 字体配置：来源、解析器与引擎字体类型
+// ---------------------------------------------------------------------------
+export { FontSourceResolver, composeFontAliases } from './font';
+export type {
+  FontSource,
+  FontSourceLoader,
+  FontSourceResolverOptions,
+  ViewerFontOptions,
+} from './font';
+export type {
+  FontAliasTable,
+  FontInput,
+  FontMatchRequest,
+  FontProvider,
+} from '@ofdrw/ofdrw-viewer-engine';
 
 // ---------------------------------------------------------------------------
 // 公共类型：来源、状态、功能、事件、导出/打印/签章选项与详情

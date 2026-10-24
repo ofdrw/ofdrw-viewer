@@ -25,6 +25,7 @@ import {
   type NavigationRenderTask,
   type NavigationViewer,
 } from './shared';
+import { UI_WARNING_CODES } from '../diagnostics';
 
 /** 只渲染可见项前后各 5 项（设计方案 §7.2）。 */
 export const THUMBNAIL_WINDOW = 5;
@@ -353,7 +354,7 @@ export class ThumbnailView {
     } catch (error) {
       reportNavigationWarning(
         this.viewer,
-        'W_THUMBNAIL_JUMP',
+        UI_WARNING_CODES.W_THUMBNAIL_JUMP,
         `跳转到第 ${pageNumber} 页失败：${error instanceof Error ? error.message : String(error)}`,
         pageNumber - 1,
       );
@@ -585,7 +586,7 @@ export class ThumbnailView {
       this.setEntryState(entry, 'failed');
       reportNavigationWarning(
         this.viewer,
-        'W_THUMBNAIL',
+        UI_WARNING_CODES.W_THUMBNAIL,
         `第 ${pageNumber} 页缩略图渲染失败：${error instanceof Error ? error.message : String(error)}`,
         pageNumber - 1,
       );

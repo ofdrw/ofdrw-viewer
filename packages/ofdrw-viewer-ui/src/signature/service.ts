@@ -39,6 +39,7 @@ import type { SealImageHandle } from '../crypto/seal-image';
 import { formatShanghaiDateTime, formatSigningTime } from '../crypto/time';
 import { VERIFICATION_RESET_EVENT } from '../crypto/service';
 import { subjectCN, toSealInfo, toSignerInfo } from './mapping';
+import { UI_WARNING_CODES } from '../diagnostics';
 
 /** 未验证声明文案。 */
 export const SIGNATURE_NOT_VERIFIED_NOTE =
@@ -398,7 +399,7 @@ export class SignatureService implements ViewerSignatureService {
 
     if (!entry.hasSignedValue) {
       warnings.push({
-        code: 'W_SIGNATURE_RESOURCE',
+        code: UI_WARNING_CODES.W_SIGNATURE_RESOURCE,
         message: '缺少签名值文件（SignedValue.dat），签章信息不完整',
       });
     } else {
@@ -409,7 +410,7 @@ export class SignatureService implements ViewerSignatureService {
         file = await engine.getSignedValue(entry.id);
       } catch (error) {
         warnings.push({
-          code: 'W_SIGNATURE_RESOURCE',
+          code: UI_WARNING_CODES.W_SIGNATURE_RESOURCE,
           message: `签名值文件读取失败：${errorText(error)}`,
         });
       }
@@ -420,19 +421,19 @@ export class SignatureService implements ViewerSignatureService {
           signer = toSignerInfo(parsed, entry.signatureDateTime);
           if (parsed.timestamp.status === 'parse-error') {
             warnings.push({
-              code: 'W_SIGNATURE_TIMESTAMP',
+              code: UI_WARNING_CODES.W_SIGNATURE_TIMESTAMP,
               message: `时间戳解析失败：${parsed.timestamp.parseError?.message ?? '结构非法'}`,
             });
           }
         } catch (error) {
           warnings.push({
-            code: 'W_SIGNATURE_ASN1',
+            code: UI_WARNING_CODES.W_SIGNATURE_ASN1,
             message: `签章信息不完整：无法解析签名值文件（${errorText(error)}）`,
           });
         }
-      } else if (!warnings.some((warning) => warning.code === 'W_SIGNATURE_RESOURCE')) {
+      } else if (!warnings.some((warning) => warning.code === UI_WARNING_CODES.W_SIGNATURE_RESOURCE)) {
         warnings.push({
-          code: 'W_SIGNATURE_RESOURCE',
+          code: UI_WARNING_CODES.W_SIGNATURE_RESOURCE,
           message: '缺少签名值文件（SignedValue.dat），签章信息不完整',
         });
       }

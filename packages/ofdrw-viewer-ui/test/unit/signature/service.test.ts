@@ -34,6 +34,7 @@ import {
   corruptSignedValue,
   readSignedValueFixture,
 } from './fixtures';
+import { UI_WARNING_CODES } from '../../../src/diagnostics';
 
 /** V4 签章样本解析结果；断言中的印章名/签发时间以此为准，避免硬编码样本值。 */
 const PARSED_V4 = parseSignedValue(readSignedValueFixture('SignedValueV4.dat'));
@@ -436,13 +437,13 @@ describe('SignatureService 覆盖层与详情', () => {
     expect(missing.signer?.signedAt).toBeUndefined();
     expect(missing.validation.status).toBe('not-verified');
     expect(missing.warnings?.map((warning) => warning.code)).toContain(
-      'W_SIGNATURE_RESOURCE',
+      UI_WARNING_CODES.W_SIGNATURE_RESOURCE,
     );
     expect(missing.warnings?.[0]?.message).toContain('缺少签名值文件');
 
     const corrupt = await viewer.getSignatureDetail('s4');
     expect(corrupt.warnings?.map((warning) => warning.code)).toContain(
-      'W_SIGNATURE_ASN1',
+      UI_WARNING_CODES.W_SIGNATURE_ASN1,
     );
     expect(corrupt.warnings?.[0]?.message).toContain('签章信息不完整');
 

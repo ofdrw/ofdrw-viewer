@@ -18,6 +18,7 @@ import {
   reportNavigationWarning,
   type NavigationViewer,
 } from './shared';
+import { UI_WARNING_CODES } from '../diagnostics';
 
 /** 大纲条目。 */
 interface OutlineEntry {
@@ -254,7 +255,7 @@ export class OutlineView {
     if (!entry.node.dest) {
       reportNavigationWarning(
         this.viewer,
-        'W_NAV_DEST',
+        UI_WARNING_CODES.W_NAV_DEST,
         `大纲“${entry.node.title}”缺少跳转目标`,
       );
       return;

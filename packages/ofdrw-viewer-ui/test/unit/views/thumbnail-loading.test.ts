@@ -11,6 +11,7 @@ import {
   resetDom,
   thumbnailItems,
 } from './helpers';
+import { UI_WARNING_CODES } from '../../../src/diagnostics';
 
 /** 未决结果。 */
 interface Deferred<T> {
@@ -174,7 +175,7 @@ describe('缩略图加载骨架', () => {
     expect(fallbackOf(failed).hidden).toBe(false);
     expect(fallbackOf(failed).textContent).toBe('6');
     expect(failed.querySelector('canvas')).toBeNull();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('W_THUMBNAIL'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(UI_WARNING_CODES.W_THUMBNAIL));
 
     // 失败是终态，不参与自动重试。
     await new Promise((resolve) => setTimeout(resolve, 30));

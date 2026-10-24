@@ -40,6 +40,8 @@ export interface CryptoText {
   readonly credentialPassphraseRequired: string;
   /** 解密失败。 */
   readonly credentialDecryptFailed: string;
+  /** 加密信息（加密检测/包结构）读取失败；与凭据无关。 */
+  readonly cryptoInspectFailed: string;
   /** 未选择用户。 */
   readonly credentialUserRequired: string;
   /** 未填写口令。 */
@@ -244,6 +246,7 @@ const ZH: CryptoText = {
   credentialPrivateKeyInvalid: '私钥无法用于该用户',
   credentialPassphraseRequired: '该私钥已加密，请输入私钥口令',
   credentialDecryptFailed: '解密失败，请检查凭据后重试',
+  cryptoInspectFailed: '读取文档加密信息失败',
   credentialUserRequired: '请选择用户',
   credentialPasswordRequired: '请输入口令',
   credentialKeyRequired: '请选择私钥文件',
@@ -365,6 +368,7 @@ const EN: CryptoText = {
   credentialPrivateKeyInvalid: 'The private key cannot be used for this user',
   credentialPassphraseRequired: 'This private key is encrypted; enter its passphrase',
   credentialDecryptFailed: 'Decryption failed; check the credentials and retry',
+  cryptoInspectFailed: 'Failed to read the document encryption information',
   credentialUserRequired: 'Select a user',
   credentialPasswordRequired: 'Enter a password',
   credentialKeyRequired: 'Select a private key file',

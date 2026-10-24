@@ -61,6 +61,7 @@ import {
 import type { OutputHost } from './host';
 import { createStoreZip, type ZipEntry } from './zip';
 import { emitOutputEvent } from './events';
+import { UI_WARNING_CODES } from '../diagnostics';
 
 /** 多页导出选项；`range` 为 `pages` 的别名，便于自定义工具栏直接传范围文本。 */
 export interface ExportImagesRequestOptions extends Omit<ExportImagesOptions, 'pages'> {
@@ -270,7 +271,7 @@ export class ExportService {
           reportOutputWarning(
             this.host,
             this.hooks,
-            'W_EXPORT_PAGE',
+            UI_WARNING_CODES.W_EXPORT_PAGE,
             `第 ${pageNumber} 页导出失败：${error instanceof Error ? error.message : String(error)}`,
           );
         }
@@ -303,7 +304,7 @@ export class ExportService {
         reportOutputWarning(
           this.host,
           this.hooks,
-          'W_EXPORT_PARTIAL',
+          UI_WARNING_CODES.W_EXPORT_PARTIAL,
           `${failures.length} 页导出失败，已跳过并继续其余页面`,
         );
       }

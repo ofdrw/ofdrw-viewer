@@ -14,6 +14,7 @@ import { createInitialViewerState } from '../../../src/state';
 import type { ViewerState } from '../../../src/state';
 import { AttachmentView } from '../../../src/views/attachments';
 import type { AttachmentConfirm, AttachmentViewer } from '../../../src/views/attachments';
+import { UI_WARNING_CODES } from '../../../src/diagnostics';
 
 /** 当前挂载的视图；用例结束统一释放。 */
 const views: AttachmentView[] = [];
@@ -286,7 +287,7 @@ describe('单个下载', () => {
     await flush();
     host.querySelector<HTMLButtonElement>('.ofd-attachment__download')!.click();
     await flush();
-    expect(events).toContain('W_ATTACHMENT_RESOURCE');
+    expect(events).toContain(UI_WARNING_CODES.W_ATTACHMENT_RESOURCE);
     expect(host.querySelector('.ofd-attachments__status')?.textContent).toContain('读取失败');
     document.body.removeEventListener('ofdviewerwarning', listener);
   });

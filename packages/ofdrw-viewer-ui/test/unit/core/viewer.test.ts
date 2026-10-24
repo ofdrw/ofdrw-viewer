@@ -13,6 +13,7 @@ vi.mock('@ofdrw/ofdrw-viewer-engine', () => ({
 }));
 
 import { OFDViewer } from '../../../src/viewer';
+import { UI_WARNING_CODES } from '../../../src/diagnostics';
 
 interface FakePage {
   index: number;
@@ -176,7 +177,7 @@ describe('OFDViewer 核心', () => {
     await viewer.setFullscreen(true);
     expect(viewer.getState().view.fullscreen).toBe(true);
     expect(viewer.getElements().root.classList.contains('ofd-viewer--fullscreen-fallback')).toBe(true);
-    expect(warnings).toContain('W_FULLSCREEN_FALLBACK');
+    expect(warnings).toContain(UI_WARNING_CODES.W_FULLSCREEN_FALLBACK);
     await viewer.setFullscreen(false);
     expect(viewer.getState().view.fullscreen).toBe(false);
     expect(viewer.getElements().root.classList.contains('ofd-viewer--fullscreen-fallback')).toBe(false);

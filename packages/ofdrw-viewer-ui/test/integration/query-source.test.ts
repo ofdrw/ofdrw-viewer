@@ -39,6 +39,7 @@ import { OFDViewer, readPreviewSourceFromLocation } from '../../src/index';
 import { OFDViewerError } from '../../src/errors';
 import { installDomEnvironment } from '../helpers/environment';
 import { createMockDocument } from '../helpers/document';
+import { UI_WARNING_CODES } from '../../src/diagnostics';
 
 /** 明文包检测结果。 */
 function plainInspection(): OfdInspection {
@@ -175,7 +176,7 @@ describe('查询参数预览', () => {
     await viewer.ready;
 
     expect(onWarning).toHaveBeenCalledWith(
-      expect.objectContaining({ code: 'W_QUERY_SOURCE' }),
+      expect.objectContaining({ code: UI_WARNING_CODES.W_QUERY_SOURCE }),
     );
     expect(viewer.getState().document.origin).toEqual({
       kind: 'url',

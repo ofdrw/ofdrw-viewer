@@ -11,6 +11,8 @@ import type {
   VerificationReport,
 } from '@ofdrw/ofdrw-viewer-crypto';
 import type { FeatureDisplay, ViewerFeatures } from './features';
+import type { DiagnosticLevel } from './diagnostics';
+import type { ViewerFontOptions } from './font';
 import {
   DEFAULT_LOCALE,
   DEFAULT_THEME,
@@ -116,6 +118,34 @@ export interface CryptoViewerOptions extends CryptoOptions {
   ) => Promise<CryptoCredential | null>;
 }
 
+/** 调试与诊断选项。 */
+export interface DebugViewerOptions {
+  /**
+   * 是否把 warning/错误打印到浏览器控制台。
+   *
+   * 默认 true（整体开关，false 时完全不打印，回调与事件不受影响）；输出格式为
+   * `[ofd-viewer] warning <code> <message> {pageIndex, resourceId}`，错误为
+   * `[ofd-viewer] error <code> ...`。同一 `code` + `pageIndex` + `resourceId`（错误为
+   * `code` + `pageIndex`）在同一文档会话内只打印一次，打开文档时重置。
+   */
+  readonly console?: boolean;
+  /**
+   * 只打印这些级别；可选。
+   *
+   * 缺省时按级别默认行为输出：`warn` → `console.warn`、`error` → `console.error`、
+   * `info` 不打印。提供后只有列表内的级别会打印（过滤发生在去重之前，被过滤的诊断
+   * 不占用去重键）。`console: false` 时该选项不生效。
+   */
+  readonly levels?: readonly DiagnosticLevel[];
+  /**
+   * 只打印这些诊断码（例如 `['W_FONT_MISSING', 'W_GLYPH_MISSING']`）；可选。
+   *
+   * 缺省时不过滤码；提供后其余码（含引擎/crypto 码）一律不打印，且不占用去重键。
+   * `console: false` 时该选项不生效。
+   */
+  readonly codes?: readonly string[];
+}
+
 /** 阅读器构造选项。 */
 export interface OFDViewerOptions {
   /** 挂载点；字符串按 CSS 选择器解析。 */
@@ -150,12 +180,26 @@ export interface OFDViewerOptions {
   readonly updateHash?: boolean;
   /** URL 来源的额外请求参数；credentials 默认 `same-origin`。 */
   readonly requestInit?: RequestInit;
+  /**
+   * 调试与诊断选项。
+   *
+   * `console` 控制是否把引擎/UI 的 warning 与错误打印到浏览器控制台（默认 true）；
+   * 关闭后只保留 `onWarning`/`onError` 回调与事件。
+   */
+  readonly debug?: DebugViewerOptions;
   /** 引擎/UI warning 回调。 */
   readonly onWarning?: (warning: ViewerWarning) => void;
   /** 打开/渲染等错误回调。 */
   readonly onError?: (error: ViewerErrorInfo) => void;
   /** 密码能力选项；省略时按默认启用。 */
   readonly crypto?: CryptoViewerOptions;
+  /**
+   * 字体配置：默认字体、补充字体、自定义加载器与额外别名组。
+   *
+   * 只在实例创建时生效，修改后需重新 `open()`；字体读取失败只产生 `W_FONT_MISSING`
+   * warning，不阻断文档打开。
+   */
+  readonly fonts?: ViewerFontOptions;
 }
 
 /** 展开默认值后的构造选项；由 `OFDViewer` 内部持有。 */
@@ -176,9 +220,13 @@ export interface ResolvedViewerOptions {
   readonly renderConcurrency: number;
   readonly updateHash: boolean;
   readonly requestInit?: RequestInit;
+  /** 调试与诊断选项；省略时按默认值（控制台打印开启）。 */
+  readonly debug?: DebugViewerOptions;
   readonly onWarning?: (warning: ViewerWarning) => void;
   readonly onError?: (error: ViewerErrorInfo) => void;
   readonly crypto?: CryptoViewerOptions;
+  /** 原样透传的字体配置；未提供时为 undefined，行为与未引入 `fonts` 时一致。 */
+  readonly fonts?: ViewerFontOptions;
 }
 
 /** 解析默认值时可用的宿主环境信息。 */
@@ -229,9 +277,11 @@ export function resolveViewerOptions(
       (mobile ? DEFAULT_MOBILE_RENDER_CONCURRENCY : DEFAULT_RENDER_CONCURRENCY),
     updateHash: options.updateHash ?? false,
     requestInit: options.requestInit,
+    debug: options.debug,
     onWarning: options.onWarning,
     onError: options.onError,
     crypto: options.crypto,
+    fonts: options.fonts,
   };
 }
 

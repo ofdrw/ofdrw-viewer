@@ -8,6 +8,7 @@ import { ExportService } from '../../../src/export/export-service';
 import { renderPageImage } from '../../../src/export/image';
 import { isOFDViewerError } from '../../../src/errors';
 import { FakeHost } from './fake-host';
+import { UI_WARNING_CODES } from '../../../src/diagnostics';
 
 let createObjectURL: ReturnType<typeof vi.fn>;
 let revokeObjectURL: ReturnType<typeof vi.fn>;
@@ -216,7 +217,7 @@ describe('exportImages 多页导出', () => {
     expect(large.pages[0]!.exportImage).toHaveBeenCalledWith(
       expect.objectContaining({ dpi: 96 }),
     );
-    expect(warnings).toContain('W_OUTPUT_DPI_REDUCED');
+    expect(warnings).toContain(UI_WARNING_CODES.W_OUTPUT_DPI_REDUCED);
     expect(large.events).toContainEqual(
       expect.objectContaining({ event: 'warning' }),
     );
@@ -242,8 +243,8 @@ describe('exportImages 多页导出', () => {
 
     expect(progress[0]).toEqual({ current: 1, total: 1000 });
     expect(host.events).toContainEqual({ event: 'exportprogress', payload: { current: 1, total: 1000 } });
-    expect(warnings).toContain('W_OUTPUT_DPI_REDUCED');
-    expect(warnings).toContain('W_OUTPUT_LARGE_TASK');
+    expect(warnings).toContain(UI_WARNING_CODES.W_OUTPUT_DPI_REDUCED);
+    expect(warnings).toContain(UI_WARNING_CODES.W_OUTPUT_LARGE_TASK);
     expect(host.pages[0]!.exportImage).toHaveBeenCalledTimes(1);
     expect(createObjectURL).not.toHaveBeenCalled();
   });
@@ -269,8 +270,8 @@ describe('exportImages 多页导出', () => {
 
     const zip = unzipSync(new Uint8Array(await downloadedBlob().arrayBuffer()));
     expect(Object.keys(zip)).toEqual(['测试文档-p2.png']);
-    expect(warnings).toContain('W_EXPORT_PAGE');
-    expect(warnings).toContain('W_EXPORT_PARTIAL');
+    expect(warnings).toContain(UI_WARNING_CODES.W_EXPORT_PAGE);
+    expect(warnings).toContain(UI_WARNING_CODES.W_EXPORT_PARTIAL);
   });
 
   it('全部页失败时报 OFD_EXPORT_FAILED 且不下载', async () => {

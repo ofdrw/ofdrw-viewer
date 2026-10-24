@@ -4,6 +4,7 @@ import type { FindHighlightRenderer, FindMatch, SliceScheduler } from '../../../
 import { createViewerBridge } from '../../../src/text/viewer-bridge';
 import type { TextContent } from '@ofdrw/ofdrw-viewer-engine';
 import { contentWithLines, makeContent, makeFakeHost, makeItem } from './helpers';
+import { UI_WARNING_CODES } from '../../../src/diagnostics';
 
 /** 记录高亮调用的假渲染器。 */
 class RecordingHighlighter implements FindHighlightRenderer {
@@ -242,8 +243,8 @@ describe('FindController 查找', () => {
     });
     await controller.find('x');
     expect(controller.getMatches()).toHaveLength(8);
-    expect(host.warnings.map((warning) => warning.code)).toContain('W_FIND_PAGE_LIMIT');
-    expect(host.warnings.map((warning) => warning.code)).toContain('W_FIND_LIMIT');
+    expect(host.warnings.map((warning) => warning.code)).toContain(UI_WARNING_CODES.W_FIND_PAGE_LIMIT);
+    expect(host.warnings.map((warning) => warning.code)).toContain(UI_WARNING_CODES.W_FIND_LIMIT);
     controller.destroy();
   });
 
@@ -259,7 +260,7 @@ describe('FindController 查找', () => {
     const controller = new FindController(host, createViewerBridge(host), highlights);
     await controller.find('anything');
     expect(controller.getFindState().total).toBe(0);
-    expect(host.warnings.map((warning) => warning.code)).toContain('W_TEXT_EMPTY');
+    expect(host.warnings.map((warning) => warning.code)).toContain(UI_WARNING_CODES.W_TEXT_EMPTY);
     controller.destroy();
   });
 

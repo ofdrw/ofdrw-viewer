@@ -19,6 +19,7 @@ export const enUS: MessageDictionary = {
   'loading.openFailed': 'Failed to open document',
   'loading.cancel': 'Cancel',
   'loading.cancelling': 'Cancelling…',
+  'loading.fonts': 'Loading fonts…',
   'loading.page': 'Rendering page…',
   'loading.pageNumber': 'Rendering page {page}…',
 

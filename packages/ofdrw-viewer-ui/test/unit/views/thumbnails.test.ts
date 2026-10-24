@@ -5,6 +5,7 @@ import {
   resetDom,
   thumbnailItems,
 } from './helpers';
+import { UI_WARNING_CODES } from '../../../src/diagnostics';
 
 beforeEach(() => {
   resetDom();
@@ -102,7 +103,7 @@ describe('ThumbnailView 缩略图', () => {
     const fallback = failed.querySelector<HTMLElement>('.ofd-thumbnail__fallback')!;
     expect(fallback.hidden).toBe(false);
     expect(fallback.textContent).toBe('1');
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('W_THUMBNAIL'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(UI_WARNING_CODES.W_THUMBNAIL));
     // 主视图仍可用：文档 ready，翻页正常。
     expect(viewer.getState().document.status).toBe('ready');
     viewer.goToPage(4);

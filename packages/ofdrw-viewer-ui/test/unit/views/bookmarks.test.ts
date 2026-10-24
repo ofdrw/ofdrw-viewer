@@ -13,6 +13,7 @@ import {
   makePageInfos,
   resetDom,
 } from './helpers';
+import { UI_WARNING_CODES } from '../../../src/diagnostics';
 
 const bookmarks: BookmarkItem[] = [
   { name: '封面', dest: { type: 'Fit', pageIndex: 0 } },
@@ -89,7 +90,7 @@ describe('BookmarkView 书签列表', () => {
     expect(invalid).toBeDefined();
     expect(invalid.dataset.destInvalid).toBe('true');
     invalid.click();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('W_NAV_DEST'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(UI_WARNING_CODES.W_NAV_DEST));
     expect(viewer.getPageNumber()).toBe(3);
     expect(bookmarkItems(panel)).toHaveLength(4);
     viewer.destroy();
@@ -107,7 +108,7 @@ describe('BookmarkView 书签列表', () => {
     viewer.openSidebar('bookmarks');
     const panel = shell.sidebar.getPanel('bookmarks')!;
     bookmarkItems(panel)[0]!.click();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('W_NAV_DEST'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(UI_WARNING_CODES.W_NAV_DEST));
     expect(viewer.getPageNumber()).toBe(1);
     viewer.destroy();
   });

@@ -4,6 +4,29 @@
 import { expect, expectNoPageErrors, test } from './fixtures';
 import { FIXTURES, openViewer, viewerUrl } from './support';
 
+test('签名条目缺 Type 的明文文档正常打开，且不出现解密/凭据文案', async ({ page, issues }) => {
+  await openViewer(page, FIXTURES.signatureNoType, { waitForRender: false });
+  const state = await page.evaluate(() => ({
+    status: window.__viewer!.getState().document.status,
+    pageCount: window.__viewer!.getState().document.pageCount,
+    signatures: window.__viewer!.getSignatures().map((entry) => ({
+      id: entry.id,
+      type: entry.type,
+      baseLoc: entry.baseLoc,
+    })),
+  }));
+  expect(state.status).toBe('ready');
+  expect(state.pageCount).toBeGreaterThan(0);
+  expect(state.signatures).toEqual([
+    { id: '2', type: '', baseLoc: 'Doc_0/Signs/Sign_0/Signature.xml' },
+  ]);
+  const body = await page.locator('body').textContent();
+  expect(body).not.toContain('解密失败');
+  expect(body).not.toContain('请检查凭据');
+  expect(body).not.toContain('读取文档加密信息失败');
+  await expectNoPageErrors(page, issues);
+});
+
 test('口令加密文档：预置凭据打开后状态就绪', async ({ page, issues }) => {
   await openViewer(page, FIXTURES.cryptoPassword, {
     password: 'FixturePass123',

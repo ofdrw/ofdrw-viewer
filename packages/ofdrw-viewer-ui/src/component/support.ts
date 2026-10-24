@@ -5,6 +5,7 @@
  * 行为仍由公共入口导出的 `OFDViewer` 提供。
  */
 import type {
+  FontSource,
   OFDViewer,
   ViewerEventMap,
   ViewerEventName,
@@ -288,6 +289,30 @@ export function readSidebarAttribute(element: HTMLElement): SidebarView | null |
   const normalized = raw.trim();
   if (normalized === '' || normalized === 'none' || normalized === 'off') return null;
   return isSidebarView(normalized) ? normalized : undefined;
+}
+
+/**
+ * 解析逗号分隔的字体 URL 属性。
+ *
+ * 用于 `<ofd-viewer font-default="..." font-supplementary="...">`：按英文逗号切分，
+ * 逐项去除首尾空白并丢弃空项，最终映射为 `[{ url }]`。
+ *
+ * @param element 自定义元素。
+ * @param attribute 属性名，例如 `font-default`。
+ * @returns 字体来源数组；属性缺失或没有任何有效 URL 时返回 undefined。
+ */
+export function readFontAttribute(
+  element: HTMLElement,
+  attribute: string,
+): FontSource[] | undefined {
+  const raw = element.getAttribute(attribute);
+  if (raw === null) return undefined;
+  const urls = raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item !== '');
+  if (urls.length === 0) return undefined;
+  return urls.map((url) => ({ url }));
 }
 
 /**

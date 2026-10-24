@@ -11,6 +11,7 @@ import type { ExportProgressEvent, ViewerWarning } from '../types';
 import { getUIShell, type UIShellHost } from '../ui';
 import type { OutputHost } from './host';
 import { emitOutputEvent } from './events';
+import { UI_WARNING_CODES } from '../diagnostics';
 
 /** 打开进度对话框的最小页数。 */
 const PROGRESS_DIALOG_THRESHOLD = 20;
@@ -171,7 +172,7 @@ export function warnForLargeTask(
     reportOutputWarning(
       host,
       hooks,
-      'W_OUTPUT_DPI_REDUCED',
+      UI_WARNING_CODES.W_OUTPUT_DPI_REDUCED,
       `${total} 页任务较大，已自动降低${feature === 'print' ? '打印' : '导出'}精度至 96 DPI`,
     );
   }
@@ -179,7 +180,7 @@ export function warnForLargeTask(
     reportOutputWarning(
       host,
       hooks,
-      'W_OUTPUT_LARGE_TASK',
+      UI_WARNING_CODES.W_OUTPUT_LARGE_TASK,
       `本次任务共 ${total} 页，可能占用较多内存，建议分批处理`,
     );
   }

@@ -22,6 +22,7 @@ import {
   highlightBoxesForRange,
   normalizeQuery,
 } from './search';
+import { UI_WARNING_CODES } from '../diagnostics';
 
 /** 默认单个时间片预算，单位毫秒。 */
 export const DEFAULT_SLICE_BUDGET_MS = 8;
@@ -291,7 +292,7 @@ export class FindController {
       this.searching = false;
       this.publishState(false);
       this.bridge.warn(
-        'W_FIND_FAILED',
+        UI_WARNING_CODES.W_FIND_FAILED,
         `查找失败：${error instanceof Error ? error.message : String(error)}`,
       );
     }
@@ -310,14 +311,14 @@ export class FindController {
         const page = await this.host.getPage(pageNumber);
         if (this.isStale(generation, signal)) return;
         if (typeof page.getTextContent !== 'function') {
-          this.bridge.warn('W_TEXT_UNSUPPORTED', '当前引擎页面不支持文本提取', pageNumber - 1);
+          this.bridge.warn(UI_WARNING_CODES.W_TEXT_UNSUPPORTED, '当前引擎页面不支持文本提取', pageNumber - 1);
           return;
         }
         content = await page.getTextContent(textContentOptions(signal));
       } catch (error) {
         if (this.isStale(generation, signal) || isAbortError(error)) return;
         this.bridge.warn(
-          'W_FIND_PAGE',
+          UI_WARNING_CODES.W_FIND_PAGE,
           `第 ${pageNumber} 页文本提取失败：${error instanceof Error ? error.message : String(error)}`,
           pageNumber - 1,
         );
@@ -339,7 +340,7 @@ export class FindController {
     });
     if (this.maxPageMatches > 0 && ranges.length >= this.maxPageMatches) {
       this.bridge.warn(
-        'W_FIND_PAGE_LIMIT',
+        UI_WARNING_CODES.W_FIND_PAGE_LIMIT,
         `第 ${pageNumber} 页命中超过 ${this.maxPageMatches} 条，已截断`,
         pageNumber - 1,
       );
@@ -358,7 +359,7 @@ export class FindController {
       if (this.maxTotalMatches > 0 && this.matches.length >= this.maxTotalMatches) {
         this.truncated = true;
         this.bridge.warn(
-          'W_FIND_LIMIT',
+          UI_WARNING_CODES.W_FIND_LIMIT,
           `查找命中超过 ${this.maxTotalMatches} 条，已停止继续搜索`,
         );
         break;
@@ -391,7 +392,7 @@ export class FindController {
       return;
     }
     if (this.emptyPageCount > 0) {
-      this.bridge.warn('W_TEXT_EMPTY', '该文档没有可提取文字');
+      this.bridge.warn(UI_WARNING_CODES.W_TEXT_EMPTY, '该文档没有可提取文字');
     }
   }
 

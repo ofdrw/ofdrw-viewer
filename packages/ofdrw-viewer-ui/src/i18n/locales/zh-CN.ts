@@ -18,6 +18,7 @@ export const zhCN = {
   'loading.openFailed': '打开文档失败',
   'loading.cancel': '取消',
   'loading.cancelling': '正在取消…',
+  'loading.fonts': '正在加载字体…',
   'loading.page': '正在渲染页面…',
   'loading.pageNumber': '第 {page} 页正在渲染…',
 

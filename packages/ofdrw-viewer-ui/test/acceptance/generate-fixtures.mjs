@@ -3,11 +3,14 @@
  *
  * - thousand.ofd：1000 页、每页一行文本，嵌入 SimSun 子集，用于性能与虚拟化验收；
  * - signature-missing-value.ofd：删除 SignedValue.dat，用于签章信息不完整降级验收；
- * - broken-page.ofd：删除第 3 页 Content.xml，用于缩略图失败/重试验收。
+ * - broken-page.ofd：删除第 3 页 Content.xml，用于缩略图失败/重试验收；
+ * - external-font.ofd / external-font-backup.ofd：外部未内嵌字体的中文样本
+ *   （仓库 ofd_pdf_match/draw_param_ref.ofd 与 AddWatermarkAnnot.ofd 的原样副本），
+ *   只声明 FontName/FamilyName、没有 FontFile，用于验证外部字体配置与 CDN 降级。
  *
  * 生成结果位于 test/acceptance/fixtures（已 gitignore），不进入提交。
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { unzipSync, zipSync } from 'fflate';
@@ -64,10 +67,25 @@ if (!existsSync(missingValuePath)) {
   writeFileSync(missingValuePath, zipSync(source, { level: 0 }));
 }
 
+// 外部字体样本：原样复制，不改字节（签名/校验值保持有效）。
+// 目的是提供一个“声明了字体名但没有 FontFile”的真实中文文档：不配置外部字体时文字
+// 必然缺失，配置后可完整显示，从而端到端验证 UI fonts 配置与 CDN 中断降级。
+const externalFontPath = resolve(outputDir, 'external-font.ofd');
+if (!existsSync(externalFontPath)) {
+  copyFileSync(resolve(sourceDir, 'draw_param_ref.ofd'), externalFontPath);
+}
+
+const externalFontBackupPath = resolve(outputDir, 'external-font-backup.ofd');
+if (!existsSync(externalFontBackupPath)) {
+  copyFileSync(resolve(sourceDir, 'AddWatermarkAnnot.ofd'), externalFontBackupPath);
+}
+
 console.log(
   `E2E fixtures ready: thousand=${(readFileSync(thousandPath).byteLength / 1024).toFixed(0)}KiB, missing=${(
     readFileSync(missingValuePath).byteLength / 1024
-  ).toFixed(0)}KiB, broken=${(readFileSync(brokenPagePath).byteLength / 1024).toFixed(0)}KiB`,
+  ).toFixed(0)}KiB, broken=${(readFileSync(brokenPagePath).byteLength / 1024).toFixed(0)}KiB, external=${(
+    readFileSync(externalFontPath).byteLength / 1024
+  ).toFixed(0)}KiB, externalBackup=${(readFileSync(externalFontBackupPath).byteLength / 1024).toFixed(0)}KiB`,
 );
 
 /** Playwright globalSetup 入口；模块加载时已完成夹具生成。 */

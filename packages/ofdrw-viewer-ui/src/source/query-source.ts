@@ -11,6 +11,7 @@ import { getGlobalObject } from '../compat';
 import { OFDViewerError } from '../errors';
 import type { ViewerWarning } from '../state';
 import type { ViewerSource } from '../types';
+import { UI_WARNING_CODES } from '../diagnostics';
 
 /** base64 查询参数解码后的默认字节上限（64 MiB）。 */
 export const DEFAULT_MAX_BASE64_BYTES = 64 * 1024 * 1024;
@@ -59,7 +60,7 @@ export function readPreviewSourceFromLocation(
   if (hasFile) {
     if (hasBase64) {
       options.onWarning?.({
-        code: 'W_QUERY_SOURCE',
+        code: UI_WARNING_CODES.W_QUERY_SOURCE,
         message: '同时提供 file 与 base64 查询参数，已优先使用 file',
       });
     }

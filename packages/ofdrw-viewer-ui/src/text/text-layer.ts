@@ -26,6 +26,7 @@ import {
 import type { FindHighlightRenderer, FindMatch } from './types';
 import type { TextViewerHost, ViewerBridge, ViewerTextLayerServiceLike } from './viewer-bridge';
 import { textContentOptions } from './viewer-bridge';
+import { UI_WARNING_CODES } from '../diagnostics';
 
 /** 单页文本层状态。 */
 interface PageTextState {
@@ -305,7 +306,7 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
       if (this.isStale(pageNumber, generation, abort)) return;
       if (typeof page.getTextContent !== 'function') {
         state.failed = true;
-        this.bridge.warn('W_TEXT_UNSUPPORTED', '当前引擎页面不支持文本提取', pageNumber - 1);
+        this.bridge.warn(UI_WARNING_CODES.W_TEXT_UNSUPPORTED, '当前引擎页面不支持文本提取', pageNumber - 1);
         return;
       }
       content = await page.getTextContent(textContentOptions(abort.signal));
@@ -314,7 +315,7 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
       const current = this.pages.get(pageNumber);
       if (current) current.failed = true;
       this.bridge.warn(
-        'W_TEXT_LOAD',
+        UI_WARNING_CODES.W_TEXT_LOAD,
         `第 ${pageNumber} 页文本提取失败：${error instanceof Error ? error.message : String(error)}`,
         pageNumber - 1,
       );
@@ -360,7 +361,7 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
     state.abort = null;
     if (specs.truncated) {
       this.bridge.warn(
-        'W_TEXT_LAYER_LIMIT',
+        UI_WARNING_CODES.W_TEXT_LAYER_LIMIT,
         `第 ${pageNumber} 页文字节点超过 ${this.maxNodes}，已合并或截断`,
         pageNumber - 1,
       );

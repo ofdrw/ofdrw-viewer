@@ -19,6 +19,7 @@ import {
   reportNavigationWarning,
   type NavigationViewer,
 } from './shared';
+import { UI_WARNING_CODES } from '../diagnostics';
 
 /** 书签条目。 */
 interface BookmarkEntry {
@@ -189,7 +190,7 @@ export class BookmarkView {
     if (!item.dest) {
       reportNavigationWarning(
         this.viewer,
-        'W_NAV_DEST',
+        UI_WARNING_CODES.W_NAV_DEST,
         `书签“${item.name}”缺少跳转目标`,
       );
       return;

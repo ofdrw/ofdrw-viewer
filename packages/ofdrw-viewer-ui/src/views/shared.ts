@@ -31,6 +31,7 @@ import type {
   ViewerWarning,
 } from '../types';
 import type { UIShellElements } from '../ui/types';
+import { UI_WARNING_CODES } from '../diagnostics';
 
 /** 引擎渲染任务的最小结构。 */
 export interface NavigationRenderTask {
@@ -275,7 +276,7 @@ function applyDestinationZoom(viewer: NavigationViewer, dest: DocumentDestinatio
   } catch (error) {
     reportNavigationWarning(
       viewer,
-      'W_NAV_ZOOM',
+      UI_WARNING_CODES.W_NAV_ZOOM,
       `按跳转目标调整缩放失败：${error instanceof Error ? error.message : String(error)}`,
       dest.pageIndex,
     );
@@ -299,7 +300,7 @@ export function goToDestination(
   const pageCount = viewer.getPageInfos().length || viewer.getState().document.pageCount;
   const reason = validateDestination(dest, pageCount);
   if (!dest || reason) {
-    reportNavigationWarning(viewer, 'W_NAV_DEST', `无效的跳转目标：${reason ?? '未知原因'}`);
+    reportNavigationWarning(viewer, UI_WARNING_CODES.W_NAV_DEST, `无效的跳转目标：${reason ?? '未知原因'}`);
     return false;
   }
   applyDestinationZoom(viewer, dest);
@@ -308,7 +309,7 @@ export function goToDestination(
   } catch (error) {
     reportNavigationWarning(
       viewer,
-      'W_NAV_JUMP',
+      UI_WARNING_CODES.W_NAV_JUMP,
       `跳转到第 ${dest.pageIndex + 1} 页失败：${error instanceof Error ? error.message : String(error)}`,
       dest.pageIndex,
     );

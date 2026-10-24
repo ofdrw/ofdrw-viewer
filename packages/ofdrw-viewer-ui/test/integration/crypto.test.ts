@@ -591,8 +591,46 @@ describe('t45 修复回归', () => {
     const cause = new CryptoError(code as never, message);
     cryptoMocks.inspect.mockRejectedValue(cause);
     const viewer = new OFDViewer({ container: document.body, source: new ArrayBuffer(8) });
-    const error = await viewer.ready.catch((value: unknown) => value as { code?: string; cause?: unknown });
+    const error = (await viewer.ready.catch((value: unknown) => value)) as {
+      code?: string;
+      message?: string;
+      cause?: unknown;
+    };
     expect(error).toMatchObject({ code: 'OFD_CRYPTO_FAILED', cause });
+    // 归因必须是“加密信息读取失败”，不得引导用户检查凭据。
+    expect(error.message).toContain('读取文档加密信息失败');
+    expect(error.message).toContain(message);
+    expect(error.message).not.toContain('请检查凭据');
+  });
+
+  it('inspect 失败时加载层错误信息同样不出现凭据指引', async () => {
+    const cause = new CryptoError('CRYPTO_INVALID_PACKAGE', '签名清单根元素非法：Doc_0/Signs/Signatures.xml');
+    cryptoMocks.inspect.mockRejectedValue(cause);
+    const viewer = new OFDViewer({ container: document.body, source: new ArrayBuffer(8) });
+    await expect(viewer.ready).rejects.toMatchObject({ code: 'OFD_CRYPTO_FAILED' });
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('读取文档加密信息失败');
+    expect(text).not.toContain('请检查凭据');
+  });
+
+  it('缺 Type 的签名条目不会阻断明文文档打开', async () => {
+    // 真实样本 ofd_pdf_match/draw_param_ref.ofd 的 Signatures.xml 缺 Signature@Type。
+    cryptoMocks.inspect.mockResolvedValue({
+      ...signedInspection(),
+      signatures: [
+        {
+          id: '2',
+          type: '',
+          baseLoc: '/Doc_0/Signs/Sign_0/Signature.xml',
+          signedValuePath: 'Doc_0/Signs/Sign_0/SignedValue.dat',
+        },
+      ],
+    } as unknown as OfdInspection);
+    const viewer = new OFDViewer({ container: document.body, source: new ArrayBuffer(8) });
+    await viewer.ready;
+    expect(viewer.getState().document.status).toBe('ready');
+    expect(cryptoMocks.inspect).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent ?? '').not.toContain('解密失败');
   });
 
   it('path loader 抛错传播 OFD_CRYPTO_FAILED 并保留 cause', async () => {
@@ -938,8 +976,13 @@ describe('t47 修复回归', () => {
       const cause = new CryptoError('CRYPTO_INVALID_PACKAGE', message);
       cryptoMocks.inspect.mockRejectedValueOnce(cause);
       const viewer = new OFDViewer({ container: document.body, source: new ArrayBuffer(8) });
-      const error = await viewer.ready.catch((value: unknown) => value as { code?: string; cause?: unknown });
+      const error = (await viewer.ready.catch((value: unknown) => value)) as {
+        code?: string;
+        message?: string;
+        cause?: unknown;
+      };
       expect(error).toMatchObject({ code: 'OFD_CRYPTO_FAILED', cause });
+      expect(error.message).toBe(`读取文档加密信息失败：${message}`);
     }
   });
 

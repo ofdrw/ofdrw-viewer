@@ -4,6 +4,7 @@ import { createViewerBridge } from '../../../src/text/viewer-bridge';
 import type { FindMatch } from '../../../src/text/types';
 import type { TextProvider } from './helpers';
 import { contentWithLines, makeFakeHost } from './helpers';
+import { UI_WARNING_CODES } from '../../../src/diagnostics';
 
 /** 等待 setTimeout 级异步任务。 */
 function flush(): Promise<void> {
@@ -144,7 +145,7 @@ describe('透明文本层服务', () => {
     host.setView({ pageNumber: 2, visiblePageRange: { start: 1, end: 1 } });
     await flush();
     expect(attempts).toBe(1);
-    expect(host.warnings.filter((warning) => warning.code === 'W_TEXT_LOAD')).toHaveLength(1);
+    expect(host.warnings.filter((warning) => warning.code === UI_WARNING_CODES.W_TEXT_LOAD)).toHaveLength(1);
     host.setView({ pageNumber: 1, visiblePageRange: { start: 0, end: 0 } });
     await vi.waitFor(() => expect(attempts).toBe(2));
     service.destroy();

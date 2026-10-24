@@ -48,17 +48,30 @@ export function collectIssues(page: Page): IssueCollector {
 /**
  * 断言页面没有未捕获异常或 console error。
  *
+ * 阅读器的控制台诊断默认开启，但**默认不放行**：只有确实会故意触发 error 级诊断的用例，
+ * 才通过 `allowedDiagnostics` 显式给出放行规则（匹配控制台首参，例如
+ * `/^\[ofd-viewer\] error OFD_OPEN_FAILED /`），避免真实错误被前缀规则整体掩盖。
+ *
  * @param page 页面。
  * @param issues 收集器。
- * @param options 预期内的窗口错误白名单（例如故意触发打开失败的验收用例）。
+ * @param options `windowErrors` 为预期内的窗口错误白名单（例如故意触发打开失败的验收用例）；
+ *   `allowedDiagnostics` 为允许出现的控制台诊断首参规则，默认空（不放行任何诊断）。
  */
 export async function expectNoPageErrors(
   page: Page,
   issues: IssueCollector,
-  options: { readonly windowErrors?: readonly RegExp[] } = {},
+  options: {
+    readonly windowErrors?: readonly RegExp[];
+    readonly allowedDiagnostics?: readonly RegExp[];
+  } = {},
 ): Promise<void> {
   expect(issues.pageErrors, 'pageerror').toEqual([]);
-  expect(issues.consoleErrors, 'console.error').toEqual([]);
+  expect(
+    issues.consoleErrors.filter(
+      (text) => !options.allowedDiagnostics?.some((pattern) => pattern.test(text)),
+    ),
+    'console.error',
+  ).toEqual([]);
   expect(issues.requestFailures, 'requestfailed').toEqual([]);
   const windowErrors = await page.evaluate(() => window.__errors ?? []);
   const unexpected = windowErrors.filter(

@@ -9,6 +9,7 @@ import {
   DEFAULT_MAX_BASE64_BYTES,
   readPreviewSourceFromLocation,
 } from '../../../src/source/query-source';
+import { UI_WARNING_CODES } from '../../../src/diagnostics';
 
 /** 构造最小 location。 */
 function locationOf(search: string, href = `https://example.com/app/index.html${search}`) {
@@ -159,7 +160,7 @@ describe('readPreviewSourceFromLocation > 优先级', () => {
     expect(source).toBe('https://example.com/app/docs/a.ofd');
     expect(onWarning).toHaveBeenCalledTimes(1);
     expect(onWarning.mock.calls[0]?.[0]).toMatchObject({
-      code: 'W_QUERY_SOURCE',
+      code: UI_WARNING_CODES.W_QUERY_SOURCE,
       message: expect.stringContaining('file'),
     });
   });
