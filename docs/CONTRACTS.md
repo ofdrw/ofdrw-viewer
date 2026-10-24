@@ -148,6 +148,8 @@
 - 打开与来源：`OFDOpenOptions`、`OFDOpenFromContainerOptions`、`OFDSource`、`FontInput`。
 - 宿主接口：`ByteSource`、`VirtualContainer`、`VirtualContainerFactory`、`ImageDecoder`、`FontProvider`；`openZipVirtualContainer`。
 - UI 数据：`PageInfo`、`TextContent`、`TextItem`、`TextChar`、`DocumentMetadata`、`OutlineNode`、`BookmarkItem`、`DocumentPermissions` 等。
+- 元数据扩展：`DocumentMetadata` 新增可选 `docUsage`、`docType`、`documentHeader`（`DocumentHeader`）、`packageInfo`（`OfdPackageInfo`）、`commonData`（`CommonDataSummary`）；子类型与 `DocumentPageArea` 一并导出。全部 optional，缺失即省略，均在 `open()` 阶段解析。
+- 附件扩展：`AttachmentInfo` 新增可选 `contentType`、`description`、`submissionDate`、`isEncrypted`；`OFDDocument` 新增 `getAttachmentByName`、`getAttachmentsByFormat`、`getAttachmentSize`、`saveAttachment`（签名与语义见 API.md §3.12.1），`AttachmentSink`/`AttachmentOperationOptions` 随之导出；`ResourceLimits` 新增可选 `maxAttachmentBytes`（byte，未配置回退 `maxEntryBytes`）。
 - 渲染器与视口：`Canvas2DLike`、`CanvasRenderingContext2DLike`、`PageRenderParameters`、`Viewport`、`getPageViewport`、`getPageTransform`。
 - 页级内容过滤：`PageContentFilter`、`DrawLayerOptions`、`AnnotationType`、`KnownAnnotationType`、`KNOWN_ANNOTATION_TYPES`；由 `render`/`exportImage`/`getTextContent` 的 `contentFilter` 使用，白名单语义与不继承规则见 API.md §4.10。
 
@@ -170,6 +172,11 @@ crypto 可以重导出 engine 的 `ByteSource` 类型，但不得借此扩大 en
 
 包根导出 `OFDViewer`、`registerViewerExtension`、构造选项与事件/状态类型、`HttpByteSource`、`readPreviewSourceFromLocation`、`DEFAULT_MAX_BASE64_BYTES`、`VERSION`/`getVersions` 与错误类型。框架入口使用 `./react`、`./vue`、`./element`（`./component` 为兼容别名），样式使用 `./style.css`。完整签名见 [UI API](../packages/ofdrw-viewer-ui/skills/API.md)。
 
+- `OFDViewer.getDocumentInfo(): Promise<ViewerDocumentInfo>`：文档信息快照，一次性并发聚合 `getMetadata`/`getPermissions`/`getAttachments`/`getSignatureEntries`/`getOutline`/`getBookmarks`；结果不写入 `ViewerState`。未打开时抛 `OFD_NOT_OPENED`，销毁后抛 `OFD_DESTROYED`。`ViewerDocumentInfo` 同时从包根导出。
+- 功能键新增 `attachments`（依赖 `sidebar`，默认开启）：引擎无 `saveAttachment()` 时标记 `unsupported`，文档无附件时按 `document` 关闭。
+- `ViewerState.document` 字段不变（不承载权限/附件）；权限与附件通过 `getDocumentInfo()` 或既有 `getPermissions()` 读取。
+- 包根同时透出引擎的 `AttachmentInfo`、`DocumentPermissions`、`DocumentMetadata` 及其新增子类型。
+
 UI 的包根导入会安装 UI shell，并加载文本、导航、签章、打印、导出等副作用模块；React/Vue/Web Component 入口复用同一 `OFDViewer` 内核，不建立第二套文档生命周期。
 
 ### 5.4 CLI
@@ -187,7 +194,7 @@ CLI 只提供可执行文件 `ofdrw-viewer-cli`，不导出库 API。命令、�
 | 调用方 | 被调用方 | 使用的公共面 |
 | --- | --- | --- |
 | crypto | engine | `ByteSource`、`VirtualContainer`、`OFDError`/`isOFDError`、`openZipVirtualContainer` 及公共类型 |
-| UI | engine | `OFDDocument`、`OFDPage`、渲染器/视口、错误、文档/文本/权限/签章类型 |
+| UI | engine | `OFDDocument`、`OFDPage`、渲染器/视口、错误、文档/文本/权限/签章类型；元数据扩展字段（`docType`/`documentHeader`/`packageInfo`/`commonData`）与附件接口（`getAttachments`/`getAttachmentByName`/`getAttachmentsByFormat`/`getAttachmentSize`/`saveAttachment`/`getAttachmentData`） |
 | UI | crypto | `inspect`、`openDecryptingContainer`、`verifyOfd`、证书/SM 类型与错误类型 |
 | CLI | engine | `OFDDocument`、图片导出、文本内容、字体/解码器注入、错误与 warning |
 | CLI | crypto | `inspect`、`openDecryptingContainer`、`verifyOfd`、`certificatesToDer`、凭据/报告类型 |
@@ -272,6 +279,17 @@ CLI 只提供可执行文件 `ofdrw-viewer-cli`，不导出库 API。命令、�
 - CLI 不提供独立 `decrypt` 子命令；需要解密时通过 `convert` 的凭据参数或 `verify` 的凭据参数完成。CLI 不自行实现 SM 算法，只调用 crypto 公共入口。
 - 凭据只在调用栈/内存中使用，不写入日志、DOM、URL、浏览器存储或输出文件；测试证书/私钥只能用于测试，不构成生产信任材料。
 
+### 7.11 文档元数据与附件接口
+
+- **元数据来源唯一**：`DocumentMetadata` 的扩展字段（`docUsage`/`docType`/`documentHeader`/`packageInfo`/`commonData`）只由 engine 在 `open()` 阶段从 OFD.xml/Document.xml/CommonData 解析，UI/CLI 不得自行解析包内 XML 生成同名数据；`getMetadata()` 仍只读内存缓存。
+- **缺失即省略**：所有新增字段 optional，解析不到时不出现 key，不放 `undefined`；非法数值/路径省略并产生 `W_METADATA_FIELD`，不阻断打开。几何字段统一 `Box`（mm），包内路径经 `resolvePackagePath` 规范化并去掉前导 `/`。
+- **附件索引与内容分离**：`getAttachments()` 只读 `Attachments.xml` 元信息并缓存到关闭；`getAttachmentSize()` 读声明大小（byte）不读内容；内容只能经 `saveAttachment()`（回调式分块）或 `getAttachmentData()`（整块，旧调用方保留）取得，均不缓存。
+- **`saveAttachment` 语义**：回调式分块，chunk 顺序等于包内字节顺序，`chunkSize` 默认 65536 byte；返回写入字节总数（byte）；`sink` 抛错原样上抛、引擎停止读取、已写字节不回滚；附件不可用上报 `W_ATTACHMENT_RESOURCE` 并返回 `0`（`getAttachmentData`/`getAttachmentSize` 对应返回 `undefined`）。
+- **`saveAttachment` 不是流式 I/O**：容器只提供整块读取，引擎先读入内存再切块回调；chunk 是本次缓冲的 `subarray` 视图，跨回调保留须自行拷贝（UI 使用 `chunk.slice()`）。文档措辞不得把它描述成流式读取。
+- **单附件上限**：取 `limits.maxAttachmentBytes`，未配置（或非法）回退 `maxEntryBytes`（默认 64 MiB）；声明大小或实际大小超限一律抛 `OFD_LIMIT_EXCEEDED`，不返回部分数据，`getAttachmentData`/`getAttachmentSize`/`saveAttachment` 三个接口口径一致（含只查元数据的 `getAttachmentSize`）。
+- **UI 消费契约**：UI 通过 `getDocumentInfo()` 聚合读取元数据/权限/附件，不把这些数据塞进 `ViewerState.document`；附件内容一律不进入 DOM，未知格式只提供下载；单附件**声明大小**超过 500 MB（`ATTACHMENT_LARGE_THRESHOLD_BYTES = 524288000` byte）时不读取内容，改为提示下载整个 OFD 原文件（`readSourceBytes()`，沿用 `export` 门控）；批量 ZIP 导出复用 `export/zip.ts` 的 `createStoreZip`（fflate store 模式），超阈值与读取失败条目跳过并汇总“已导出 N，跳过 M”。
+- **CLI 消费契约**：`info --json` 的 `document` 子对象平铺同步 5 个新字段与 `attachments` 摘要数组（`id`/`name`/`format?`/`size?`/`modDate?`），字段名与 engine 一致、缺失即省略；文本输出只在有值时新增“文档用途/文档类型/文档根/附件”行，不新增 `attachments` 子命令。
+
 ## 8. 错误码与 warning 码注册表
 
 这些码是公共契约。新增、删除或改名必须同步本文件、对应 `skills/API.md` 和消费方映射。
@@ -291,6 +309,7 @@ CLI 只提供可执行文件 `ofdrw-viewer-cli`，不导出库 API。命令、�
 | `OFD_RENDERER_UNSUPPORTED` | 渲染器/绘制能力不支持 |
 | `OFD_ABORTED` | 操作被取消 |
 | `OFD_CLOSED` | 文档或容器已关闭 |
+| `OFD_NOT_OPENED` | 文档从未成功打开时请求文档级信息（区别于已打开后被关闭的 `OFD_CLOSED`）；由 UI `getDocumentInfo()` 抛出 |
 | `OFD_LIMIT_EXCEEDED` | 包/条目/解压/资源超过限制 |
 | `OFD_FONT_PARSE` | 字体解析失败 |
 | `OFD_IMAGE_DECODE` | 图片解码失败 |

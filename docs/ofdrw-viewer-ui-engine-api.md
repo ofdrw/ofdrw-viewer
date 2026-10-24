@@ -156,8 +156,24 @@ UI 只对可见页和相邻预取页构建透明文本层；按 96 DPI 坐标定
 ### 元数据、权限与附件
 
 - `getMetadata()` 返回 OFD 版本、页数和 DocInfo；日期保留原文，不推断时区；无 DocInfo 仍有版本和页数。
+- 元数据新增 5 个可选字段，全部在 `open()` 阶段解析，`getMetadata()` 只读内存缓存、不额外读取包内条目；缺失时省略 key，不放入 `undefined`：
+  - `docUsage`：文档用途（DocInfo/DocUsage）。
+  - `docType`：`OFD.xml` 的 `OFD@DocType`（例如 `OFD`/`Render`/`None`）。
+  - `documentHeader`（`DocumentHeader`）：`docId`、`version`、`maxUnitId`、`pageArea`、`publicRes`/`documentRes`/`templatePageRes`（`readonly string[]`，包内路径列表）、`defaultCs`、`docUsage`。
+  - `packageInfo`（`OfdPackageInfo`）：`docRoot`、`docBodyCount`，可选 `maxUnitId`。
+  - `commonData`（`CommonDataSummary`）：`pageArea`、`defaultColorSpaceId`、`documentVersion`、`dataDir`。
+  - 几何字段统一用 `Box`（mm），与 `PageInfo` 一致；非法数值/路径省略并产生 `W_METADATA_FIELD`，不阻断打开。
 - `getPermissions()` 只读 `Document.xml/Permissions`：布尔权限缺省允许，`print.copies=0` 表示不允许打印，负数按不限，非法字段回退并产生 `W_PERMISSION_FIELD`。引擎不做 DRM 强制。
-- `getAttachments()` / `getAttachmentData()` 按需读取附件索引和原始字节；当前 UI 不提供附件面板，也不消费这两个接口，因此它们不是 UI 的阅读依赖。
+- 附件接口：`getAttachments()` 读 `Attachments.xml` 索引（无索引返回 `[]`，不 warning），`getAttachmentByName()`/`getAttachmentsByFormat()` 复用该缓存做查询，`getAttachmentSize()` 只返回 XML 声明的 byte 大小而不读内容，`saveAttachment(id, sink, opts)` 以回调式分块交出字节（引擎内部整块读取后按 `chunkSize` 切分，不是流式 I/O；chunk 为 `subarray` 视图，保留须拷贝），`getAttachmentData(id)` 返回整块字节（保留给旧调用方）。
+- `AttachmentInfo` 除 `id`/`name` 外，可选 `format`、`size`（byte）、`creationDate`、`modDate`、`visible`、`usage`，以及新增的 `contentType`（MIME）、`description`、`submissionDate`、`isEncrypted`。
+- 单附件大小上限取 `limits.maxAttachmentBytes`，未配置时回退 `maxEntryBytes`；声明大小或实际字节超限抛 `OFD_LIMIT_EXCEEDED` 且不返回部分数据，UI 需按普通读取失败处理。
+- 附件不可用（无索引/ID 不存在/缺 `FileLoc`/文件缺失）时 `saveAttachment` 上报 `W_ATTACHMENT_RESOURCE` 并返回 `0`，`getAttachmentData`/`getAttachmentSize` 返回 `undefined`；`sink` 抛错原样上抛，已写字节不回滚。
+
+UI 的消费方式：
+
+- `getDocumentInfo()` 一次性并发聚合 `getMetadata()`/`getPermissions()`/`getAttachments()`/`getSignatureEntries()`/`getOutline()`/`getBookmarks()`，结果不写入 `ViewerState`；属性对话框与附件侧栏从该快照读取新字段与附件列表。
+- 附件侧栏只在引擎实现 `saveAttachment()` 且文档确有附件时出现；下载用 `saveAttachment()` 分块收集，大附件（声明大小超过 500 MB / 524288000 byte）不读内容，改为提示下载整个 OFD 原文件（走 UI 的 `readSourceBytes()`，与 `export` 门控一致）。
+- UI 不解析附件内容，附件从不进入 DOM，未知格式只提供下载。
 
 ### 签章数据
 
@@ -198,6 +214,7 @@ UI 需要遵守的归属规则：
 | `OFD_LIMIT_EXCEEDED` | 包/条目/解压/图片等超限 | 打开或读取失败 |
 | `OFD_ABORTED` | 渲染/读取/导出取消 | 静默取消，不显示错误 |
 | `OFD_CLOSED` | 关闭后继续读写 | 视为生命周期错误 |
+| `OFD_NOT_OPENED` | 文档从未成功打开时请求文档级信息（区别于已打开后被关闭的 `OFD_CLOSED`） | UI `getDocumentInfo()` 抛出；视为未打开状态，不显示错误卡 |
 | `OFD_RENDERER_UNSUPPORTED` | 缺少渲染器/编码器或格式不支持 | 功能不可用或输出失败 |
 
 完整错误码与抛出位置见 [引擎 API 错误](../packages/ofdrw-viewer-engine/skills/API.md#9-错误)。UI 需要区分以下三类 code：
@@ -217,7 +234,8 @@ warning 不中断操作，通过打开参数 `onWarning` 同步回调；同一 `
 - 无大纲、无书签、无签章索引：返回空数组，不报错。
 - 合法但无内容的页范围：返回空数组。
 - 无附件索引：`getAttachments()` 返回 `[]`，`getAttachmentData(id)` 返回 `undefined`，都不产生 warning。
-- 附件索引已声明但 ID 不存在、条目缺少 `FileLoc`、附件文件缺失或读取失败：`getAttachmentData(id)` 返回 `undefined` 并产生 `W_ATTACHMENT_RESOURCE`；资源超限、包损坏等不可降级错误仍抛 `OFDError`，不能降级为 `undefined`。
+- 附件索引已声明但 ID 不存在、条目缺少 `FileLoc`、附件文件缺失或读取失败：`getAttachmentData(id)` 返回 `undefined`、`saveAttachment()` 返回 `0`，并产生 `W_ATTACHMENT_RESOURCE`；资源超限、包损坏等不可降级错误仍抛 `OFDError`，不能降级为 `undefined`。
+- 声明大小超过引擎单附件上限（`limits.maxAttachmentBytes`，未配置回退 `maxEntryBytes`，默认 64 MiB）时 `getAttachmentData`/`saveAttachment`/`getAttachmentSize` 均抛 `OFD_LIMIT_EXCEEDED`（`getAttachmentSize` 只查元数据也不例外）；UI 在大附件阈值（500 MB = 524288000 byte）处已提前拦截，此错误通常只出现在宿主自行调用附件接口的路径。
 - 未声明或缺失的签章值返回 `undefined`；已声明但读取失败产生 `W_SIGNATURE_RESOURCE`。
 - 非法页索引、非法参数、资源超限、关闭后调用：抛 `OFDError`。
 - 取消：抛 `OFD_ABORTED`，不是正常空结果。
@@ -235,5 +253,5 @@ UI 侧的页信息、文本、渲染、导出和签章读取断言由 `test/inte
 ## 当前契约缺口
 
 - 引擎没有 `renderRegion`/瓦片渲染接口；大页面缩放仍按整页 canvas 渲染，UI 不依赖瓦片或局部重绘，改用 DPI 上限和页面缓存控制内存。
-- 引擎不提供“下载原文件”或文档打包导出；UI 当前也没有该能力，需要原文件的宿主应从自己的来源读取。
+- 引擎没有“下载某个附件或打包导出附件”的接口：单附件只能经 `saveAttachment()`（分块回调）/`getAttachmentData()`（整块）取出字节，ZIP 打包由 UI 复用自身的 `createStoreZip()`（fflate store 模式，不新增依赖）；“下载整个 OFD 原文件”走 UI 的 `readSourceBytes()`，不经过引擎。
 - `getPageInfos()` 一次返回全部页尺寸；当前没有分页/流式页信息接口，1000 页依赖该批量结果建立页盒。
