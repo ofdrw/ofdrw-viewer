@@ -6,6 +6,19 @@
 
 页面只使用 `<ofd-viewer>` Web Component，支持打开本地 `.ofd` 文件、内置样例、主题与语言切换，并在状态栏显示 UI / engine / crypto 版本号。所有文档都在浏览器本地解析与渲染，不会上传。
 
+站点不再自己解析文档 URL：直接用 UI 的查询参数预览能力。
+
+- `?file=`：完整 http(s) URL，或相对当前页面的路径（如 `?file=samples/doc1File.ofd`）；相对路径由 UI 按页面地址解析，部署到子路径也无需额外处理。
+- `?base64=`：纯 Base64 或 `data:application/ofd;base64,...` 形式的内联文档。
+- 两者同时存在时 `file` 优先；切换示例或本地文件时，站点会把 `?file=` 同步到地址栏，便于复制分享。
+
+示例：
+
+```text
+https://ofdrw.github.io/ofdrw-viewer/?file=samples/doc1File.ofd
+https://ofdrw.github.io/ofdrw-viewer/?file=https%3A%2F%2Fexample.com%2Fdemo.ofd
+```
+
 本目录是独立的 pnpm workspace 包 `@ofdrw/ofdrw-viewer-site`，不属于 UI 包：它直接引用
 `packages/ofdrw-viewer-ui/src` 源码构建，不经过 UI 包的 `dist`。
 

@@ -20,9 +20,6 @@ const SAMPLES = [
 /** 页面首次加载时默认打开的示例。 */
 const DEFAULT_SAMPLE = SAMPLES[0].name;
 
-/** 站点资源基地址；由 Vite 按部署子路径注入，始终以 `/` 结尾。 */
-const BASE_URL = import.meta.env.BASE_URL;
-
 /** 状态提示自动隐藏的定时器。 */
 let toastTimer: number | undefined;
 
@@ -64,26 +61,17 @@ function setStatus(message: string, duration = 2500): void {
 }
 
 /**
- * 把站点内相对路径解析为绝对 URL；带协议的绝对 URL 原样返回。
+ * 同步地址栏的 `file` 查询参数，便于复制链接分享当前文档。
  *
- * @param path 站点内相对路径（如 `samples/a.ofd`）或完整 URL
- * @returns 可直接交给阅读器的绝对 URL
- */
-function toAssetUrl(path: string): string {
-  if (/^[a-z][a-z0-9+.-]*:/i.test(path)) return path;
-  return new URL(path, new URL(BASE_URL, window.location.origin)).href;
-}
-
-/**
- * 同步地址栏的 `src` 查询参数，便于复制链接分享当前文档。
+ * 相对路径由阅读器按当前页面地址解析，站点不再自己拼绝对 URL。
  *
- * @param src 要写入的站点内相对路径；传 null 表示移除参数
+ * @param file 要写入的站点内相对路径或完整 URL；传 null 表示移除参数
  */
-function updateQuery(src: string | null): void {
+function updateQuery(file: string | null): void {
   try {
     const url = new URL(window.location.href);
-    if (src) url.searchParams.set('src', src);
-    else url.searchParams.delete('src');
+    if (file) url.searchParams.set('file', file);
+    else url.searchParams.delete('file');
     window.history.replaceState(null, '', url);
   } catch {
     // 非 http(s) 环境（如 file://）可能禁止修改历史记录，忽略即可。
@@ -102,31 +90,19 @@ function applyShellTheme(theme: string): void {
 }
 
 /**
- * 打开文档并展示加载状态。
- *
- * @param source 阅读器可接受的来源（URL 字符串）
- * @param label 状态提示中展示的名称
- */
-async function openSource(source: string, label: string): Promise<void> {
-  setStatus(`正在打开：${label}`, 0);
-  try {
-    await viewer.open(source);
-  } catch (reason) {
-    setStatus(`打开失败：${reason instanceof Error ? reason.message : String(reason)}`, 6000);
-  }
-}
-
-/**
  * 打开内置示例，并同步示例下拉框与地址栏。
+ *
+ * 相对路径直接交给阅读器，由 UI 按当前页面地址解析；打开失败由 `ofd-error` 事件统一提示。
  *
  * @param name `SAMPLES` 中的文件名
  */
-async function openSample(name: string): Promise<void> {
+function openSample(name: string): void {
   const sample = SAMPLES.find((item) => item.name === name);
   if (!sample) return;
   sampleSelect.value = sample.name;
   updateQuery(`samples/${sample.name}`);
-  await openSource(toAssetUrl(`samples/${sample.name}`), sample.label);
+  setStatus(`正在打开：${sample.label}`, 0);
+  viewer.source = `samples/${sample.name}`;
 }
 
 // 文档打开：展示总页数，提示会在数秒后自动消失。
@@ -156,7 +132,7 @@ fileInput.addEventListener('change', () => {
 
 // 示例切换：空值代表当前是本地文件或自定义链接，无需处理。
 sampleSelect.addEventListener('change', () => {
-  if (sampleSelect.value) void openSample(sampleSelect.value);
+  if (sampleSelect.value) openSample(sampleSelect.value);
 });
 
 // 主题切换：同时作用于阅读器与页面外壳。
@@ -177,22 +153,26 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () 
 
 /**
  * 页面初始化：填充版本号、应用外壳主题并打开初始文档。
+ *
+ * 若地址栏已有 `?file=` 或 `?base64=`，不设置 `source`，由阅读器自行读取查询参数；
+ * 否则打开默认示例。这样站点不再重复实现 URL 解析与来源规范化。
  */
-async function main(): Promise<void> {
+function main(): void {
   const versions = getVersions();
   versionEl.textContent = `UI ${versions.ui} · engine ${versions.engine} · crypto ${versions.crypto}`;
   versionEl.title = '阅读器各组成包的版本';
   applyShellTheme(themeSelect.value);
 
-  const requested = new URLSearchParams(window.location.search).get('src');
-  if (requested) {
+  const params = new URLSearchParams(window.location.search);
+  if (params.has('file') || params.has('base64')) {
     sampleSelect.value = '';
-    await openSource(toAssetUrl(requested), requested);
     return;
   }
-  await openSample(DEFAULT_SAMPLE);
+  openSample(DEFAULT_SAMPLE);
 }
 
-void main().catch((reason: unknown) => {
+try {
+  main();
+} catch (reason) {
   setStatus(`初始化失败：${reason instanceof Error ? reason.message : String(reason)}`, 6000);
-});
+}
