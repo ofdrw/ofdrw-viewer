@@ -12,6 +12,7 @@ import {
   CERT_USER,
   ENCRYPT_KEY,
   FIXTURES,
+  FONT_FILE,
   PASSWORD,
   PASSWORD_USER,
   SIGNER_KEY,
@@ -28,10 +29,10 @@ import {
 afterEach(cleanupTempDirs);
 
 describe('V-CLI 转图片：旧用法兼容', () => {
-  it('旧用法默认 PNG、页码与命名保持原行为', async () => {
+  it.skipIf(FONT_FILE === null)('旧用法默认 PNG、页码与命名保持原行为', async () => {
     const cwd = await createTempDir();
     const out = join(cwd, 'out');
-    const fontDir = await createFontDir();
+    const fontDir = (await createFontDir())!;
     const result = await runMain(
       [fixture('plain.ofd'), '-o', out, '--pages', '2', '--font-dir', fontDir],
       cwd,
@@ -45,10 +46,10 @@ describe('V-CLI 转图片：旧用法兼容', () => {
     expect(image.height).toBeGreaterThan(0);
   });
 
-  it('旧用法 --text 同时产出 PNG 与五字段文本 JSON', async () => {
+  it.skipIf(FONT_FILE === null)('旧用法 --text 同时产出 PNG 与五字段文本 JSON', async () => {
     const cwd = await createTempDir();
     const out = join(cwd, 'out');
-    const fontDir = await createFontDir();
+    const fontDir = (await createFontDir())!;
     const result = await runMain(
       [fixture('plain.ofd'), '-o', out, '--pages', '1', '--text', '--font-dir', fontDir],
       cwd,
@@ -77,10 +78,10 @@ describe('V-CLI 转图片：旧用法兼容', () => {
 });
 
 describe('V-CLI 转图片：加密文档凭据路径', () => {
-  it('口令路径导出 PNG + 文本，保留 --pages/--text 语义且不泄漏口令', async () => {
+  it.skipIf(FONT_FILE === null)('口令路径导出 PNG + 文本，保留 --pages/--text 语义且不泄漏口令', async () => {
     const cwd = await createTempDir();
     const out = join(cwd, 'out');
-    const fontDir = await createFontDir();
+    const fontDir = (await createFontDir())!;
     const result = await runMain(
       [
         fixture('password-encrypted.ofd'),
@@ -114,10 +115,10 @@ describe('V-CLI 转图片：加密文档凭据路径', () => {
     expect(result.stdout).not.toContain('EncryptedWK');
   });
 
-  it('私钥路径导出 PNG + 文本，支持 DER 私钥且不输出 PEM 内容', async () => {
+  it.skipIf(FONT_FILE === null)('私钥路径导出 PNG + 文本，支持 DER 私钥且不输出 PEM 内容', async () => {
     const cwd = await createTempDir();
     const out = join(cwd, 'out');
-    const fontDir = await createFontDir();
+    const fontDir = (await createFontDir())!;
     const result = await runMain(
       [
         fixture('cert-encrypted.ofd'),

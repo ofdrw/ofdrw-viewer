@@ -5,9 +5,10 @@
  * 不导入 CLI 的 unit/acceptance 辅助，避免复用被测实现内部的期望。
  */
 
+import { existsSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadImage } from '@napi-rs/canvas';
 import { main } from '../../src/cli.js';
@@ -30,10 +31,25 @@ export const PASSWORD = 'FixturePass123';
 /** 根证书 PEM。 */
 export const ROOT_PEM = join(FIXTURES, 'certs', 'root-ca.crt.pem');
 
-/** 仓库本地中文字体（仅用于独立验证文本导出）。 */
-export const FONT_FILE = fileURLToPath(
-  new URL('../../../../test/.fixtures/fonts/DroidSansFallbackFull.ttf', import.meta.url),
-);
+/**
+ * 中文字体候选。
+ *
+ * 字体文件不提交版本库（仓库根 `test/.fixtures/` 被 gitignore），本机可能有
+ * 历史缓存，CI 依赖 `fonts-droid-fallback` / `fonts-noto-cjk` 注入；全部缺失时
+ * 由调用方跳过对应用例，而不是伪造通过。
+ */
+const FONT_CANDIDATES = [
+  fileURLToPath(new URL('../../../../test/.fixtures/fonts/DroidSansFallbackFull.ttf', import.meta.url)),
+  '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
+  '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+  '/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc',
+  '/mnt/c/Windows/Fonts/simsun.ttc',
+  '/mnt/c/Windows/Fonts/msyh.ttc',
+];
+
+/** 首个可用的中文字体绝对路径；全部缺失时为 null。 */
+export const FONT_FILE: string | null =
+  FONT_CANDIDATES.find((candidate) => existsSync(candidate)) ?? null;
 
 /** 根证书 DER。 */
 export const ROOT_DER = join(FIXTURES, 'certs', 'root-ca.crt.der');
@@ -82,12 +98,15 @@ export async function createTempDir(prefix = 'ofdrw-vcli-'): Promise<string> {
 /**
  * 创建只含一个中文字体的字体目录，避免扫描整个仓库字体目录。
  *
- * @returns 字体目录绝对路径
+ * 保留字体原文件名：格式由扩展名决定，`.ttc` 改名为 `.ttf` 会导致加载失败。
+ *
+ * @returns 字体目录绝对路径；环境中没有可用中文字体时为 null
  */
-export async function createFontDir(): Promise<string> {
+export async function createFontDir(): Promise<string | null> {
+  if (FONT_FILE === null) return null;
   const dir = join(await createTempDir('ofdrw-vcli-font-'), 'fonts');
   await mkdir(dir, { recursive: true });
-  await copyFile(FONT_FILE, join(dir, 'DroidSansFallbackFull.ttf'));
+  await copyFile(FONT_FILE, join(dir, basename(FONT_FILE)));
   return dir;
 }
 

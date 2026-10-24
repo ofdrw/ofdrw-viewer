@@ -42,10 +42,12 @@ jobs:
 
       # ubuntu-24.04 runner 预装字体不含 CJK；engine 的文本 API 与发票红章用例
       # 需要把系统 CJK 字体注入补充字体，缺字体会让文字不绘制并导致 bbox 断言失败。
+      # fonts-droid-fallback 提供 DroidSansFallbackFull.ttf：cli 的独立验证用例按该
+      # 系统路径取字体（仓库 test/.fixtures/ 不提交），缺失会整组跳过。
       - name: 安装测试字体
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk fonts-droid-fallback
 
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
