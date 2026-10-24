@@ -138,6 +138,154 @@ describe('inspect', () => {
     expect(result.signatures[0]?.signedValuePath).toBe('Doc_0/Sign_0/SignedValue.dat');
   });
 
+  it('签名条目缺少 Type/BaseLoc 时只置空字段，不中断检测', async () => {
+    const files = unzipSync(fixtureBytes('plain.ofd'));
+    files['Doc_0/Signs/Signatures.xml'] = new TextEncoder().encode(
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<ofd:Signatures xmlns:ofd="http://www.ofdspec.org/2016">' +
+        '<ofd:Signature ID="no-type" BaseLoc="/Doc_0/Signs/Sign_0/Signature.xml"/>' +
+        '<ofd:Signature ID="no-baseloc" Type="Seal"/>' +
+        '</ofd:Signatures>',
+    );
+    files['Doc_0/Signs/Sign_0/SignedValue.dat'] = Uint8Array.of(1);
+    const result = await inspect({ kind: 'arraybuffer', data: zipSync(files, { level: 0 }) });
+    expect(result.signatures).toEqual([
+      {
+        id: 'no-type',
+        type: '',
+        baseLoc: '/Doc_0/Signs/Sign_0/Signature.xml',
+        signedValuePath: 'Doc_0/Signs/Sign_0/SignedValue.dat',
+      },
+      { id: 'no-baseloc', type: 'Seal', baseLoc: '', signedValuePath: undefined },
+    ]);
+  });
+
+  it('真实样本缺 Type：检测成功、明文、type 空串且已解析 SignedValue', async () => {
+    // 夹具 signatures-no-type.ofd 是仓库 ofd_pdf_match/draw_param_ref.ofd 的原样副本：
+    // 其 Signatures.xml 为 <Signature ID="2" BaseLoc="/Doc_0/Signs/Sign_0/Signature.xml"/>。
+    const bytes = fixtureBytes('signatures-no-type.ofd');
+    expect(bytes.length).toBeGreaterThan(0);
+    const result = await inspect({ kind: 'arraybuffer', data: bytes });
+    expect(result.encrypted).toBe(false);
+    expect(result.users).toEqual([]);
+    expect(result.signatures).toEqual([
+      {
+        id: '2',
+        type: '',
+        baseLoc: '/Doc_0/Signs/Sign_0/Signature.xml',
+        signedValuePath: 'Doc_0/Signs/Sign_0/SignedValue.dat',
+      },
+    ]);
+  });
+
+  it('同时缺 ID/Type/BaseLoc 的签名条目只置空字段，不影响其他签名', async () => {
+    const files = unzipSync(fixtureBytes('plain.ofd'));
+    files['Doc_0/Signs/Signatures.xml'] = new TextEncoder().encode(
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<ofd:Signatures xmlns:ofd="http://www.ofdspec.org/2016">' +
+        '<ofd:Signature/>' +
+        '<ofd:Signature ID="ok" Type="Seal" BaseLoc="/Doc_0/Signs/Sign_0/Signature.xml"/>' +
+        '</ofd:Signatures>',
+    );
+    files['Doc_0/Signs/Sign_0/SignedValue.dat'] = Uint8Array.of(1);
+    const result = await inspect({ kind: 'arraybuffer', data: zipSync(files, { level: 0 }) });
+    expect(result.signatures).toEqual([
+      { id: '', type: '', baseLoc: '', signedValuePath: undefined },
+      {
+        id: 'ok',
+        type: 'Seal',
+        baseLoc: '/Doc_0/Signs/Sign_0/Signature.xml',
+        signedValuePath: 'Doc_0/Signs/Sign_0/SignedValue.dat',
+      },
+    ]);
+  });
+
+  it('缺 ID 但 Type/BaseLoc 正常的签名条目保留空 ID，其他签名不受影响', async () => {
+    const files = unzipSync(fixtureBytes('plain.ofd'));
+    files['Doc_0/Signs/Signatures.xml'] = new TextEncoder().encode(
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<ofd:Signatures xmlns:ofd="http://www.ofdspec.org/2016">' +
+        '<ofd:Signature Type="Seal" BaseLoc="/Doc_0/Signs/Sign_0/Signature.xml"/>' +
+        '<ofd:Signature ID="second" Type="Sign" BaseLoc="/Doc_0/Signs/Sign_1/Signature.xml"/>' +
+        '</ofd:Signatures>',
+    );
+    files['Doc_0/Signs/Sign_0/SignedValue.dat'] = Uint8Array.of(1);
+    files['Doc_0/Signs/Sign_1/SignedValue.dat'] = Uint8Array.of(2);
+    const result = await inspect({ kind: 'arraybuffer', data: zipSync(files, { level: 0 }) });
+    expect(result.signatures).toEqual([
+      {
+        id: '',
+        type: 'Seal',
+        baseLoc: '/Doc_0/Signs/Sign_0/Signature.xml',
+        signedValuePath: 'Doc_0/Signs/Sign_0/SignedValue.dat',
+      },
+      {
+        id: 'second',
+        type: 'Sign',
+        baseLoc: '/Doc_0/Signs/Sign_1/Signature.xml',
+        signedValuePath: 'Doc_0/Signs/Sign_1/SignedValue.dat',
+      },
+    ]);
+  });
+
+  it('缺 BaseLoc 的签名条目不推导 SignedValue，同清单其他签名仍解析', async () => {
+    const files = unzipSync(fixtureBytes('plain.ofd'));
+    files['Doc_0/Signatures.xml'] = new TextEncoder().encode(
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<ofd:Signatures xmlns:ofd="http://www.ofdspec.org/2016">' +
+        '<ofd:Signature ID="no-baseloc" Type="Seal"/>' +
+        '<ofd:Signature ID="with-baseloc" Type="Seal" BaseLoc="Sign_1/Signature.xml"/>' +
+        '</ofd:Signatures>',
+    );
+    files['Doc_0/Signatures/SignedValue.dat'] = Uint8Array.of(9);
+    files['Doc_0/Sign_1/SignedValue.dat'] = Uint8Array.of(1);
+    const result = await inspect({ kind: 'arraybuffer', data: zipSync(files, { level: 0 }) });
+    expect(result.signatures).toEqual([
+      { id: 'no-baseloc', type: 'Seal', baseLoc: '', signedValuePath: undefined },
+      {
+        id: 'with-baseloc',
+        type: 'Seal',
+        baseLoc: 'Sign_1/Signature.xml',
+        signedValuePath: 'Doc_0/Sign_1/SignedValue.dat',
+      },
+    ]);
+  });
+
+  it('签名 BaseLoc 路径穿越仍抛 CRYPTO_INVALID_PACKAGE', async () => {
+    const files = unzipSync(fixtureBytes('plain.ofd'));
+    files['Doc_0/Signatures.xml'] = new TextEncoder().encode(
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<ofd:Signatures xmlns:ofd="http://www.ofdspec.org/2016">' +
+        '<ofd:Signature ID="bad" Type="Seal" BaseLoc="../../Signature.xml"/>' +
+        '</ofd:Signatures>',
+    );
+    await expect(
+      inspect({ kind: 'arraybuffer', data: zipSync(files, { level: 0 }) }),
+    ).rejects.toMatchObject({ code: 'CRYPTO_INVALID_PACKAGE' });
+  });
+
+  it('签名清单 XML 超限不被吞掉，仍抛 CRYPTO_LIMIT_EXCEEDED', async () => {
+    const bytes = fixtureBytes('plain.ofd');
+    // 用极小上限让 Signatures.xml 读取直接超限：该错误必须穿透 readSignatures。
+    await expect(
+      inspect(
+        {
+          kind: 'arraybuffer',
+          data: zipSync(
+            {
+              ...unzipSync(bytes),
+              'Doc_0/Signs/Signatures.xml': new TextEncoder().encode(
+                '<?xml version="1.0" encoding="UTF-8"?><ofd:Signatures xmlns:ofd="http://www.ofdspec.org/2016"/>',
+              ),
+            },
+            { level: 0 },
+          ),
+        },
+        { limits: { maxAsn1Bytes: 8 } },
+      ),
+    ).rejects.toMatchObject({ code: 'CRYPTO_LIMIT_EXCEEDED' });
+  });
+
   it('onWarning 取消后在 inspect 返回前抛出 CRYPTO_ABORTED', async () => {
     const data = mutateSeed('cert-encrypted.ofd', (seed) => {
       const user = firstUser(seed);

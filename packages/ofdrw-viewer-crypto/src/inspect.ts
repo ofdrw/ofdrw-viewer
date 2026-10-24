@@ -68,11 +68,11 @@ export interface EncryptionLayerInfo {
 
 /** `Signatures.xml` 中的签名条目摘要；不解析 SignedValue。 */
 export interface SignatureEntrySummary {
-  /** `Signature@ID`。 */
+  /** `Signature@ID`；缺失时为空串。 */
   readonly id: string;
-  /** `Signature@Type`。 */
+  /** `Signature@Type`；缺失时为空串。 */
   readonly type: string;
-  /** `Signature@BaseLoc`。 */
+  /** `Signature@BaseLoc`；缺失/为空时为空串，由验证层记录 issue。 */
   readonly baseLoc: string;
   /** 约定的 SignedValue 路径；文件不存在时省略。 */
   readonly signedValuePath?: string;
@@ -363,23 +363,21 @@ async function readSignatures(
     const container = root.localName === 'Signatures' ? root : xmlFind(root, 'Signatures');
     if (!container) throw new CryptoError('CRYPTO_INVALID_PACKAGE', `签名清单根元素非法：${path}`);
     xmlChildren(container, 'Signature').forEach((signature, index) => {
-      const id = xmlAttr(signature, 'ID')?.trim();
-      const type = xmlAttr(signature, 'Type')?.trim();
-      const baseLoc = xmlAttr(signature, 'BaseLoc')?.trim();
-      if (!id || !type || !baseLoc) {
-        throw new CryptoError(
-          'CRYPTO_INVALID_PACKAGE',
-          `签名条目缺少 ID/Type/BaseLoc：${path}#${index + 1}`,
-        );
-      }
+      const id = xmlAttr(signature, 'ID')?.trim() ?? '';
+      const type = xmlAttr(signature, 'Type')?.trim() ?? '';
+      const baseLoc = xmlAttr(signature, 'BaseLoc')?.trim() ?? '';
       let signedValuePath: string | undefined;
-      try {
-        const signaturePath = resolveVirtualPath(dirnameVirtualPath(path), baseLoc);
-        const dir = dirnameVirtualPath(signaturePath);
-        const candidate = dir.length > 0 ? `${dir}/SignedValue.dat` : 'SignedValue.dat';
-        if (access.has(candidate)) signedValuePath = candidate;
-      } catch {
-        throw new CryptoError('CRYPTO_INVALID_PACKAGE', `签名 BaseLoc 非法：${baseLoc}`);
+      // 单条记录缺 Type/BaseLoc 只影响该签名：Type 仅作展示，BaseLoc 由验证层
+      // 记为 SIGNATURE_BASELOC_INVALID。只读检测不能因此让整份文档打不开。
+      if (baseLoc.length > 0) {
+        try {
+          const signaturePath = resolveVirtualPath(dirnameVirtualPath(path), baseLoc);
+          const dir = dirnameVirtualPath(signaturePath);
+          const candidate = dir.length > 0 ? `${dir}/SignedValue.dat` : 'SignedValue.dat';
+          if (access.has(candidate)) signedValuePath = candidate;
+        } catch {
+          throw new CryptoError('CRYPTO_INVALID_PACKAGE', `签名 BaseLoc 非法：${path}#${index + 1}`);
+        }
       }
       result.push({ id, type, baseLoc, signedValuePath });
     });

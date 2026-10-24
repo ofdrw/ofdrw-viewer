@@ -75,6 +75,7 @@ crypto/
 | `negative-tampered-signedvalue.ofd` | 负例 | 签章值校验必须失败 |
 | `negative-tampered-signature.ofd` | 负例 | `dataHash`/Reference 校验必须失败 |
 | `negative-extra-file.ofd` | 负例 | 完整性/夹带检查必须失败 |
+| `signatures-no-type.ofd` | 明文签名 | `Signatures.xml` 的 `Signature` 缺 `Type`（`BaseLoc` 正常）；只读检测必须成功，`signatures[0].type` 为空串 |
 
 ### 信任根与 `unknown`
 
@@ -142,6 +143,7 @@ sha256sum -c manifest.sha256
 - 夹具基于 ofdrw 2.4.0（Apache License 2.0），只在测试构建中使用。
 - 夹具与测试证书随本仓库发布，遵循仓库根许可证（MIT）；测试证书/私钥不构成任何生产信任材料。
 - 基准 `plain.ofd` 来自 ofdrw 测试资源 `ofdrw-crypto/src/test/resources/hello.ofd`（Apache License 2.0）。
+- `signatures-no-type.ofd` 为仓库 `ofd_pdf_match/draw_param_ref.ofd` 的原样副本（回归夹具，33 402 B），用于覆盖“签名条目缺 Type 不得阻断打开”。
 
 ## 8. 相关文档
 

@@ -929,6 +929,39 @@ describe('t19 修复回归', () => {
     }
   });
 
+  it('Signatures.xml 单条记录 BaseLoc 为空白时不误报 Signature.xml 损坏', async () => {
+    const base = await buildV1SignedContainer();
+    try {
+      const entries = await readEntriesOf(base);
+      const signaturesXml = new TextEncoder().encode(
+        '<?xml version="1.0" encoding="UTF-8"?>\n' +
+          '<ofd:Signatures xmlns:ofd="http://www.ofdspec.org/2016">' +
+          '<ofd:Signature ID="s002" Type="Seal" BaseLoc=" "/>' +
+          '<ofd:Signature ID="s001" Type="Seal" BaseLoc="/Doc_0/Signs/Sign_0/Signature.xml"/>' +
+          '<ofd:MaxSignId>s001</ofd:MaxSignId></ofd:Signatures>',
+      );
+      const container = wrapEntries(
+        mergeEntries(
+          entries,
+          new Map([['Doc_0/Signs/Signatures.xml', { bytes: signaturesXml }]]),
+        ),
+      );
+      try {
+        const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
+        expect(report.signatures).toHaveLength(2);
+        const bad = report.signatures.find((item) => item.id === 's002')!;
+        const good = report.signatures.find((item) => item.id === 's001')!;
+        expect(bad.status).toBe('invalid');
+        expect(bad.issues.map((item) => item.code)).toEqual(['SIGNATURE_BASELOC_INVALID']);
+        expect(good.status).toBe('valid');
+      } finally {
+        await container.close();
+      }
+    } finally {
+      await base.close();
+    }
+  });
+
   it('印章时间戳解析失败 → warning 级 issue + W_CRYPTO_TIMESTAMP_PARSE，无 error 级解析 issue', async () => {
     const entries = await readFixtureEntries('signed-sesv5.ofd');
     // 合成带非法时间戳令牌的 v5 印章；Seal.esl 与 SignedValue 不一致不影响本用例关注的 warning。

@@ -366,7 +366,14 @@ async function verifyOneSignature(
   const issues: VerificationIssue[] = [];
   let baseLoc = record.baseLoc;
   let signatureDir = '';
-  // 单条 BaseLoc 非法只影响该签名，不能中断其他签名。
+  // 单条 BaseLoc 缺失/非法只影响该签名，不能中断其他签名。
+  // 缺 BaseLoc 时不把清单目录当作签名路径，否则会误报为 Signature.xml 损坏。
+  if (record.baseLoc.trim().length === 0) {
+    issues.push(
+      issue('SIGNATURE_BASELOC_INVALID', '签名缺少 BaseLoc：Signatures.xml 的记录', 'error'),
+    );
+    return baseSignatureResult(record, record.baseLoc, options, issues);
+  }
   try {
     baseLoc = record.baseLoc.startsWith('/')
       ? resolvePackagePath('', record.baseLoc)
