@@ -2,8 +2,9 @@
  * 打印文档构建（设计方案 §10.2 / §10.3）。
  *
  * 逐页调用引擎 `exportImage` 生成 PNG，插入 `<img>`；页面尺寸使用 mm。
- * `@page` 规则：统一尺寸直接设置，混合尺寸按尺寸分组使用命名页；不生成 PDF。
- * 打印旋转通过容器宽高交换 + CSS `rotate()` 实现，不改动引擎输出像素。
+ * `@page` 规则：统一尺寸直接设置；混合尺寸仅在 Chromium ≥85 且
+ * `CSS.supports('page', ...)` 为 true 时使用命名页，否则降级为“统一最大纸型 + 等比适配”。
+ * 不生成 PDF。打印旋转通过容器宽高交换 + CSS `rotate()` 实现，不改动引擎输出像素。
  */
 
 import { OFDViewerError } from '../errors';
@@ -224,24 +225,49 @@ export async function printPreparedDocument(prepared: PreparedPrintDocument): Pr
   }
 }
 
+/** 启用命名页所需的最低 Chrome 主版本；Chrome 85 起支持 `page` 属性与命名页。 */
+const NAMED_PAGES_MIN_CHROME_MAJOR = 85;
+
 /**
- * 检测命名页（`@page <name>` + `page` 属性）能力。
+ * 从 UA 解析 Chromium 系浏览器主版本。
  *
- * `page` 属性 Chrome 85 才有；Chrome 67 会忽略命名页规则。用
- * `CSS.supports('page', ...)` 判断（Chrome 28+ 可用，未知属性返回 false）。
- * 无法探测的环境（无 `CSS`/`supports`）按支持处理，保持现代内核行为。
+ * 只识别 Chromium 系（HeadlessChrome、Chrome、Android Chrome、iOS CriOS）；
+ * 其他引擎返回 null，由调用方按“不支持命名页”降级处理。
  *
- * @param view 目标窗口；省略时使用全局 `CSS`。
- * @returns 支持命名页时 true。
+ * @param userAgent 浏览器 UA；空串返回 null。
+ * @returns 主版本号；无法识别时为 null。
+ */
+function chromiumMajorVersion(userAgent: string): number | null {
+  const match = /(?:HeadlessChrome|Chrome|CriOS)\/(\d+)/.exec(userAgent);
+  if (!match) return null;
+  const major = Number(match[1]);
+  return Number.isFinite(major) ? major : null;
+}
+
+/**
+ * 检测命名页（`@page <name>` + `page` 属性）是否可实际生效。
+ *
+ * Chrome 67 对 `CSS.supports('page', ...)` 返回 true，但打印时命名页尺寸被忽略
+ * （真实 Chromium 67 `Page.printToPDF` 两页均为 Letter），单凭 `CSS.supports`
+ * 会误判。因此采用双门控：Chromium 主版本 ≥85 **且** `CSS.supports('page', ...)`
+ * 为 true 才启用命名页；Chrome 67、非 Chromium 系或 supports 为 false 时一律
+ * 走“统一最大纸型 + 等比适配”降级。
+ *
+ * @param view 目标窗口；省略时使用全局 `window`。
+ * @returns 可安全启用命名页时 true。
  */
 export function supportsNamedPages(view?: Window | null): boolean {
-  const scoped = (view as (Window & { CSS?: typeof CSS }) | null | undefined)?.CSS;
-  const css = scoped ?? (typeof CSS !== 'undefined' ? CSS : undefined);
-  if (!css || typeof css.supports !== 'function') return true;
+  const scoped = view ?? (typeof window !== 'undefined' ? window : null);
+  if (!scoped) return false;
+  const userAgent = scoped.navigator?.userAgent ?? '';
+  const major = chromiumMajorVersion(userAgent);
+  if (major === null || major < NAMED_PAGES_MIN_CHROME_MAJOR) return false;
+  const css = (scoped as Window & { CSS?: typeof CSS }).CSS;
+  if (!css || typeof css.supports !== 'function') return false;
   try {
     return css.supports('page', 'ofd-size-0');
   } catch {
-    return true;
+    return false;
   }
 }
 

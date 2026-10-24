@@ -108,7 +108,7 @@
 | --- | --- | --- | --- | --- |
 | S1 | `AbortSignal.reason` | `undefined`；`abort(reason)` 忽略参数 | 取消仍有 `AbortError`，但原因/`cause` 丢失；事件里的 `reason` 字段为空 | [降级] 测试只断言“已取消”，不断言具体 reason；不伪造 reason（伪造会与原生语义冲突） |
 | S2 | 无前缀 Fullscreen | 只有 `webkit*` 前缀（且需用户手势） | `setFullscreen` 走沉浸式回退并 `warn('W_FULLSCREEN_FALLBACK')` | [降级] 修 `inset` 保证回退可见；原生全屏可选 P2 |
-| S3 | `@page` 命名页 / `page` 属性 | `page` 属性 Chrome 85；命名页规则被忽略 | 混合页尺寸打印退化为单一纸张 | [降级] 检测 `CSS.supports('page','x')`；不支持时退化为“统一纸型 + 等比适配”，见 §5.8 |
+| S3 | `@page` 命名页 / `page` 属性 | `page` 属性 Chrome 85；命名页规则被忽略；67 的 `CSS.supports('page','x')` 返回 true 但实际不生效 | 混合页尺寸打印退化为单一纸张 | [降级] 双门控：Chromium 主版本 ≥85 且 `CSS.supports` 为 true 才启用命名页，否则统一纸型 + 等比适配，见 §5.8 |
 | S4 | `prefers-color-scheme` | 76 才有；`matchMedia` 恒 false | `theme="auto"` 恒解析为 light | [降级] 显式 `theme="dark"` 仍可用；文档说明 |
 | S5 | `prefers-reduced-motion` / `prefers-contrast` | 74/96 才有；媒体查询恒 false | 动效照常播放；高对比主题不生效 | [降级] 不影响功能 |
 | S6 | `color-scheme` | 81 才有 | 深色主题下原生滚动条/表单控件仍是浅色 | [降级] UI 已给主要控件自定义背景；记录视觉差异 |
@@ -635,10 +635,10 @@ site（3 条 / 2 容器）：
 
 实现要求：
 
-1. 用 `CSS.supports('page', 'ofd-size-0')` 判断命名页能力（`CSS.supports` Chrome 28+ 可用；67 对未知属性返回 false，[待验证]）。
+1. 用双门控判断命名页能力：Chromium 主版本 ≥85（解析 UA 的 `Chrome`/`HeadlessChrome`/`CriOS`）且 `CSS.supports('page', 'ofd-size-0')` 为 true。Chrome 67 的 `CSS.supports` 返回 true 但命名页实际不生效（`Page.printToPDF` 两页均 612×792），不能单凭 `CSS.supports` 判断；非 Chromium 系一律按不支持处理。
 2. 不支持时走**统一纸型降级**：取所有页的最大宽/高（或第一页），生成单一 `@page { size: <w>mm <h>mm }`；每个 `.ofd-print-page` 用 `max-width/max-height: 100%` 与 `object-fit: contain`（图片已有 `object-fit: contain`，见 style.css 1225-1230）适配，保证不裁切关键内容。
 3. 打印按钮/流程不新增公共选项；`OFDViewer.print()` 的签名与事件不变。
-4. Chrome 67 的打印对话框是否遵守 `@page size` [待验证]；验收以“纸张尺寸正确、每页完整、无横向裁切”为准，允许混合尺寸降级为统一纸型。
+4. Chrome 67 实测命名页尺寸不生效（见 `docs/verification/chrome67-verification.md` 的 F1），因此 67 必须走降级；验收以“纸张尺寸正确、每页完整、无横向裁切”为准，允许混合尺寸降级为统一纸型。
 
 ### 5.9 CSS 回归验收
 
@@ -1012,7 +1012,7 @@ Playwright 配置固定 `viewport: 1440×900`、`channel: 'chrome'`（系统 Chr
 | --- | --- | --- | --- | --- |
 | D1 | `AbortSignal.reason` | 缺失/`undefined`，`abort(reason)` 参数被忽略 | 取消仍以 `OFD_ABORTED` 抛出，但 `reason`/`cause` 为空 | 只判断“已取消”，不要依赖 reason 文案（§2.2-S1） |
 | D2 | 无前缀 Fullscreen API | 只有 `webkit*` 前缀，且需用户手势 | `setFullscreen()` 走沉浸式回退并告警 `W_FULLSCREEN_FALLBACK` | 保留回退层；如需原生全屏由宿主自行加前缀桥接 |
-| D3 | `@page` 命名页 / `page` 属性 | 不支持（Chrome 85+） | 混合页尺寸打印退化为统一纸型 + 等比适配 | 打印前用 `CSS.supports('page','x')` 判断；见 §5.8 |
+| D3 | `@page` 命名页 / `page` 属性 | 不支持（Chrome 85+） | 混合页尺寸打印退化为统一纸型 + 等比适配 | 打印前用“Chromium ≥85 且 CSS.supports”双门控判断；见 §5.8 |
 | D4 | `prefers-color-scheme` | 恒 false（Chrome 76+） | `theme="auto"` 解析为 light | 显式传 `theme="dark"`；不要依赖系统深色 |
 | D5 | `prefers-reduced-motion` / `prefers-contrast` | 恒 false | 动效照常播放；高对比主题不生效 | 不影响核心功能，接入方可自行覆盖 |
 | D6 | `color-scheme` | 不支持（Chrome 81+） | 深色主题下原生滚动条/表单控件仍为浅色 | 记录视觉差异，不阻断功能 |
@@ -1068,7 +1068,7 @@ node scripts/check-compat.mjs --help
 
 ### 9.7 版本徽章
 
-根 README、engine README、ui README 均增加了 `Chrome >= 67` 徽章，链接分别指向本文件（包内 README 使用 `../../docs/chrome67-compat.md`）。徽章只写已验证的最低版本 Chrome 67；**不写 Safari/Firefox 版本**，除非附录 A 对应项已实测通过并回填结论。
+根 README、engine README、ui README 均增加了 `Chrome >= 67` 徽章；徽章为纯图片、不包裹链接。徽章只写已验证的最低版本 Chrome 67；**不写 Safari/Firefox 版本**，除非附录 A 对应项已实测通过并回填结论。
 
 ---
 
@@ -1083,7 +1083,7 @@ node scripts/check-compat.mjs --help
 | A-5 | Playwright 1.64.1 能否驱动 Chrome 67 | 无 67 二进制；预期不能 | 临时 `executablePath` 跑 layout.spec；记录失败阶段 |
 | A-6 | Chrome 67 是否支持 `-webkit-backdrop-filter` | BCD 未给前缀数据 | 67 上读取 `CSS.supports('-webkit-backdrop-filter','blur(1px)')` 与截图 |
 | A-7 | Chrome 67 对 `@supports (width: min(1px,2px))` 的求值 | 未实测 | 67 上打开测试页读 `CSS.supports('width','min(1px,2px)')`；据此决定自定义属性方案 |
-| A-8 | Chrome 67 的 `CSS.supports('page','ofd-size-0')` | 未实测 | 67 上执行；用于打印降级判断 |
+| A-8 | Chrome 67 的 `CSS.supports('page','ofd-size-0')` | 已实测：返回 true，但命名页尺寸不生效（printToPDF 两页均 612×792） | 结论已回填；打印探测改为 UA ≥85 双门控，见 §5.8 |
 | A-9 | `queueMicrotask` BCD 原始 JSON 条目 | BCD 仓库聚合文件未检出（MDN 页面给 Chrome 71） | 复核 MDN/Bcd；不阻塞实现 |
 | A-10 | Chrome 67 的 `MediaQueryList.addEventListener` | BCD 未给出 | 67 上 `typeof matchMedia('(min-width:1px)').addEventListener`；已有 `addListener` 回退 |
 | A-11 | Chrome 67 Worker 中 `FileReader`/`Response(blob).arrayBuffer` 可用性 | 未实测 | Worker 内跑 compat 单测；决定 Blob polyfill 主路径 |

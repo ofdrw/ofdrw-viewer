@@ -115,6 +115,8 @@ describe('打印范围与 DOM', () => {
   });
 
   it('混合页尺寸按尺寸分组使用命名 @page', async () => {
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(CHROME_145_UA);
+    vi.spyOn(window.CSS, 'supports').mockReturnValue(true);
     const host = new FakeHost({
       pageSizes: [
         { widthMm: 210, heightMm: 297 },
@@ -327,6 +329,12 @@ describe('打印进度与取消', () => {
   });
 });
 
+/** Chromium 67/145 的 UA 片段，用于门控单测。 */
+const CHROME_67_UA =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/67.0.3396.0 Safari/537.36';
+const CHROME_145_UA =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.7632.116 Safari/537.36';
+
 describe('打印样式工具', () => {
   it('buildPrintCss 可独立生成统一尺寸与混合尺寸规则', async () => {
     const uniformHost = new FakeHost({ pageCount: 1 });
@@ -344,7 +352,7 @@ describe('打印样式工具', () => {
       mixedHost,
       prepareOptions({ pages: [1, 2] }),
     );
-    const css = buildPrintCss(mixed.pages);
+    const css = buildPrintCss(mixed.pages, true);
     expect(css).toContain('@page ofd-size-0 { size: 210mm 297mm; margin: 0; }');
     expect(css).toContain(
       'body > :not(.ofd-print-root) { display: none !important; }',
@@ -375,15 +383,12 @@ describe('打印样式工具', () => {
     mixed.cleanup();
   });
 
-  it('supportsNamedPages 通过 CSS.supports 探测 page 属性', () => {
-    const supports = vi.spyOn(window.CSS, 'supports').mockReturnValue(false);
+  it('Chrome 67 的 supports 假阳性仍降级为统一最大纸型（不启用命名页）', async () => {
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(CHROME_67_UA);
+    const supports = vi.spyOn(window.CSS, 'supports').mockReturnValue(true);
     expect(supportsNamedPages(window)).toBe(false);
-    expect(supports).toHaveBeenCalledWith('page', 'ofd-size-0');
-    expect(supportsNamedPages(null)).toBe(false);
-  });
+    expect(supports).not.toHaveBeenCalled();
 
-  it('preparePrintDocument 在无命名页能力时写入降级样式', async () => {
-    vi.spyOn(window.CSS, 'supports').mockReturnValue(false);
     const mixedHost = new FakeHost({
       pageSizes: [
         { widthMm: 210, heightMm: 297 },
@@ -397,6 +402,42 @@ describe('打印样式工具', () => {
     const css = mixed.style.textContent ?? '';
     expect(css).toContain('@page { size: 210mm 297mm; margin: 0; }');
     expect(css).not.toContain('ofd-size-');
+    expect(css).toContain('object-fit: contain');
     mixed.cleanup();
+  });
+
+  it('Chrome 145 且 supports 为 true 时启用命名页', async () => {
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(CHROME_145_UA);
+    const supports = vi.spyOn(window.CSS, 'supports').mockReturnValue(true);
+    expect(supportsNamedPages(window)).toBe(true);
+    expect(supports).toHaveBeenCalledWith('page', 'ofd-size-0');
+
+    const mixedHost = new FakeHost({
+      pageSizes: [
+        { widthMm: 210, heightMm: 297 },
+        { widthMm: 105, heightMm: 148 },
+      ],
+    });
+    const mixed = await preparePrintDocument(
+      mixedHost,
+      prepareOptions({ pages: [1, 2] }),
+    );
+    const css = buildPrintCss(mixed.pages);
+    expect(css).toContain('@page ofd-size-0 { size: 210mm 297mm; margin: 0; }');
+    expect(css).toContain('@page ofd-size-1 { size: 105mm 148mm; margin: 0; }');
+    expect(css).not.toContain('object-fit: contain');
+    mixed.cleanup();
+  });
+
+  it('Chrome 145 但 supports 为 false 时降级', () => {
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(CHROME_145_UA);
+    vi.spyOn(window.CSS, 'supports').mockReturnValue(false);
+    expect(supportsNamedPages(window)).toBe(false);
+    expect(supportsNamedPages(null)).toBe(false);
+  });
+
+  it('非 Chromium 环境不启用命名页（统一降级）', () => {
+    expect(supportsNamedPages(window)).toBe(false);
+    expect(supportsNamedPages(null)).toBe(false);
   });
 });
