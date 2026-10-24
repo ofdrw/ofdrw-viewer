@@ -26,14 +26,11 @@ let toastTimer: number | undefined;
 /** 演示控件在鼠标移出后自动隐藏的延时，单位毫秒。 */
 const DOCK_HIDE_DELAY = 400;
 
-/** 进入页面时演示控件的常显时长，单位毫秒；超时后自动淡出，提示底部有操作入口。 */
-const DOCK_INITIAL_SHOW_DURATION = 2000;
+/** `?dock=on` 时演示控件的常显时长，单位毫秒；超时后自动淡出，提示底部有操作入口。 */
+const DOCK_SHOW_DURATION = 3000;
 
-/** 不使用 `?dock=` 参数时写入本地存储的偏好键。 */
-const DOCK_PREFERENCE_KEY = 'ofdrw-viewer-site.dock';
-
-/** 演示控件隐藏策略：auto 为悬停唤出、自动淡出；off 为彻底隐藏。 */
-type DockMode = 'auto' | 'off';
+/** 演示控件的显示策略：on 显示一段时间后自动隐藏，并支持悬停唤出；off 彻底隐藏。 */
+type DockMode = 'on' | 'off';
 
 /** 演示控件自动隐藏的待执行定时器。 */
 let dockHideTimer: number | undefined;
@@ -96,50 +93,19 @@ function updateQuery(file: string | null): void {
 }
 
 /**
- * 读取演示控件的隐藏策略。
+ * 读取演示控件的显示策略。
  *
- * 优先使用地址参数 `?dock=`，并通过会话级存储记住选择，刷新或切换示例后
- * 依然生效；参数不合法时忽略，退回存储值，最后是默认的 auto。
+ * 地址参数 `?dock=` 优先；不传参数时默认值为 on。取值不区分大小写，
+ * 同时接受 1/0/true/false 等常见写法；无法识别的值时按默认的 on 处理。
  *
- * @returns 隐藏策略：auto 悬停唤出、off 彻底隐藏
+ * @returns 显示策略：on 显示一段时间后自动隐藏，off 彻底隐藏
  */
-function readDockPreference(): DockMode {
-  const params = new URLSearchParams(window.location.search);
-  const mode = params.get('dock') ?? params.get('ui');
-  if (mode !== null) {
-    // 同时接受 1/0/true/false/auto/off/hidden 等常见写法。
-    const normalized = mode.trim().toLowerCase();
-    if (['off', '0', 'false', 'hidden', 'none'].includes(normalized)) return 'off';
-    if (['auto', 'on', '1', 'true', 'show'].includes(normalized)) return 'auto';
-  }
-  try {
-    const stored = window.sessionStorage.getItem(DOCK_PREFERENCE_KEY);
-    if (stored === 'off' || stored === 'auto') return stored;
-  } catch {
-    // 隐私模式或 file:// 下可能禁用会话存储，忽略即可。
-  }
-  return 'auto';
-}
-
-/**
- * 持久化演示控件偏好，并把它同步到地址参数。
- *
- * @param mode 隐藏策略
- */
-function saveDockPreference(mode: DockMode): void {
-  try {
-    window.sessionStorage.setItem(DOCK_PREFERENCE_KEY, mode);
-  } catch {
-    // 存储不可用时仅靠地址参数生效。
-  }
-  try {
-    const url = new URL(window.location.href);
-    if (mode === 'auto') url.searchParams.delete('dock');
-    else url.searchParams.set('dock', 'off');
-    window.history.replaceState(null, '', url);
-  } catch {
-    // file:// 等环境可能禁止修改历史记录，忽略即可。
-  }
+function readDockMode(): DockMode {
+  const raw = new URLSearchParams(window.location.search).get('dock');
+  if (raw === null) return 'on';
+  const normalized = raw.trim().toLowerCase();
+  if (['off', '0', 'false', 'hidden', 'none'].includes(normalized)) return 'off';
+  return 'on';
 }
 
 /**
@@ -166,11 +132,11 @@ function scheduleHideDock(delay: number = DOCK_HIDE_DELAY): void {
 /**
  * 按隐藏策略初始化演示控件，并绑定悬停、触摸与键盘的唤出行为。
  *
- * @param mode 隐藏策略：auto 悬停唤出并自动淡出；off 彻底隐藏
+ * @param mode 显示策略：on 显示一段时间后自动隐藏，off 彻底隐藏
  */
 function setupDock(mode: DockMode): void {
   if (mode === 'off') {
-    // 恢复入口在地址参数里（?dock=on）：页面本就没有常驻的切换按钮。
+    // 恢复入口在地址参数里（去掉 dock 参数或 ?dock=on）。
     dockEl.hidden = true;
     return;
   }
@@ -191,10 +157,10 @@ function setupDock(mode: DockMode): void {
   dockEl.addEventListener('touchstart', showDock, { passive: true });
   dockEl.addEventListener('touchend', () => scheduleHideDock());
 
-  // 进入页面先完整显示一段时间，让访客知道底部有这些入口，随后自动隐藏；
+  // dock=on：进入页面先完整显示 3 秒，让访客知道底部有这些入口，随后自动隐藏；
   // 期间若鼠标已在控件上或已触发悬停，showDock 会清除该定时器。
   showDock();
-  scheduleHideDock(DOCK_INITIAL_SHOW_DURATION);
+  scheduleHideDock(DOCK_SHOW_DURATION);
 }
 
 /**
@@ -282,9 +248,7 @@ function main(): void {
   versionEl.title = '阅读器各组成包的版本';
   applyShellTheme(themeSelect.value);
 
-  const dockMode = readDockPreference();
-  setupDock(dockMode);
-  saveDockPreference(dockMode);
+  setupDock(readDockMode());
 
   const params = new URLSearchParams(window.location.search);
   if (params.has('file') || params.has('base64')) {
