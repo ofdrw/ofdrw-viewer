@@ -6,6 +6,7 @@
  */
 
 import type {
+  AttachmentInfo,
   BookmarkItem,
   DocumentMetadata,
   DocumentPermissions,
@@ -63,6 +64,10 @@ export interface MockDocumentOptions {
   readonly bookmarks?: readonly BookmarkItem[];
   /** 签章 XML 摘要。 */
   readonly signatures?: readonly SignatureEntryInfo[];
+  /** 附件元信息；省略时为空数组。 */
+  readonly attachments?: readonly AttachmentInfo[];
+  /** 附件字节，按附件 ID 索引；省略时返回空字节。 */
+  readonly attachmentContents?: Readonly<Record<string, Uint8Array>>;
   /** 签章原始字节，按签章 ID 索引。 */
   readonly signedValues?: Readonly<Record<string, Uint8Array>>;
   /** 自定义页渲染；用于取消/优先级断言。 */
@@ -76,6 +81,8 @@ export interface MockDocumentOptions {
     readonly outline?: boolean;
     readonly bookmarks?: boolean;
     readonly signatureEntries?: boolean;
+    readonly attachments?: boolean;
+    readonly attachmentContent?: boolean;
   };
   /** 关闭回调；用于断言生命周期。 */
   readonly onClose?: () => void;
@@ -100,6 +107,12 @@ export interface MockEngineDocument {
   getMetadata(): Promise<DocumentMetadata>;
   getPermissions(): Promise<DocumentPermissions>;
   getSignatureEntries?(): Promise<readonly SignatureEntryInfo[]>;
+  getAttachments?(): Promise<readonly AttachmentInfo[]>;
+  saveAttachment?(
+    attachmentId: string,
+    sink: (chunk: Uint8Array) => void | Promise<void>,
+    options?: { signal?: AbortSignal; chunkSize?: number },
+  ): Promise<number>;
   getSignedValue(signatureId: string): Promise<SignedValueFile | undefined>;
   close(): Promise<void>;
 }
@@ -338,6 +351,16 @@ export function createMockDocument(options: MockDocumentOptions = {}): MockEngin
   }
   if (!options.omit?.signatureEntries) {
     document.getSignatureEntries = async () => options.signatures ?? [];
+  }
+  if (!options.omit?.attachments) {
+    document.getAttachments = async () => options.attachments ?? [];
+  }
+  if (!options.omit?.attachmentContent) {
+    document.saveAttachment = async (attachmentId, sink) => {
+      const bytes = options.attachmentContents?.[attachmentId] ?? new Uint8Array();
+      await sink(bytes);
+      return bytes.length;
+    };
   }
   return document;
 }

@@ -10,12 +10,20 @@ import type {
   SignatureVerification,
   VerificationReport,
 } from '@ofdrw/ofdrw-viewer-crypto';
-import type { PageImageFormat, SignatureEntryInfo } from '@ofdrw/ofdrw-viewer-engine';
+import type {
+  AttachmentInfo,
+  DocumentMetadata,
+  DocumentPermissions,
+  PageImageFormat,
+  PageInfo,
+  SignatureEntryInfo,
+} from '@ofdrw/ofdrw-viewer-engine';
 import type { ViewerFeatureStates } from './features';
 import type {
   Rotation,
   SidebarView,
   ViewerErrorInfo,
+  ViewerOrigin,
   ViewerState,
   ViewerWarning,
   ZoomMode,
@@ -25,9 +33,11 @@ import type {
 // 引擎公共类型（UI 公共 API 会原样透出）
 // ---------------------------------------------------------------------------
 export type {
+  AttachmentInfo,
   BookmarkItem,
   DocumentDestination,
   DocumentMetadata,
+  DocumentPermissions,
   OutlineNode,
   PageImageFormat,
   PageInfo,
@@ -69,6 +79,7 @@ export type {
   UIState,
   ViewState,
   ViewerErrorInfo,
+  ViewerOrigin,
   ViewerState,
   ViewerToast,
   ViewerWarning,
@@ -199,6 +210,37 @@ export interface ExportProgressEvent {
   readonly current: number;
   /** 总页数。 */
   readonly total: number;
+}
+
+// ---------------------------------------------------------------------------
+// 文档信息快照
+// ---------------------------------------------------------------------------
+
+/**
+ * 当前文档的完整信息快照，由 `OFDViewer.getDocumentInfo()` 按需聚合。
+ *
+ * 不进入 `ViewerState.document`：快照较重，铺进状态会让每次状态提交都携带
+ * 全量数据并触发订阅者重渲染。需要时调用一次即可，内部全部命中引擎缓存。
+ */
+export interface ViewerDocumentInfo {
+  /** 引擎完整元数据，含文档属性与包级结构信息。 */
+  readonly metadata: DocumentMetadata;
+  /** 总页数。 */
+  readonly pageCount: number;
+  /** 全部页尺寸，按页索引升序。 */
+  readonly pageInfos: readonly PageInfo[];
+  /** 文档权限声明；不含 DRM 强制。 */
+  readonly permissions: DocumentPermissions;
+  /** 附件元信息列表，保持 XML 顺序；无附件时为空数组。 */
+  readonly attachments: readonly AttachmentInfo[];
+  /** 签章条目数。 */
+  readonly signatureCount: number;
+  /** 大纲顶层条目数。 */
+  readonly outlineCount: number;
+  /** 书签条目数。 */
+  readonly bookmarkCount: number;
+  /** 打开来源；内存字节打开时省略。 */
+  readonly origin?: ViewerOrigin;
 }
 
 // ---------------------------------------------------------------------------

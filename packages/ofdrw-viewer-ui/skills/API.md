@@ -25,6 +25,8 @@ await viewer.ready;
 
 公共入口会安装内置 UI 外壳，并以副作用方式注册文本/查找、导航、签章、打印、导出能力；框架入口也会导入公共入口。
 
+公共入口同时导出引擎侧的数据类型：`DocumentMetadata`、`DocumentHeader`、`DocumentPageArea`、`OfdPackageInfo`、`CommonDataSummary`、`AttachmentInfo`、`DocumentPermissions`、`PageInfo`，以及 UI 自己的 `ViewerDocumentInfo`、`ViewerFeature`、`ViewerFeatureStates`。
+
 ### `VERSION` 与 `getVersions`
 
 `VERSION` 是 UI 包版本字符串，当前为 `0.1.0`。`getVersions()` 返回 UI、渲染引擎与密码能力包三个版本：
@@ -98,6 +100,16 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 - `thumbnailCacheSize` 当前只被解析，未接入缩略图缓存实现，实际缓存数量固定；不要依赖该选项控制缩略图内存。
 - `updateHash` 默认关闭，避免嵌入场景污染宿主地址。启用后 hash 形如 `#page=3&zoom=page-width&rotation=90&sidebar=outline`，未知参数会保留；监听 `hashchange`/`popstate` 恢复视图，非法字段忽略。查询串 `?file=`/`?base64=` 与 hash 互不覆盖。
 
+### 国际化词条
+
+内置 `zh-CN`/`en-US` 两套词条键集同构，宿主可通过翻译层覆盖。附件与属性面板相关词条分组：
+
+| 前缀 | 用途 | 关键键 |
+| --- | --- | --- |
+| `attachments.*` | 附件侧栏与附件操作 | `attachments.title`（侧栏标签）、`name`、`format`、`size`、`date`、`download`、`downloadNamed`、`exportAll`、`exportSummary`、`empty`（空状态）、`missing`、`sizeKb`、`sizeMb`、`cancel`、`downloadOfd`、`confirmLargeTitle`、`confirmLarge`（含 `{name}`/`{size}`/`{threshold}`）、`error`（含 `{name}`/`{message}`）、`unsupported`、`ofdUnavailable` |
+| `properties.*` | 文档属性对话框六个分组 | 分组标题、新元数据字段、权限项、单位与数值模板 |
+| `feature.attachments` | 功能开关文案 | — |
+
 ### 容器与来源
 
 `source` 省略时，`open()` 依次检查显式参数、构造来源、`?file=`、`?base64=`；都没有时 `ready` 以 `OFD_INVALID_OPTION` 拒绝。详细解析规则见[通过 URI 参数预览](#通过-uri-参数预览)。
@@ -112,7 +124,7 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 
 ### 功能键
 
-`ViewerFeature` 是以下 19 个键的联合；`ViewerFeatures` 是 `Partial<Record<ViewerFeature, boolean>>`，未出现的键默认开启。
+`ViewerFeature` 是以下 20 个键的联合；`ViewerFeatures` 是 `Partial<Record<ViewerFeature, boolean>>`，未出现的键默认开启。
 
 | 功能键 | 作用 | 依赖 |
 | --- | --- | --- |
@@ -121,6 +133,7 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 | `thumbnails` | 缩略图 | `sidebar` |
 | `outline` | 大纲 | `sidebar` |
 | `bookmarks` | 书签 | `sidebar` |
+| `attachments` | 附件侧栏（列表/下载/导出） | `sidebar` |
 | `pageNavigation` | 翻页/跳页 | — |
 | `pageNumberInput` | 页码输入框 | — |
 | `zoom` | 缩放按钮、快捷键与手势 | — |
@@ -136,7 +149,7 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 | `documentProperties` | 文档属性 | — |
 | `keyboardShortcuts` | 键盘快捷键 | — |
 
-依赖不满足时，被依赖功能以 `reason: 'dependency'` 关闭，并可能继续级联（例如 `sidebar` 关闭会关闭缩略图/大纲/书签）。`toolbar`/`sidebar` 关闭时，其内部控件即使自身开启也不可见。
+依赖不满足时，被依赖功能以 `reason: 'dependency'` 关闭，并可能继续级联（例如 `sidebar` 关闭会关闭缩略图/大纲/书签/附件）。`toolbar`/`sidebar` 关闭时，其内部控件即使自身开启也不可见。
 
 ### 有效状态与原因
 
@@ -187,6 +200,8 @@ viewer.setFeatureDisplay({ export: 'disable' });
 ### 文档与能力约束
 
 文档权限、内容可用性以及引擎/环境能力会写入 `FeatureAvailability`。例如没有文本层的文档会关闭 `textLayer` 及其依赖；`crypto.enabled=false` 时 `verification` 被标记为 `unsupported`，验证面板/按钮不可用，`verify()` 与 `openVerificationPanel()` 会以 `OFD_FEATURE_DISABLED`（`feature='verification'`）拒绝。
+
+`attachments` 的两类关闭原因：引擎文档没有 `saveAttachment()`（旧引擎或未实现）→ `unsupported`；引擎具备能力但 `getAttachments()` 为空或读取失败 → `document`。两种情况下侧栏都不渲染附件标签页，`openSidebar('attachments')` 抛 `OFD_FEATURE_DISABLED`。
 
 ## 事件
 
@@ -297,11 +312,33 @@ viewer.off('pagechanging', handler);
 | `getDocument()` | 底层引擎文档；未打开为 `null` |
 | `getPage(pageNumber): Promise<EnginePage>` | 读取引擎页面对象；页码夹取到有效页 |
 | `getPermissions(): Promise<DocumentPermissions>` | 文档权限；未打开返回全部允许的宽松默认值 |
+| `getDocumentInfo(): Promise<ViewerDocumentInfo>` | 文档信息快照（元数据/页信息/权限/附件/签章/大纲/书签计数）；**未打开抛 `OFD_NOT_OPENED`** |
 | `getRoot()` | 阅读器根 `HTMLElement` |
 | `getElements()` | 内置 UI 结构元素 `{ root, toolbar, body, sidebar, sidebarMask, main, findbar, dialogLayer, toastLayer }` |
 | `warnCrypto(code, message)` | 供密码服务/扩展上报 warning，宿主一般不用 |
 
 `getPageView()`/`getPageViews()` 返回的是内部页视图对象，主要供扩展使用；普通宿主优先用 `getPageInfo()` 与引擎页面 API。
+
+#### `getDocumentInfo()`
+
+```ts
+interface ViewerDocumentInfo {
+  readonly metadata: DocumentMetadata;            // 引擎完整元数据（含 docType/documentHeader/packageInfo/commonData）
+  readonly pageCount: number;
+  readonly pageInfos: readonly PageInfo[];
+  readonly permissions: DocumentPermissions;
+  readonly attachments: readonly AttachmentInfo[]; // 保持 XML 顺序；无附件为 []
+  readonly signatureCount: number;                 // 签章条目数
+  readonly outlineCount: number;                   // 大纲顶层条目数
+  readonly bookmarkCount: number;                  // 书签条目数
+  readonly origin?: ViewerOrigin;                  // 内存字节打开时省略
+}
+```
+
+- **按需调用**：结果不写入 `ViewerState.document`，不会因每次状态刷新产生额外渲染，宿主要多用时应自行缓存返回值。
+- **一次性聚合**：内部并发调用 `getMetadata()`、`getPermissions()`、`getAttachments()`、`getSignatureEntries()`、`getOutline()`、`getBookmarks()`，全部命中引擎缓存，不额外读取包内条目。
+- **严格接口**：未打开文档时抛 `OFD_NOT_OPENED`，不返回空壳；销毁后抛 `OFD_DESTROYED`。这与 `getPermissions()` 不同——后者未打开时仍返回宽松默认值。
+- **旧引擎兼容**：底层引擎没有 `getAttachments()` 时 `attachments` 返回 `[]`，不报错。
 
 ### 导航与缩放
 
@@ -323,7 +360,7 @@ viewer.off('pagechanging', handler);
 
 | 方法 | 说明 |
 | --- | --- |
-| `openSidebar(view)` | 打开 `thumbnails`/`outline`/`bookmarks`/`signatures`；需要 `sidebar` 及对应功能 |
+| `openSidebar(view)` | 打开 `thumbnails`/`outline`/`bookmarks`/`signatures`/`attachments`；需要 `sidebar` 及对应功能 |
 | `closeSidebar()` | 关闭侧栏；已关闭时无操作 |
 | `toggleSidebar()` | 已打开则关闭，否则打开第一个可用侧栏 |
 | `setFullscreen(value): Promise<void>` | 进入/退出全屏；原生不支持或失败时回退为沉浸式样式并产生 `W_FULLSCREEN_FALLBACK` |
@@ -353,6 +390,26 @@ interface UIDialogOptions {
 ```
 
 `DialogName` 允许宿主扩展字符串，内置名称仅为约定。
+
+#### 附件侧栏
+
+`attachments` 侧栏显示当前文档的附件列表，并负责下载与批量导出；需要 `sidebar` 与 `attachments` 同时开启，且文档确实带附件（见“文档与能力约束”）。
+
+列表列与缺失处理：
+
+| 列 | 内容 | 缺失时 |
+| --- | --- | --- |
+| 名称 | `AttachmentInfo.name` | 必填；无名条目直接跳过 |
+| 格式 / 大小 / 日期 | `format`、`size`（格式化为 KB/MB）、`modDate`（回退 `creationDate`） | 显示 `-` |
+| 下载 | 单个下载按钮 | — |
+
+下载与导出行为：
+
+- **单个下载**：调用引擎 `saveAttachment()` 回调式收集（每块 `slice()` 拷贝后再拼接，引擎缓冲不可跨回调复用）→ `Blob` → `URL.createObjectURL` → 隐藏 `<a download>` 触发 → 延迟 `revokeObjectURL`。附件始终先完整读入内存再下载，不是流式落盘；文件名优先 `name`、其次 `id`，按 `/`、`\` 分段去除 `..`，过滤控制字符与平台保留字符；无扩展名时按 `format` 补全。
+- **大附件阈值**：单附件**声明大小**超过 `ATTACHMENT_LARGE_THRESHOLD_BYTES = 524288000`（**500 MB**）时**不读取附件内容**；确认框提示“是否改为下载整个 OFD 原文件”，用户取消则什么都不读，确认后经 `readSourceBytes()` 下载整个 OFD（该路径沿用 `export` 功能与文档导出权限门控；不可读取时提示 `attachments.ofdUnavailable`）。未声明 `size` 的附件不参与阈值判断。
+- **导出全部**：顶层“导出全部”按钮把全部附件打包为 ZIP 下载；复用图片导出的 `createStoreZip()`（`export/zip.ts`，fflate store 模式、按需动态 `import`），不引入新依赖。ZIP 条目名取附件 `name`，重名追加 `-2`/`-3` 后缀；超过阈值的附件与读取失败的条目跳过，完成后汇总提示“已导出 N 个附件，跳过 M 个”。
+- **错误处理**：读取失败上报 `W_ATTACHMENT_RESOURCE` 并写面板状态文本，不抛到宿主。
+- **安全约束**：附件内容一律不进入 DOM（不使用 `innerHTML`/`srcdoc`），未知格式只提供下载、不提供预览。
 
 ### 主题、语言与功能
 
@@ -454,7 +511,7 @@ interface ViewerState {
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `source` | 引擎来源 / `null` | 规范化后的引擎来源；未打开为 `null` |
-| `origin` | `{ kind: 'url', url } / { kind: 'file', name } / { kind: 'blob' }` | 原始来源命名信息，用于标题和导出文件名 |
+| `origin` | `ViewerOrigin / undefined` | 原始来源命名信息，用于标题和导出文件名 |
 | `pageCount` | `number` | 总页数 |
 | `pageInfos` | `PageInfo[]` | 全部页尺寸信息，按页索引升序 |
 | `metadata` | `DocumentMetadata` | 文档属性；不可用或未加载时省略 |
@@ -462,6 +519,10 @@ interface ViewerState {
 | `outline` | `OutlineNode[]` | 大纲；未加载或为空时省略 |
 | `bookmarks` | `BookmarkItem[]` | 书签；未加载或为空时省略 |
 | `status` | `'idle' / 'opening' / 'ready' / 'error' / 'closed'` | 文档生命周期 |
+
+`ViewerOrigin` 是 `{ kind: 'url', url }` / `{ kind: 'file', name }` / `{ kind: 'blob' }` 的联合，只保留命名所需信息，不进入网络读取；文档来源不是 URL/File 时 `origin` 省略。
+
+该结构不承载权限与附件：`DocumentState` 没有 `permissions`/`attachments` 字段，这两类数据通过 `getDocumentInfo()` 或 `getPermissions()` 读取，避免状态快照随文档信息膨胀。
 
 ### `ViewState`
 
@@ -506,6 +567,20 @@ interface ViewerState {
 ### `DocumentMetadata` 与 `DocumentDestination`
 
 `DocumentMetadata` 描述文档属性：`version`、`pageCount`、`packageSize?`、`title?`、`author?`、`subject?`、`abstract?`、`creationDate?`、`modDate?`、`creator?`、`creatorVersion?`、`keywords?`、`docId?`、`customData?`。日期字段保留 OFD 原文，不转换时区。
+
+新增可选字段（全部“缺失即省略”，不放入 `undefined`）：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `docUsage` | `string?` | 文档用途（DocInfo/DocUsage） |
+| `docType` | `string?` | `OFD.xml` 的 `OFD@DocType`，例如 `OFD`/`Render`/`None` |
+| `documentHeader` | `DocumentHeader?` | Document.xml 头部声明 |
+| `packageInfo` | `OfdPackageInfo?` | 包级结构：`docRoot`（包内路径）、`docBodyCount`、`maxUnitId?` |
+| `commonData` | `CommonDataSummary?` | 公共数据摘要：`pageArea?`、`defaultColorSpaceId?`、`documentVersion?`、`dataDir?` |
+
+`DocumentHeader` 字段：`docId?`、`version?`、`maxUnitId?`、`pageArea?`（`DocumentPageArea`：`physicalBox?`/`applicationBox?`/`bleedBox?`，`Box` 单位 mm）、`publicRes?`/`documentRes?`/`templatePageRes?`（`readonly string[]`，包内路径列表）、`defaultCs?`、`docUsage?`。设置 `documentProperties` 后，属性对话框据此分组展示包信息、颜色与资源等内容。
+
+`AttachmentInfo` 描述单个附件：`id`、`name` 必含；可选 `format`、`size`（byte）、`creationDate`、`modDate`、`visible`、`usage`、`contentType`（MIME）、`description`、`submissionDate`、`isEncrypted`。附件列表通过 `getDocumentInfo().attachments` 或附件侧栏读取，UI 不解析附件内容。
 
 `DocumentDestination` 描述文档内跳转目标：`{ type, pageIndex, leftMm?, topMm?, rightMm?, bottomMm?, zoom? }`；`type` 为 `XYZ`/`Fit`/`FitH`/`FitV`/`FitR`，`pageIndex` 为 0-based，坐标单位 mm。当前版本没有 `goToDestination()`，需要自行读取目标页后调用 `goToPage(pageIndex + 1)`。
 

@@ -23,6 +23,7 @@ export const SIDEBAR_VIEWS: readonly SidebarView[] = Object.freeze([
   'outline',
   'bookmarks',
   'signatures',
+  'attachments',
 ]);
 
 /** 标签文案键。 */
@@ -31,6 +32,7 @@ const TAB_LABEL_KEYS: Readonly<Record<SidebarView, MessageKey>> = Object.freeze(
   outline: 'sidebar.outline',
   bookmarks: 'sidebar.bookmarks',
   signatures: 'sidebar.signatures',
+  attachments: 'attachments.title',
 });
 
 /** 空态文案键。 */
@@ -39,6 +41,7 @@ const EMPTY_LABEL_KEYS: Readonly<Record<SidebarView, MessageKey>> = Object.freez
   outline: 'sidebar.noOutline',
   bookmarks: 'sidebar.noBookmarks',
   signatures: 'sidebar.noSignatures',
+  attachments: 'attachments.empty',
 });
 
 /** 侧栏宽度范围，单位 px（设计方案 §5.1）。 */

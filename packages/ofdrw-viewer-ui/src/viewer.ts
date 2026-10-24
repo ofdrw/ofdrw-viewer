@@ -97,6 +97,7 @@ import type {
   PageRange,
   PrintOptions,
   SignatureDetail,
+  ViewerDocumentInfo,
   ViewerEventMap,
   ViewerEventName,
   ViewerEventHandler,
@@ -693,6 +694,45 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     return this.controller.getPermissions();
   }
 
+  /**
+   * 读取当前文档的完整信息快照。
+   *
+   * 需文档已打开；未打开时抛 `OFD_NOT_OPENED`，不返回空壳，避免调用方误判为
+   * “文档没有元数据”。内部并发读取元数据、权限、附件、签章、大纲与书签，均命中
+   * 打开阶段或首次读取建立的缓存，不额外读取包内容。
+   *
+   * 与 `getPermissions()` 的区别：`getPermissions()` 在未打开时返回宽松默认值，
+   * 本方法是严格接口。
+   *
+   * @returns 文档信息快照；快照为普通对象，调用方拥有。
+   * @throws OFDViewerError 文档尚未打开时抛 `OFD_NOT_OPENED`。
+   */
+  async getDocumentInfo(): Promise<ViewerDocumentInfo> {
+    this.assertNotDisposed();
+    this.assertOpen();
+    const [metadata, permissions, attachments, signatures, outline, bookmarks] =
+      await Promise.all([
+        this.controller.getMetadata(),
+        this.controller.getPermissions(),
+        this.controller.getAttachments(),
+        this.controller.getSignatureEntries(),
+        this.controller.getOutline(),
+        this.controller.getBookmarks(),
+      ]);
+    const origin = this.state.document.origin;
+    return {
+      metadata,
+      pageCount: this.pageInfos.length || this.controller.pageCount,
+      pageInfos: [...this.pageInfos],
+      permissions,
+      attachments,
+      signatureCount: signatures.length,
+      outlineCount: outline.length,
+      bookmarkCount: bookmarks.length,
+      ...(origin === undefined ? {} : { origin }),
+    };
+  }
+
   // -------------------------------------------------------------------------
   // 事件
   // -------------------------------------------------------------------------
@@ -1277,6 +1317,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     else if (view === 'outline') this.assertFeature('outline');
     else if (view === 'bookmarks') this.assertFeature('bookmarks');
     else if (view === 'signatures') this.assertFeature('signatures');
+    else if (view === 'attachments') this.assertFeature('attachments');
     this.patchView({ sidebarView: view });
     this.updateSidebarVisibility();
     this.emit('sidebarviewchanged', { view });
@@ -1299,7 +1340,9 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       this.closeSidebar();
       return;
     }
-    const first = (['thumbnails', 'outline', 'bookmarks', 'signatures'] as const).find(
+    const first = (
+      ['thumbnails', 'outline', 'bookmarks', 'signatures', 'attachments'] as const
+    ).find(
       (view) => this.featureGate.isEnabled(view) && this.featureGate.isVisible(view),
     );
     if (first) this.openSidebar(first);
@@ -2490,6 +2533,18 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       unsupported.signatures = true;
     }
     if (!this.cryptoService.isEnabled) unsupported.verification = true;
+    // 附件：引擎缺少流式读取能力或文档没有附件时，不渲染附件标签页。
+    const attachmentCapable =
+      this.controller.document !== null &&
+      typeof (this.controller.document as { saveAttachment?: unknown }).saveAttachment ===
+        'function';
+    if (!attachmentCapable) {
+      unsupported.attachments = true;
+    } else {
+      const attachments = await this.controller.getAttachments().catch(() => undefined);
+      if (token !== this.openToken) return;
+      if (!attachments || attachments.length === 0) documentAvailability.attachments = false;
+    }
     const states = this.featureGate.setAvailability({
       document: documentAvailability,
       unsupported,

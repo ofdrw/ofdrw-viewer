@@ -23,6 +23,7 @@ import type {
   ExportOfdOptions,
   PageRange,
   PrintOptions,
+  ViewerDocumentInfo,
   ViewerEventHandler,
   ViewerEventName,
 } from '../types';
@@ -88,6 +89,8 @@ export interface UIShellHost {
   setFullscreen(value: boolean): unknown;
   /** 打开验证面板；未启用密码能力时省略。 */
   openVerificationPanel?(): unknown;
+  /** 读取完整文档信息快照；核心未提供时属性对话框退回状态内字段。 */
+  getDocumentInfo?(): Promise<ViewerDocumentInfo>;
 }
 
 /** 扩展注册函数；`registerViewerExtension` 结构兼容。 */
@@ -140,55 +143,275 @@ function settle(result: unknown, shell: UIShell): void {
   });
 }
 
+/** 属性对话框中的一行；值为空时该行不渲染。 */
+type PropertyRow = readonly [label: string, value: string | undefined];
+
+/** 属性对话框中的一个分组。 */
+interface PropertyGroup {
+  /** 分组标题。 */
+  readonly title: string;
+  /** 分组内各行，按展示顺序排列。 */
+  readonly rows: readonly PropertyRow[];
+}
+
+/**
+ * 格式化字节数为 KB/MB 文本。
+ *
+ * @param translator 翻译器。
+ * @param bytes 字节数，单位 byte。
+ * @returns 例如 `12.3 KB`；非法值返回 undefined。
+ */
+function formatBytes(translator: Translator, bytes: number | undefined): string | undefined {
+  if (bytes === undefined || !Number.isFinite(bytes) || bytes < 0) return undefined;
+  const kb = bytes / 1024;
+  if (kb < 1024) {
+    return translator.t('properties.sizeKb', {
+      value: translator.formatNumber(kb, { maximumFractionDigits: 1 }),
+    });
+  }
+  return translator.t('properties.sizeMb', {
+    value: translator.formatNumber(kb / 1024, { maximumFractionDigits: 2 }),
+  });
+}
+
+/**
+ * 格式化页面区矩形。
+ *
+ * @param translator 翻译器。
+ * @param box 矩形，几何单位 mm。
+ * @returns 例如 `210 × 297 mm（原点 0, 0 mm）`；缺失或非法时 undefined。
+ */
+function formatBox(
+  translator: Translator,
+  box: { readonly x: number; readonly y: number; readonly w: number; readonly h: number } | undefined,
+): string | undefined {
+  if (!box) return undefined;
+  if (![box.x, box.y, box.w, box.h].every((value) => Number.isFinite(value))) return undefined;
+  return translator.t('properties.boxValue', {
+    width: translator.formatNumber(box.w, { maximumFractionDigits: 2 }),
+    height: translator.formatNumber(box.h, { maximumFractionDigits: 2 }),
+    x: translator.formatNumber(box.x, { maximumFractionDigits: 2 }),
+    y: translator.formatNumber(box.y, { maximumFractionDigits: 2 }),
+  });
+}
+
+/**
+ * 把包内路径数组拼成一行文本。
+ *
+ * OFD 允许同一类资源声明多个路径；逐行展示会破坏键值布局，因此用换行符分隔，
+ * 由 CSS 的 `white-space: pre-line` 渲染为多行。
+ *
+ * @param paths 包内路径列表。
+ * @returns 以换行分隔的文本；空数组或缺失时返回 undefined。
+ */
+function joinPaths(paths: readonly string[] | undefined): string | undefined {
+  if (!paths || paths.length === 0) return undefined;
+  return paths.join('\n');
+}
+
+/**
+ * 数字转为文本。
+ *
+ * @param value 数字；可为 undefined。
+ * @returns 文本；非有限数字返回 undefined。
+ */
+function toStringOrUndefined(value: number | undefined): string | undefined {
+  if (value === undefined || !Number.isFinite(value)) return undefined;
+  return String(value);
+}
+
+/**
+ * 构造权限一行的文本。
+ *
+ * @param translator 翻译器。
+ * @param allowed 是否允许。
+ * @returns “允许”/“不允许”。
+ */
+function formatPermission(translator: Translator, allowed: boolean): string {
+  return allowed ? translator.t('properties.allowed') : translator.t('properties.denied');
+}
+
+/**
+ * 收集文档属性对话框的六个分组（设计方案 §6.3）。
+ *
+ * 分组顺序与设计一致；任一分组内全部字段缺失时由 `createPropertySections` 隐藏。
+ * 权限与附件来自 `getDocumentInfo()` 快照（不在 `ViewerState` 中）；快照不可用时
+ * 这两项返回空，其余字段继续展示。
+ *
+ * @param viewer 阅读器实例。
+ * @param translator 翻译器。
+ * @param info 文档信息快照；读取失败时为 undefined。
+ * @returns 分组列表。
+ */
+function collectPropertyGroups(
+  viewer: UIShellHost,
+  translator: Translator,
+  info: ViewerDocumentInfo | undefined,
+): readonly PropertyGroup[] {
+  const { document: documentState } = viewer.getState();
+  const metadata = info?.metadata ?? documentState.metadata;
+  const header = metadata?.documentHeader;
+  const packageInfo = metadata?.packageInfo;
+  const commonData = metadata?.commonData;
+  // 页面区优先取 Document.xml 头部声明，其次 CommonData。
+  const pageArea = header?.pageArea ?? commonData?.pageArea;
+  const permissions = info?.permissions;
+  const printPermission = permissions?.print;
+  const attachments = info?.attachments ?? [];
+  const t = translator.t.bind(translator);
+
+  const documentRows: PropertyRow[] = [
+    [t('properties.title'), metadata?.title],
+    [t('properties.author'), metadata?.author],
+    [t('properties.subject'), metadata?.subject],
+    [t('properties.abstract'), metadata?.abstract],
+    [t('properties.keywords'), metadata?.keywords?.join(', ')],
+    [t('properties.docUsage'), metadata?.docUsage ?? header?.docUsage],
+    [t('properties.docId'), metadata?.docId ?? header?.docId],
+    [t('properties.creationDate'), metadata?.creationDate],
+    [t('properties.modDate'), metadata?.modDate],
+    [t('properties.creator'), metadata?.creator],
+    [t('properties.creatorVersion'), metadata?.creatorVersion],
+  ];
+
+  const packageRows: PropertyRow[] = [
+    [t('properties.version'), metadata?.version],
+    [t('properties.docType'), metadata?.docType],
+    [t('properties.docRoot'), packageInfo?.docRoot],
+    [t('properties.maxUnitId'), toStringOrUndefined(packageInfo?.maxUnitId)],
+    [t('properties.docBodyCount'), toStringOrUndefined(packageInfo?.docBodyCount)],
+    [t('properties.pageCount'), String(documentState.pageCount)],
+    [t('properties.fileSize'), formatBytes(translator, metadata?.packageSize)],
+  ];
+
+  const pageRows: PropertyRow[] = [
+    [t('properties.physicalBox'), formatBox(translator, pageArea?.physicalBox)],
+    [t('properties.applicationBox'), formatBox(translator, pageArea?.applicationBox)],
+    [t('properties.bleedBox'), formatBox(translator, pageArea?.bleedBox)],
+  ];
+
+  const resourceRows: PropertyRow[] = [
+    [t('properties.defaultColorSpace'), header?.defaultCs ?? commonData?.defaultColorSpaceId],
+    [t('properties.publicRes'), joinPaths(header?.publicRes)],
+    [t('properties.documentRes'), joinPaths(header?.documentRes)],
+    [t('properties.templatePageRes'), joinPaths(header?.templatePageRes)],
+    [t('properties.dataDir'), commonData?.dataDir],
+  ];
+
+  // 权限 6 项逐项展示；打印与份数仅在文档声明 Print 时出现。
+  const permissionRows: PropertyRow[] = permissions
+    ? [
+        [t('properties.permission.edit'), formatPermission(translator, permissions.edit)],
+        [t('properties.permission.annot'), formatPermission(translator, permissions.annot)],
+        [t('properties.permission.export'), formatPermission(translator, permissions.export)],
+        [t('properties.permission.signature'), formatPermission(translator, permissions.signature)],
+        [t('properties.permission.watermark'), formatPermission(translator, permissions.watermark)],
+        [t('properties.permission.printScreen'), formatPermission(translator, permissions.printScreen)],
+        [
+          t('properties.permission.print'),
+          printPermission ? formatPermission(translator, printPermission.printable) : undefined,
+        ],
+        [
+          t('properties.permission.printCopies'),
+          printPermission?.copies === undefined
+            ? undefined
+            : t('properties.copies', { count: printPermission.copies }),
+        ],
+      ]
+    : [];
+
+  const securityRows: PropertyRow[] = [
+    ...permissionRows,
+    [t('properties.signatureCount'), toStringOrUndefined(documentState.signaturesSummary?.length)],
+    [t('properties.attachmentCount'), String(attachments.length)],
+    [t('properties.outlineCount'), toStringOrUndefined(documentState.outline?.length)],
+    [t('properties.bookmarkCount'), toStringOrUndefined(documentState.bookmarks?.length)],
+  ];
+
+  // 附件清单只读：名称作标签，格式/大小/日期合并为一列。
+  const attachmentRows: PropertyRow[] = attachments.map((item) => [
+    item.name,
+    [
+      item.format ?? t('properties.missing'),
+      formatBytes(translator, item.size) ?? t('properties.missing'),
+      item.modDate ?? item.creationDate ?? t('properties.missing'),
+    ].join(' · '),
+  ]);
+
+  return [
+    { title: t('properties.groupDocument'), rows: documentRows },
+    { title: t('properties.groupPackage'), rows: packageRows },
+    { title: t('properties.groupPageSettings'), rows: pageRows },
+    { title: t('properties.groupResources'), rows: resourceRows },
+    { title: t('properties.groupSecurity'), rows: securityRows },
+    { title: t('properties.groupAttachments'), rows: attachmentRows },
+  ];
+}
+
+/**
+ * 把分组渲染为 `<section>`；分组内全部字段缺失时跳过该分组。
+ *
+ * @param doc 对话框所属文档。
+ * @param groups 分组列表。
+ * @returns 容器元素；所有分组都为空时返回空容器。
+ */
+function createPropertySections(doc: Document, groups: readonly PropertyGroup[]): HTMLElement {
+  const container = doc.createElement('div');
+  container.className = 'ofd-properties__groups';
+  for (const group of groups) {
+    const visibleRows = group.rows.filter(([, value]) => Boolean(value));
+    if (visibleRows.length === 0) continue;
+    const section = doc.createElement('section');
+    section.className = 'ofd-properties__group';
+    const heading = doc.createElement('h3');
+    heading.className = 'ofd-properties__heading';
+    heading.textContent = group.title;
+    const list = doc.createElement('dl');
+    list.className = 'ofd-properties';
+    for (const [label, value] of visibleRows) {
+      if (!value) continue;
+      const term = doc.createElement('dt');
+      term.textContent = label;
+      const description = doc.createElement('dd');
+      description.textContent = value;
+      list.append(term, description);
+    }
+    section.append(heading, list);
+    container.append(section);
+  }
+  return container;
+}
+
 /**
  * 打开文档属性对话框（纯展示，不修改文档）。
+ *
+ * 按设计方案 §6.3 分六个分组展示；分组内全部字段缺失时隐藏该分组。权限与附件
+ * 清单通过 `getDocumentInfo()` 按需读取（不铺进 `ViewerState`），附件清单只读，
+ * 下载入口在附件侧栏。读取失败时退回状态中已有字段，不阻断对话框。
  *
  * @param viewer 阅读器实例。
  * @param shell 当前外壳。
  */
 function showDocumentProperties(viewer: UIShellHost, shell: UIShell): void {
-  const { document: documentState } = viewer.getState();
   const translator = shell.translatorInstance;
   const doc = shell.elements.root.ownerDocument;
-  const metadata = documentState.metadata;
-
-  const list = doc.createElement('dl');
-  list.className = 'ofd-properties';
-  const rows: readonly (readonly [string, string | undefined])[] = [
-    [translator.t('properties.version'), metadata?.version],
-    [translator.t('properties.pageCount'), String(documentState.pageCount)],
-    [
-      translator.t('properties.fileSize'),
-      metadata?.packageSize === undefined
-        ? undefined
-        : `${translator.formatNumber(metadata.packageSize / 1024, {
-            maximumFractionDigits: 1,
-          })} KB`,
-    ],
-    [translator.t('properties.title'), metadata?.title],
-    [translator.t('properties.author'), metadata?.author],
-    [translator.t('properties.subject'), metadata?.subject],
-    [translator.t('properties.keywords'), metadata?.keywords?.join(', ')],
-    [translator.t('properties.creator'), metadata?.creator],
-    [translator.t('properties.creationDate'), metadata?.creationDate],
-    [translator.t('properties.modDate'), metadata?.modDate],
-    [translator.t('properties.docId'), metadata?.docId],
-  ];
-  for (const [label, value] of rows) {
-    if (!value) continue;
-    const term = doc.createElement('dt');
-    term.textContent = label;
-    const description = doc.createElement('dd');
-    description.textContent = value;
-    list.append(term, description);
+  const render = (info: ViewerDocumentInfo | undefined): void => {
+    const groups = collectPropertyGroups(viewer, translator, info);
+    shell.openDialog({
+      name: 'documentProperties',
+      title: translator.t('toolbar.documentProperties'),
+      content: createPropertySections(doc, groups),
+      actions: [{ label: translator.t('dialog.closeAction'), primary: true }],
+    });
+  };
+  if (typeof viewer.getDocumentInfo !== 'function') {
+    render(undefined);
+    return;
   }
-
-  shell.openDialog({
-    name: 'documentProperties',
-    title: translator.t('toolbar.documentProperties'),
-    content: list,
-    actions: [{ label: translator.t('dialog.closeAction'), primary: true }],
-  });
+  void viewer
+    .getDocumentInfo()
+    .then((info) => render(info))
+    .catch(() => render(undefined));
 }
 
 /**

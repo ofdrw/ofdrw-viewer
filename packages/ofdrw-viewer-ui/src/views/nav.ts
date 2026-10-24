@@ -14,6 +14,7 @@ import { runMicrotask } from '../compat';
 import type { Translator } from '../i18n';
 import { getUIShell } from '../ui';
 import { registerViewerExtension, type OFDViewer } from '../viewer';
+import { AttachmentView } from './attachments';
 import { BookmarkView } from './bookmarks';
 import { OutlineView } from './outline';
 import { ThumbnailView } from './thumbnails';
@@ -26,6 +27,8 @@ export interface NavigationServices {
   outline?: OutlineView;
   /** 书签列表；打开过“书签”面板后才有。 */
   bookmarks?: BookmarkView;
+  /** 附件列表；打开过“附件”面板后才有。 */
+  attachments?: AttachmentView;
 }
 
 /** 实例到导航视图的映射；用于诊断与测试。 */
@@ -76,6 +79,15 @@ function bindPanels(viewer: OFDViewer): NavigationServices {
     services.bookmarks = view;
     return () => {
       if (services.bookmarks === view) delete services.bookmarks;
+      view.destroy();
+    };
+  });
+
+  shell.sidebar.registerPanel('attachments', (host) => {
+    const view = new AttachmentView({ viewer, host, getTranslator });
+    services.attachments = view;
+    return () => {
+      if (services.attachments === view) delete services.attachments;
       view.destroy();
     };
   });

@@ -28,6 +28,20 @@ const A4 = { widthMm: 210, heightMm: 297 };
 /** 横向 A3 页面，用于验证混合尺寸命名页。 */
 const A3_LANDSCAPE = { widthMm: 297, heightMm: 210 };
 
+/**
+ * Chromium 67 的 UA 片段：`CSS.supports('page', …)` 为假阳性，必须走统一纸型降级。
+ *
+ * 与 `test/unit/print/print-service.test.ts` 保持一致。
+ */
+const CHROME_67_UA =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/67.0.3396.0 Safari/537.36';
+
+/**
+ * Chromium 145 的 UA 片段：主版本 ≥85，配合 supports 为 true 时启用命名页。
+ */
+const CHROME_145_UA =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.7632.116 Safari/537.36';
+
 beforeEach(() => {
   document.body.innerHTML = '';
   installDomEnvironment();
@@ -40,6 +54,10 @@ afterEach(() => {
 
 describe('打印集成', () => {
   it('范围解析、混合页尺寸 @page、旋转与 DOM 清理', async () => {
+    // 命名页能力由 UA（Chromium ≥85）与 CSS.supports 双门控决定；jsdom 无 CSS，
+    // 这里显式模拟支持命名页的环境，使混合尺寸走命名 @page 分支。
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(CHROME_145_UA);
+    vi.spyOn(window.CSS, 'supports').mockReturnValue(true);
     const capture = captureDownloads();
     const { viewer, document: engineDocument } = await openViewer(openMock, {
       pageCount: 5,
@@ -121,6 +139,37 @@ describe('打印集成', () => {
       rotation: 0,
     });
     expect(rotated.css).toContain('size: 297mm 210mm');
+    viewer.destroy();
+    capture.restore();
+  });
+
+  it('Chrome 67 混合页尺寸降级为统一最大纸型（不启用命名页）', async () => {
+    const capture = captureDownloads();
+    // Chrome 67 对 CSS.supports 返回 true 属于假阳性，双门控必须降级。
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(CHROME_67_UA);
+    vi.spyOn(window.CSS, 'supports').mockReturnValue(true);
+    const { viewer, document: engineDocument } = await openViewer(openMock, {
+      pageCount: 3,
+      pageSizesMm: [A4, A3_LANDSCAPE, A4],
+      metadata: { version: '1.0', pageCount: 3, title: '降级文档' },
+    });
+
+    let css = '';
+    vi.spyOn(window, 'print').mockImplementation(() => {
+      css = document.querySelector('style[data-ofd-print-style]')?.textContent ?? '';
+      window.dispatchEvent(new Event('afterprint'));
+    });
+
+    await viewer.print({ pages: [1, 2], dpi: 96 });
+
+    // 统一纸型取所有页的最大宽/高，任何一页都不被裁切。
+    expect(css).toContain('@page { size: 297mm 297mm; margin: 0; }');
+    expect(css).not.toContain('ofd-size-');
+    // 降级分支为等比适配补齐 object-fit。
+    expect(css).toContain('object-fit: contain');
+    // 打印仍按页码导出，不受纸型降级影响。
+    expect(engineDocument.exportLog.map((call) => call.pageNumber)).toEqual([1, 2]);
+
     viewer.destroy();
     capture.restore();
   });

@@ -792,3 +792,83 @@ describe('OFDViewer 核心', () => {
     denied.destroy();
   });
 });
+
+describe('getDocumentInfo()', () => {
+  it('一次性聚合元数据、页信息、权限、附件与各类计数', async () => {
+    engineMocks.open.mockImplementation(async () => ({
+      ...(makeDocument(2) as Record<string, unknown>),
+      getMetadata: async () => ({
+        version: '1.2',
+        pageCount: 2,
+        docType: 'OFD',
+        packageInfo: { docRoot: 'Doc_0/Document.xml', docBodyCount: 1 },
+      }),
+      getAttachments: async () => [
+        { id: 'a1', name: '合同.pdf', format: 'PDF', size: 2048 },
+        { id: 'a2', name: '明细.xlsx' },
+      ],
+      getSignatureEntries: async () => [{ id: 's1' }],
+      getOutline: async () => [{ title: '第一章', dest: { type: 'Fit', pageIndex: 0 } }],
+      getBookmarks: async () => [
+        { title: '书签1', pageIndex: 0 },
+        { title: '书签2', pageIndex: 1 },
+      ],
+    }));
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+    });
+    await viewer.ready;
+
+    const info = await viewer.getDocumentInfo();
+    expect(info.metadata).toMatchObject({ version: '1.2', docType: 'OFD' });
+    expect(info.metadata.packageInfo).toEqual({ docRoot: 'Doc_0/Document.xml', docBodyCount: 1 });
+    expect(info.pageCount).toBe(2);
+    expect(info.pageInfos).toHaveLength(2);
+    expect(info.permissions).toMatchObject({ export: true, printScreen: true });
+    expect(info.attachments.map((item) => item.id)).toEqual(['a1', 'a2']);
+    expect(info.signatureCount).toBe(1);
+    expect(info.outlineCount).toBe(1);
+    expect(info.bookmarkCount).toBe(2);
+    viewer.destroy();
+  });
+
+  it('未打开时抛 OFD_NOT_OPENED，而 getPermissions() 仍返回宽松默认值', async () => {
+    engineMocks.open.mockImplementation(async () => {
+      throw new Error('打开失败');
+    });
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+    });
+    await viewer.ready.catch(() => undefined);
+
+    await expect(viewer.getDocumentInfo()).rejects.toMatchObject({ code: 'OFD_NOT_OPENED' });
+    // 严格接口与宽松接口的差异：getPermissions 不抛错。
+    await expect(viewer.getPermissions()).resolves.toMatchObject({ edit: true });
+    viewer.destroy();
+  });
+
+  it('聚合结果不写入 ViewerState.document，也不触发状态膨胀', async () => {
+    engineMocks.open.mockImplementation(async () => ({
+      ...(makeDocument(1) as Record<string, unknown>),
+      getAttachments: async () => [{ id: 'a1', name: 'a.pdf' }],
+    }));
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+    });
+    await viewer.ready;
+    await viewer.getDocumentInfo();
+
+    const after = viewer.getState();
+    // 快照专属字段不进入文档状态。
+    expect(Object.prototype.hasOwnProperty.call(after.document, 'attachments')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(after.document, 'permissions')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(after.document, 'signatureCount')).toBe(false);
+    viewer.destroy();
+  });
+});

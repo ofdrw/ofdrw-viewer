@@ -2044,6 +2044,85 @@
 .ofd-properties dd {
   margin: 0;
   word-break: break-word;
+  /* 资源路径可能有多条，按换行逐行展示。 */
+  white-space: pre-line;
+}
+
+/* 文档属性对话框的分组容器（设计方案 §6.3）。 */
+.ofd-properties__groups {
+  display: flex;
+  flex-direction: column;
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.ofd-properties__group + .ofd-properties__group {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ofd-border);
+}
+
+.ofd-properties__heading {
+  margin: 0 0 6px;
+  color: var(--ofd-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* 附件侧栏（设计方案 §6.2）。 */
+.ofd-attachments__toolbar {
+  display: flex;
+  margin-bottom: 8px;
+}
+
+.ofd-attachments__export {
+  width: 100%;
+}
+
+.ofd-attachments__status {
+  margin: 0 0 8px;
+  color: var(--ofd-text-secondary);
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.ofd-attachments__status[data-level='warning'] {
+  color: var(--ofd-warning, #a15c00);
+}
+
+.ofd-attachments {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ofd-attachment {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--ofd-border);
+}
+
+.ofd-attachment__name {
+  color: var(--ofd-text);
+  word-break: break-all;
+}
+
+.ofd-attachment__meta {
+  margin: 2px 0 4px;
+  color: var(--ofd-text-secondary);
+  font-size: 12px;
+}
+
+.ofd-attachment__download {
+  align-self: flex-start;
+}
+
+/* 超过大附件阈值的条目：只提示改为下载整个 OFD。 */
+.ofd-attachment__download[data-large='true'] {
+  border-color: var(--ofd-warning, #a15c00);
+  color: var(--ofd-warning, #a15c00);
 }
 
 /* “关于”中的链接（如开源许可入口）。 */

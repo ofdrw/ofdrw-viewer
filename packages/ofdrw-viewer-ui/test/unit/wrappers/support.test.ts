@@ -61,7 +61,13 @@ describe('wrapper 公共桥接', () => {
     expect(toRotation(-90)).toBe(270);
     expect(toRotation(Number.NaN)).toBeUndefined();
     expect(isSidebarView('signatures')).toBe(true);
+    expect(isSidebarView('thumbnails')).toBe(true);
+    expect(isSidebarView('outline')).toBe(true);
+    expect(isSidebarView('bookmarks')).toBe(true);
+    // 本轮新增的附件侧栏必须与 SidebarView 联合类型保持一致。
+    expect(isSidebarView('attachments')).toBe(true);
     expect(isSidebarView('print')).toBe(false);
+    expect(isSidebarView(null)).toBe(false);
     expect(isTheme('auto')).toBe(true);
     expect(isTheme('sepia')).toBe(false);
 
@@ -71,6 +77,14 @@ describe('wrapper 公共桥接', () => {
     element.setAttribute('sidebar', '');
     expect(readSidebarAttribute(element)).toBeNull();
     element.removeAttribute('sidebar');
+    expect(readSidebarAttribute(element)).toBeUndefined();
+  });
+
+  it('读取 attachments 侧栏属性并拒绝未知取值', () => {
+    const element = document.createElement('ofd-viewer');
+    element.setAttribute('sidebar', 'attachments');
+    expect(readSidebarAttribute(element)).toBe('attachments');
+    element.setAttribute('sidebar', 'unknown-view');
     expect(readSidebarAttribute(element)).toBeUndefined();
   });
 

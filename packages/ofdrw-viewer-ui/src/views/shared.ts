@@ -99,6 +99,12 @@ export interface NavigationViewer {
   ): () => void;
 }
 
+/** 派发诊断 warning 所需的最小宿主；`OFDViewer` 与附件视图均结构兼容。 */
+export interface WarningHost {
+  /** 读取阅读器 DOM 根节点，warning 事件从该节点派发。 */
+  getElements(): { readonly root: HTMLElement };
+}
+
 /** 页信息缺省值：A4，单位 mm。 */
 const A4: PageInfo = Object.freeze({ index: 0, widthMm: 210, heightMm: 297 });
 
@@ -120,7 +126,7 @@ export const NAVIGATION_WARNING_EVENT = 'ofdviewerwarning';
  * @param pageIndex 关联页索引，0-based；省略表示与页面无关。
  */
 export function reportNavigationWarning(
-  viewer: NavigationViewer,
+  viewer: WarningHost,
   code: string,
   message: string,
   pageIndex?: number,

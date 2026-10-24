@@ -40,7 +40,7 @@ export type ScaleValue = number | ZoomMode;
 export type Rotation = 0 | 90 | 180 | 270;
 
 /** 侧栏视图。 */
-export type SidebarView = 'thumbnails' | 'outline' | 'bookmarks' | 'signatures';
+export type SidebarView = 'thumbnails' | 'outline' | 'bookmarks' | 'signatures' | 'attachments';
 
 /** 主题。 */
 export type Theme = 'light' | 'dark' | 'auto';

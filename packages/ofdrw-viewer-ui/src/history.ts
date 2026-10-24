@@ -42,6 +42,7 @@ const SIDEBAR_VIEWS: readonly SidebarView[] = [
   'outline',
   'bookmarks',
   'signatures',
+  'attachments',
 ];
 
 /** 合法缩放模式。 */

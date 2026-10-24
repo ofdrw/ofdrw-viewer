@@ -45,6 +45,7 @@ const FEATURE_LABEL_KEYS: Readonly<Record<ViewerFeature, MessageKey>> = Object.f
   thumbnails: 'feature.thumbnails',
   outline: 'feature.outline',
   bookmarks: 'feature.bookmarks',
+  attachments: 'feature.attachments',
   pageNavigation: 'feature.pageNavigation',
   pageNumberInput: 'feature.pageNumberInput',
   zoom: 'feature.zoom',

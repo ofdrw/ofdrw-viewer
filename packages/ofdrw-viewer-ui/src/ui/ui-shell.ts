@@ -46,6 +46,7 @@ const SIDEBAR_VIEW_ORDER: readonly SidebarView[] = Object.freeze([
   'outline',
   'bookmarks',
   'signatures',
+  'attachments',
 ]);
 
 /** 对话框名称到功能的映射，用于功能关闭时收起弹窗。 */

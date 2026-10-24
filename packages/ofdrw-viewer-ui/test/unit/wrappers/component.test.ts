@@ -65,6 +65,53 @@ describe('<ofd-viewer>', () => {
     expect((await element.exportOfd())?.filename).toBe('fake.ofd');
   });
 
+  it('sidebar="attachments" 传递给核心而不被静默忽略', async () => {
+    const element = document.createElement(OFD_VIEWER_TAG) as OFDViewerElement;
+    element.setAttribute('src', 'a.ofd');
+    element.setAttribute('sidebar', 'attachments');
+    document.body.append(element);
+
+    const viewer = FakeViewer.instances[0]!;
+    // 初始 sidebar 属性经 normalizeSidebarView 校验后进入构造选项；
+    // 修复前会被判为非法并丢弃为 undefined，导致附件侧栏被静默忽略。
+    expect(viewer.options.sidebar).toBe('attachments');
+
+    // 运行期切换到 attachments 也必须下发到核心（先切到别的视图再切回）。
+    element.setAttribute('sidebar', 'outline');
+    element.setAttribute('sidebar', 'attachments');
+    await tick();
+    expect(viewer.sidebarCalls).toContain('attachments');
+  });
+
+  it('sidebar 既有取值（thumbnails/outline/bookmarks/signatures）仍正常', async () => {
+    const element = document.createElement(OFD_VIEWER_TAG) as OFDViewerElement;
+    element.setAttribute('src', 'a.ofd');
+    document.body.append(element);
+    const viewer = FakeViewer.instances[0]!;
+
+    for (const view of ['thumbnails', 'outline', 'bookmarks', 'signatures'] as const) {
+      element.setAttribute('sidebar', view);
+    }
+    await tick();
+
+    expect(viewer.sidebarCalls).toEqual(
+      expect.arrayContaining(['thumbnails', 'outline', 'bookmarks', 'signatures']),
+    );
+  });
+
+  it('非法 sidebar 取值被忽略', async () => {
+    const element = document.createElement(OFD_VIEWER_TAG) as OFDViewerElement;
+    element.setAttribute('src', 'a.ofd');
+    document.body.append(element);
+    const viewer = FakeViewer.instances[0]!;
+    const before = viewer.sidebarCalls.length;
+
+    element.setAttribute('sidebar', 'not-a-view');
+    await tick();
+
+    expect(viewer.sidebarCalls.length).toBe(before);
+  });
+
   it('属性变化映射到实例方法且不重建实例', async () => {
     const element = document.createElement(OFD_VIEWER_TAG) as OFDViewerElement;
     element.setAttribute('src', 'a.ofd');

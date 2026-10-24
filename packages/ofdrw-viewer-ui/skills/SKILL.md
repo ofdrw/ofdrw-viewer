@@ -1,6 +1,6 @@
 ---
 name: ofdrw-viewer-ui
-description: Embed the framework-agnostic OFD reader UI from @ofdrw/ofdrw-viewer-ui in web apps. Use this skill whenever a task involves a complete OFD reading interface, including continuous scrolling, zoom/rotation, thumbnails, outline/bookmarks, text selection and search, printing, PNG/JPEG/WebP and original OFD export, encrypted-document credentials, signature overlays and verification panels, or the Web Component/React/Vue adapters. Covers installation, style import, container sizing, OFDViewer options/methods/events, feature gates, crypto configuration, framework wrappers, and known boundaries. Also covers URL loading in the UI layer: HttpByteSource, HTTP Range/CORS, request headers, cancellation, shared byte sources (engine does not fetch), host-controlled font bytes, and URI parameter preview: ?file= URLs, ?base64= values, base64 预览, encoding, priority and security. Use for OFD 阅读器、OFD 在线预览、URI 参数预览、?file=、?base64=、base64 预览、Vue/React OFD 组件、URL 跨域/Range 排障, or when embedding @ofdrw/ofdrw-viewer-ui.
+description: Embed the framework-agnostic OFD reader UI from @ofdrw/ofdrw-viewer-ui in web apps. Use this skill whenever a task involves a complete OFD reading interface, including continuous scrolling, zoom/rotation, thumbnails, outline/bookmarks, attachments sidebar with per-file download and ZIP export of embedded files, text selection and search, printing, PNG/JPEG/WebP and original OFD export, document info snapshot via getDocumentInfo, encrypted-document credentials, signature overlays and verification panels, or the Web Component/React/Vue adapters. Covers installation, style import, container sizing, OFDViewer options/methods/events, feature gates, crypto configuration, framework wrappers, and known boundaries. Also covers URL loading in the UI layer: HttpByteSource, HTTP Range/CORS, request headers, cancellation, shared byte sources (engine does not fetch), host-controlled font bytes, and URI parameter preview: ?file= URLs, ?base64= values, base64 预览, encoding, priority and security. Use for OFD 阅读器、OFD 在线预览、URI 参数预览、?file=、?base64=、base64 预览、Vue/React OFD 组件、URL 跨域/Range 排障, or when embedding @ofdrw/ofdrw-viewer-ui.
 ---
 
 # OFD 阅读器 UI（@ofdrw/ofdrw-viewer-ui）
@@ -16,6 +16,7 @@ description: Embed the framework-agnostic OFD reader UI from @ofdrw/ofdrw-viewer
 - 需要透明文本层、文本选择/复制、全文查找与高亮；
 - 需要打开加密 OFD（口令或 SM2 私钥），展示签章覆盖层与验证面板；
 - 需要浏览器打印、单页/多页图片导出（PNG/JPEG/WebP，多页 ZIP）；
+- 需要查看、下载 OFD 内嵌附件（附件侧栏，单个下载或整包 ZIP 导出），或读取文档信息快照（元数据、权限、附件、各类计数）；
 - 需要 `<ofd-viewer>` Web Component 或 React/Vue 薄适配；
 - 需要用 `?file=` / `?base64=` 链接直接预览 OFD，而不改宿主代码。
 
@@ -275,7 +276,7 @@ const viewer = new OFDViewer({ container: '#viewer', source: '/api/doc.ofd' });
 </script>
 ```
 
-标签默认是 `ofd-viewer`，采用 light DOM，不创建 Shadow DOM。基础属性为 `src`、`page`、`scale`、`rotation`、`theme`、`locale`、`sidebar`；复杂配置用 `features`、`crypto`、`source` property。省略 `src` 时仍会创建实例并读取查询参数；断开连接销毁实例，重新连接按当前属性重建。事件名为 `ofd-*`，`event.detail` 为对应载荷，`reader.viewer` 是底层只读实例。
+标签默认是 `ofd-viewer`，采用 light DOM，不创建 Shadow DOM。基础属性为 `src`、`page`、`scale`、`rotation`、`theme`、`locale`、`sidebar`；复杂配置用 `features`、`crypto`、`source` property。省略 `src` 时仍会创建实例并读取查询参数；断开连接销毁实例，重新连接按当前属性重建。事件名为 `ofd-*`，`event.detail` 为对应载荷，`reader.viewer` 是底层只读实例。`sidebar` 属性只接受 `thumbnails`/`outline`/`bookmarks`/`signatures`（空、`none`、`off` 关闭），暂不接受 `attachments`；要打开附件侧栏，用 `reader.viewer.openSidebar('attachments')`。
 
 完整属性/property/方法/事件见 [API.md Web Component](./API.md#web-component)。
 
@@ -368,7 +369,9 @@ viewer.setFeatures({ print: true });
 viewer.setFeatureDisplay({ export: 'disable' });
 ```
 
-`features` 是补丁对象，未出现的键默认开启；非法键/值被忽略。关闭 `textLayer` 会级联关闭 `selection` 和 `find`，关闭 `sidebar` 会级联关闭 `thumbnails`/`outline`/`bookmarks`。受功能守卫的方法在功能禁用时抛 `OFD_FEATURE_DISABLED`，可用 `isFeatureDisabledError(error, 'print')` 判断；`closeSidebar()` 等清理方法不设守卫。
+`features` 是补丁对象，未出现的键默认开启；非法键/值被忽略。共 20 个功能键：`toolbar`、`sidebar`、`thumbnails`、`outline`、`bookmarks`、`attachments`、`pageNavigation`、`pageNumberInput`、`zoom`、`rotate`、`fullscreen`、`textLayer`、`selection`、`find`、`print`、`export`、`signatures`、`verification`、`documentProperties`、`keyboardShortcuts`。关闭 `textLayer` 会级联关闭 `selection` 和 `find`，关闭 `sidebar` 会级联关闭 `thumbnails`/`outline`/`bookmarks`/`attachments`。受功能守卫的方法在功能禁用时抛 `OFD_FEATURE_DISABLED`，可用 `isFeatureDisabledError(error, 'print')` 判断；`closeSidebar()` 等清理方法不设守卫。
+
+`attachments` 依赖 `sidebar`，另有两种由实现状态决定的关闭原因，宿主无法用 `features: true` 打开：引擎文档没有 `saveAttachment()`（旧引擎）时为 `unsupported`；引擎支持但 `getAttachments()` 为空或读取失败时为 `document`。两种情况下侧栏不渲染附件 tab，`openSidebar('attachments')` 抛 `OFD_FEATURE_DISABLED`。
 
 `featureDisplay` 只决定被关闭功能的控件如何展示：`hide` 隐藏，`disable` 保留但禁用。`features: true` 不能绕过文档权限或引擎/环境限制；完整功能键、依赖与有效状态见 [API.md 功能开关](./API.md#功能开关)。
 
@@ -407,6 +410,33 @@ console.log(original.filename, original.size);
 
 默认打印当前页、`dpi: 'auto'`、沿用当前旋转；默认导出当前页、PNG、`quality: 0.92`。`auto` DPI 按本次页数分档：≤50 页 200、51–200 页 150、>200 页 96；显式 DPI 须为 `(0, 600]`，结果四舍五入。多页导出生成 ZIP；单页失败会降级为 warning，全部失败抛 `OFD_EXPORT_FAILED`。打印调用浏览器打印对话框，不生成 PDF；图片导出不合并为 PDF。`exportOfd()` 导出阅读器打开时的原始 OFD 字节，不重新渲染；加密文档导出原始加密包；与图片导出共用 `export` 功能开关和文档权限。
 
+### 附件与文档信息
+
+附件由内置侧栏展示，宿主只需打开侧栏或读取信息快照：
+
+```ts
+viewer.openSidebar('attachments');   // 需要 sidebar 与 attachments 功能；文档无附件时不可用
+const info = await viewer.getDocumentInfo();
+console.log(info.attachments);       // AttachmentInfo[]，保持 XML 顺序
+console.log(info.metadata.docType, info.metadata.packageInfo?.docRoot);
+console.log(info.pageCount, info.signatureCount, info.outlineCount, info.bookmarkCount);
+```
+
+附件侧栏：
+
+- 列表列：名称、格式 · 大小 · 日期（`modDate` 缺失回退 `creationDate`，两者都没有显示 `-`）、单个“下载”按钮；没有 `name` 的条目直接跳过。无附件时显示空状态。
+- 单个下载：先经引擎 `saveAttachment()` 分块读完整份附件到内存，再生成 `Blob` 并触发浏览器下载；文件名优先用 `name`、其次 `id`，会过滤路径分隔符、控制字符与平台保留字符，无扩展名时按 `format` 补全。读取失败只在面板内提示并上报 `W_ATTACHMENT_RESOURCE`，不抛给宿主。
+- 导出全部：把全部附件打包成 store 模式 ZIP（复用图片导出的 `createStoreZip`，fflate 按需动态导入，不引入新依赖），条目名为附件名、重名追加 `-2`/`-3`；超过阈值的附件与读取失败的条目会被跳过，完成后汇总“已导出 N 个附件，跳过 M 个”。
+- 大附件阈值 `ATTACHMENT_LARGE_THRESHOLD_BYTES = 524288000`（**500 MB**）：按附件的**声明大小**判断，超过阈值时**不读取附件内容**，确认框提示“是否改为下载整个 OFD 原文件”——取消则什么都不读，确认后经 `readSourceBytes()` 下载整个 OFD（沿用 `export` 功能与文档导出权限门控）。未声明 `size` 的附件不参与阈值判断，走普通下载。
+- 安全约束：附件内容一律不进入 DOM（不用 `innerHTML`/`srcdoc`），未知格式只提供下载、不提供预览。
+
+`getDocumentInfo()` 返回 `ViewerDocumentInfo`：`metadata`（引擎完整元数据，含 `docType`/`documentHeader`/`packageInfo`/`commonData`）、`pageCount`、`pageInfos`、`permissions`、`attachments`、`signatureCount`、`outlineCount`、`bookmarkCount`，以及可选的 `origin`。
+
+- **按需调用**：结果不写入 `ViewerState.document`，不会触发状态订阅者重渲染；宿主需要多次使用时应自行缓存返回值，而不是每次渲染都调用。
+- **一次性聚合**：内部并发读取元数据、权限、附件、签章、大纲与书签，全部命中引擎缓存。
+- **未打开抛 `OFD_NOT_OPENED`**：不返回空壳（与 `getPermissions()` 未打开时返回宽松默认值不同）；销毁后抛 `OFD_DESTROYED`。
+- 属性对话框（`documentProperties` 功能）按六个分组展示：文档属性、包信息、页面设置、颜色与资源、安全与结构、附件清单；某分组内全部字段缺失时整组隐藏。
+
 ### 加密文档与签名验证
 
 ```ts
@@ -440,6 +470,11 @@ console.log(report.overall);
 - **跳转目标**：`goToDestination` 尚未暴露；可读 `getPageInfos()` 后用 `goToPage(pageIndex + 1)` 跳转，页内坐标由调用方处理。
 - **性能**：未对数千页大文档、超大文件或低端设备做硬性性能承诺；首屏与全篇查找耗时随页数增长，宿主应自行压测。
 - **缩略图缓存**：`thumbnailCacheSize` 当前仅被解析，尚未接入缩略图缓存实现，实际缓存数量固定；需要严格控制内存时不要依赖该选项。
+- **附件**：附件列表只在 `attachments` 功能开启、引擎具备 `saveAttachment()` 且文档确有附件时出现；无附件时不渲染 tab。超过 500 MB（按声明大小）的附件不读取内容，只能改为下载整个 OFD 原文件；“导出全部”会跳过超阈值与读取失败的条目并汇总提示，不静默丢弃，但也不会部分重试。
+- **附件内容不渲染**：附件只做下载，不预览、不插入 DOM、不执行；未知格式没有内置查看器。
+- **附件读取不是流式**：引擎先整块读入内存再分块回调，UI 也会先把附件拼成完整 `Blob` 再下载；下载超大附件会占用等量内存，受引擎单附件上限（`maxAttachmentBytes`，未配置回退 `maxEntryBytes` 默认 64 MiB）约束。
+- **大附件阈值不可配置**：`524288000` 是源码常量，没有 `options` 入口；需要不同阈值时只能改用引擎接口自行实现下载。
+- **`<ofd-viewer sidebar="attachments">` 当前不生效**：HTML 属性只识别 `thumbnails`/`outline`/`bookmarks`/`signatures`，其余值被忽略；需要附件侧栏时用 `reader.viewer.openSidebar('attachments')`（或 `sidebar` property / React、Vue 的 `sidebar` prop）。
 
 ## 参考
 

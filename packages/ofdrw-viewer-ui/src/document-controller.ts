@@ -10,6 +10,7 @@
 
 import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
 import type {
+  AttachmentInfo,
   BookmarkItem,
   DocumentMetadata,
   DocumentPermissions,
@@ -76,6 +77,8 @@ export interface EngineDocument {
   getMetadata(options?: { signal?: AbortSignal }): Promise<DocumentMetadata>;
   /** 文档权限声明。 */
   getPermissions(options?: { signal?: AbortSignal }): Promise<DocumentPermissions>;
+  /** 附件元信息；旧引擎实现可能不含该方法。 */
+  getAttachments?(options?: { signal?: AbortSignal }): Promise<readonly AttachmentInfo[]>;
   /** 签章 XML 摘要。 */
   getSignatureEntries(
     options?: { signal?: AbortSignal },
@@ -302,6 +305,7 @@ export class DocumentController {
   private bookmarksPromise: Promise<readonly BookmarkItem[]> | null = null;
   private metadataPromise: Promise<DocumentMetadata> | null = null;
   private permissionsPromise: Promise<DocumentPermissions> | null = null;
+  private attachmentsPromise: Promise<readonly AttachmentInfo[]> | null = null;
   private signatureEntriesPromise: Promise<readonly SignatureEntryInfo[]> | null = null;
 
   /**
@@ -534,6 +538,19 @@ export class DocumentController {
     return this.permissionsPromise;
   }
 
+  /**
+   * 读取附件元信息；结果缓存。
+   *
+   * 只读索引，不读取附件内容。引擎未实现 `getAttachments()` 时返回空数组，
+   * 保证旧版本引擎下调用方无需额外分支判断。
+   */
+  async getAttachments(): Promise<readonly AttachmentInfo[]> {
+    const document = this.requireDocument();
+    if (typeof document.getAttachments !== 'function') return [];
+    this.attachmentsPromise ??= document.getAttachments();
+    return this.attachmentsPromise;
+  }
+
   /** 读取签章 XML 摘要；结果缓存。 */
   async getSignatureEntries(): Promise<readonly SignatureEntryInfo[]> {
     const document = this.requireDocument();
@@ -568,6 +585,7 @@ export class DocumentController {
     this.bookmarksPromise = null;
     this.metadataPromise = null;
     this.permissionsPromise = null;
+    this.attachmentsPromise = null;
     this.signatureEntriesPromise = null;
     if (!document) return;
     try {

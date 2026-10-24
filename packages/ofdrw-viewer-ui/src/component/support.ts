@@ -246,7 +246,11 @@ export function isTheme(value: unknown): value is Theme {
  */
 export function isSidebarView(value: unknown): value is SidebarView {
   return (
-    value === 'thumbnails' || value === 'outline' || value === 'bookmarks' || value === 'signatures'
+    value === 'thumbnails' ||
+    value === 'outline' ||
+    value === 'bookmarks' ||
+    value === 'signatures' ||
+    value === 'attachments'
   );
 }
 

@@ -18,6 +18,7 @@ export const VIEWER_FEATURES = [
   'thumbnails',
   'outline',
   'bookmarks',
+  'attachments',
   'pageNavigation',
   'pageNumberInput',
   'zoom',
@@ -90,6 +91,7 @@ export const FEATURE_DEPENDENCIES: Readonly<
   thumbnails: ['sidebar'],
   outline: ['sidebar'],
   bookmarks: ['sidebar'],
+  attachments: ['sidebar'],
   selection: ['textLayer'],
   find: ['textLayer'],
 });
