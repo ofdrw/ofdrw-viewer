@@ -1,6 +1,6 @@
 ---
 name: ofdrw-viewer-engine
-description: Render OFD documents to Canvas with @ofdrw/ofdrw-viewer-engine. Use this skill whenever a task involves opening, previewing, rendering, or exporting .ofd pages in JavaScript/TypeScript, including browser pages, Web Workers/OffscreenCanvas, Node.js tools, Electron/Tauri, or WeChat Mini Programs. Covers page rendering, thumbnails, PNG/JPEG/WebP export, searchable text layers with pixel coordinates, outlines/metadata/attachments/signatures, DPI/canvas sizing, virtual container/encrypted-document injection, host-provided document sources (arraybuffer/blob/custom ByteSource, engine does not fetch URLs or read files), platform hooks (createCanvas, encodeImage, imageDecoders, custom ByteSource, FontProvider), cancellation, and debugging warnings such as missing fonts or images. Also use for OFD 预览、OFD 转图片、文字层坐标、engine 不联网/来源委托, or when wiring a custom Canvas host. See the bundled API.md for exact signatures and defaults.
+description: Render OFD documents to Canvas with @ofdrw/ofdrw-viewer-engine. Use this skill whenever a task involves opening, previewing, rendering, or exporting .ofd pages in JavaScript/TypeScript, including browser pages, Web Workers/OffscreenCanvas, Node.js tools, Electron/Tauri, or WeChat Mini Programs. Covers page rendering, content filtering by layer/template/annotation type, thumbnails, PNG/JPEG/WebP export, searchable text layers with pixel coordinates, outlines/metadata/attachments/signatures, DPI/canvas sizing, virtual container/encrypted-document injection, host-provided document sources (arraybuffer/blob/custom ByteSource, engine does not fetch URLs or read files), platform hooks (createCanvas, encodeImage, imageDecoders, custom ByteSource, FontProvider), cancellation, and debugging warnings such as missing fonts or images. Also use for OFD 预览、按内容层过滤、OFD 转图片、文字层坐标、engine 不联网/来源委托, or when wiring a custom Canvas host. See the bundled API.md for exact signatures and defaults.
 ---
 
 # OFD 页面渲染引擎（@ofdrw/ofdrw-viewer-engine）
@@ -405,6 +405,52 @@ await upload(png.data); // Uint8Array
 
 `exportImage` 复用文档 `renderer` 绘制导出画布，自定义 `renderer` 会影响导出；Node/小程序仍需注入 `createCanvas` 与 `encodeImage`。
 
+### 按内容层过滤（contentFilter）
+
+`page.render`、`page.exportImage`、`page.getTextContent` 都接受可选的 `contentFilter`，用于只绘制/收集指定内容。语义是**白名单**：
+
+- 不传：全部绘制。
+- 传了：只画参数里出现且启用的内容；未出现的层、注释、签章都不画。
+- 每次调用独立；导出/文本层不会自动继承上一次 `render` 的过滤。
+
+```ts
+// 只看正文和签章
+await page.render({
+  canvasContext,
+  viewport,
+  contentFilter: {
+    layers: { body: true },
+    signatures: true,
+  },
+}).promise;
+
+// 只看背景模板
+await page.render({
+  canvasContext,
+  viewport,
+  contentFilter: {
+    layers: { background: { templates: true } },
+  },
+}).promise;
+
+// 只看正文页面内容 + 印章类注释
+const text = await page.getTextContent({
+  contentFilter: {
+    layers: { body: { page: true } },
+    annotationTypes: ['Stamp'],
+  },
+});
+```
+
+- 每层值：`true` 画整层，`false` 不画，`{ page: true }` 只画页面自身内容，`{ templates: true }` 只画模板内容，`{}` 不画。
+- 模板按 `Template/@ZOrder` 归入背景/正文/前景，模板内部图层类型不参与过滤；Custom 层没有模板。
+- 注释：`annotations: true` 画全部；`annotationTypes` 出现时只画列出的类型，空数组不画；`annotations: false` 不画并忽略类型。
+- 注释类型可用 `KNOWN_ANNOTATION_TYPES` 的常见值，也可传自定义 `Annot/@Type` 字符串；匹配区分大小写。
+- 导出/文本层要与画面一致时，显式传同一个 `contentFilter`。
+- 切换过滤只重绘，不重新 prepare/解码；文本缓存会按过滤签名区分。
+
+完整字段、默认值和示例见 [API.md §4.10](./API.md)。
+
 ### 文字层
 
 ```ts
@@ -480,7 +526,9 @@ warning 不中断渲染，同一 `(code, pageIndex, objectId)` 只上报一次�
 - engine 不联网、不读本地文件：没有 `url`/`node-file`/`wechat-file` 来源；先由宿主读成 `arraybuffer`/`blob`，或传 `custom ByteSource`。
 - Node 的 `imageDecoders` 未覆盖实际格式时图片会缺失；按文档中的图片格式补齐插件。
 - 不要在主线程同步等待渲染；`render` 返回任务，必须 `await task.promise`。
-- 同一页的 `getTextContent` 缓存不含 DPI，但包含 `includeChars`/`includeAnnotations`/`includeInvisible`/`layerOrder`/上限。
+- 同一页的 `getTextContent` 缓存不含 DPI，但包含 `includeChars`/`includeAnnotations`/`includeInvisible`/`layerOrder`/上限/`contentFilter` 签名。
+- `contentFilter` 是白名单：只写要显示的内容。写 `{ layers: { background: false } }` 不是“隐藏背景、其余照画”，而是只指定了一个不画的层，结果接近空白页；要隐藏某层，把其余要画的内容都显式写上。
+- `exportImage`/`getTextContent` 不会自动继承上一次 `render` 的 `contentFilter`；需要一致时传同一个对象。
 - 不要把 `limits` 设为 0 上线；不要忽略 `W_FONT_MISSING` 导致的文字缺字。
 - 不要用引擎做签章验签、证书解析或加密文档解密；这些不在引擎范围。
 

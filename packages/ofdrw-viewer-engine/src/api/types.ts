@@ -13,6 +13,7 @@ import type { OFDSource } from '../platform/source';
 import type { Canvas2DLike, CanvasRenderingContext2DLike, Renderer } from '../renderer/types';
 import type { OFDWarning } from '../warnings';
 import type { Viewport } from '../common/types';
+import type { PageContentFilter } from '../render/content-filter';
 import type { OFDEventBus } from './events';
 
 export type { FontInput } from '../platform/font-provider';
@@ -20,6 +21,14 @@ export type { OFDSource } from '../platform/source';
 export type { OFDWarning } from '../warnings';
 export type { PageSize } from '../model/types';
 export type { Viewport } from '../common/types';
+// 页级绘制内容过滤类型：与 `render`/`exportImage`/`getTextContent` 的 `contentFilter` 参数配套导出。
+export type {
+  AnnotationType,
+  DrawLayerOptions,
+  KnownAnnotationType,
+  PageContentFilter,
+} from '../render/content-filter';
+export { KNOWN_ANNOTATION_TYPES } from '../render/content-filter';
 
 /** 资源限制；单位除特别说明外均为 byte，设 0 表示不限制（仅测试建议）。 */
 export interface ResourceLimits {
@@ -97,6 +106,13 @@ export interface PageRenderParameters {
   canvasContext: CanvasRenderingContext2DLike;
   /** 页面在指定 DPI 下的像素尺寸。 */
   viewport: Viewport;
+  /**
+   * 页级绘制内容白名单；不传表示全部绘制。
+   *
+   * 只作用于本次渲染：引擎不保存“当前过滤”，`exportImage`/`getTextContent`
+   * 也不会继承上一次 `render` 的过滤。
+   */
+  contentFilter?: PageContentFilter;
   /** 取消信号；中止后 promise 以 `OFD_ABORTED` 拒绝。 */
   signal?: AbortSignal;
 }
@@ -125,6 +141,12 @@ export interface PageImageExportOptions {
    * PNG 可传 `null` 得到透明背景；JPEG/WebP 不支持透明，`null` 按白底处理。
    */
   background?: string | null;
+  /**
+   * 页级绘制内容白名单；不传表示全部绘制。
+   *
+   * 只作用于本次导出，不继承页面最近一次 `render` 的过滤；需要与显示一致时显式传同一对象。
+   */
+  contentFilter?: PageContentFilter;
   /** 取消信号；中止后 promise 以 `OFD_ABORTED` 拒绝。 */
   signal?: AbortSignal;
 }

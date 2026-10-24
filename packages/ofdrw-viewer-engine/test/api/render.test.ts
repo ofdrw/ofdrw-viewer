@@ -4,14 +4,20 @@
 
 import { describe, expect, it } from 'vitest';
 import { OFDError, isOFDError } from '../../src/errors';
+import type { PageContentFilter } from '../../src/api/types';
+import { KNOWN_ANNOTATION_TYPES } from '../../src/index';
+import { RecordingRenderer } from '../../src/renderer/recording';
 import {
+  OFD_NS,
   buildFixtureOfd,
+  createPng,
   createTestCanvas,
   openTestDocument,
   renderPage,
   trackRenderer,
   createTestRenderer,
 } from './helpers';
+import { buildXmlDocument } from '../fixtures/xml';
 import type { XmlElementSpec } from '../fixtures/xml';
 
 /** 捕获 promise 拒绝并返回错误。 */
@@ -252,5 +258,309 @@ describe('页面渲染', () => {
     } finally {
       await doc.close();
     }
+  });
+});
+
+/** 正文层红色矩形，位于左上 10mm 内；其余区域保持宿主白底。 */
+function bodyRect(): XmlElementSpec {
+  return {
+    name: 'ofd:PathObject',
+    attrs: { ID: 11, Boundary: '0 0 10 10', Fill: 'true', Stroke: 'false' },
+    children: [
+      { name: 'ofd:AbbreviatedData', children: ['M 0 0 L 10 0 L 10 10 L 0 10 Z'] },
+      { name: 'ofd:FillColor', attrs: { Value: '255 0 0' } },
+    ],
+  };
+}
+
+/**
+ * 合成 100×100mm 单页：正文层红色矩形 + 绿色 Highlight 注释 + 蓝色位图签章。
+ *
+ * @param options 是否附加注释与签章。
+ * @returns OFD ZIP 字节。
+ */
+function buildFilterOfd(options: { annotation: boolean; signature: boolean }): Uint8Array {
+  const annotationRoot: XmlElementSpec = {
+    name: 'ofd:PageAnnot',
+    attrs: { 'xmlns:ofd': OFD_NS },
+    children: [
+      {
+        name: 'ofd:Annot',
+        attrs: { ID: 100, Type: 'Highlight' },
+        children: [
+          {
+            name: 'ofd:Appearance',
+            attrs: { Boundary: '50 50 20 20' },
+            children: [
+              {
+                name: 'ofd:PathObject',
+                attrs: { ID: 101, Boundary: '0 0 20 20', Fill: 'true', Stroke: 'false' },
+                children: [
+                  { name: 'ofd:AbbreviatedData', children: ['M 0 0 L 20 0 L 20 20 L 0 20 Z'] },
+                  { name: 'ofd:FillColor', attrs: { Value: '0 255 0' } },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  return buildFixtureOfd({
+    pages: [{ id: 1, widthMm: 100, heightMm: 100, objects: [bodyRect()] }],
+    ...(options.annotation
+      ? {
+          annotations: {
+            files: [{ pageId: 1, filePath: 'Annots/Page_1.xml' }],
+            entries: [{ name: 'Doc_0/Annots/Page_1.xml', data: buildXmlDocument(annotationRoot) }],
+          },
+        }
+      : {}),
+    ...(options.signature
+      ? {
+          extraEntries: [
+            {
+              name: 'Doc_0/Signs/Signatures.xml',
+              data: `<?xml version="1.0" encoding="UTF-8"?>
+<ofd:Signatures xmlns:ofd="http://www.ofdspec.org/2016">
+<ofd:Signature ID="1" Type="Seal" BaseLoc="/Doc_0/Signs/Sign_0/Signature.xml"/>
+</ofd:Signatures>`,
+            },
+            {
+              name: 'Doc_0/Signs/Sign_0/Signature.xml',
+              data: `<?xml version="1.0" encoding="UTF-8"?>
+<ofd:Signature xmlns:ofd="http://www.ofdspec.org/2016"><ofd:SignedInfo>
+<ofd:StampAnnot ID="s1" PageRef="1" Boundary="50 50 40 40"/>
+</ofd:SignedInfo><ofd:SignedValue>SignedValue.dat</ofd:SignedValue></ofd:Signature>`,
+            },
+            { name: 'Doc_0/Signs/Sign_0/SignedValue.dat', data: sealPngSignedValue() },
+          ],
+        }
+      : {}),
+  });
+}
+
+/**
+ * 构造内嵌 1×1 蓝色 PNG 的 v1 签章 DER。
+ *
+ * @returns SignedValue.dat 字节。
+ */
+function sealPngSignedValue(): Uint8Array {
+  const png = createPng('#0000ff');
+  const picture = derSeq(derIa5('PNG'), derOctet(png), derInt(40), derInt(40));
+  const sealInfo = derSeq(
+    derSeq(derIa5('ES'), derInt(4), derIa5('V')),
+    derIa5('id'),
+    derSeq(),
+    picture,
+  );
+  return derSeq(derSeq(derInt(4), derSeq(sealInfo, derSeq())), derOctet(Uint8Array.from([1])));
+}
+
+/** DER TLV 编码；仅测试构造 SignedValue 用。 */
+function derTlv(tag: number, content: Uint8Array): Uint8Array {
+  const prefix: number[] = [tag];
+  if (content.length < 0x80) prefix.push(content.length);
+  else {
+    const bytes: number[] = [];
+    let value = content.length;
+    while (value > 0) {
+      bytes.unshift(value & 0xff);
+      value >>= 8;
+    }
+    prefix.push(0x80 | bytes.length, ...bytes);
+  }
+  return Uint8Array.from([...prefix, ...content]);
+}
+
+/** DER SEQUENCE。 */
+function derSeq(...children: Uint8Array[]): Uint8Array {
+  return derTlv(0x30, Uint8Array.from(children.flatMap((child) => [...child])));
+}
+
+/** DER INTEGER（非负小整数）。 */
+function derInt(value: number): Uint8Array {
+  return derTlv(0x02, Uint8Array.from([value]));
+}
+
+/** DER IA5String。 */
+function derIa5(value: string): Uint8Array {
+  return derTlv(0x16, Uint8Array.from([...value].map((char) => char.charCodeAt(0))));
+}
+
+/** DER OCTET STRING。 */
+function derOctet(value: Uint8Array): Uint8Array {
+  return derTlv(0x04, value);
+}
+
+/** 单次页面绘制中被记录的内容：正文填充、注释填充、签章图片。 */
+interface DrawnContent {
+  /** 是否有红色正文填充（#ff0000）。 */
+  body: boolean;
+  /** 注释外观是否绘制：绿色填充（#00ff00）。 */
+  annotation: boolean;
+  /** 是否绘制签章图片。 */
+  signature: boolean;
+}
+
+/**
+ * 用 RecordingRenderer 渲染一页并返回本次绘制内容；不产生像素。
+ *
+ * @param page 页面。
+ * @param renderer 记录渲染器；每次调用前清空。
+ * @param contentFilter 可选内容过滤。
+ * @returns 本次调用的绘制内容。
+ */
+async function drawFiltered(
+  page: Parameters<typeof renderPage>[0],
+  renderer: RecordingRenderer,
+  contentFilter?: PageContentFilter,
+): Promise<DrawnContent> {
+  renderer.calls.length = 0;
+  await page.render({
+    canvasContext: createTestCanvas(378, 378).context,
+    viewport: { width: 378, height: 378, dpi: 96 },
+    ...(contentFilter !== undefined ? { contentFilter } : {}),
+  }).promise;
+  const fills = renderer.calls.filter(
+    (call): call is Extract<(typeof renderer.calls)[number], { op: 'fill' }> => call.op === 'fill',
+  );
+  const hasFill = (r: number, g: number, b: number): boolean =>
+    fills.some(
+      (call) =>
+        call.paint.kind === 'color' &&
+        call.paint.rgba.r === r &&
+        call.paint.rgba.g === g &&
+        call.paint.rgba.b === b,
+    );
+  return {
+    body: hasFill(255, 0, 0),
+    annotation: hasFill(0, 255, 0),
+    signature: renderer.calls.some((call) => call.op === 'drawImage'),
+  };
+}
+
+describe('页面渲染 contentFilter', () => {
+  it('不传 contentFilter 或传与全画等价的配置：与改动前一致（层/注释/签章全画）', async () => {
+    const renderer = new RecordingRenderer();
+    const doc = await openTestDocument(buildFilterOfd({ annotation: true, signature: true }), {
+      renderer,
+    });
+    try {
+      const page = await doc.getPage(0);
+      expect(await drawFiltered(page, renderer)).toEqual({
+        body: true,
+        annotation: true,
+        signature: true,
+      });
+      expect(
+        await drawFiltered(page, renderer, {
+          layers: { background: true, body: true, foreground: true, custom: true },
+          annotations: true,
+          signatures: true,
+        }),
+      ).toEqual({ body: true, annotation: true, signature: true });
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('contentFilter 透传到 drawPage：白名单只绘制指定层/注释类型/签章', async () => {
+    const renderer = new RecordingRenderer();
+    const doc = await openTestDocument(buildFilterOfd({ annotation: true, signature: true }), {
+      renderer,
+    });
+    try {
+      const page = await doc.getPage(0);
+      expect(await drawFiltered(page, renderer, { layers: { body: true } })).toEqual({
+        body: true,
+        annotation: false,
+        signature: false,
+      });
+      // annotationTypes 出现即开启注释；页面层与签章都不出现，因此不画。
+      expect(await drawFiltered(page, renderer, { annotationTypes: ['Highlight'] })).toEqual({
+        body: false,
+        annotation: true,
+        signature: false,
+      });
+      expect(await drawFiltered(page, renderer, { signatures: true })).toEqual({
+        body: false,
+        annotation: false,
+        signature: true,
+      });
+      // 类型不在白名单：注释不画。
+      expect(await drawFiltered(page, renderer, { annotationTypes: ['Stamp'] })).toEqual({
+        body: false,
+        annotation: false,
+        signature: false,
+      });
+      // annotations:false 优先于类型列表。
+      expect(
+        await drawFiltered(page, renderer, { annotations: false, annotationTypes: ['Highlight'] }),
+      ).toEqual({ body: false, annotation: false, signature: false });
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('每次调用独立：不记忆上一次过滤；{} 为空白页；之后不传仍全画', async () => {
+    const renderer = new RecordingRenderer();
+    const doc = await openTestDocument(buildFilterOfd({ annotation: true, signature: true }), {
+      renderer,
+    });
+    try {
+      const page = await doc.getPage(0);
+      expect(await drawFiltered(page, renderer, { layers: { body: true } })).toEqual({
+        body: true,
+        annotation: false,
+        signature: false,
+      });
+      // 不传过滤：重新全画。
+      expect(await drawFiltered(page, renderer)).toEqual({
+        body: true,
+        annotation: true,
+        signature: true,
+      });
+      // {} 是白名单里没有任何内容 → 空白页，但仍正常走 beginPage/endPage。
+      expect(await drawFiltered(page, renderer, {})).toEqual({
+        body: false,
+        annotation: false,
+        signature: false,
+      });
+      expect(renderer.calls.filter((call) => call.op === 'beginPage')).toHaveLength(1);
+      expect(renderer.calls.filter((call) => call.op === 'endPage')).toHaveLength(1);
+      expect(await drawFiltered(page, renderer)).toEqual({
+        body: true,
+        annotation: true,
+        signature: true,
+      });
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('非法 contentFilter 不抛错，按未指定处理（不绘制对应内容）', async () => {
+    const renderer = new RecordingRenderer();
+    const doc = await openTestDocument(buildFilterOfd({ annotation: true, signature: true }), {
+      renderer,
+    });
+    try {
+      const page = await doc.getPage(0);
+      expect(
+        await drawFiltered(page, renderer, {
+          layers: { body: { page: 'yes' as unknown as boolean } },
+          annotationTypes: 'Highlight' as unknown as readonly string[],
+        }),
+      ).toEqual({ body: false, annotation: false, signature: false });
+    } finally {
+      await doc.close();
+    }
+  });
+});
+
+describe('公共导出：内容过滤类型', () => {
+  it('KNOWN_ANNOTATION_TYPES 从包根导出且为冻结常量', () => {
+    expect(KNOWN_ANNOTATION_TYPES).toEqual(['Link', 'Path', 'Highlight', 'Stamp', 'Watermark']);
+    expect(Object.isFrozen(KNOWN_ANNOTATION_TYPES)).toBe(true);
   });
 });

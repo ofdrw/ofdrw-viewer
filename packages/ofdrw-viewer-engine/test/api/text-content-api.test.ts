@@ -5,8 +5,12 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { OFDWarning } from '../../src/warnings';
+import type { TextContentOptions } from '../../src/api/ui-types';
+import { createCanvas } from '@napi-rs/canvas';
+import type { CanvasRenderingContext2DLike } from '../../src/renderer/types';
+import { buildXmlDocument } from '../fixtures/xml';
 import type { XmlElementSpec } from '../fixtures/xml';
-import { buildFixtureOfd, openTestDocument } from './helpers';
+import { OFD_NS, buildFixtureOfd, openTestDocument } from './helpers';
 import { OFDPage } from '../../src/api/page';
 import { isOFDError } from '../../src/errors';
 import { findSystemCjkFont } from '../fixtures/fonts';
@@ -213,5 +217,213 @@ describe('OFDPage.getTextContent', () => {
   it('手工 OFDPage 无 text driver 报 OFD_RENDERER_UNSUPPORTED', async () => {
     const page = new OFDPage(0, { width: 100, height: 100 }, async () => undefined);
     expect(errorCode(await rejectOf(page.getTextContent()))).toBe('OFD_RENDERER_UNSUPPORTED');
+  });
+});
+
+/** 构造注释外观：Boundary 指定位置，内部一个文本对象。 */
+function annotAppearance(type: string, id: number, text: string, boundary: string): XmlElementSpec {
+  return {
+    name: 'ofd:Annot',
+    attrs: { ID: id, Type: type },
+    children: [
+      {
+        name: 'ofd:Appearance',
+        attrs: { Boundary: boundary },
+        children: [
+          {
+            name: 'ofd:TextObject',
+            attrs: { ID: id * 10, Boundary: '0 0 40 10', Font: 1, Size: 8 },
+            children: [{ name: 'ofd:TextCode', attrs: { X: 0, Y: 5 }, children: [text] }],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * 合成 100×100mm 页面：Body 层一段正文文字 + 两个注释外观（Highlight/Stamp）。
+ *
+ * 页面自身内容只有 Body 层文字；层过滤用 `layers.body` 与空配置对比。
+ *
+ * @returns OFD ZIP 字节。
+ */
+function buildAnnotatedTextOfd(): Uint8Array {
+  const font = findSystemCjkFont();
+  if (!font) throw new Error('测试环境缺少可用的 CJK 字体');
+  const bodyText: XmlElementSpec = {
+    name: 'ofd:TextObject',
+    attrs: { ID: 2, Boundary: '10 10 60 20', Font: 1, Size: 10 },
+    children: [{ name: 'ofd:TextCode', attrs: { X: 0, Y: 10 }, children: ['正文'] }],
+  };
+  const annotationRoot: XmlElementSpec = {
+    name: 'ofd:PageAnnot',
+    attrs: { 'xmlns:ofd': OFD_NS },
+    children: [
+      annotAppearance('Highlight', 201, '高亮', '10 70 40 10'),
+      annotAppearance('Stamp', 202, '印章', '10 90 40 10'),
+    ],
+  };
+  return buildFixtureOfd({
+    // 页模型通过 helper 的 Page 元素生成；图层内容由内嵌字体所在文档级资源支撑。
+    pages: [{ id: 1, widthMm: 100, heightMm: 100, objects: [bodyText] }],
+    documentRes: [
+      {
+        path: 'Doc_0/Res/Res.xml',
+        children: [
+          {
+            name: 'ofd:Fonts',
+            children: [
+              {
+                name: 'ofd:Font',
+                attrs: {
+                  ID: 1,
+                  FontName: 'Droid Sans Fallback',
+                  FamilyName: 'Droid Sans Fallback',
+                  Charset: 'unicode',
+                },
+                children: [{ name: 'ofd:FontFile', children: ['Font_1.ttf'] }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    annotations: {
+      files: [{ pageId: 1, filePath: 'Annots/Page_1.xml' }],
+      entries: [{ name: 'Doc_0/Annots/Page_1.xml', data: buildXmlDocument(annotationRoot) }],
+    },
+    extraEntries: [
+      { name: 'Doc_0/Res/Font_1.ttf', data: new Uint8Array(readFileSync(font.path)) },
+    ],
+  });
+}
+
+/** 提取文本项文字列表。 */
+function textsOf(content: { items: Array<{ text: string }> }): string[] {
+  return content.items.map((item) => item.text);
+}
+
+describe('OFDPage.getTextContent contentFilter', () => {
+  it('不传 contentFilter：页面文字与注释文字全收集（includeAnnotations 决定注释）', async () => {
+    const doc = await openTestDocument(buildAnnotatedTextOfd());
+    try {
+      const page = await doc.getPage(0);
+      expect(textsOf(await page.getTextContent())).toEqual(['正文']);
+      expect(textsOf(await page.getTextContent({ includeAnnotations: true }))).toEqual([
+        '正文',
+        '高亮',
+        '印章',
+      ]);
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('contentFilter 透传：被隐藏的层不进入文本层，{} 为空白', async () => {
+    const doc = await openTestDocument(buildAnnotatedTextOfd());
+    try {
+      const page = await doc.getPage(0);
+      expect(
+        textsOf(await page.getTextContent({ contentFilter: { layers: { body: true } } })),
+      ).toEqual(['正文']);
+      expect(
+        textsOf(await page.getTextContent({ contentFilter: { layers: { background: true } } })),
+      ).toEqual([]);
+      expect(textsOf(await page.getTextContent({ contentFilter: {} }))).toEqual([]);
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('注释文字同样受类型白名单约束', async () => {
+    const doc = await openTestDocument(buildAnnotatedTextOfd());
+    try {
+      const page = await doc.getPage(0);
+      expect(
+        textsOf(
+          await page.getTextContent({
+            includeAnnotations: true,
+            contentFilter: { annotationTypes: ['Highlight'] },
+          }),
+        ),
+      ).toEqual(['高亮']);
+      expect(
+        textsOf(
+          await page.getTextContent({
+            includeAnnotations: true,
+            contentFilter: { annotationTypes: ['Highlight', 'Stamp'] },
+          }),
+        ),
+      ).toEqual(['高亮', '印章']);
+      // annotations:false 覆盖类型列表。
+      expect(
+        textsOf(
+          await page.getTextContent({
+            includeAnnotations: true,
+            contentFilter: { annotations: false, annotationTypes: ['Highlight'] },
+          }),
+        ),
+      ).toEqual([]);
+      // 未打开 includeAnnotations 时，即使过滤允许注释也不收集。
+      expect(
+        textsOf(await page.getTextContent({ contentFilter: { annotationTypes: ['Highlight'] } })),
+      ).toEqual([]);
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('过滤变化使文本缓存失效：不同过滤得到各自的文本结果', async () => {
+    const doc = await openTestDocument(buildAnnotatedTextOfd());
+    try {
+      const page = await doc.getPage(0);
+      const all = await page.getTextContent({ includeAnnotations: true });
+      const onlyBody = await page.getTextContent({
+        includeAnnotations: true,
+        contentFilter: { layers: { body: true } },
+      });
+      const blank = await page.getTextContent({
+        includeAnnotations: true,
+        contentFilter: {},
+      });
+      expect([textsOf(all), textsOf(onlyBody), textsOf(blank)]).toEqual([
+        ['正文', '高亮', '印章'],
+        ['正文'],
+        [],
+      ]);
+      // 回到“全画”：与第一次结果一致。
+      expect(textsOf(await page.getTextContent({ includeAnnotations: true }))).toEqual([
+        '正文',
+        '高亮',
+        '印章',
+      ]);
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('不继承上一次 render 的过滤：render 传空白过滤后文本层仍全画', async () => {
+    const doc = await openTestDocument(buildAnnotatedTextOfd());
+    try {
+      const page = await doc.getPage(0);
+      const viewport = page.getViewport({ dpi: 96 });
+      const width = Math.ceil(viewport.width);
+      const height = Math.ceil(viewport.height);
+      const canvas = createCanvas(width, height);
+      await page.render({
+        canvasContext: canvas.getContext('2d') as unknown as CanvasRenderingContext2DLike,
+        viewport: { width, height, dpi: 96 },
+        contentFilter: {},
+      }).promise;
+      expect(textsOf(await page.getTextContent())).toEqual(['正文']);
+      expect(textsOf(await page.getTextContent({ includeAnnotations: true }))).toEqual([
+        '正文',
+        '高亮',
+        '印章',
+      ]);
+    } finally {
+      await doc.close();
+    }
   });
 });

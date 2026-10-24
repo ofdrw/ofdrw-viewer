@@ -135,6 +135,8 @@ import type {
 import { drawPage } from '../render/page';
 import { collectTextPageMm, toTextPagePx } from '../render/text-content';
 import type { TextPageMm } from '../render/text-content';
+import { resolveContentFilter } from '../render/content-filter';
+import type { PageContentFilter } from '../render/content-filter';
 
 /** Canvas 尺寸比较容差，避免浮点 viewport 与整数 canvas 的舍入误差。 */
 const CANVAS_SIZE_EPSILON = 1e-6;
@@ -172,6 +174,14 @@ interface TextBuildConfig {
   includeInvisible: boolean;
   maxTextItems: number;
   maxTextChars: number;
+  /**
+   * 本次文本收集的内容过滤配置；不传表示全部绘制。
+   *
+   * 不做文档级默认、不与打开选项合并，每次调用独立。
+   */
+  contentFilter?: PageContentFilter;
+  /** 规范化后的过滤稳定签名；过滤不同的文本结果不能复用同一缓存。 */
+  contentFilterKey: string;
 }
 
 /** 进行中的文本构建；多个调用方共享同一 promise。 */
@@ -1268,6 +1278,8 @@ export class OFDDocument {
       );
     }
     const dpi = normalizeTextDpi(options.dpi);
+    // 只规范化本次调用的过滤：引擎不保存“当前过滤”，也不与打开选项合并。
+    const contentFilter = options.contentFilter;
     const config: TextBuildConfig = {
       layerOrder: options.layerOrder ?? this.layerOrder,
       includeChars: options.includeChars ?? true,
@@ -1275,6 +1287,8 @@ export class OFDDocument {
       includeInvisible: options.includeInvisible ?? false,
       maxTextItems: normalizeTextLimit(options.maxTextItems, DEFAULT_TEXT_MAX_ITEMS),
       maxTextChars: normalizeTextLimit(options.maxTextChars, DEFAULT_TEXT_MAX_CHARS),
+      contentFilterKey: resolveContentFilter(contentFilter).key,
+      ...(contentFilter !== undefined ? { contentFilter } : {}),
     };
     const key = textCacheKey(pageIndex, config);
     const cached = this.textCache.get(key);
@@ -1341,6 +1355,7 @@ export class OFDDocument {
           includeInvisible: config.includeInvisible,
           maxTextItems: config.maxTextItems,
           maxTextChars: config.maxTextChars,
+          ...(config.contentFilter !== undefined ? { contentFilter: config.contentFilter } : {}),
           pageIndex,
           signal: combined.signal,
           onWarning,
@@ -1966,6 +1981,7 @@ export class OFDDocument {
           signal: combined.signal,
           onWarning: pageWarning,
           pageIndex,
+          ...(params.contentFilter !== undefined ? { contentFilter: params.contentFilter } : {}),
         });
         throwIfAborted(combined.signal);
         if (operation) {
@@ -2152,11 +2168,14 @@ export class OFDDocument {
     const background = resolveExportBackground(source.context, exportOptions.background, format);
     fillExportBackground(source.context, width, height, background);
 
+    // 导出过滤只来自本次导出选项：不记忆页面最近一次 render 用的过滤。
+    const contentFilter = exportOptions.contentFilter;
     await this.renderPage(
       pageIndex,
       {
         canvasContext: source.context,
         viewport: { width: viewport.width, height: viewport.height, dpi },
+        ...(contentFilter !== undefined ? { contentFilter } : {}),
         signal,
       },
       signal,
@@ -3285,6 +3304,9 @@ function normalizeTextLimit(value: number | undefined, fallback: number): number
 /**
  * 构造文本 mm 缓存键；不包含 dpi。
  *
+ * 内容过滤签名（`all`/`none`/层与注释白名单）参与键，过滤变化时不能复用旧布局，
+ * 否则会出现“画面上隐藏了正文，文本层仍能选中正文”。
+ *
  * @param pageIndex 页索引。
  * @param config 规范化文本选项。
  * @returns 缓存键。
@@ -3298,6 +3320,7 @@ function textCacheKey(pageIndex: number, config: TextBuildConfig): string {
     config.includeInvisible ? 1 : 0,
     config.maxTextItems,
     config.maxTextChars,
+    config.contentFilterKey,
   ].join('\u0000');
 }
 

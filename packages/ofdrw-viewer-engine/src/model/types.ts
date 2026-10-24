@@ -368,6 +368,8 @@ export interface IndependentBlock {
    * 该字段是 11.7 的公共形状，所有 IndependentBlock 都必须携带。
    */
   displayList: DisplayList;
+  /** 注释类型；仅 `source === 'annotation'` 时填充，内部字段，不进入公共 API。 */
+  annotationType?: string;
 }
 
 /** 轴向渐变资源。 */

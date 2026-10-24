@@ -7,6 +7,7 @@
  */
 
 import type { Box, Matrix } from '../common/types';
+import type { PageContentFilter } from '../render/content-filter';
 
 /** 页面信息查询参数。 */
 export interface PageInfoOptions {
@@ -382,6 +383,13 @@ export interface TextContentOptions {
   includeChars?: boolean;
   /** 是否包含注释 Appearance 文字，默认 false。 */
   includeAnnotations?: boolean;
+  /**
+   * 页级绘制内容白名单；不传表示全部绘制。
+   *
+   * 与 `page.render` 使用同一语义：被隐藏的层/模板/注释不会进入文本层，
+   * 且不同过滤各自使用独立的文本缓存。只作用于本次查询，不继承上一次 `render` 的过滤。
+   */
+  contentFilter?: PageContentFilter;
   /** 是否包含不可见文字，默认 false。 */
   includeInvisible?: boolean;
   /** 图层顺序；缺省沿用打开时的 layerOrder。 */

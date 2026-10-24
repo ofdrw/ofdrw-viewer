@@ -263,7 +263,7 @@ document.events.listenerCount(type);
 
 ### 4.4 `page.render(params: PageRenderParameters): RenderTask`
 
-`PageRenderParameters`：`canvasContext`（必填）、`viewport`（必填）、`signal`（可选）。
+`PageRenderParameters`：`canvasContext`（必填）、`viewport`（必填）、`signal`（可选）、`contentFilter`（可选，见 §4.10）。
 
 - `canvasContext`/`canvas` 必须有效，canvas 宽高必须为有限数值且 `>= viewport.width/height`（浮点误差容差约 1e-6 px）；context 无效抛 `OFD_RENDERER_UNSUPPORTED`，canvas 小于 viewport 抛 `OFD_CANVAS_SIZE_MISMATCH`。
 - `viewport` 宽高/DPI 必须为有限正数，否则 `OFD_CANVAS_SIZE_MISMATCH`；宽×高超过 `maxCanvasPixels`（默认 64,000,000）抛 `OFD_CANVAS_TOO_LARGE`。
@@ -273,6 +273,7 @@ document.events.listenerCount(type);
 - `params.signal` 与 `RenderTask.cancel()` 合并；取消后 `task.promise` 以 `OFD_ABORTED` 拒绝并派发 `page:render:abort`。
 - 入口校验失败：同步返回已拒绝的任务（`task.id === 0`），不派发事件。通过后 `render()` 返回前同步派发 `page:render:start`；预取消的 `signal` 仍按 `start → abort` 派发。
 - 自定义 `renderer` 接管本方法及 `exportImage` 的页面绘制；不提供局部/瓦片渲染能力。
+- `contentFilter` 只影响本次绘制：不传全部绘制，传了按白名单只绘制指定层/模板/注释/签章，详见 §4.10。
 
 ### 4.5 `page.exportImage(options?: PageImageExportOptions): Promise<PageImageResult>`
 
@@ -285,6 +286,7 @@ document.events.listenerCount(type);
 | `quality` | `number` | `0.92` | JPEG/WebP 有效，夹取到 0..1（非有限值回退 0.92）；PNG 固定 1 |
 | `rotation` | `0 \| 90 \| 180 \| 270` | `0` | 只改导出方向；90/270 输出宽高互换；非法值回退 0 并上报 `W_BAD_NUMBER`（`objectId='exportImage.rotation'`） |
 | `background` | `string \| null` | `'#ffffff'` | PNG 可传 `null` 透明；JPEG/WebP 的 `null` 按白底；非法 CSS 颜色按白底 |
+| `contentFilter` | `PageContentFilter` | — | 只导出指定内容；不传全画；不继承上一次 `render` 的过滤（见 §4.10） |
 | `signal` | `AbortSignal` | — | 取消后以 `OFD_ABORTED` 拒绝 |
 
 - 整页导出，不包含阅读器缩放；使用独立的离屏画布，不经过宿主主 Canvas；页面内容仍由文档级 `renderer` 绘制，因此自定义 renderer 会影响导出。
@@ -314,6 +316,7 @@ document.events.listenerCount(type);
 | `layerOrder` | `'document' \| 'type'` | 打开时的 `layerOrder` | 文本项顺序与图层展开顺序 |
 | `maxTextItems` | `number` | `20,000` | 非负整数；`0` 表示不限 |
 | `maxTextChars` | `number` | `500,000` | 非负整数；`0` 表示不限 |
+| `contentFilter` | `PageContentFilter` | — | 只收集指定内容的文字；不传全画；过滤变化会改变文本缓存键（见 §4.10） |
 | `signal` | `AbortSignal` | — | 取消后以 `OFD_ABORTED` 拒绝 |
 
 - 返回 `px` 坐标文本层，原点为页面 `PhysicalBox` 左上角、y 向下；`TextContent.unit` 固定 `'px'`。mm 布局按页缓存，按 `dpi/25.4` 换算，缓存键不含 DPI。
@@ -329,6 +332,7 @@ document.events.listenerCount(type);
 - 不调用 Canvas 文字 API；纯逻辑布局，可在 Worker/Node 中运行。
 - `TextContent`：`pageIndex`、`dpi`、`unit`、`pageWidth`、`pageHeight`、`items`、`itemCount`、`charCount`、`truncated`；`charCount` 统计所有文本项字符（即使 `includeChars=false`）。
 - 同一页的并发请求共享构建；最后一个等待方取消时才中止无人等待的构建。
+- `contentFilter` 与 `page.render` 使用同一白名单语义；被隐藏的层/模板/注释不会进入文本层。
 
 ### 4.8 `RenderTask`
 
@@ -348,6 +352,85 @@ document.events.listenerCount(type);
 - `page:render:end`：绘制完成、`task.promise` resolve 前派发。
 - `page:render:error`：真实失败，含 `error/durationMs`。
 - `page:render:abort`：调用方取消（`cause='caller'`）或文档关闭（`cause='close'`）。
+
+### 4.10 `PageContentFilter`（内容过滤）
+
+`page.render`、`page.exportImage`、`page.getTextContent` 都接受可选的 `contentFilter`，用于只绘制/收集指定内容。语义是**白名单**：
+
+- 不传（或传 `undefined`/`null`）：全部绘制，与旧版本行为一致。
+- 传了：只绘制出现且启用的项；未出现的层、模板、注释、签章一律不绘制。
+- `contentFilter: {}`：空白页（没有指定任何内容）。
+- 与“全画”等价的配置（四层都 `true`、`annotations: true`、`signatures: true`、无注释类型白名单）归一化为全画。
+- 每次调用独立；引擎不保存“当前过滤”，导出/文本层不会自动继承上一次 `render` 的过滤。
+
+```ts
+export type KnownAnnotationType = 'Link' | 'Path' | 'Highlight' | 'Stamp' | 'Watermark';
+export type AnnotationType = KnownAnnotationType | (string & {});
+
+export interface DrawLayerOptions {
+  /** 是否绘制该层中页面自身的内容，缺省 false。 */
+  page?: boolean;
+  /** 是否绘制该层中的模板内容，缺省 false；Custom 层忽略。 */
+  templates?: boolean;
+}
+
+export interface PageContentFilter {
+  /** 各内容层；出现即参与白名单，未出现的层不绘制。 */
+  layers?: {
+    background?: boolean | DrawLayerOptions;
+    body?: boolean | DrawLayerOptions;
+    foreground?: boolean | DrawLayerOptions;
+    custom?: boolean | DrawLayerOptions;
+  };
+  /** 是否绘制注释，缺省 false；false 时忽略 annotationTypes。 */
+  annotations?: boolean;
+  /** 只绘制这些注释类型；出现时视为开启注释；空数组表示不画注释。 */
+  annotationTypes?: readonly AnnotationType[];
+  /** 是否绘制签章，缺省 false。 */
+  signatures?: boolean;
+}
+```
+
+层值规则：
+
+| 值 | 含义 |
+| --- | --- |
+| `true` | 等价于 `{ page: true, templates: true }`，绘制整层 |
+| `false` | 不绘制该层 |
+| `{ page: true }` | 只绘制该层页面自身内容 |
+| `{ templates: true }` | 只绘制该层模板内容（模板按 `Template/@ZOrder` 归入背景/正文/前景） |
+| `{}` | 不绘制该层 |
+
+- 模板内部 `Layer/@Type` 不参与过滤，模板整体按 `Template/@ZOrder` 归属；Custom 层没有模板归属，`templates` 被忽略。
+- 注释：`annotations: true` 绘制全部；`annotationTypes` 出现时只绘制列出的类型（即使 `annotations` 未显式 true）；`annotations: false` 时不绘制并忽略 `annotationTypes`；`annotationTypes: []` 不绘制任何注释。
+- 层值只接受布尔值或对象；其他值（如 `null`、字符串、数字）按“未指定”处理，即不绘制该层。对象里只有 `page: true`/`templates: true` 生效，其他字段值与类型忽略。
+- 注释类型匹配 `Annotation.type` 原值，区分大小写。`KnownAnnotationType` 为 `Link/Path/Highlight/Stamp/Watermark`；`AnnotationType = KnownAnnotationType | (string & {})`，支持宿主自定义 `Annot/@Type`。`KNOWN_ANNOTATION_TYPES` 可用于生成多选项。
+- 签章与注释独立；`signatures` 缺省 false。
+- `annotationTypes` 只接受数组：非数组按“未指定”处理；数组内的非字符串项忽略，字符串 `trim` 后去重并保持首次出现顺序。白名单模式下注释缺失 `type` 视为不匹配。
+- 过滤是绘制期判定：切换过滤不需要重新 prepare、不重新解码字体/图片；`getTextContent` 的文本缓存键包含过滤签名（不传/等价全画为 `all`，`{}` 为 `none`）。
+- 非法输入按“未指定”处理（对应内容不绘制），不抛错，不新增 warning。
+
+示例：
+
+```ts
+// 只看正文和签章
+await page.render({
+  canvasContext,
+  viewport,
+  contentFilter: { layers: { body: true }, signatures: true },
+}).promise;
+
+// 只看背景模板
+await page.exportImage({
+  dpi: 144,
+  contentFilter: { layers: { background: { templates: true } } },
+});
+
+// 只看正文页面内容 + 印章类注释
+await page.getTextContent({
+  contentFilter: { layers: { body: { page: true } }, annotationTypes: ['Stamp'] },
+});
+```
 
 ---
 
@@ -641,7 +724,7 @@ interface OFDWarning {
 
 ## 13. 公开类型附录
 
-以下每个名字都出现在本节，与 `src/index.ts` 的全部导出对应。类型只列用途/关键字段，完整字段以源码为准。
+以下每个名字都出现在本节，与 `src/index.ts` 的当前导出一一对应。类型只列用途/关键字段，完整字段以源码为准。
 
 ### 13.1 类、函数与常量
 
@@ -666,6 +749,7 @@ interface OFDWarning {
 | `MM_PER_INCH` | 25.4 |
 | `DEFAULT_RESOURCE_LIMITS` | 默认资源限制常量 |
 | `DEFAULT_CACHE_OPTIONS` | 默认缓存常量 |
+| `KNOWN_ANNOTATION_TYPES` | 常见注释类型常量：`Link/Path/Highlight/Stamp/Watermark` |
 
 ### 13.2 API 类型与常量
 
@@ -683,6 +767,10 @@ interface OFDWarning {
 | `PageRenderParameters` | `render` 参数 |
 | `PageImageExportOptions` | `exportImage` 参数 |
 | `PageImageResult` | `exportImage` 结果 |
+| `PageContentFilter` | 页级内容过滤白名单；`render`/`exportImage`/`getTextContent` 的 `contentFilter` |
+| `DrawLayerOptions` | 单个内容层的 `page`/`templates` 开关 |
+| `KnownAnnotationType` | 常见注释类型字面量联合 |
+| `AnnotationType` | 注释类型；常见类型 + 自定义字符串 |
 | `PageImageFormat` | `'png'\|'jpeg'\|'webp'` |
 | `PageImageMime` | 对应 MIME 联合 |
 | `EncodeImage` | 编码钩子类型 |

@@ -12,8 +12,9 @@ import { OFDError, isOFDError } from '../../src/errors';
 import type { OFDWarning } from '../../src/warnings';
 import { RecordingRenderer } from '../../src/renderer/recording';
 import type { Canvas2DLike, CanvasRenderingContext2DLike } from '../../src/renderer/types';
+import { buildXmlDocument } from '../fixtures/xml';
 import type { XmlElementSpec } from '../fixtures/xml';
-import { buildFixtureOfd, createTestRenderer, openTestDocument } from './helpers';
+import { buildFixtureOfd, createTestCanvas, createTestRenderer, openTestDocument } from './helpers';
 
 /** 捕获 promise 拒绝并返回错误。 */
 async function rejectOf(promise: Promise<unknown>): Promise<unknown> {
@@ -644,3 +645,140 @@ describe('page.exportImage', () => {
     }
   });
 });
+
+describe('page.exportImage contentFilter', () => {
+  /** 通过导出结果的 PNG 采样判断正文/注释是否绘制。 */
+  function exportedContent(data: Uint8Array): { body: boolean; annotation: boolean } {
+    const png = PNG.sync.read(Buffer.from(data));
+    return {
+      body: pixelOf(png, 10, 10).slice(0, 3).join(',') === '255,0,0',
+      annotation: pixelOf(png, 220, 220).slice(0, 3).join(',') === '0,255,0',
+    };
+  }
+
+  it('contentFilter 透传到内部 renderPage：只导出白名单内容', async () => {
+    const doc = await openTestDocument(buildExportFilterOfd(), {
+      createCanvas: nodeCanvas,
+      encodeImage: async (canvas, format, quality) => encodeWithNode(canvas, format, quality),
+    });
+    try {
+      const page = await doc.getPage(0);
+      // 不传：全画。
+      expect(exportedContent((await page.exportImage()).data)).toEqual({
+        body: true,
+        annotation: true,
+      });
+      // 只画正文层页面内容。
+      expect(exportedContent((await page.exportImage({ contentFilter: { layers: { body: true } } })).data)).toEqual({
+        body: true,
+        annotation: false,
+      });
+      // 只画注释类型白名单，正文不画。
+      expect(
+        exportedContent((await page.exportImage({ contentFilter: { annotationTypes: ['Highlight'] } })).data),
+      ).toEqual({ body: false, annotation: true });
+      // 空白页。
+      expect(exportedContent((await page.exportImage({ contentFilter: {} })).data)).toEqual({
+        body: false,
+        annotation: false,
+      });
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('导出不继承上一次 render 的过滤：不传 contentFilter 时仍全画', async () => {
+    const doc = await openTestDocument(buildExportFilterOfd(), {
+      renderer: createTestRenderer(),
+      createCanvas: nodeCanvas,
+      encodeImage: async (canvas, format, quality) => encodeWithNode(canvas, format, quality),
+    });
+    try {
+      const page = await doc.getPage(0);
+      const canvas = createTestCanvas(378, 378);
+      await page.render({
+        canvasContext: canvas.context,
+        viewport: { width: 378, height: 378, dpi: 96 },
+        contentFilter: {},
+      }).promise;
+      // 上一次 render 是空白页；导出不传过滤仍应全画。
+      expect(exportedContent((await page.exportImage()).data)).toEqual({
+        body: true,
+        annotation: true,
+      });
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('每次导出独立：上一次导出过滤不影响下一次', async () => {
+    const doc = await openTestDocument(buildExportFilterOfd(), {
+      createCanvas: nodeCanvas,
+      encodeImage: async (canvas, format, quality) => encodeWithNode(canvas, format, quality),
+    });
+    try {
+      const page = await doc.getPage(0);
+      await page.exportImage({ contentFilter: { layers: { body: true } } });
+      expect(exportedContent((await page.exportImage()).data)).toEqual({
+        body: true,
+        annotation: true,
+      });
+      expect(exportedContent((await page.exportImage({ contentFilter: { signatures: true } })).data)).toEqual({
+        body: false,
+        annotation: false,
+      });
+    } finally {
+      await doc.close();
+    }
+  });
+});
+
+/**
+ * 合成 100×100mm 单页：正文层红色矩形 + 绿色 Highlight 注释。
+ *
+ * @returns OFD ZIP 字节。
+ */
+function buildExportFilterOfd(): Uint8Array {
+  const annotationRoot: XmlElementSpec = {
+    name: 'ofd:PageAnnot',
+    attrs: { 'xmlns:ofd': 'http://www.ofdspec.org/2016' },
+    children: [
+      {
+        name: 'ofd:Annot',
+        attrs: { ID: 100, Type: 'Highlight' },
+        children: [
+          {
+            name: 'ofd:Appearance',
+            attrs: { Boundary: '50 50 20 20' },
+            children: [
+              {
+                name: 'ofd:PathObject',
+                attrs: { ID: 101, Boundary: '0 0 20 20', Fill: 'true', Stroke: 'false' },
+                children: [
+                  { name: 'ofd:AbbreviatedData', children: ['M 0 0 L 20 0 L 20 20 L 0 20 Z'] },
+                  { name: 'ofd:FillColor', attrs: { Value: '0 255 0' } },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  return buildFixtureOfd({
+    pages: [{ id: 1, widthMm: 100, heightMm: 100, objects: [
+      {
+        name: 'ofd:PathObject',
+        attrs: { ID: 11, Boundary: '0 0 10 10', Fill: 'true', Stroke: 'false' },
+        children: [
+          { name: 'ofd:AbbreviatedData', children: ['M 0 0 L 10 0 L 10 10 L 0 10 Z'] },
+          { name: 'ofd:FillColor', attrs: { Value: '255 0 0' } },
+        ],
+      },
+    ] }],
+    annotations: {
+      files: [{ pageId: 1, filePath: 'Annots/Page_1.xml' }],
+      entries: [{ name: 'Doc_0/Annots/Page_1.xml', data: buildXmlDocument(annotationRoot) }],
+    },
+  });
+}

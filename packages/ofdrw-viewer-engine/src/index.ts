@@ -5,6 +5,10 @@
  * 不直接从包根暴露。`CanvasFactory` 是 H5Canvas2DRenderer 内部结构，不在此导出。
  */
 
+// Chrome 67 兼容补丁必须最先求值：后续模块的顶层表达式可能直接使用 globalThis 等
+// Chrome 67 缺失的 API。这里只做副作用导入，不从包根导出任何内容。
+import './compat';
+
 // ---------------------------------------------------------------------------
 // 公共 API 类
 // ---------------------------------------------------------------------------
@@ -68,6 +72,7 @@ export type {
 // API 类型
 // ---------------------------------------------------------------------------
 export { DEFAULT_CACHE_OPTIONS, DEFAULT_RESOURCE_LIMITS } from './api/types';
+export { KNOWN_ANNOTATION_TYPES } from './api/types';
 export type {
   CacheOptions,
   CanvasImageEncodeSource,
@@ -87,6 +92,16 @@ export type {
   PageSize,
   ResourceLimits,
   ViewportOptions,
+} from './api/types';
+
+// ---------------------------------------------------------------------------
+// 页级绘制内容过滤
+// ---------------------------------------------------------------------------
+export type {
+  AnnotationType,
+  DrawLayerOptions,
+  KnownAnnotationType,
+  PageContentFilter,
 } from './api/types';
 export type {
   AttachmentInfo,

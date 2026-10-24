@@ -16,6 +16,14 @@ import { drawBlock, drawObjects, resolveDisplayImage } from './object';
 import { replayDisplayList } from './display-list';
 import { wrapPatternBinder } from './prepare';
 import type { ImageSubstitutionMode } from './image';
+import type { PageContentFilter } from './content-filter';
+import {
+  isAnnotationTypeVisible,
+  isPageLayerVisible,
+  isSignatureVisible,
+  isTemplateLayerVisible,
+  resolveContentFilter,
+} from './content-filter';
 
 /** 页面图层类型顺序（设计方案图 16）。 */
 const LAYER_TYPES: readonly Layer['type'][] = ['Background', 'Body', 'Foreground', 'Custom'];
@@ -34,6 +42,8 @@ export interface DrawPageOptions {
   onWarning?: WarningHandler;
   /** 页索引，从 0 开始；仅用于 warning。 */
   pageIndex?: number;
+  /** 页级绘制内容白名单；不传表示全部绘制。 */
+  contentFilter?: PageContentFilter;
 }
 
 /** 页面绘制顺序项；模板/页图层按绘制顺序展开，注释块单独一项。 */
@@ -65,6 +75,8 @@ export interface PageDrawOrderOptions {
   includeAnnotations?: boolean;
   /** warning 回调；用于模板缺失与非法图层顺序。 */
   onWarning?: WarningHandler;
+  /** 页级绘制内容白名单；不传表示全部绘制。 */
+  contentFilter?: PageContentFilter;
 }
 
 /**
@@ -74,8 +86,11 @@ export interface PageDrawOrderOptions {
  * 每组先模板（按页面引用顺序）后页图层；document 模式模板整体在前。模板
  * 组内按模板自身图层类型 + XML 顺序；注释块始终最后。
  *
+ * 过滤在同一次展开中统一应用：页面图层按 `Layer/@Type` 判定，模板图层按
+ * `Template/@ZOrder` 判定（不看模板内部图层类型），注释按 `annotationType` 白名单判定。
+ *
  * @param prepared 已准备的页面。
- * @param options 图层顺序、注释与 warning 选项。
+ * @param options 图层顺序、注释、内容过滤与 warning 选项。
  * @returns 按绘制顺序展开的图层项与可选注释项。
  */
 export function resolvePageDrawOrder(
@@ -91,6 +106,7 @@ export function resolvePageDrawOrder(
     warn('W_LAYER_ORDER', `未知图层顺序 ${String(rawOrder)}，已按 type 处理`);
   }
   const layerOrder = rawOrder === 'document' ? 'document' : 'type';
+  const filter = resolveContentFilter(options.contentFilter);
   const templates = resolveTemplates(page, prepared.templates, warn);
   const entries: PageDrawEntry[] = [];
   const pushLayer = (
@@ -98,6 +114,10 @@ export function resolvePageDrawOrder(
     template?: { id: ResourceId; zOrder: 'Background' | 'Body' | 'Foreground' },
   ): void => {
     if (layer.children.length === 0) return;
+    const visible = template
+      ? isTemplateLayerVisible(filter, template.zOrder)
+      : isPageLayerVisible(filter, layer.type);
+    if (!visible) return;
     entries.push({
       kind: template ? 'template' : 'page',
       layerType: layer.type,
@@ -134,6 +154,7 @@ export function resolvePageDrawOrder(
 
   if (options.includeAnnotations) {
     for (const block of prepared.page.annotationBlocks) {
+      if (!isAnnotationTypeVisible(filter, block.annotationType)) continue;
       entries.push({ kind: 'annotation', block });
     }
   }
@@ -147,7 +168,7 @@ export function resolvePageDrawOrder(
  * @param renderer 目标渲染器。
  * @param canvasContext 宿主 2D 上下文，仅透传给 renderer。
  * @param viewport 页面像素尺寸与 DPI。
- * @param options 图层顺序、取消与 warning 选项。
+ * @param options 图层顺序、内容过滤、取消与 warning 选项。
  */
 export function drawPage(
   prepared: PreparedPageBundle,
@@ -222,10 +243,17 @@ export function drawPage(
     onWarning: warn,
   };
 
+  const filter = resolveContentFilter(options.contentFilter);
   const entries = resolvePageDrawOrder(prepared, {
     layerOrder: options.layerOrder ?? 'type',
+    contentFilter: options.contentFilter,
     onWarning: (warning) => warn(warning.code, warning.message, warning.objectId),
   });
+  // 注释在展开阶段已按类型过滤；遍历时再按同一判定跳过，避免逐块复制过滤逻辑。
+  const annotationBlocks = prepared.page.annotationBlocks.filter((block) =>
+    isAnnotationTypeVisible(filter, block.annotationType),
+  );
+  const drawSignatures = isSignatureVisible(filter);
   renderer.beginPage(canvasContext, viewport);
   try {
     renderer.setTransform(IDENTITY_MATRIX);
@@ -243,7 +271,7 @@ export function drawPage(
     }
 
     // 注释/签章外观在所有图层之后，按 PageAnnot 文件顺序。
-    for (const block of prepared.page.annotationBlocks) {
+    for (const block of annotationBlocks) {
       if (options.signal?.aborted) break;
       const boundary = block.boundary;
       renderer.save();
@@ -285,7 +313,7 @@ export function drawPage(
     }
 
     // 签章外观最后绘制；按 StampAnnot 顺序，后出现覆盖先出现。
-    for (const block of prepared.signatureBlocks ?? []) {
+    for (const block of drawSignatures ? (prepared.signatureBlocks ?? []) : []) {
       if (options.signal?.aborted) break;
       renderer.save();
       try {

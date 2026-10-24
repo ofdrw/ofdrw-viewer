@@ -149,6 +149,7 @@
 - 宿主接口：`ByteSource`、`VirtualContainer`、`VirtualContainerFactory`、`ImageDecoder`、`FontProvider`；`openZipVirtualContainer`。
 - UI 数据：`PageInfo`、`TextContent`、`TextItem`、`TextChar`、`DocumentMetadata`、`OutlineNode`、`BookmarkItem`、`DocumentPermissions` 等。
 - 渲染器与视口：`Canvas2DLike`、`CanvasRenderingContext2DLike`、`PageRenderParameters`、`Viewport`、`getPageViewport`、`getPageTransform`。
+- 页级内容过滤：`PageContentFilter`、`DrawLayerOptions`、`AnnotationType`、`KnownAnnotationType`、`KNOWN_ANNOTATION_TYPES`；由 `render`/`exportImage`/`getTextContent` 的 `contentFilter` 使用，白名单语义与不继承规则见 API.md §4.10。
 
 engine 的每个根导出名必须出现在自身 `skills/API.md` 附录中，由 `test/smoke/public-api-doc.test.ts` 检查。
 

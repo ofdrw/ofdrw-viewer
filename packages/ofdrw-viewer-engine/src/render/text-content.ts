@@ -26,6 +26,7 @@ import {
 } from '../common/matrix';
 import { compositeBlockCacheKey, getBlockStyles } from './object';
 import { resolvePageDrawOrder } from './page';
+import type { PageContentFilter } from './content-filter';
 import { layoutText } from './text';
 import type { GlyphPlacement, TextLayout, TextLayoutUnit } from './text';
 
@@ -194,8 +195,13 @@ export interface TextContentCollectOptions {
   layerOrder?: 'document' | 'type';
   /** 是否返回 chars，默认 true。 */
   includeChars?: boolean;
-  /** 是否包含注释 Appearance，默认 false。 */
+  /** 是否包含注释 Appearance，默认 false；注释类型仍受 contentFilter 白名单约束。 */
   includeAnnotations?: boolean;
+  /**
+   * 页级绘制内容白名单；不传表示全部绘制。
+   * 与 `drawPage` 使用同一组判定，隐藏的内容不会进入文本层。
+   */
+  contentFilter?: PageContentFilter;
   /** 是否包含不可见文字，默认 false。 */
   includeInvisible?: boolean;
   /** 取消信号；中止抛 `OFD_ABORTED`。 */
@@ -237,7 +243,7 @@ interface LayerContext {
  * Pattern tile 与 ClipArea.text 不属于页面内容，不会被访问。
  *
  * @param prepared 已准备页面。
- * @param options 遍历、可见性、字符与上限选项。
+ * @param options 遍历、可见性、内容过滤、字符与上限选项。
  * @returns mm 文本布局；同一结果可复用于任意 DPI。
  */
 export function collectTextPageMm(
@@ -266,6 +272,7 @@ export function collectTextPageMm(
   const entries = resolvePageDrawOrder(prepared, {
     layerOrder: options.layerOrder ?? 'type',
     includeAnnotations: options.includeAnnotations ?? false,
+    contentFilter: options.contentFilter,
     onWarning: options.onWarning
       ? (warning) => options.onWarning?.(warning.code, warning.message, warning.objectId)
       : undefined,

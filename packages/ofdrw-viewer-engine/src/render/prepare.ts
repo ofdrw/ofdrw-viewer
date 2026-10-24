@@ -559,6 +559,7 @@ export async function preparePage(input: PreparePageInput): Promise<PreparedPage
         styleRoot: defaultStyle,
         cacheKey: `annotation:${annotation.id}`,
         boundary,
+        annotationType: annotation.type,
         displayList: { commands: [], bounds: { x: 0, y: 0, w: space.width, h: space.height } },
       };
       setBlockStyles(block, styles);
