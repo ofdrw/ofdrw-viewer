@@ -1,950 +1,299 @@
-# OFD 转图片、加密查询与验签 CLI（ofdrw-viewer-cli）设计方案
+# OFD 转图片、查询与验签 CLI（ofdrw-viewer-cli）设计方案
 
-> 状态：设计定稿 v1.3（2026-10-23）
-> 定位：`@ofdrw/ofdrw-viewer-engine` 的 Node CLI 子包；消费 engine 与 `@ofdrw/ofdrw-viewer-crypto` 公共 API，输出页面图片/空间文本，并提供 `info` 查询、`verify` 验签与加密文档转图片；发布为多平台自包含可执行文件，并配套仓库内 Agent skill。
-> 依据：《OFD 渲染引擎设计方案》v0.5-r12 第 6.1/14.4/15 节、[`docs/text-content-api.md`](./text-content-api.md)、[`docs/ofdrw-viewer-crypto设计方案.md`](./ofdrw-viewer-crypto设计方案.md) 第 7 章。
+本文件定义 `@ofdrw/ofdrw-viewer-cli` 的当前设计：它如何消费 engine 与 crypto 的公共 API，把 OFD 转成逐页图片与空间文本，并完成 `info` 查询、`verify` 验签与加密文档转换，以及如何打包成多平台自包含可执行文件。
 
-## 1. 背景与目标
+CLI 的完整参数表、输出示例与 Agent 使用步骤见 [`packages/ofdrw-viewer-cli/skills/SKILL.md`](../packages/ofdrw-viewer-cli/skills/SKILL.md)；本文不复制该表，只说明命令语义、设计约束与实现边界。跨包契约见 [`CONTRACTS.md`](./CONTRACTS.md)，测试矩阵见 [`测试方案.md`](./测试方案.md)，构建与发布流程见 [`packages/ofdrw-viewer-cli/docs/BUILDING.md`](../packages/ofdrw-viewer-cli/docs/BUILDING.md)。
 
-engine 只提供平台无关的页面渲染与文本内容 API，不负责读文件、创建 Canvas、编码图片、写 JSON 和跨平台分发。本子包补齐 Node 侧的完整链路：
+## 1. 定位、范围与非目标
 
-```text
-OFD 文件
-  ├─ crypto.inspect()        → 加密层/用户/签名/完整性摘要（info）
-  ├─ engine.getMetadata()/getPageInfos() → 明文文档属性/页数/页尺寸（info）
-  ├─ crypto.openDecryptingContainer() → 内存明文容器（加密转图片/verify）
-  ├─ crypto.verifyOfd()      → 完整性+签名+链+印章+时间戳解析（verify）
-  ├─ page.getTextContent()   → 文字 + 位置（px）
-  └─ page.render()           → Canvas → PNG/JPEG/WebP
-```
+### 1.1 定位
 
-目标：
+engine 只提供平台无关的页面渲染与文本内容 API，不负责读文件、创建 Canvas、编码图片、写 JSON、记录日志和跨平台分发。CLI 是 Node 侧的完整宿主：
 
-1. 一条命令完成单文件、多页 OFD 的图片导出，`--text` 时同时导出空间文本；
-2. 图片与文本共用同一页、同一 DPI、同一坐标系，可直接叠加；
-3. 发布为 Linux/macOS/Windows 自包含可执行文件，用户无需安装 Node；
-4. 提供仓库内 Agent skill，让 agent 能稳定定位可执行文件、调用、读取图片与可选 JSON；
-5. 对坏文件、缺字体、缺图、文本截断、超大页面给出明确错误/警告；
-6. 提供 `info`（只查询）与 `verify`（一次性完整性+签名验证）子命令；
-7. 加密 OFD 可用口令或 SM2 私钥在内存中解密后转图片，不落盘明文，不提供独立 `decrypt`。
+- 打开本地 OFD，注入 Canvas、编码器、图片解码插件与字体字节；
+- 按页导出图片，并在 `--text` 时导出同坐标系的空间文本 JSON；
+- 提供 `info`（只查询）与 `verify`（一次性完整性 + 签名验证）；
+- 对加密文档，用口令或 SM2 私钥在内存中解密后渲染，不落盘明文；
+- 把错误、warning、进度与退出码收敛成稳定的终端契约；
+- 以 Node SEA 发布 Linux/macOS/Windows 自包含可执行文件。
 
-## 2. 范围
+### 1.2 目标
 
-### 2.1 v1.3 范围内
+- 同一套命令、参数与输出契约在普通 Node 与 SEA 产物下保持一致；
+- 页级产物（PNG/JPEG/WebP 与 JSON）可被脚本直接消费，失败粒度与退出码稳定；
+- 人能读的进度、错误与 warning 清晰可定位，且不泄露凭据；
+- 构建可复现、按平台分发，终端用户不需要安装 Node。
 
-- 单个本地 OFD 文件输入；
-- 输出 PNG（默认）、JPEG、WebP；
-- `--text` 时输出每页 `<stem>-p<NNN>.json`（每项 `text` + `x/y/w/h`）；默认不输出 JSON；
-- 全部页或指定页范围（`1-3,5`）；
-- DPI、字体目录补充（`--font-dir`）；
+### 1.3 范围
+
+- 单个本地 OFD 文件输入；输出 PNG（默认）、JPEG、WebP；
+- 全部页或指定页范围（`1-3,5`），输出 DPI 默认 96；
+- `--text` 时每页额外输出 `<stem>-p<NNN>.json`（`text` + `x/y/w/h`，px）；
+- `--font-dir` 补充字体，默认自动发现白名单系统字体，`--no-system-fonts` 可关闭；
 - 人读日志；错误与 warning 直接打印到控制台；
-- SIGINT 取消与临时文件清理；
-- Node SEA 自包含可执行文件，多平台构建与发布；
-- `info` 查询加密层/用户/签名/完整性摘要，明文文档再查元数据/页数/页尺寸，不解密、不验签；
-- `verify` 一次性完成防夹带完整性、全部签名、证书链、印章与时间戳解析；
-- 加密文档转图片：`--password` 或 `--key`（PEM/DER/PKCS#8），可选 `--key-passphrase`/`--user`；
-- `--root`（PEM/DER/CER/Base64，可重复，CLI 入口经 `certificatesToDer` 转为 DER）与 `--sm2-user-id`；
+- SIGINT 取消、临时文件清理与原子写；
+- `info`：查询加密层、用户、签名与完整性摘要；明文文档再查元数据、页数、页尺寸，不解密、不验签；
+- `verify`：一次性完成防夹带完整性、全部签名、证书链、印章与时间戳解析；
+- 加密转图片：`--password` 或 `--key`（PEM/DER/PKCS#8），可选 `--key-passphrase`、`--user`；
+- `--root`（PEM/DER/CER/Base64，可重复）与 `--sm2-user-id`；
 - 终端人类可读输出清理控制字符，JSON 保留原始值；
-- Agent skill（仅仓库源文件，不安装到本机，也不随 release 打包）。
+- Node SEA 自包含可执行文件与多平台发布产物；
+- 输入包字节受 engine `maxPackageBytes` 与 crypto `maxSourceBytes` 默认上限约束（均 256 MiB），超限按文档级失败处理。
 
-### 2.2 v1.3 明确不做
+### 1.4 非目标
 
 - 多文件/目录批量、通配符、stdin/URL 输入；
 - PDF 输出、打印；
 - OCR（文本来自 OFD 内容层，不识别图片文字）；
-- 注释/签章文字（`includeAnnotations=false`）；
-- 多文档包的文档选择（只处理第一个文档）；
+- 注释与签章文字（`includeAnnotations=false`）；
+- 多文档包的文档选择（固定处理第一个文档）；
 - 并行渲染（固定串行）；
-- ~~自动扫描系统字体~~（由 [渲染字体缺省方案设计](./渲染字体缺省方案设计.md) 实现并默认开启，见 §7.4）；
 - 图片 DPI 元数据（PNG pHYs / JPEG density）写入；
 - 纯文本模式（不渲染图片）；
-- 独立 `decrypt` 子命令（加密文档请直接带凭据转图片；`decrypt` 固定退出 1）；
+- 独立 `decrypt` 子命令（加密文档直接带凭据转图片；`decrypt` 固定用法错误）；
 - 明文落盘、批量验签、CRL/OCSP 吊销检查；
 - Linux musl/Alpine 产物；
-- macOS 签名/公证与 Windows 代码签名。
+- macOS 签名/公证与 Windows 代码签名；
+- 自动下载根证书、字体或可执行文件；系统字体发现只属于 CLI 宿主策略，engine 不做自动发现（见 [`渲染字体缺省方案设计.md`](./渲染字体缺省方案设计.md)）。
 
-## 3. 与 engine 的边界
+## 2. 与 engine / crypto 的边界
 
-CLI 只能从 `@ofdrw/ofdrw-viewer-engine` 与 `@ofdrw/ofdrw-viewer-crypto` 包根导入类型与 API，禁止跨包相对路径引用内部模块。engine 不联网、不读取本地文件：OFD 由 CLI 用 `fs` 随机读后以 `custom` 传入，字体由 CLI 预读为 `{ data }`；网络/文件策略全部留在 CLI。
+### 2.1 导入与职责
+
+CLI 只从 `@ofdrw/ofdrw-viewer-engine` 与 `@ofdrw/ofdrw-viewer-crypto` 包根导入类型与 API，禁止跨包相对路径引用内部模块。三方职责固定：
+
+- engine：解包、页面模型、渲染、文本内容、字体匹配与回退；不联网、不读文件，也不读字体路径或 URL；
+- crypto：口令/私钥解析、解密、完整性/签名/证书链/印章/时间戳验证；不依赖 CLI、UI 或 engine；
+- CLI：文件读取策略、Canvas/编码/解码、字体字节读取、输出命名、日志、退出码、输入源生命周期。
+
+OFD 由 CLI 用 `fs` 随机读后以 `custom` 源传给 engine，或以 `{ kind: 'byte-source', source }` 传给 crypto；字体由 CLI 预读为 `{ data }`；根证书由 CLI 读原始字节后转换为 DER。CLI 不重复实现 SM2/SM3/SM4、ASN.1、证书链或解密逻辑。 文件、字体与根证书的读取边界见 [网络与文件获取委托设计](网络获取委托设计.md)。
+
+### 2.2 使用的公共 API
 
 | CLI 需要的能力 | 来源 |
 | --- | --- |
 | 打开文档、页树、页尺寸、渲染任务、取消 | `OFDDocument` / `OFDPage` / `RenderTask` |
-| 默认 Canvas2D 渲染器 | `H5Canvas2DRenderer` |
+| 默认 Canvas2D 渲染器 | engine 内置 `H5Canvas2DRenderer`（CLI 只注入 Canvas 工厂） |
 | Viewport 计算 | `page.getViewport({ dpi })` |
 | 空间文本 | `page.getTextContent({ dpi, includeChars: false })`，只取 `item.text/rect` |
-| 字体补充 | `OFDOpenOptions.supplementaryFonts`（CLI 读取字节，传 `{ data }`） |
-| 图片解码插件 | `OFDOpenOptions.imageDecoders` |
+| 整页渲染与编码 | `page.exportImage({ dpi, format, quality, background, signal })` |
+| 字体补充 | `OFDOpenOptions.supplementaryFonts`（CLI 通过 `loadFontInputs()` 读取字节，传 `{ data }`） |
+| 图片解码插件 | `OFDOpenOptions.imageDecoders`（CLI 提供 PNG/JPEG/WebP；GIF/JBIG2/TIFF 由 engine 内置解码器按需加载） |
 | warning/error | `onWarning`、`OFDError` |
 | 包/加密/签名摘要 | `inspect(source)`，只读，不解密不验签 |
 | 加密解密 | `openDecryptingContainer({ source, credentials })` → 明文 `VirtualContainer` |
-| 完整性+签名验证 | `verifyOfd({ source/ container, roots, sm2UserId })` → `VerificationReport` |
+| 证书输入转换 | `certificatesToDer(bytes)`（PEM 单/多证书、DER/CER、Base64） |
+| 完整性 + 签名验证 | `verifyOfd({ source/container, roots, sm2UserId })` → `VerificationReport` |
 | crypto warning | `CryptoWarning`；由 CLI 统一写 stderr |
 
-依赖状态：
+依赖方向固定为 `CLI → engine`、`CLI → crypto`；engine 与 crypto 互不依赖。签名、报告字段与错误码语义由各包的 `skills/API.md` 与 crypto 设计文档持有，CLI 只决定命令、输出与退出码。
 
-- 图片链路使用 `OFDDocument.open`、`OFDPage.getViewport` 与 `OFDPage.exportImage`；
-- 文本链路使用 `OFDPage.getTextContent`（v1.1 增量，设计见 [`docs/text-content-api.md`](./text-content-api.md)），固定 `includeChars=false`；
-- 截至本设计定稿，图片/文本链路与 crypto `info`/`verify`/加密转图片均已落地并通过 CLI 单测、e2e 与 5 文件 82 例黑盒验收（含 SEA）；本机 Linux x64 + Node 26.10 验证。
-- CLI 复用 crypto 的口令/私钥解析、解密、验签与链校验，不重复实现密码学逻辑；crypto 不依赖 CLI/UI/engine。
+## 3. Node 约束与子包组织
 
-`--text` 时文本 API 不可用的行为：`OFDDocument.open` 成功后检测 `typeof page.getTextContent === 'function'`；不存在则打印 `CLI_TEXT_UNSUPPORTED` 并退出 2，不静默只导出图片。
+### 3.1 运行约束
 
-需要 engine 侧确认的一条契约：
+- 运行时 Node ≥ 22，纯 ESM；`bin` 指向 `dist/bin.js`；
+- 只使用 Node 内置模块（`node:fs/promises`、`node:path`、`node:os`、`node:util` 的 `parseArgs`、`node:process` 等）与 `@napi-rs/canvas` 原生依赖；不引入浏览器 polyfill 或 `jsdom`；
+- 输入 OFD 用 `fs.FileHandle` 随机读，不整包 `readFile`；私钥、根证书、字体等小文件可整文件读取；
+- 输出写同目录临时文件，`fsync` 后 `rename`，失败清理临时文件；
+- 日志写 `process.stdout` / `process.stderr`，`bin.ts` 只把 `main()` 返回值写入 `process.exitCode`，不使用 `process.exit()`；
+- 版本号普通 Node 下读 `package.json`，SEA 下由启动包装从内嵌清单写入环境变量；
+- 不导出公共库 API；测试通过内部 import 与子进程完成。
 
-- JBIG2/TIFF 内置解码器（`src/image/format.ts` 的 `builtinImageDecoders`）是否由 `OFDDocument.open` 默认启用。若默认不启用，应从包根导出该插件集合；否则 CLI 只能把 JBIG2/TIFF 页作为“图片缺失 warning”处理。
+### 3.2 模块划分
 
-## 4. Node 约束与子包组织
-
-### 4.1 运行约束
-
-源码与开发环境只面向 Node，不做浏览器/小程序适配：
-
-- 开发运行时 Node ≥ 22，ESM；
-- 只用 Node 内置模块：`node:fs/promises`、`node:path`、`node:os`、`node:util.parseArgs`、`node:process`；
-- 文件输入由 CLI 的 `NodeFileByteSource` 使用 `fs.promises.open` 随机读；对 crypto 以 `{ kind: 'byte-source', source }` 传入，对 engine 以 `OFDSource` 的 `custom` 形式传入；两种路径都不对输入 OFD 整包 `readFile`；
-- 输出先写同目录临时文件，`fsync` 后 `rename`，失败清理临时文件；
-- Canvas、图片解码、字体目录直接使用 Node 侧实现；
-- 不引入 `jsdom`、browser polyfill、`Blob`/`fetch` 兼容层；
-- 日志写 `process.stdout` / `process.stderr`，退出码写 `process.exitCode`。
-
-发布产物是内嵌 Node 运行时的自包含可执行文件，最终用户不需要安装 Node；源码仍只依赖 Node API。
-
-### 4.2 目录
-
-```text
-packages/ofdrw-viewer-cli/
-  package.json              # type: module；bin: ofdrw-viewer-cli；engines.node >=22
-  tsconfig.json
-  tsconfig.build.json       # tsc 构建 dist（无 tsup）
-  scripts/
-    build-sea.mjs           # SEA 打包：bundle、收集 assets、生成可执行文件
-  src/
-    bin.ts                  # shebang + main()
-    cli.ts                  # parseArgs、子命令分派、帮助、参数校验、退出码
-    convert.ts              # 打开文档（可注入解密容器）、逐页导出、汇总
-    info.ts                 # info 子命令：crypto inspect + engine 明文元数据/文本/JSON 输出
-    verify.ts               # verify 子命令：verifyOfd + 文本/JSON 输出
-    credentials.ts          # 口令/私钥/根证书读取，组装 crypto 公共类型
-    crypto-output.ts        # crypto warning → stderr，统一净化
-    safe-text.ts            # 终端文本控制字符清理
-    text.ts                 # getTextContent → text + x/y/w/h 数组
-    output.ts               # 输出目录、命名、图片编码、原子写
-    log.ts                  # 进度、摘要、错误与 warning 输出
-    errors.ts               # 错误到退出码映射（含 crypto 4/5）
-    canvas.ts               # @napi-rs/canvas 加载（普通 Node / SEA 两种来源）
-    sea.ts                  # SEA 资产解压、缓存与 NAPI 路径设置
-    image-decoder.ts        # Node 图片解码插件（png/jpeg/webp）
-    fonts.ts                # --font-dir 递归扫描与去重
-  test/
-    unit/                   # 参数、命名、字体、退出码、日志、info/verify、stderr 安全
-    e2e/                    # 构建后普通 bin 的真实子进程
-    verification/           # 独立 V-CLI 契约/文本/转换用例
-    acceptance/             # 黑盒验收：真实 bin/SEA + crypto 夹具 + engine 文本 oracle
-```
-
-### 4.3 约定
-
-- 子包目录、包名、命令名（`bin`）统一为 `ofdrw-viewer-cli`；
-- 参数解析使用 Node 22 的 `node:util.parseArgs`，不引入 commander/yargs；
-- 生产依赖为 `@napi-rs/canvas`、`@ofdrw/ofdrw-viewer-engine`、`@ofdrw/ofdrw-viewer-crypto`；测试可增加 `pngjs`（校验尺寸/非空白），不进入运行时；
-- `cli.ts` 负责参数/子命令，`convert.ts`/`info.ts`/`verify.ts` 各自负责一条流程，`text.ts`/`output.ts`/`canvas.ts`/`sea.ts` 各负责一件事；
-- 不导出公共库 API；测试通过内部 import 与 `spawn` 完成。
-
-## 5. CLI 接口
-
-### 5.1 用法
-
-```text
-ofdrw-viewer-cli <input.ofd> [转图片选项] [加密凭据选项]
-
-ofdrw-viewer-cli info <input.ofd> [--json]
-
-ofdrw-viewer-cli verify <input.ofd> [加密凭据选项] [--root <file>]... [--sm2-user-id <id>] [--json]
-```
-
-示例：
-
-```bash
-# 全部页：PNG，96 DPI，输出到 ./发票示例/
-ofdrw-viewer-cli 发票示例.ofd
-
-# 同时导出空间文本 JSON
-ofdrw-viewer-cli 发票示例.ofd --text
-
-# 指定页、JPEG、文本
-ofdrw-viewer-cli 发票示例.ofd -o ./out --pages 1-2,4 --format jpeg --text
-
-# 高精度 + 补充字体目录
-ofdrw-viewer-cli manual.ofd --dpi 300 --font-dir ./fonts
-
-# 只查询（加密包无需凭据）
-ofdrw-viewer-cli info encrypted.ofd --json
-
-# 配置信任根验证；无根时为 unknown
-ofdrw-viewer-cli verify signed.ofd --root root-ca.crt.pem
-
-# 加密文档转图片 / 验证
-ofdrw-viewer-cli encrypted.ofd -o ./out --password '***'
-ofdrw-viewer-cli cert-encrypted.ofd -o ./out --key encrypt.key.pem
-ofdrw-viewer-cli signed-encrypted.ofd --password '***' --root root-ca.crt.pem
-```
-
-子命令识别：第一个位置参数严格等于 `info` 或 `verify` 时进入子命令；文件名恰为 `info`/`verify`/`decrypt` 时用 `./info`、`./verify`、`./decrypt` 规避。`decrypt` 永远不是子命令，固定用法错误（1）。
-
-### 5.2 参数
-
-| 参数 | 默认 | 说明 |
-| --- | --- | --- |
-| `<input>` | 必填 | 本地 OFD 文件路径 |
-| `-o, --out <dir>` | `./<输入文件名>/` | 输出目录；不存在时递归创建；指向文件则报错 |
-| `-f, --format <fmt>` | `png` | `png` / `jpeg` / `webp` |
-| `-d, --dpi <n>` | `96` | 图片与文本共用的输出 DPI，正整数 |
-| `-p, --pages <ranges>` | 全部 | 1 起闭区间，如 `1-3,5`；重复/重叠自动去重排序；总跨度上限 100000 页 |
-| `--font-dir <dir>` | 无 | 补充字体目录；递归扫描 ttf/otf/ttc/otc，结果排在系统字体之前 |
-| `--no-system-fonts` | 关闭 | 关闭系统字体自动发现，仅使用 `--font-dir`（旧版行为） |
-| `--text` | 关闭 | 每页额外导出空间文本 JSON |
-| `--user <name>` | 无 | 加密文档用户名；转图片/verify |
-| `--password <password>` | 无 | 口令用户；与 `--key` 互斥；转图片/verify |
-| `--key <path>` | 无 | SM2 私钥（PEM/DER/PKCS#8）；转图片/verify |
-| `--key-passphrase <text>` | 无 | 加密 PKCS#8 私钥口令；必须配合 `--key` |
-| `--root <file>` | 无 | 信任根证书（PEM/DER/CER/Base64，可重复）；CLI 读取后经 `certificatesToDer` 转为 DER；仅 verify |
-| `--sm2-user-id <id>` | `1234567812345678` | 自定义 SM2 签名 userId；仅 verify |
-| `--json` | 关闭 | info/verify 输出固定 JSON |
-| `-h, --help` | — | 帮助 |
-| `-V, --version` | — | 版本与平台 |
-
-参数上下文：
-
-- `info` 只接受输入与 `--json`；带凭据、`--root`、`--sm2-user-id` 或转图片参数 → 用法错误（1）；
-- `verify` 接受凭据/`--root`/`--sm2-user-id`/`--json`；拒绝 `-o`/`--format`/`--dpi`/`--pages`/`--font-dir`/`--no-system-fonts`/`--text`（1）；
-- 转图片接受凭据，但拒绝 `--root`/`--sm2-user-id`/`--json`（1）；
-- `--password` 与 `--key` 互斥；`--user` 必须与二者之一同用；`--key-passphrase` 必须与 `--key` 同用。
-
-固定行为，不提供参数：
-
-- 白底，不透明；
-- 目标文件已存在时直接覆盖，采用“临时文件 + rename”原子替换；
-- 串行处理页面；
-- 默认只导出图片；`--text` 时每页额外导出空间文本 JSON；
-- `--text` 时每项只保留 `text` 与 `rect`（`x/y/w/h`），不含字符级数据；不含注释/签章文字；
-- 页级失败继续，结束时汇总；文档级失败立即退出；
-- TTY 下显示单行逐页进度 `[N/M]`，非 TTY 不输出进度；
-- JPEG/WebP 质量固定 90；
-- engine 使用默认选项：`documentIndex=0`、默认 `strictImageCtm`、`layerOrder=type`；
-- 不提供其他输出开关；错误与 warning 直接打印到控制台。
-
-参数校验规则：
-
-- `--dpi` 必须是正整数；超过 1200 时给 warning，仍继续；
-- `--pages` 语法非法、页码越界（> pageCount）属于用法错误，退出 1；
-- `--font-dir` 不存在或不是目录时报错退出 1；目录内无字体时 warning 后继续；
-- `--format` 非法时打印允许值并退出 1；
-- 未知参数、缺少 `<input>` 时打印 usage 并退出 1。
-
-### 5.3 输出命名与目录
-
-默认每页产出一张图片，文件名同 stem、同页号：
-
-```text
-<out>/
-  发票示例-p001.png
-  发票示例-p002.png
-```
-
-加 `--text` 时，同页额外产出同名 JSON：
-
-```text
-<out>/
-  发票示例-p001.png
-  发票示例-p001.json
-  发票示例-p002.png
-  发票示例-p002.json
-```
-
-- 页号至少 3 位，按 `pageCount` 位数取 `max(3, digits)`；
-- 输入 stem 原样保留（含中文、空格），不做 slug；
-- 单页文档同样使用 `-p001` 后缀；
-- 已存在文件直接覆盖，采用原子替换；
-- `--text` 时图片与 JSON 同页同 DPI，坐标可直接叠加。
-
-### 5.4 退出码
-
-| 码 | 含义 |
+| 模块 | 职责 |
 | --- | --- |
-| `0` | 全部页成功（允许 warning/文本截断） |
-| `1` | 用法错误、参数非法、输入/输出路径错误、页码越界 |
-| `2` | 文档级失败：无法打开、非 OFD/包损坏、`--text` 时文本 API 不可用等；加密但缺凭据归 4 |
-| `3` | 页级失败：至少一页失败；全部页失败仍为 3 |
-| `4` | 加密/凭据失败：缺少凭据、用户名不存在、口令/私钥错误、解密失败 |
-| `5` | 验证未通过：verify 的 invalid/unknown/unsupported/not-applicable |
-| `130` | 用户中断（SIGINT） |
+| `src/cli.ts` | `parseArgs`、子命令分派、帮助/版本、参数校验、进度输出、退出码 |
+| `src/convert.ts` | 打开文档（可注入解密容器）、逐页导出、汇总与清理 |
+| `src/info.ts` | `info` 子命令：crypto `inspect` + engine 明文元数据/页尺寸 |
+| `src/verify.ts` | `verify` 子命令：`verifyOfd` + 文本/JSON 输出 |
+| `src/credentials.ts` | 口令/私钥/根证书读取，组装 crypto 公共类型，输入源打开与关闭 |
+| `src/node-file-source.ts` | 基于 `fs.FileHandle` 的只读随机访问 `ByteSource` |
+| `src/output.ts` | 输出目录、页号补零命名、原子写 |
+| `src/pages.ts` | 页码范围解析、去重合并、越界与上限校验 |
+| `src/text.ts` | `getTextContent` 结果扁平化为 `text/x/y/w/h` |
+| `src/fonts.ts` | `--font-dir` 扫描、系统字体发现、字节读取与合并去重 |
+| `src/canvas.ts` | `@napi-rs/canvas` 加载与 engine Canvas/编码适配 |
+| `src/image-decoder.ts` | PNG/JPEG/WebP 解码插件 |
+| `src/sea.ts` | SEA 资产解压、缓存校验与 NAPI 环境变量设置 |
+| `src/log.ts` | 信息、错误、warning 与 warning 汇总输出 |
+| `src/errors.ts` | CLI 错误码、crypto/engine 错误到退出码映射 |
+| `src/crypto-output.ts` | crypto warning 到 stderr 的统一呈现 |
+| `src/safe-text.ts` | 终端文本控制字符清理 |
 
-一个页面成功 = 图片写出；`--text` 时还要求 JSON 也写出。任一失败即该页失败，但保留已成功的那一份。全部页失败仍返回 `3`；文档打开失败才是 `2`。`info` 成功固定 0；`verify` 只有 `overall=valid` 才 0，`unknown` 也 5。
+`cli.ts` 不实现渲染或密码学；`convert.ts`、`info.ts`、`verify.ts` 各自负责一条流程；`text.ts`、`output.ts`、`canvas.ts`、`sea.ts` 各自只做一件事。
 
-### 5.5 控制台输出
+### 3.3 构建产物
 
-- 成功：`完成：12/12 页 → /abs/out（1.2s）`；`--text` 时为 `完成：12/12 页（图片 + 文本）→ ...`；
-- 页失败：即时打印 `页面 3/12 失败 [OFD_IMAGE_DECODE]：...`，继续后续页；结束时打印 `完成：11/12 页，1 页失败 → /abs/out`；
-- 文档失败：`打开失败 [OFD_INVALID_PACKAGE]：...`；
-- warning：即时打印 `警告 [W_FONT_MISSING] 第 1 页：...`，结束时按 code 汇总计数；
-- `info`/`verify` 文本输出写 stdout；JSON（`--json`）也写 stdout，二者不混用；
-- warning 逐条写 stderr，结束时输出 `警告汇总：CODE×N、...`；
-- 正常摘要写 stdout，错误与 warning 写 stderr；
-- TTY 下显示单行进度 `[3/12]`，非 TTY 不输出逐页进度；
-- 人类可读 stderr 与 info/verify 文本会移除 ANSI CSI、替换 C0/C1/U+2028/U+2029；未知异常堆栈仍按原样输出；JSON 保留原始值；
-- 脚本化依赖退出码与输出文件。
+- `dist/bin.js`：普通 Node 入口，`package.json` 的 `bin` 指向它；
+- `dist/sea/ofdrw-viewer-cli[.exe]`：当前平台自包含可执行文件；
+- `dist/release/ofdrw-viewer-cli-<version>-<target>.tar.gz|.zip`：发布归档，附同名 `.sha256`；
+- `scripts/build-sea.mjs` 负责 SEA 构建与冒烟，`scripts/package-sea.mjs` 负责归档打包。
 
-## 6. 空间文本导出（`--text`）
+## 4. CLI 接口
 
-### 6.1 来源与坐标
-
-仅在传入 `--text` 时调用 `OFDPage.getTextContent({ dpi, includeChars: false })`（设计见 [`docs/text-content-api.md`](./text-content-api.md)），不解析 XML、不做 OCR。
-
-CLI 只做一次扁平化，把每个 `TextItem` 转成一条记录：
-
-- `x/y/w/h` 取 `TextItem.rect`；
-- 单位 px，原点为页面左上角，y 向下；
-- 与同页图片使用同一 `dpi`，坐标可直接叠加到 PNG；
-- 旋转/竖排/多 run 的文字取 `rect` 的轴对齐包围盒，不输出 `quad`；
-- 每个 `TextItem` 一条，保持 `items` 原始顺序；
-- 跳过 `text` 为空的项；
-- 不输出页号、字体、层级、矩阵、字符、`truncated` 等字段；页号由文件名给出，页面尺寸由同页 PNG 给出。
-
-### 6.2 JSON 结构
-
-每页写一个扁平数组，元素只有 `text` 与位置：
-
-```json
-[
-  { "text": "发票", "x": 100, "y": 176, "w": 48, "h": 24 },
-  { "text": "金额", "x": 400, "y": 300, "w": 48, "h": 24 }
-]
-```
-
-转换逻辑：
-
-```ts
-const content = await page.getTextContent({ dpi, includeChars: false });
-const records = content.items
-  .filter((item) => item.text.length > 0)
-  .map((item) => ({
-    text: item.text,
-    x: item.rect.x,
-    y: item.rect.y,
-    w: item.rect.width,
-    h: item.rect.height,
-  }));
-await writeFileAtomic(jsonPath, JSON.stringify(records));
-```
-
-- 空页写 `[]`；
-- 坐标保留原始小数，不做取整或单位换算；
-- `text` 保留原始内容（可能含空格/换行），位置是该项的包围盒。
-
-### 6.3 粒度与限制
-
-`--text` 启用时：
-
-- 固定 `includeChars=false`，只做文本项级位置，不展开字符；
-- 固定 `includeAnnotations=false`、`includeInvisible=false`；
-- `layerOrder` 沿用文档打开时的默认值（`type`）；
-- 使用 API 默认上限：`maxTextItems=20,000`、`maxTextChars=500,000`；
-- 截断不失败：engine 产生 `W_TEXT_ITEM_LIMIT` / `W_TEXT_CHAR_LIMIT` warning，JSON 中不包含截断标志；
-- 缺字体时 `text` 仍保留，CLI 不因此判失败。
-
-### 6.4 文本与图片的独立性
-
-`--text` 时每页分别尝试文本与图片；默认只尝试图片：
-
-```ts
-let textOk = true;
-let imageOk = false;
-if (textEnabled) {
-  textOk = false;
-  try { await exportText(page, outJson); textOk = true; } catch (error) { logPageError(...); }
-}
-try { await exportImage(page, outImage); imageOk = true; } catch (error) { logPageError(...); }
-if (!textOk || !imageOk) pageFailed = true;
-```
-
-- 文本失败不阻止图片；图片失败不阻止文本；
-- 两者都失败时只记一条页失败；
-- `--text` 时文本 API 不存在属于全局能力缺失，打开后立即退出 2，不进入逐页流程；不加 `--text` 不检测该 API。
-
-## 7. 渲染流程
-
-### 7.1 打开文档
-
-```ts
-const fileSource = await NodeFileByteSource.open(input);
-const cryptoSource: CryptoSource = { kind: 'byte-source', source: fileSource };
-let container: VirtualContainer | undefined;
-try {
-  if (hasCredentials) {
-    const opened = await openDecryptingContainer({ source: cryptoSource, credentials });
-    container = opened.container;
-    reportCryptoWarnings(logger, opened.warnings);
-  }
-  const doc = await OFDDocument.open({
-    ...(container === undefined
-      ? { source: { kind: 'custom', source: fileSource } }
-      : { container }),
-    createCanvas: createCanvasLike,
-    encodeImage: encodeCanvasImage,
-    imageDecoders: [...nodeImageDecoders],
-    supplementaryFonts: await loadFontInputs(fontFiles, logger),
-    onWarning: printWarning,
-  });
-  // ...逐页导出...
-  await doc.close();
-} finally {
-  // crypto 不关闭调用方字节源；engine 直接 custom 路径也由 CLI 幂等兜底。
-  await fileSource.close().catch(() => undefined);
-  await container?.close().catch(() => undefined);
-}
-```
-
-- 只使用公共 API；不读取 ZIP、不解析加密 XML；
-- 有凭据时把 `{ kind: 'byte-source', source: fileSource }` 传给 `openDecryptingContainer`，再把明文 `VirtualContainer` 注入 engine；容器由 CLI 关闭，明文不落盘；
-- 无凭据时把同一 `NodeFileByteSource` 以 engine `custom` 形式直开；加密包由 engine 抛 `OFD_ENCRYPTED`，CLI 映射为退出 4；
-- `onWarning` 直接打印到 stderr，不改变退出码；
-- 打开失败时打印 `OFDError.code` 并退出 2；
-- `--text` 时打开后检测 `page.getTextContent` 是否存在；未加 `--text` 不检测。
-
-### 7.2 逐页导出
-
-```ts
-for (const pageNumber of pageNumbers) {
-  const page = await doc.getPage(pageNumber - 1);
-
-  // 1) 空间文本（仅 --text）
-  if (textEnabled) {
-    const content = await page.getTextContent({ dpi, includeChars: false });
-    const records = content.items
-      .filter((item) => item.text.length > 0)
-      .map((item) => ({
-        text: item.text,
-        x: item.rect.x,
-        y: item.rect.y,
-        w: item.rect.width,
-        h: item.rect.height,
-      }));
-    await writeAtomic(jsonPath, JSON.stringify(records));
-  }
-
-  // 2) 图片（始终）
-  const result = await page.exportImage({
-    dpi,
-    format,
-    quality: 0.9,
-    background: '#ffffff',
-    signal,
-  });
-  const imagePath = buildImagePath(outDir, stem, pageNumber, format, doc.pageCount);
-  await writeFileAtomic(imagePath, result.data);
-}
-```
-
-- 文本与图片使用同一 `dpi`；
-- 默认只处理图片；`--text` 时先文本后图片，文本不依赖 Canvas，失败时仍可继续出图；
-- 图片编码、白底、尺寸取整由 engine `exportImage` 负责，CLI 只命名、落盘与汇总；
-- 全部结束后 `await doc.close()`，关闭失败只打印 warning。
-
-### 7.3 Node Canvas 加载
-
-`canvas.ts` 需要同时支持两种来源：
-
-- 普通 Node：从 `node_modules` 加载 `@napi-rs/canvas`；
-- SEA 可执行文件：从内嵌资产解压目录加载 `@napi-rs/canvas`，并设置 `NAPI_RS_NATIVE_LIBRARY_PATH` 指向平台 `.node`。
-
-```ts
-import { createRequire } from 'node:module';
-import { join } from 'node:path';
-
-export function loadCanvas(): typeof import('@napi-rs/canvas') {
-  const dir = process.env.OFDRW_CANVAS_DIR;
-  if (dir) {
-    process.env.NAPI_RS_NATIVE_LIBRARY_PATH = join(dir, 'native', manifest.nodeFile);
-    return createRequire(join(dir, 'canvas', 'index.js'))(join(dir, 'canvas'));
-  }
-  return createRequire(import.meta.url)('@napi-rs/canvas');
-}
-```
-
-- 直接使用 `createCanvas`，不封装 CanvasFactory；
-- 编码统一 `canvas.toBuffer(mime, { quality: 90 })`；
-- 不引入 `pngjs` 作为运行时依赖。
-
-### 7.4 字体
-
-实现位于 `fonts.ts`：
-
-- `--font-dir` 指定一个目录；
-- 递归扫描 `.ttf` / `.otf` / `.ttc` / `.otc`，大小写不敏感；
-- 文件按路径字典序排列，去重（`realpath`）；
-- **CLI 读取字体字节**：`loadFontInputs()` 用 `readFile` 预读每个文件，以 `{ data }[]` 传给 `supplementaryFonts`；engine 只收已读好的 `FontInput.data`，不再提供 `loadInput`、也不读取字体 URL/路径。单文件读取失败发 `W_FONT_MISSING` 并跳过；
-- **默认自动扫描白名单系统字体**（Linux/macOS/Windows 各自目录；CJK 优先，最多注入 6 个、总字节预算 96 MiB，不跟随目录符号链接、文件符号链接不得逃逸白名单），发现结果排在 `--font-dir` 之后并按 `realpath` 去重；`--no-system-fonts` 关闭自动发现、仅用 `--font-dir`（恢复旧版行为）；
-- 缺字体由 engine 产生 `W_FONT_MISSING`；文本仍保留，图片可能少字形。
-
-### 7.5 图片解码
-
-Node 侧实现位于 `image-decoder.ts`：
-
-- 通过 `@napi-rs/canvas.loadImage` 注入 `png` / `jpeg` / `webp`；
-- 插件放在 CLI 生产代码，不复用 engine 测试 helper；
-- GIF/BMP v1 不承诺；失败由 engine 产生 `W_IMAGE_DECODE` 并跳过该图；
-- JBIG2/TIFF 依赖 engine 内置解码器，契约见第 3 节。
-
-### 7.6 取消与原子写
-
-- 固定串行；
-- SIGINT：CLI 主流程 AbortController 触发 `signal`，传给 `exportImage`、`getTextContent` 与 crypto 的 `byte-source` 读取；取消当前页/解密/验证并退出 130；
-- `NodeFileByteSource` 在 `finally` 中关闭；无论成功、异常还是取消，都不把文件句柄留给 crypto（crypto 不关闭调用方字节源）；
-- 图片写同目录临时文件，完成后 `rename`；`--text` 时 JSON 同样原子写；失败/取消时删除临时文件；
-- 中断后已完成的页保留，未完成页不产生半成品文件；
-- 超大页面：渲染前用 `width × height` 与 engine 默认 `maxCanvasPixels`（64,000,000）比较，超限提示“降低 --dpi”并退出 2，不分配 canvas。
-
-## 8. 自包含可执行文件与多平台分发
-
-### 8.1 选型
-
-采用 **Node SEA（Single Executable Application）**：
-
-- 官方方案，内嵌 Node 运行时，用户无需安装 Node；
-- 原生模块通过 SEA `assets` 嵌入，启动时解压到临时目录，用 `NAPI_RS_NATIVE_LIBRARY_PATH` 加载；
-- 已在本机 Linux x64 验证：Node 26.10 + `@napi-rs/canvas` 1.0.13，SEA 可执行文件成功创建 Canvas、输出 PNG 与空间文本 JSON；体积约 180.9 MB；
-- 不使用 Bun/Deno 运行时，避免 Skia/N-API 与字体行为的兼容性风险。
-
-构建机要求 Node ≥ 26.10（`node --build-sea` 由 Node 25.5+ 提供）。产物内嵌运行时，终端用户无 Node 版本要求。
-
-### 8.2 打包机制
-
-`scripts/build-sea.mjs`：
-
-1. 用 esbuild 打包 `src/bin.ts`：
-   - `format: 'esm'`、`platform: 'node'`、`target: 'node26'`；
-   - `external: ['@napi-rs/canvas']`，避免把 canvas JS 打进 bundle；
-2. 收集 `@napi-rs/canvas` 包 JS 与 `package.json` 到 `dist/sea/assets/canvas/`；
-3. 收集当前平台包（如 `@napi-rs/canvas-linux-x64-gnu`）的 `.node` 与 `package.json` 到 `dist/sea/assets/native/`；
-4. 生成 `canvas-manifest.json`（平台包名、`.node` 文件名）；
-5. 生成 `sea-config.json`：
-   - `main`、`output`、`mainFormat: 'module'`；
-   - `disableExperimentalSEAWarning: true`；
-   - `assets` 指向上述文件；
-6. 运行 `node --build-sea sea-config.json`；
-7. Unix 设置可执行位；macOS 只编译产物，不执行 codesign；
-8. 运行 `--version`、`--help` 与 `helloworld.ofd` 转换冒烟；空间文本由 acceptance 单独覆盖。
-
-### 8.3 SEA 启动时的资产解压
-
-`sea.ts`：
-
-- `sea.isSea()` 为 false 时直接返回；
-- 读取 `sea.getAssetKeys()` / `sea.getRawAsset()`；
-- POSIX 缓存根为 `os.tmpdir()/ofdrw-viewer-cli-u<uid>`，Windows 无 uid 时为 `os.tmpdir()/ofdrw-viewer-cli`；版本目录为 `u<uid>-<version>-<platform>-<arch>-<digest>/`；旧共享根 `ofdrw-viewer-cli` 不再读取/复用；
-- 用 `.complete` 标记避免重复解压；先写 staging 目录，校验摘要后 `rename`；
-- 设置 `OFDRW_CANVAS_DIR` 与 `NAPI_RS_NATIVE_LIBRARY_PATH`；
-- POSIX 下校验缓存根、版本目录、`.complete`、`canvas/`、`native/` 与全部清单资产的属主=当前 uid、目录 0700、文件 0600，拒绝符号链接；Windows 拒绝符号链接/重解析点；
-- 复用缓存前按构建脚本同算法重算全部资产 SHA-256 摘要，并校验清单字段与路径段；不匹配、权限异常或预置目录非空时统一 `SeaAssetError` → `CLI_SEA_EXTRACT_FAILED` 退出 2，不加载未验证文件；
-- 失败时打印明确错误（临时目录不可写、磁盘不足、缓存不安全）并退出 2。
-
-### 8.4 平台矩阵与产物名
-
-| 平台 | 运行器 | 产物 |
-| --- | --- | --- |
-| Linux x64 (glibc) | `ubuntu-24.04` | `ofdrw-viewer-cli-<version>-linux-x64-gnu.tar.gz` |
-| Linux arm64 (glibc) | `ubuntu-24.04-arm` | `ofdrw-viewer-cli-<version>-linux-arm64-gnu.tar.gz` |
-| macOS x64 | `macos-13` | `ofdrw-viewer-cli-<version>-darwin-x64.tar.gz` |
-| macOS arm64 | `macos-14` | `ofdrw-viewer-cli-<version>-darwin-arm64.tar.gz` |
-| Windows x64 | `windows-2022` | `ofdrw-viewer-cli-<version>-win32-x64.zip` |
-| Windows arm64 | `windows-11-arm` | `ofdrw-viewer-cli-<version>-win32-arm64.zip` |
-
-每个压缩包包含：
+### 4.1 入口与子命令分派
 
 ```text
-ofdrw-viewer-cli[.exe]
-README.md
-LICENSE
-```
+ofdrw-viewer-cli <input.ofd> [转图片选项] [凭据选项]
 
-每个单平台产物同时生成 `.sha256`；发布时再由 CI 汇总生成 `SHA256SUMS`。构建、平台限制与 Node 版本要求以 `packages/ofdrw-viewer-cli/docs/BUILDING.md` 为准。
-
-### 8.5 CI 发布流程
-
-仓库使用 `.github/workflows/release-cli.yml`：
-
-- 触发：`workflow_dispatch` 或 tag `cli-v*`；
-- matrix 构建各平台；
-- 每个 job：安装 Node 26.10、pnpm、依赖，运行 `pnpm -C packages/ofdrw-viewer-cli build:sea -- --target <target>`，执行图片与 `--text` 冒烟测试，运行 `package:sea` 并上传 artifact；
-- release job：下载全部 artifact、生成 `SHA256SUMS`、创建 GitHub Release；
-- 权限仅 `contents: write`；
-- 不自动执行 `git push`；发布由 tag/手动触发。
-
-### 8.6 已知限制
-
-- Linux 仅 glibc；musl/Alpine 不提供；
-- 所有 ARM 目标均为 ARM64；不提供 32 位 ARM / ARMv7 / armhf；
-- LoongArch/龙芯不提供，Node 与 canvas 生态缺少稳定构建链；
-- macOS 只编译可执行文件，不签名、不公证；首次运行可能被 Gatekeeper 拦截；
-- Windows 未签名，可能触发 SmartScreen；
-- 单文件体积约 180 MB（Linux x64 实测），压缩后仍较大；
-- 首次启动需解压约 36 MB 原生模块，后续命中缓存；
-- POSIX 缓存根带当前 uid（`ofdrw-viewer-cli-u<uid>`），不同用户不会撞首个用户的 0700 根；旧共享根不再读取/复用。Windows 无 uid 时保留固定根名，`TEMP` 通常按用户隔离；
-- 根名可预测：其他用户预建同名根会因属主/权限校验 fail-closed 退出 2（不加载未验证资产），仅造成该用户启动 DoS；
-- 安全更新需要重新构建并发布。
-
-## 9. Agent skill
-
-### 9.1 位置与命名
-
-仓库源文件：
-
-```text
-packages/ofdrw-viewer-cli/skills/SKILL.md
-```
-
-skill 名：`ofdrw-viewer-cli`。skill 源文件作为 CLI 子包的一部分维护，只放仓库，不安装到 `~/.agents/skills/`，也不随 release 压缩包分发。
-
-### 9.2 Skill 内容
-
-frontmatter：
-
-```yaml
----
-name: ofdrw-viewer-cli
-description: Convert OFD documents into per-page PNG/JPEG/WebP images with the ofdrw-viewer-cli executable, query package/encryption/signature metadata with info, and verify anti-smuggling integrity plus all signatures with verify. Use when an agent needs OFD page images, spatial text JSON, encrypted-document conversion, or signature/chain verification.
----
-```
-
-正文必须覆盖：
-
-1. **何时使用**：页面图/坐标文本、加密转换、`info` 元数据查询、`verify` 验签；纯文本解析优先用 `mineru`。
-2. **定位可执行文件**：`$OFDRW_VIEWER_CLI` → `command -v ofdrw-viewer-cli` → 仓库 `dist/sea/...`；找不到时按平台下载 release 并校验 `SHA256SUMS`，不要静默安装。
-3. **命令**：转图片（含 `--pages/--format/--dpi/--font-dir/--text`）、`info`、`verify`、加密转图片、`--root`/`--sm2-user-id`，以及文件名恰为 `info`/`verify`/`decrypt` 时用 `./` 前缀。
-4. **参数上下文**：`info` 只接受 `--json`；`verify` 不接受转图片参数；转图片不接受 `--root`/`--sm2-user-id`/`--json`；口令与私钥互斥。
-5. **产物**：默认 `<stem>-p001.png`；`--text` 时额外 `<stem>-p001.json`；`info`/`verify` 文本与 JSON 的字段。
-6. **JSON 与文本差异**：`--json` 写 stdout 且保留原始值；文本/stderr 清理控制字符；warning 汇总规则。
-7. **Agent 工作流**：
-   - 先 `info` 判断是否加密、有哪些用户/签名；
-   - 需要信任结论时先向用户索取根证书，再 `verify`；无根 `unknown` 不得报告为通过；
-   - 转图片先 `--pages 1` 预览，需要坐标时加 `--text`；
-   - 加密文档带凭据转换，不记录/回显凭据；
-   - 缺字形时 `text` 仍可用，用 `--font-dir` 重试。
-8. **错误处理**：退出码 0/1/2/3/4/5/130；`OFD_*` 与 `CRYPTO_*` 错误码；不要对 2/4/5 盲目重试。
-9. **安全**：路径加引号；不要执行不受信任的可执行文件；下载后校验 SHA256；不提供独立 decrypt；大页/高 DPI 注意内存。
-10. **平台**：Linux glibc、macOS Gatekeeper、Windows SmartScreen 备注。
-
-### 9.3 分发
-
-- skill 源文件随 CLI 子包版本管理，仅此一份；
-- 不放入 release 压缩包，也不在本机安装；
-- 不要在 agent 运行环境安装、复制或软链该 skill；仅从仓库读取。
-
-## 10. 错误与 warning 呈现
-
-- 错误：`错误[OFD_XXX]：message`，写 stderr；
-- 非 `OFDError`：归类为 `CLI_UNEXPECTED`，打印 message 与堆栈；
-- 文本 API 缺失（仅 `--text`）：`CLI_TEXT_UNSUPPORTED`，退出 2；
-- 文本 JSON 写盘失败（仅 `--text`）：`CLI_TEXT_WRITE_FAILED`，该页失败、保留图片，退出 3；
-- SEA 资产解压/缓存校验失败：`CLI_SEA_EXTRACT_FAILED`，退出 2，不加载未验证文件；
-- warning：即时打印 `警告 [W_XXX] 第 N 页：message`，结束时按 code 汇总；
-- warning 不改变退出码；文本截断只打印 engine warning，JSON 不含 `truncated` 字段；
-- 人类可读 stderr（`Logger.error/warn/pageError` 与 crypto warning 的 message/path）写前统一 `sanitizeDisplayText`：移除 ANSI CSI，替换 C0/C1/U+2028/U+2029，防止恶意 OFD 伪造 warning/错误行；
-- `Logger.info` 与 `--json` stdout 保留原始值；info 成功路径在 payload 输出后调用 `flushWarningSummary()`；
-- 错误/警告不包含口令、私钥、PEM、`EncryptedWK`。
-
-## 11. 测试与验收
-
-### 11.1 单元测试与 e2e
-
-默认 `pnpm -C packages/ofdrw-viewer-cli test` 运行 15 个文件、258 个用例，不包含较慢的黑盒验收：
-
-- `parseArgs`：必填输入、未知参数、默认值、`--text` 开关、中文参数错误；
-- 页码解析：`1-3,5`、重复、乱序、越界、非法输入，以及单段/合并后总页数 100000 上限；
-- 输出命名：默认图片；`--text` 时图片与 JSON 成对、同 stem 同页号；
-- 字体目录扫描：递归、扩展名过滤、去重、空目录 warning；新增自合成 `test/fixtures/minimal.ttf` 保证 `--font-dir` 始终可执行；
-- 退出码映射、摘要、TTY/非 TTY 进度、`CLI_VERSION` 与 package.json 一致；
-- 文本 JSON：`TextItem` → `{text,x,y,w,h}`、过滤空 `text`、保持 `items` 顺序、不输出其他字段；空页 `[]`；
-- 原子写：成功替换、失败清理临时文件；
-- SEA 资产路径、`u<uid>` 缓存命名、属主/0700/0600/符号链接/摘要不符/预置目录负向校验；
-- `info`/`verify`：参数上下文、文本/JSON 字段、无根 unknown、有效根 valid、篡改/夹带 invalid、加密凭据、`decrypt` 拒绝；
-- 终端安全：Logger.error/warn/pageError、crypto warning message/path、info/verify 文本对换行/ESC/C1/U+2028 的清理，JSON 原值保留；
-- 加密转换：口令/私钥、缺/错凭据、页范围/格式/文本参数。
-
-`test/e2e/cli.test.ts` 以真实 `dist/bin.js` 子进程覆盖图片与文本主路径；`test/verification` 独立覆盖 CLI 契约；`test:acceptance` 额外执行 5 文件 82 例黑盒验收（含 SEA）。
-
-### 11.2 图片黑盒验收（CLI 42 例中的图片/参数/退出码部分）
-
-| 用例 | 样本 | 断言 |
-| --- | --- | --- |
-| 单页 PNG（默认） | `helloworld.ofd` | 退出 0；只有 1 个 PNG；尺寸 = `ceil(viewport)`；白底、非空白 |
-| 多页/页码范围 | `999.ofd` | 5 页全量或 `--pages` 只产出选中页；页号补零 |
-| 格式 | 任意单页 + `--format jpeg` / `webp` | 扩展名与 magic 正确；白底、非空白 |
-| DPI | 任意单页 + `--dpi` | 图片尺寸与 `getViewport({dpi})` 取整一致 |
-| 输出目录 | 未指定 `-o` / 嵌套目录 | 默认 `cwd/<stem>/`；不存在时递归创建 |
-| 字体目录 | `minimal.ttf` / 系统字体 | 递归扫描；缺失时按报告标记 skip |
-| 坏文件/缺文件/目录/页码越界 | 非法输入 | 分别退出 2/1；不创建输出目录 |
-| 部分页失败/全部页失败 | `999.ofd` | 保留成功页；退出 3；无 `.tmp` |
-| 覆盖与原子替换 | 已存在目标 | 旧文件完整替换；采样期间不出现半成品 |
-| SIGINT | 大页样本 | 退出 130；无 `.tmp` 残留 |
-| 帮助/版本 | — | 退出 0；含全部参数（含 `--text`）、版本与平台 |
-
-### 11.3 文本黑盒验收（CLI 11 例 + text-mock 2 例）
-
-以下用例均带 `--text`：
-
-| 用例 | 样本 | 断言 |
-| --- | --- | --- |
-| 第 1 页结构与 oracle | `dense-text-perf.ofd --pages 1` | 147 项；每项恰好 `text/x/y/w/h`；与 96 DPI oracle 全量逐项一致；坐标在页面内 |
-| 第 2 页大量文本 | `dense-text-perf.ofd --pages 2` | 8,331 项；与 oracle 全量一致；JSON 约 873 KB；< 30 s |
-| 全量两页 | `dense-text-perf.ofd` | 4 个产物；p001/p002 的 PNG+JSON 成对 |
-| 空文本页 | `helloworld.ofd` | 写 `[]`（2 B），PNG 仍产出 |
-| 不传 `--text` | `dense-text-perf.ofd` | 不调用 `getTextContent`；不生成任何 JSON |
-| 格式组合 | `--format jpeg/webp --text` | 图片扩展名正确；JSON 同页号 |
-| DPI 组合 | `--dpi 144 --text` | JSON 与 144 DPI oracle 全量一致；PNG 同 DPI |
-| 默认输出目录 | `--text` 无 `-o` | PNG 与 JSON 共用 `cwd/<stem>/` |
-| 文本写盘失败 | 预占 JSON 路径为目录 | 退出 3；保留同页 PNG；无 `.tmp` |
-| 图片写盘失败 | 预占 PNG 路径为目录 | 退出 3；保留同页 JSON；无 `.tmp` |
-| SIGINT | `999.ofd --text --dpi 600` | 退出 130；已产出 JSON 可解析、PNG 完整；无 `.tmp` |
-| 文本 API 缺失 | mock engine | 退出 2；stderr 含 `CLI_TEXT_UNSUPPORTED`；不写文件 |
-| engine 未绑定文本驱动 | mock `OFD_RENDERER_UNSUPPORTED` | 映射 `CLI_TEXT_UNSUPPORTED` 退出 2 |
-
-已知未覆盖：真实缺字体页面仍保留非空 text（设计 §6.3）、多页部分文本失败/文本+图片同时失败、真实旧版 engine 二进制缺 API；这些作为后续补充项。
-
-### 11.4 SEA 可执行文件测试
-
-`test/acceptance/sea.acceptance.ts` 4 例，全部在 `PATH` 不含 Node 的隔离环境中运行：
-
-- `--version` / `--help`；
-- `helloworld.ofd`/`999.ofd` 图片转换与缓存命中；
-- `dense-text-perf.ofd --text --pages 1` 生成 147 项 JSON + PNG，与 oracle 全量一致；
-- `TMPDIR` 不可用时退出 2 并输出 `CLI_SEA_EXTRACT_FAILED`。
-
-构建冒烟由 `build-sea.mjs` 覆盖冷/热启动与 `helloworld.ofd` PNG。
-
-### 11.5 运行平台覆盖
-
-- Linux glibc x64/arm64 必测；
-- macOS x64/arm64 必测；
-- Windows x64/arm64 必测；
-- 路径分隔符、中文/空格文件名、`@napi-rs/canvas` 原生加载；
-- 不把平台相关路径写死在测试里，统一用 `node:path` 与临时目录。
-
-### 11.6 性能
-
-- 用 `dense-text-perf.ofd` 记录打开、文本、渲染、总耗时并打印；
-- v1 不设硬性性能门禁，保留基线。
-
-## 12. 分阶段与依赖
-
-截至 2026-10-23，本期 P1–P5 已完成并在本机 Linux x64（Node 26.10、glibc）验证；P6 为后续可选项。
-
-| 阶段 | 内容 | 状态 |
-| --- | --- | --- |
-| P0 | 本设计评审；CLI 参数、输出、文本 JSON、SEA 方案定稿 | 完成 |
-| P1 | 包骨架、参数解析、输出/日志、字体目录扫描、Node Canvas/图片解码、单元测试 | 完成 |
-| P2 | 接 `OFDDocument`/`OFDPage.exportImage`，跑通图片导出；错误与取消 | 完成 |
-| P3 | 接 `OFDPage.getTextContent`，用 `--text` 跑通空间文本 JSON | 完成 |
-| P4 | SEA 构建脚本、平台矩阵（含 Windows arm64）、冒烟测试、release workflow | 完成（Linux x64 产物实测；其他平台待 CI/实机） |
-| P5 | Agent skill 编写与仓库内校验、README/发布说明 | 完成（v1.3 已同步 info/verify/加密转换） |
-| P6（可选） | 批量、并发、系统字体、PDF 输出、纯文本模式 | 未做 |
-
-已知风险与后续项：
-
-- SEA 内嵌原生模块依赖临时目录可写；极简容器需提供可写 tmp；
-- 可预测 uid 的其他用户可预建 `ofdrw-viewer-cli-u<uid>` 根，导致该用户 SEA 启动 fail-closed（exit 2，不加载资产）；按用户隔离根不再有跨用户 0700 根冲突；
-- 二进制约 180.9 MB，分发体积较大；
-- macOS 未签名、未公证、Windows 未签名，首次运行有系统提示；
-- 文本 JSON 在超大文档上可能很大（默认 500k 字符上限），需要截断 warning；
-- 真实缺字体文本保留、多页部分文本失败、旧版 engine 缺 API 尚未纳入黑盒；
-- macOS/Windows/arm64 实机、`windows-11-arm` runner、签名/公证仍待 CI 或用户环境验证；
-- JBIG2/TIFF 契约未确认时，扫描类票据样本可能缺图。
-
-## 13. 已定事项与待确认项
-
-已定：
-
-1. 子包目录、包名、命令名统一为 `ofdrw-viewer-cli`；
-2. 默认输出目录 `./<输入文件名>/`；
-3. 默认 DPI 96；
-4. 目标文件已存在时默认覆盖；
-5. CLI 参数为输入、输出目录、格式、DPI、页码、字体目录、`--text`、加密凭据、`--root`、`--sm2-user-id`、`--json`；其余行为使用内部默认值；
-6. 默认只导出图片；`--text` 时每页额外导出空间文本 JSON；
-7. `--text` 的文本为 px 坐标、文本项级 `text + x/y/w/h`、与图片同 DPI；
-8. `info` 只查询、不解密不验签；`verify` 一次性验证完整性+全部签名；无独立 `decrypt`；
-9. 加密 OFD 用口令或 SM2 私钥解密后渲染，明文不落盘；`--root` 可重复，无根判定 `unknown`；
-10. 人类可读 stderr/文本清理控制字符，JSON 保留原始值；
-11. 发布采用 Node SEA 自包含可执行文件，Windows arm64 纳入 v1；
-12. 提供 `packages/ofdrw-viewer-cli/skills/SKILL.md`，skill 源文件随子包维护，仅放仓库，不安装、不随 release 分发；
-13. macOS 只编译可执行文件，不签名、不公证。
-
-待确认：
-
-1. JBIG2/TIFF 内置解码是否由 `OFDDocument.open` 默认启用；
-2. `windows-11-arm` runner 是否可用；不可用时是否接受用 ARM64 Node 二进制交叉注入。
-## 14. 加密文档、`info` 与 `verify`（v1.3 增量）
-
-本章记录 v1.3 新增的 CLI 契约；crypto 内部算法与报告字段细节以 [`docs/ofdrw-viewer-crypto设计方案.md`](./ofdrw-viewer-crypto设计方案.md) 第 7 章为准。
-
-### 14.1 命令总览与兼容
-
-保留既有“无子命令 = 转图片”的行为：
-
-```text
-ofdrw-viewer-cli <input.ofd> [转图片选项] [加密凭据选项]
 ofdrw-viewer-cli info <input.ofd> [--json]
-ofdrw-viewer-cli verify <input.ofd> [加密凭据选项] [--root <file>]... [--sm2-user-id <id>] [--json]
+
+ofdrw-viewer-cli verify <input.ofd> [凭据选项] [--root <file>]... [--sm2-user-id <id>] [--json]
+
+ofdrw-viewer-cli version [--json]
 ```
 
-| 命令 | 用途 | 是否解密 | 是否验签 |
-| --- | --- | --- | --- |
-| 转图片（无子命令） | 页面图片；`--text` 时空间文本 | 提供凭据时解密 | 否 |
-| `info` | 包结构/加密层/用户/签名/完整性摘要 + 明文文档元数据/页尺寸 | 否 | 否 |
-| `verify` | 防夹带完整性 + 全部签名 + 证书链 + 印章 + 时间戳解析 | 加密输入时内部解密 | 是 |
+分派规则：
 
-- 子命令只认第一个位置参数**严格等于** `info` 或 `verify`；文件名恰好为 `info`/`verify`/`decrypt` 时用 `./info`、`./verify`、`./decrypt` 前缀规避。
-- `decrypt` 不是子命令；出现时固定用法错误（退出 1），提示使用 `verify` 或带凭据的转图片命令。
-- 不提供“只解密”“只验完整性”“只验某个签名”等独立命令。
+- 解析阶段先处理 `--help`/`-V`，再判断子命令；第一个位置参数严格等于 `info`、`verify`、`version` 时进入对应子命令；`decrypt` 例外，固定用法错误（退出 1），但 `decrypt --help`/`decrypt -V` 仍按帮助/版本返回 0；其余情况按转图片处理；
+- 文件名恰好为 `info`、`verify`、`version`、`decrypt` 时，写成 `./info` 等形式规避子命令识别；
+- `decrypt` 不是子命令，出现时固定用法错误（退出 1），提示改用 `verify` 或带凭据的转图片；
+- `--help`、`-V/--version` 优先于输入校验：缺少输入也返回 0 并打印帮助或短版本；
+- `version` 子命令不接受输入文件，只接受 `--json`；文本输出 CLI 版本、平台-架构与 Node 版本，JSON 输出 `{ cli, platform, arch, node }`；
+- `info` 只接受输入与 `--json`；出现凭据、`--root`、`--sm2-user-id` 或转图片参数 → 用法错误（1）；
+- `verify` 接受凭据、`--root`、`--sm2-user-id`、`--json`；出现 `--out`、`--format`、`--dpi`、`--pages`、`--font-dir`、`--no-system-fonts`、`--text` → 用法错误（1）；
+- 转图片接受凭据；出现 `--root`、`--sm2-user-id`、`--json` → 用法错误（1）；
+- 只接受一个位置输入文件；多文件、缺输入、未知参数、非法选项值都归用法错误（1）。
 
-### 14.2 `info`（只查询）
+完整参数表、示例与输出说明见 [`skills/SKILL.md`](../packages/ofdrw-viewer-cli/skills/SKILL.md)。
 
-语义：先读取包结构、加密层、用户、签名条目与完整性存在性；明文包再用 engine 只读打开同一字节源，读取文档属性与页尺寸。**不调用** `openDecryptingContainer`/`verifyOfd`，不读取私钥、不渲染页面、不输出 `EncryptedWK`。加密包无凭据时不自动解密，`document` 省略。
+### 4.2 参数与校验规则
 
-文本示例（明文）：
+转图片参数的默认值与设计约束：
 
-```text
-文件: /abs/input.ofd
-大小: 5226 B
-OFD 版本: 1.0
-加密: 否
-用户: 无
-签名: 0
-完整性: 无
-标题: 无
-作者: 无
-主题: 无
-创建时间: 2021-06-02
-修改时间: 无
-创建工具: OFD R&W（1.9.8）
-页数: 2
-页面尺寸: 第 1 页 210×297 mm；第 2 页 210×297 mm
-```
+- 输入必须是存在的普通文件，否则退出 1；打开文档阶段的包结构错误归 2，凭据/解密错误归 4；CLI 自身路径错误归 1，crypto 输入源打开失败归 2；
+- `--out` 默认当前工作目录下的输入文件 stem；不存在时递归创建，指向非目录或创建失败退出 1；
+- `--format` 取值为 `png`/`jpeg`/`webp`（大小写不敏感），默认 `png`；扩展名分别为 `.png`/`.jpg`/`.webp`；
+- `--dpi` 必须是正安全整数，默认 96；大于 1200 时产生 `W_DPI_HIGH` 但继续执行；
+- `--pages` 使用 1 起闭区间，逗号分隔，允许连字符与逗号两侧空白；解析后去重、升序、合并重叠区间；单段跨度与合并后总页数上限均为 100000，超限在展开前退出 1；未提供时展开为 `1..pageCount`，`pageCount` 超过 100000 也退出 1；页码越界在拿到 `pageCount` 后判定，退出 1；
+- `--font-dir` 递归扫描 `ttf/otf/ttc/otc`（扩展名大小写不敏感），目录不存在、不是目录或不可读取退出 1；空目录产生 `W_FONT_DIR_EMPTY` 后继续；
+- 默认自动发现白名单系统字体；`--no-system-fonts` 关闭发现，只使用 `--font-dir`；
+- `--text` 为布尔开关，默认关闭；
+- `--password` 与 `--key` 互斥；`--user` 必须与二者之一同用；`--key-passphrase` 必须与 `--key` 同用；空路径/空 userId 退出 1；
+- `--key` 接受 PEM 或 DER（含 PKCS#8）；`--key-passphrase` 只用于加密私钥；
+- `--root` 可重复，接受 PEM（单/多证书）、DER/CER 与 Base64；同一路径重复传入按路径去重；仅 `verify`；
+- `--sm2-user-id` 去除首尾空白后非空；省略时使用标准值 `1234567812345678`；仅 `verify`；
+- `--json` 只用于 `info`、`verify`、`version`。
 
-加密无凭据时在原摘要后追加一行：`元数据不可用（加密文档，需凭据）`。页面尺寸文本最多展示前 5 页，更多页时追加“共 N 页，完整尺寸见 --json”；JSON 始终保留全部页尺寸。
+固定行为（不可配置）：
 
-`info --json` 固定结构（对应 `CliInfoJson`）：
+- 白底、不透明；目标文件已存在时直接覆盖，采用“临时文件 + `fsync` + `rename`”原子替换；
+- 页面串行处理，JPEG/WebP 编码质量固定 0.9；
+- engine 使用默认选项：`documentIndex=0`、`layerOrder=type`、`strictImageCtm=true`；CLI 只覆盖 Canvas、编码、解码、字体、warning 与取消信号；
+- 错误与 warning 直接打印到控制台，不写日志文件；
+- 口令、私钥、PEM 与 `EncryptedWK` 不进入日志、错误消息或帮助文本。
 
-```ts
-interface CliInfoJson {
-  readonly command: 'info';
-  readonly input: string;            // 绝对路径
-  readonly packageSize: number;      // byte
-  readonly ofdVersion?: string;      // 明文优先取 document.version；均不可读时省略
-  readonly encrypted: boolean;
-  readonly layers: readonly EncryptionLayerInfo[];
-  readonly users: readonly EncryptionUserInfo[];
-  readonly signatureCount: number;
-  readonly integrityPresent: boolean;
-  readonly document?: CliDocumentInfo; // 加密无凭据时省略
-  readonly warnings: readonly CryptoWarning[];
-}
+### 4.3 输出命名与目录
 
-interface CliDocumentInfo {
-  readonly version: string;          // 与顶层 ofdVersion 同源
-  readonly pageCount: number;        // 页数
-  readonly pageSizes: readonly { widthMm: number; heightMm: number }[]; // 每页尺寸，mm
-  readonly title?: string;           // DocInfo/Title
-  readonly author?: string;
-  readonly subject?: string;
-  readonly abstract?: string;
-  readonly creationDate?: string;    // 原文
-  readonly modDate?: string;         // 原文
-  readonly creator?: string;
-  readonly creatorVersion?: string;
-  readonly keywords?: readonly string[];
-  readonly docId?: string;
-  readonly customData?: Readonly<Record<string, string>>;
-}
-```
+- 每页图片：`<out>/<stem>-p<NNN>.<ext>`；
+- `--text` 时每页文本：`<out>/<stem>-p<NNN>.json`；
+- `<stem>` 为输入文件名去扩展名，原样保留中文与空格；
+- `NNN` 至少 3 位，实际宽度取 `max(3, pageCount 的十进制位数)`；单页文档同样使用 `-p001`；
+- 图片与文本共用页号、DPI 与输出目录，坐标可直接叠加；
+- 已存在目标直接覆盖；写入失败不留下临时文件。
 
-JSON 示例（节选，明文 `plain.ofd`）：
+### 4.4 退出码
+
+| 码 | 语义 | 适用场景 |
+| --- | --- | --- |
+| 0 | 成功 | 转图片全部页成功；`info` 查询成功；`verify` 的 `overall=valid` |
+| 1 | 用法/参数错误 | 未知参数、缺少输入、`decrypt`、子命令参数冲突、页码范围非法、路径不可用、`--font-dir` 非法 |
+| 2 | 文档级失败 | 非 OFD、包损坏、无法打开、页面像素超限、`--text` 时文本 API 不可用、SEA 资产失败 |
+| 3 | 页级失败 | 转图片至少一页失败（文本读取/写盘失败；但文本导出 catch 中的 `OFD_RENDERER_UNSUPPORTED` 映射的 `CLI_TEXT_UNSUPPORTED` 及其他文档级 `CliError` 属文档级失败 2，不按页级失败处理）；全部页失败仍为 3 |
+| 4 | 加密/凭据失败 | 缺少凭据、用户名不存在/不唯一、口令/私钥错误、解密失败 |
+| 5 | 验证未通过 | `verify` 的 `invalid`/`unknown`/`unsupported`/`not-applicable` |
+| 130 | 用户中断 | SIGINT 或注入的取消信号 |
+
+映射规则：
+
+- engine 的 `OFDError` 在打开/文档准备等文档级路径按失败 2 处理；逐页 `getPage` 与图片导出的 catch 中按页级失败（3）处理（图片导出遇文档级 `CliError` 仍直接 rethrow）；文本导出 catch 的 unsupported 映射见下。`OFD_ENCRYPTED` 在无凭据转图片时映射为 `CLI_CREDENTIALS_REQUIRED`（4）；
+- crypto 的 `CryptoError` 按类别映射：参数类 1、源/包结构/未加密类 2、凭据/解密入口/密钥类 4、ASN.1/算法/证书/完整性/签名/时间戳类 5、取消 130；
+- 未知异常归 `CLI_UNEXPECTED`，按文档级失败（2）并保留堆栈；
+- 只在文本导出 catch 中把 `OFD_RENDERER_UNSUPPORTED` 映射为 `CLI_TEXT_UNSUPPORTED`（文档级失败 2，不按页级失败处理），其他文档级 `CliError` 同样直接 rethrow；图片导出不走该映射：engine `OFDError`（含 `OFD_RENDERER_UNSUPPORTED`）默认按页级失败（3）继续，`CLI_IMAGE_WRITE_FAILED` 同样按页级（3）；仅文档级 `CliError` 直接退出 2；其他文本读取错误与 `CLI_TEXT_WRITE_FAILED` 也按页级失败（3）记录该页后继续后续页；
+- `info` 成功固定 0；`verify` 只有 `overall=valid` 为 0，`unknown` 也是 5。
+
+### 4.5 控制台输出
+
+- stdout：帮助、短版本、`info`/`verify` 的文本或 JSON、转图片结束摘要；
+- stderr：错误、warning、逐页进度、warning 汇总、用法提示与未知异常堆栈；
+- 逐页进度每页两行，始终写 stderr，TTY 与管道一致，不用 `\r` 覆盖：
+  - `[<index>/<total>] 第 <page> 页 开始`
+  - `[<index>/<total>] 第 <page> 页 完成|失败`
+  - 取消发生在页中时，可能只有“开始”而没有结束行；
+- 页失败即时输出：`页面 <page>/<total> 失败 [CODE]：message`，随后继续后续页；
+- 结束摘要：
+  - 成功：`完成：S/T 页 → <out>（<秒>s）`；带 `--text` 时为 `完成：S/T 页（图片 + 文本）→ <out>（<秒>s）`
+  - 有失败页：`完成：S/T 页[（图片 + 文本）]，N 页失败 → <out>`
+  - 取消：`已取消：S/T 页 → <out>`
+- warning 即时输出：`警告 [W_CODE][ 第 N 页]：message`；结束时输出 `警告汇总：CODE×N、...`，按 code 字典序，汇总不改变退出码；
+- 错误：`错误[CODE]：message`；`CLI_USAGE` 额外输出用法提示与 `--help` 指引，路径/页码等具体错误只输出错误行；
+- 人类可读通道统一净化：移除 ANSI CSI，替换 C0/C1、换行、U+2028/U+2029 为空格；覆盖 `Logger.error/warn/pageError`、crypto warning 的 message/path、`info`/`verify` 文本字段；
+- JSON 与正常摘要保留文档原始值；`info`/`verify` 的 JSON 使用 2 空格缩进，`--text` 的 JSON 使用紧凑序列化；未知异常堆栈不净化。
+
+### 4.6 `info`
+
+`info` 只调用 crypto 的 `inspect` 读取包级摘要；明文包再用 engine 只读打开读取元数据、页数与页尺寸。它不解密、不验签、不渲染页面。同一 `NodeFileByteSource` 先以 `{ kind: 'byte-source', source }` 交给 `inspect`，再以 `{ kind: 'custom', source }` 打开 engine；document 关闭失败只产生 warning，不改变退出码。
+
+行为：
+
+- 加密包不要求凭据，也不自动解密；元数据标记为不可用，但包级信息照常输出并以退出 0 结束；
+- 明文包的文档元数据在 JSON 中缺失字段直接省略，文本输出显示“无”；
+- `inspect` 与 engine 的 warning 都逐条打印，结束时汇总，不改变退出码；
+- 参数/路径错误 1，非法包等包结构错误 2，取消 130。
+
+文本输出按固定顺序：文件、大小、OFD 版本、加密（层数）、用户、签名、完整性；有文档信息时继续输出标题、作者、主题、创建时间、修改时间、创建工具、页数、页面尺寸。页面尺寸只展示前 5 页，超出时追加“完整尺寸见 `--json`”；加密无凭据时追加“元数据不可用（加密文档，需凭据）”。
+
+`--json` 输出固定结构：
 
 ```json
 {
   "command": "info",
-  "input": "/abs/input.ofd",
-  "packageSize": 5226,
-  "ofdVersion": "1.0",
+  "input": "<绝对路径>",
+  "packageSize": 0,
+  "ofdVersion": "<可选>",
   "encrypted": false,
   "layers": [],
   "users": [],
   "signatureCount": 0,
   "integrityPresent": false,
   "document": {
-    "version": "1.0",
-    "pageCount": 2,
-    "pageSizes": [
-      { "widthMm": 210, "heightMm": 297 },
-      { "widthMm": 210, "heightMm": 297 }
-    ],
-    "creationDate": "2021-06-02",
-    "creator": "OFD R&W",
-    "creatorVersion": "1.9.8",
-    "docId": "4228962e12c247e2984e79d8334ed10e"
+    "version": "<OFD 版本>",
+    "pageCount": 0,
+    "pageSizes": [{ "widthMm": 210, "heightMm": 297 }]
   },
   "warnings": []
 }
 ```
 
-- `layers[]` 从外到内，含 `layer/id/encryptDate?/encryptScope?/decryptSeedPath/entriesMapPath/users[]`；`users[]` 为全层按键去重后的视图，`method` 为 `password`/`certificate`/`unknown`。
-- 加密包也退出 0，无需口令；明文包 `encrypted=false`、`layers/users=[]`。加密包无凭据时 `document` 整体省略，但 `layers/users/signatureCount/integrityPresent` 仍按 `inspect` 输出。
-- 输入以 `NodeFileByteSource` 构造 `{ kind:'byte-source', source }` 交给 `inspect`；`inspect` 关闭内部容器但不关闭字节源。明文包随后用同一字节源以 `{ kind:'custom', source }` 调 `OFDDocument.open`，只执行 `getMetadata()`/`getPageInfos()`，在 `finally` 关闭 document，再由 CLI 关闭字节源；`document` 关闭失败只产生 warning，不改变退出码。
-- 顶层 `ofdVersion` 统一口径：有 `document` 时取 `document.version`，否则取 `inspect.ofdVersion`，避免 crypto/engine 两套版本字段冲突；`document.version` 与之相同。
-- 字段缺失时省略，不输出 `null`；文本对缺失的标题/作者/主题/创建时间/修改时间/创建工具显示 `无`。
-- `document` 的 `pageSizes` 按页序，单位 mm；JSON 不截断，文本只做摘要。
-- 包无法读取/结构非法 → 退出 2；`info` 不因未配置根或未验签失败。engine 打开/读取失败按文档级失败映射，不静默吞掉。
-- `inspect` 与 engine 的 warning 都逐条写 stderr（engine warning 可带页号），payload 输出后调用 `flushWarningSummary()`；JSON stdout 不受影响。
+顶层 `ofdVersion` 在有 `document` 时取 `document.version`，否则取 `inspect` 的版本；缺失字段在 JSON 中省略而不输出 `null`。`document` 仅在明文包出现，可含 `title`、`author`、`subject`、`abstract`、`creationDate`、`modDate`、`creator`、`creatorVersion`、`keywords`、`docId`、`customData`；`layers`/`users`/`warnings` 的字段语义由 [`ofdrw-viewer-crypto设计方案.md`](./ofdrw-viewer-crypto设计方案.md) 与 [`packages/ofdrw-viewer-crypto/skills/API.md`](../packages/ofdrw-viewer-crypto/skills/API.md) 持有。
 
-### 14.3 `verify`（一次性完整性 + 签名）
+### 4.7 `verify`
 
-语义：输入以 `{ kind:'byte-source', source: NodeFileByteSource }` 交给 `verifyOfd`；若输入加密，crypto 内部用凭据按需解密（内部临时容器）并关闭，再完成防夹带完整性、全部签名、证书链、印章与时间戳解析；时间戳只解析、不验证。CLI 只关闭调用方字节源，不关闭 crypto 内部容器。
+`verify` 调用一次 `verifyOfd`，同时完成防夹带完整性、全部签名、证书链、印章与时间戳解析；加密包由 crypto 内部解密，CLI 不落盘明文。
 
-文本示例：
+行为：
 
-```text
-验证结果: valid
-完整性: 未保护
-签名 1: s001 valid（SESv4，引用 6/6，证书链 valid，印章 valid）
-  时间戳: parsed-not-verified（已解析，未验证）（2026-10-22T17:51:06.000Z）
-根证书: 已配置 1 / 链 valid
+- `overall` 取 `valid`/`invalid`/`unknown`/`unsupported`/`not-applicable`；时间戳只解析、不参与聚合；
+- 只有 `overall=valid` 退出 0；其余状态（含 `unknown`）退出 5；
+- 存在签名或完整性保护但未配置 `--root` 时，证书链状态为 `unknown`，签名/完整性状态随之不可判定，`overall` 不会为 `valid`；这是预期安全状态，不是验证通过。需要可信结论时必须配置正确根证书；
+- 签名与完整性都不存在时 `overall=not-applicable`，退出 5；
+- `--json` 即使结果为 `invalid`/`unknown` 也先输出完整报告，再返回 5；
+- 报告中的 `warnings` 逐条打印；`--root` 文件不存在/不可读退出 1，内容无法转换为证书时按 crypto 错误映射退出 5；
+- 口令错误、用户不匹配、私钥错误 → 4；包结构/源超限 → 2；验证入口无法产出报告 → 5；取消 → 130；`--sm2-user-id` 只影响签名数学验证；
+
+文本输出按固定顺序：验证结果、解密摘要（如已解密）、完整性、逐签名结果（可含时间戳行）、根证书行。根证书行使用命中的 `trustAnchor` 指纹去重计数；没有命中但配置了根时，回退到本次配置的去重路径数（至少显示 1）；未配置时显示“未配置”。多签名与完整性的链状态按“签名顺序 + 完整性”去重后以 `/` 连接，不做状态降级；没有链状态子项时显示 `unknown`。
+
+`--json` 输出固定外壳（示例省略 `report` 其余字段）：
+
+```json
+{ "command": "verify", "input": "<绝对路径>", "report": { "overall": "valid" } }
 ```
 
-`verify --json` 固定结构：
+`report` 是 crypto 的 `VerificationReport`，字段包括 `overall`、`package`、可选 `decryption`、`integrity`（未保护为 `null`）、`signatures`、`rootsConfigured`、`warnings`、`startedAt`、`durationMs`；字段定义与语义见 [`ofdrw-viewer-crypto设计方案.md`](./ofdrw-viewer-crypto设计方案.md) 与 [`packages/ofdrw-viewer-crypto/skills/API.md`](../packages/ofdrw-viewer-crypto/skills/API.md)。
 
-```ts
-interface CliVerifyJson {
-  readonly command: 'verify';
-  readonly input: string;            // 绝对路径
-  readonly report: VerificationReport;
-}
-```
-
-`VerificationReport` 关键字段：`overall`、`package`、`decryption?`、`integrity`（未保护为 `null`）、`signatures[]`、`rootsConfigured`、`warnings[]`、`startedAt`、`durationMs`。详细子状态见 crypto 设计 §3.6/§5.7。
-
-行为约定：
-
-- `overall` 取 `valid`/`invalid`/`unknown`/`unsupported`/`not-applicable`；时间戳不参与聚合。
-- 只有 `overall=valid` 退出 0；其余（含 `unknown`）退出 5。
-- **未配置 `--root` 时链状态为 `unknown`，这是预期安全状态，不是验证通过**；需要可信结论时必须配置正确根证书。
-- `--root` 可重复，支持 PEM/DER/CER/Base64；CLI 读取每个文件的原始字节后调用 crypto 的 `certificatesToDer` 转为逐张 DER，再传给只接收 DER 的 `verifyOfd`。同一根以多条路径传入时，文本按实际命中的 `trustAnchor` 指纹去重计数。
-- 根证书行固定为 `根证书: 未配置 / 链 <status>` 或 `根证书: 已配置 N / 链 <status>`；多签名/完整性链状态按“签名顺序 + 完整性”去重聚合（如 `valid/incomplete`）。
-- `--sm2-user-id` 覆盖默认 SM2 userId `1234567812345678`；仅影响签名数学验证。
-- `--json` 即使 `invalid`/`unknown` 也先输出完整报告，再返回 5。
-- 签名/完整性均不存在时 `overall=not-applicable`，退出 5。
-- 口令错误/用户不匹配/私钥错误 → 退出 4；入口无法产出报告时按包结构/凭据/验证入口分别归 2/4/5。
-
-### 14.4 加密文档转图片
+### 4.8 加密文档转图片
 
 ```bash
 ofdrw-viewer-cli encrypted.ofd -o out --password '***'
@@ -952,60 +301,211 @@ ofdrw-viewer-cli encrypted.ofd -o out --key encrypt.key.pem
 ofdrw-viewer-cli encrypted.ofd -o out --key encrypt.key.pem --key-passphrase '***'
 ```
 
-- 凭据：`--password`（口令用户）或 `--key`（SM2 私钥，PEM/DER/PKCS#8）；可选用 `--user` 指定 `UserInfo@UserName`；`--key-passphrase` 仅用于加密 PKCS#8。
-- 流程：`NodeFileByteSource` → `{ kind:'byte-source', source }` → `openDecryptingContainer` → 明文 `VirtualContainer` → `OFDDocument.open({ container })` → 既有页面导出；容器由 CLI 关闭，明文不落盘。
-- 字节源由 CLI 拥有，成功、异常、取消/SIGINT 后关闭；crypto 不关闭调用方字节源。明文包时 `openDecryptingContainer` 返回 source-backed 容器，仍由 CLI 关闭。
-- 未提供凭据/凭据错误：不进入渲染、不产出页面，退出 4。
-- 明文文档不加凭据时行为、输出命名、页码、DPI、`--text`、`--font-dir` 完全兼容旧版；字体来源除外：默认自动发现系统字体（可用 `--no-system-fonts` 恢复旧版渲染基线）。
-- 转图片不接受 `--root`/`--sm2-user-id`/`--json`；需要验签请使用 `verify`。
-- 页面级失败仍退出 3；文档/包错误 2；SIGINT 130。
+- 凭据：`--password`（口令用户）或 `--key`（SM2 私钥，PEM/DER/PKCS#8）；可选 `--user` 指定 `UserInfo@UserName`；`--key-passphrase` 只用于加密 PKCS#8；
+- 流程与“打开文档与解密容器”一致：字节源 → `openDecryptingContainer` → 明文容器 → `OFDDocument.open` → 逐页导出；容器由 CLI 关闭，明文不落盘；
+- 未提供凭据或凭据错误：不进入渲染、不产出页面，退出 4；
+- 明文文档带凭据：产生 `W_CRYPTO_CREDENTIAL_IGNORED`，转图片行为与不带凭据一致，退出码按页面结果计算；`verify` 则按报告 `overall` 计算；
+- 转图片不接受 `--root`、`--sm2-user-id`、`--json`；需要验签请使用 `verify`；
+- 页面级失败退出 3，文档/包错误 2，SIGINT 130；
+- 不提供独立 `decrypt`；明文只存在于内存中的解密容器，不落盘。
 
-### 14.5 JSON 与文本/终端输出
+## 5. 空间文本导出（`--text`）
 
-- `info`/`verify` 的 `--json` 都写 stdout，包含固定 `command`/`input`；文本模式写 stdout；warning/error 写 stderr；不混合。
-- JSON 保留文档原始值，便于机读；文本/错误/warning 属于人类可读通道。
-- 人类可读通道统一净化：移除 ANSI CSI，替换换行/C0/C1/U+2028/U+2029 为空格，覆盖 info UserName、verify Signature ID/parseError、crypto warning message/path、Logger.error/warn/pageError，防止恶意 OFD 伪造输出行；未知异常的堆栈不在净化范围。
-- `Logger.info` 不净化，因为 JSON 与正常摘要必须保留原值。
-- warning 逐条输出，结束时按 code 汇总；汇总不改变退出码。
+- 数据来源：`page.getTextContent({ dpi, includeChars: false })`；CLI 只消费 `items` 的 `text` 与 `rect`；
+- 输出为扁平 JSON 数组，每项恰好五个字段：
+  - `text`：engine 已过滤 CR/LF，不保留换行；普通空格等空白保留，CLI 原样透传；
+  - `x`/`y`：包围盒左上角坐标，px；
+  - `w`/`h`：包围盒宽高，px；
+- 坐标直接取 `rect` 的小数值，不做取整；保持 `items` 原始顺序；
+- 跳过 `text` 为空的项；空页输出 `[]`；JSON 使用紧凑序列化；
+- 文本与图片共用同一页、同一 DPI、同一坐标系，因此可直接叠加；
+- 处理顺序为先文本后图片；文本导出 catch 中的 `OFD_RENDERER_UNSUPPORTED`（映射 `CLI_TEXT_UNSUPPORTED`）及其他文档级 `CliError` 按文档级失败退出 2，不按页级失败处理；其余文本读取失败只记该页失败，文本 JSON 写盘失败（`CLI_TEXT_WRITE_FAILED`）也按页级失败（退出 3）处理，二者都继续导出同页图片与后续页；图片写盘失败（`CLI_IMAGE_WRITE_FAILED`）保留已写出的 JSON 并继续后续页；
+- 进入逐页流程前先检查首个选中页是否提供 `getTextContent`；缺失时按文档级失败退出 2（`CLI_TEXT_UNSUPPORTED`），不静默只导出图片；`getTextContent` 抛 `OFD_RENDERER_UNSUPPORTED` 时同样映射为该错误；
+- engine 对文本收集有默认上限（20,000 项、500,000 字符）：超限停止收集并产生 warning，CLI 只透传 warning，JSON 不含截断标记；
+- 缺字体时 engine 会跳过对应文本项并产生 `W_FONT_MISSING`，其余文本项照常输出。
 
-### 14.6 退出码与错误边界
+文本项模型、坐标与可见性规则见 [`text-content-api.md`](./text-content-api.md)。
 
-| 码 | 语义 | 适用场景 |
+## 6. 渲染与写盘流程
+
+### 6.1 打开文档与解密容器
+
+无凭据：
+
+1. 用 `NodeFileByteSource` 以 `fs.promises.open(..., 'r')` 打开输入，随机读取，不整包 `readFile`；
+2. 以 `{ kind: 'custom', source }` 交给 `OFDDocument.open`，注入 `createCanvas`、`encodeImage`、`imageDecoders` 与 `onWarning`，字体非空时再注入 `supplementaryFonts`；
+3. 加密包由 engine 抛 `OFD_ENCRYPTED`，CLI 转为 `CLI_CREDENTIALS_REQUIRED`，不进入渲染，退出 4。
+
+有凭据：
+
+1. `openCryptoSource` 重新打开输入文件，组装 `{ kind: 'byte-source', source }`；
+2. `openDecryptingContainer({ source, credentials, signal })` 在内存中解密，得到明文 `VirtualContainer`；
+3. crypto 返回的 warning 逐条打印；明文包带凭据时产生 `W_CRYPTO_CREDENTIAL_IGNORED`，行为与不带凭据一致；
+4. 明文容器交给 `OFDDocument.open({ container, ... })`；engine 只借用容器，不关闭它。
+
+资源所有权与关闭顺序：
+
+- 无凭据路径：engine 基于 `custom` 源创建并拥有容器，`document.close()` 会关闭容器与字节源；CLI 仍对 `NodeFileByteSource` 做幂等兜底关闭；
+- 有凭据路径：解密容器由 CLI 创建并拥有，engine 借用；按 `document → container → byteSource` 顺序关闭；
+- 成功、异常、取消与 SIGINT 都走同一 `finally`；
+- 关闭失败只产生 warning（`W_DOC_CLOSE_FAILED`、`W_CONTAINER_CLOSE_FAILED`、`W_SOURCE_CLOSE_FAILED`），不覆盖主流程结果。
+
+`--text` 时在打开成功后、逐页导出前检查文本 API；未加 `--text` 不检查。
+
+### 6.2 逐页导出
+
+1. 打开成功后用 `document.pageCount` 校验页码范围，得到升序页号列表；
+2. 逐页串行执行：
+   - `document.getPage(pageNumber - 1)`；失败计页级失败并继续；
+   - 用 `page.getViewport({ dpi })` 计算 `ceil(width) × ceil(height)`，超过 engine 默认 `maxCanvasPixels`（64,000,000）时抛 `CLI_PAGE_TOO_LARGE`，按文档级失败退出 2，不分配 Canvas、不写该页文件；
+   - `--text` 时先读取文本并原子写 JSON；`OFD_RENDERER_UNSUPPORTED`（映射 `CLI_TEXT_UNSUPPORTED`）及其他文档级 `CliError` 按文档级失败退出 2，不按页级失败处理；其余文本读取失败或写盘失败（`CLI_TEXT_WRITE_FAILED`）都只记页级失败（退出 3），继续尝试同页图片与后续页；
+   - 调用 `page.exportImage({ dpi, format, quality: 0.9, background: '#ffffff', signal })`，再原子写图片；图片写盘失败只记页级失败；
+3. 页面成功 = 图片写出，且（`--text` 时）JSON 也写出；页级失败保留已成功的那一份产物并继续后续页；
+4. 页级失败不改变后续页处理；全部页失败仍返回 3；
+5. 取消信号在每页开始与文本写完后检查；图片完成后进入下一页时再检查；命中后停止后续页，已完成页保留，退出 130。
+
+engine 负责整页渲染、尺寸取整、白底与格式编码；CLI 只负责页选择、命名、落盘、进度与汇总。
+
+### 6.3 Canvas、编码与图片解码
+
+- `canvas.ts` 普通 Node 下按包名加载 `@napi-rs/canvas`；SEA 下从 `OFDRW_CANVAS_DIR` 指向的资产目录加载，并依赖 `NAPI_RS_NATIVE_LIBRARY_PATH` 指向平台 `.node`；模块加载结果进程内缓存；
+- `createCanvasLike(width, height)` 适配 engine 的 `Canvas2DLike`；`encodeCanvasImage` 按格式调用 `toBuffer`：PNG 忽略质量，JPEG/WebP 使用 CLI 固定的 0.9；
+- `image-decoder.ts` 用 `@napi-rs/canvas.loadImage` 提供 PNG/JPEG/WebP 解码插件，注入 `imageDecoders`；
+- engine 对 GIF/JBIG2/TIFF 有内置解码器，宿主未注入时按需加载；Node 侧没有浏览器原生解码能力，不能依赖 `createImageBitmap`；
+- 图片解码失败由 engine 产生对应 warning（`W_IMAGE_DECODE` 或 `W_JBIG2_DECODE`）并跳过该图，不中断整页。
+
+### 6.4 字体集成
+
+- `--font-dir` 的字体排在系统字体之前，合并时按 realpath 去重；
+- CLI 通过 `loadFontInputs()` 在转换开始前读取全部字体字节，以 `supplementaryFonts` 注入 engine；engine 不读路径、不读 URL、不联网；
+- 系统字体默认自动发现，`--no-system-fonts` 关闭；发现算法、白名单目录、限额与安全边界由 [`渲染字体缺省方案设计.md`](./渲染字体缺省方案设计.md) 持有；
+- 字体字节读取失败产生 `W_FONT_MISSING` 并跳过该文件，其余字体照常注入；
+- 缺字体、缺字形分别由 engine 产生 `W_FONT_MISSING`、`W_GLYPH_MISSING`；CLI 只透传，有页号时附页号；
+- 单个字体超过 engine 默认 `maxFontBytes`（64 MiB）时被忽略并产生 warning，CLI 不做二次校验。
+
+### 6.5 取消与原子写
+
+- 主流程注册一次 `SIGINT`，首次触发时中止 `AbortController`；信号传入 engine 渲染/文本读取与 crypto 解密/验证；
+- 取消后不再开始新页；当前页可能完成也可能中断；已写出的文件保留，不产生半成品；
+- 所有输出都先写同目录唯一临时文件（`.名字.tmp-<pid>-<uuid>`），`fsync` 后 `rename` 到目标；任一步失败删除临时文件；
+- SIGINT 或取消返回 130；`verify` 取消不产出半份报告；
+- 输出目录在读取与渲染前创建；解析阶段的用法错误（如 `--pages` 区间过大、`--dpi` 非法）发生在创建目录之前，凭据构建与页码越界校验发生在创建目录之后。
+
+## 7. 自包含可执行文件与多平台分发
+
+### 7.1 选型
+
+采用 Node SEA（Single Executable Application）：每个产物内嵌 Node 运行时、CLI/engine/crypto JS 与当前平台 `@napi-rs/canvas` 原生模块。
+
+- 运行 CLI 的终端用户不需要安装 Node；包声明的运行时下限仍是 Node ≥ 22；
+- SEA 构建使用 `node --build-sea`，构建机要求 Node ≥ 25.5，推荐 26.10；
+- 一平台一架构一产物，不做 universal binary，不做跨平台交叉构建；
+- 不使用 Bun/Deno 运行时，避免 Skia/N-API 与字体行为差异。
+
+### 7.2 打包流程
+
+1. 生成 SEA 启动包装：先 `prepareSeaAssets()`，失败时打印 `CLI_SEA_EXTRACT_FAILED` 并退出 2，成功后动态导入 `bin.ts`；
+2. 用 esbuild 把包装与 CLI/engine/crypto 打成单个 ESM 文件（`format: 'esm'`、`platform: 'node'`、`target: 'node22'`），`@napi-rs/canvas` 保持 external；
+3. 收集 `@napi-rs/canvas` 的 JS 与 `package.json` 到 `assets/canvas/`，收集当前平台原生包的 `.node` 与 `package.json` 到 `assets/native/`；
+4. 生成 `canvas-manifest.json`：`schemaVersion`、CLI 版本、平台、架构、canvas 版本、原生包名与版本、`.node` 文件名、全部资产摘要（SHA-256 前 16 位十六进制）；
+5. 写 `sea-config.json`（`mainFormat: 'module'`、关闭实验 warning、内嵌资产），运行 `node --build-sea`；Unix 设置可执行位；
+6. 在隔离临时目录执行冷启动、二次启动与真实 OFD 图片冒烟（文本路径由验收用例单独覆盖）；
+7. `package:sea` 把可执行文件、根目录 `README.md` 与 `LICENSE` 打包为 `.tar.gz`（Windows 为 `.zip`），并写 `<归档>.sha256`；不包含 `skills/`、源码或 `.node`。
+
+### 7.3 SEA 启动时的资产解压
+
+普通 Node 下 `prepareSeaAssets()` 直接返回；SEA 下：
+
+- 启动包装在顶层引用 `import.meta.url`，为空时输出 `CLI_SEA_ENTRY_URL` 并退出 2，保证 `createRequire(import.meta.url)` 可用；
+- 读取并校验内嵌清单：格式版本、平台/架构与当前进程一致、资产键非空且包含清单声明的 `.node`、路径段安全；
+- 平台不匹配时提示下载对应平台产物并退出 2；
+- 缓存根：POSIX 为 `<tmpdir>/ofdrw-viewer-cli-u<uid>`，Windows 为 `<tmpdir>/ofdrw-viewer-cli`；
+- 缓存目录：`<缓存根>/<u<uid>|win>-<version>-<platform>-<arch>-<digest>/`；
+- 解压先写 `<缓存根>/.tmp-<digest>-<pid>-<随机后缀>`，校验全部资产摘要后 `rename` 到缓存目录；并发竞争时若目标已完整则复用，否则 fail-closed；
+- `.complete` 文件内容为资产摘要；复用前校验目录/文件类型、非符号链接、POSIX 属主为当前 uid、目录 0700、文件 0600，并按构建脚本相同算法重算摘要；
+- 任一校验失败抛 `SeaAssetError`，启动包装输出 `CLI_SEA_EXTRACT_FAILED` 并退出 2，不加载未验证文件；
+- 成功后设置 `OFDRW_CANVAS_DIR`、`NAPI_RS_NATIVE_LIBRARY_PATH` 与 `OFDRW_CLI_VERSION`，供 Canvas 加载与版本输出使用；
+- 缓存根名可预测：其他用户预建同名根会因属主/权限校验而 fail-closed，只影响该用户启动，不加载未验证资产。
+
+### 7.4 平台矩阵与产物
+
+构建脚本与打包脚本支持以下目标。发布流水线当前在 5 个原生 runner 上构建 Linux/macOS/Windows x64 与 Linux/macOS ARM64；Windows ARM64 产物需在原生 ARM64 runner 上单独构建，不能用 x64 冒充：
+
+| 目标 | 平台-架构 | 归档后缀 |
 | --- | --- | --- |
-| 0 | 成功 | 转图片全部成功；info 查询成功；verify `overall=valid` |
-| 1 | 用法/参数错误 | 未知参数、缺少输入、`decrypt`、info 带凭据、参数组合冲突 |
-| 2 | 文档级失败 | 非 OFD、包损坏、无法打开、SEA 资产失败 |
-| 3 | 页级失败 | 转图片至少一页失败；全部页失败仍为 3 |
-| 4 | 加密/凭据失败 | 缺少凭据、用户名不存在、口令/私钥错误、解密失败 |
-| 5 | 验证未通过 | verify 的 invalid/unknown/unsupported/not-applicable |
-| 130 | 用户中断 | SIGINT/AbortSignal |
+| `linux-x64-gnu` | Linux x86_64 glibc | `.tar.gz` |
+| `linux-arm64-gnu` | Linux ARM64 glibc | `.tar.gz` |
+| `darwin-x64` | macOS Intel | `.tar.gz` |
+| `darwin-arm64` | macOS Apple Silicon | `.tar.gz` |
+| `win32-x64` | Windows x64 | `.zip` |
+| `win32-arm64` | Windows ARM64 | `.zip` |
 
-- 错误格式 `错误[CODE]：message`；warning 格式 `警告 [W_CODE] 第 N 页：message`。
-- 输出不得包含口令、私钥、PEM、`EncryptedWK`；错误消息不回显凭据。
-- 加密转换的包/解密失败为 4，文档结构为 2，页级为 3，SIGINT 为 130。
+- 归档命名：`ofdrw-viewer-cli-<version>-<target>.tar.gz|.zip`，同名 `.sha256` 记录归档摘要；
+- Linux 只支持 glibc；不提供 musl/Alpine、LoongArch、RISC-V、32 位 ARM/ARMv7/armhf；
+- 归档内只放可执行文件、`README.md`、`LICENSE`。
 
-### 14.7 安全与实现边界
+构建机 Node 版本、本地构建步骤与产物命名以 [`packages/ofdrw-viewer-cli/docs/BUILDING.md`](../packages/ofdrw-viewer-cli/docs/BUILDING.md) 为准；发布流水线的平台范围以仓库内的发布工作流为准（当前为 5 个原生 runner）。
 
-- CLI 只消费 crypto 公共 API，不重复实现 SM2/SM3/SM4、ASN.1、证书链或解密逻辑。
-- OFD 输入统一用 `NodeFileByteSource` 随机读，以 `byte-source` 交给 crypto，不对输入包调用 `readFile` 整包；私钥/根证书/字体等小文件可按原方式读取。
-- crypto 先按字节源 `size` 预检 `maxSourceBytes`（默认 256 MiB），不读取内容；超限按文档级失败退出 2。
-- 取消经 `AbortSignal` 传入每次字节读取，命中后退出 130；`verify` 的取消不产生半份报告。
-- 解密只在内存中发生，不写明文临时文件；`verify` 内部的临时容器不暴露给用户。
-- `NodeFileByteSource` 由 CLI 拥有并在成功/失败/取消/SIGINT 后关闭；crypto 不关闭调用方字节源；engine 直接使用 custom 源时由 CLI 幂等兜底关闭。
-- 不自动下载根证书/字体/二进制；根证书由用户通过 `--root` 提供。
-- 仅对可信 OFD 运行；超大页面/高 DPI 可能占用大量内存。
-- `--password`/`--key-passphrase` 可能进入 shell 历史或进程列表，帮助与文档明确提示，不在日志中打印。
+### 7.5 当前限制
 
-### 14.8 实现与测试映射
+- macOS 不签名、不公证，首次运行可能被 Gatekeeper 隔离；Windows 未签名，可能触发 SmartScreen；
+- 首次启动需把原生资产解压到系统临时目录，要求临时目录可写且磁盘空间充足；极简容器未提供可写临时目录时无法启动；
+- 可预测缓存根可能被其他用户预建，导致该用户启动 fail-closed（退出 2），不影响已存在缓存；
+- 产物体积包含 Node 运行时与原生模块，分发体积较大；安全更新只能重新构建并发布；
+- 不提供自动更新或后台下载。
 
-| 能力 | 实现 | 测试 |
+## 8. 错误与 warning 呈现
+
+- 错误格式：`错误[CODE]：message`，写 stderr；`CODE` 保留 engine/crypto 原始错误码，CLI 自身错误使用 `CLI_*`；
+- page 失败格式：`页面 <page>/<total> 失败 [CODE]：message`；
+- warning 格式：`警告 [W_CODE][ 第 N 页]：message`；结束时按 code 汇总；
+- warning 不改变退出码，只影响诊断；
+- CLI 自身产生的 warning：`W_DPI_HIGH`、`W_FONT_DIR_EMPTY`、`W_FONT_MISSING`（字体字节读取失败）、`W_SOURCE_CLOSE_FAILED`、`W_DOC_CLOSE_FAILED`、`W_CONTAINER_CLOSE_FAILED`；
+- engine/crypto warning 的 code 与消息透传（人类可读通道净化后输出）；warning 码集合与注册表由 [`CONTRACTS.md`](./CONTRACTS.md) 与各包 `skills/API.md` 持有，CLI 不新增跨包码；
+- 未知异常归 `CLI_UNEXPECTED` 并打印堆栈；用法错误额外打印用法行与 `--help` 指引；
+- 错误、warning 与帮助文本不回显口令、私钥、PEM、`EncryptedWK` 或凭据文件内容；
+- 人类可读通道净化规则见“控制台输出”；JSON 保留原始值。
+
+## 9. 验证方式
+
+CLI 特有断言（完整矩阵见 [`测试方案.md`](./测试方案.md)）：
+
+- 参数与分派：默认值、子命令参数互斥、`decrypt` 拒绝、`--help`/`-V` 优先、`version` 输出、用法错误中文提示且不回显敏感值；
+- 页码：单页/区间/重复/乱序/空白、单段与合计 100000 上限、越界、文档页数超限；
+- 命名与目录：默认 `cwd/<stem>/`、补零宽度、`jpeg → .jpg`、覆盖写、目录创建失败；
+- 字体：`--font-dir` 递归/过滤/去重/空目录、系统白名单与限额、符号链接与白名单逃逸、合并顺序与日志、`--no-system-fonts`；
+- 文本：`text/x/y/w/h`、`items` 顺序、空文本过滤、空页 `[]`、`OFD_RENDERER_UNSUPPORTED` 映射 `CLI_TEXT_UNSUPPORTED`、其他文档级 `CliError` 均退出 2 且不按页级失败处理；其余文本读取失败不阻止图片（页失败退出 3）、文本写盘失败不阻止图片（页失败退出 3）、图片写盘失败保留文本（退出 3）、文本 API 缺失退出 2；
+- 原子写与取消：失败/取消无临时文件、已写文件保留、SIGINT 130；
+- `info`：加密包无凭据退出 0 且无文档块、明文元数据与页尺寸、文本前 5 页摘要、warning 不改变退出码；
+- `verify`：无根 `unknown` 退出 5、有效根 `valid` 退出 0、篡改/夹带 `invalid` 退出 5、缺失凭据 4、`not-applicable` 5、根行计数与链状态去重、时间戳只解析；
+- 终端安全：ANSI/C0/C1/U+2028/U+2029 清理、JSON 原值、crypto warning path 清理；
+- 性能：`dense-text-perf.ofd` 用例检查每页耗时在宽松超时内、文本顺序与 JSON 体积稳定，没有独立性能门禁；
+- SEA：缓存命名与权限、符号链接/属主/摘要负向校验、`CLI_SEA_EXTRACT_FAILED` 退出 2、PATH 不含 Node 时 `--version`/`--help`/图片/文本冒烟。
+
+实现与测试映射（路径以 CLI 包根为基准）：
+
+| 能力 | 实现 | 主要测试 |
 | --- | --- | --- |
-| 子命令/参数/退出码 | `src/cli.ts` | `test/unit/cli.test.ts`、`test/unit/crypto-cli.test.ts` |
-| info 文本/JSON/明文元数据 | `src/info.ts` | `test/unit/info-document.test.ts`、`test/unit/crypto-cli.test.ts`、`test/verification/cli-info-verify.test.ts`、`test/verification/cli-info-document.verify.test.ts`、`test/acceptance/crypto.acceptance.ts` |
-| verify 文本/JSON | `src/verify.ts` | 同上 + `test/acceptance/crypto.acceptance.ts` |
-| 凭据/根证书读取 | `src/credentials.ts` | `test/unit/crypto-cli.test.ts` |
-| warning 呈现/净化 | `src/crypto-output.ts`、`src/log.ts`、`src/safe-text.ts` | `test/unit/stderr-safety.test.ts` |
-| 加密转图片 | `src/convert.ts` | `test/verification/cli-convert.test.ts`、acceptance |
-| 黑盒/SEA | `dist/bin.js`、`dist/sea/...` | `test/acceptance/*.acceptance.ts` |
+| 参数、子命令、退出码、进度 | `src/cli.ts` | `test/unit/cli.test.ts`、`test/unit/crypto-cli.test.ts` |
+| 转换流程、页级/文档级失败、取消 | `src/convert.ts` | `test/unit/convert.test.ts`、`test/e2e/cli.test.ts` |
+| 命名、目录、原子写 | `src/output.ts` | `test/unit/output.test.ts` |
+| 页码范围 | `src/pages.ts` | `test/unit/cli.test.ts` |
+| 文本 JSON | `src/text.ts` | `test/unit/text.test.ts`、`test/e2e/cli.test.ts` |
+| 字体扫描与系统发现 | `src/fonts.ts` | `test/unit/fonts.test.ts` |
+| `info` | `src/info.ts` | `test/unit/info-document.test.ts`、`test/unit/crypto-cli.test.ts` |
+| `verify` | `src/verify.ts` | `test/unit/crypto-cli.test.ts`、`test/verification/` |
+| 凭据、根证书、输入源 | `src/credentials.ts`、`src/node-file-source.ts` | `test/unit/byte-source.test.ts`、`test/unit/node-file-source.test.ts` |
+| warning/净化 | `src/log.ts`、`src/safe-text.ts`、`src/crypto-output.ts` | `test/unit/log.test.ts`、`test/unit/stderr-safety.test.ts` |
+| SEA 资产与缓存 | `src/sea.ts`、`scripts/build-sea.mjs` | `test/unit/sea.test.ts`、`test/acceptance/sea.acceptance.ts` |
+| 黑盒验收 | `dist/bin.js`、`dist/sea/` | `test/acceptance/*.acceptance.ts` |
 
-验证命令：`pnpm -C packages/ofdrw-viewer-cli typecheck`、`test`、`build`、`test:acceptance`；acceptance 覆盖 5 文件 82 例（含 SEA）。
+验证命令：
+
+```bash
+pnpm -C packages/ofdrw-viewer-cli typecheck
+pnpm -C packages/ofdrw-viewer-cli test
+pnpm -C packages/ofdrw-viewer-cli build
+pnpm -C packages/ofdrw-viewer-cli test:acceptance
+```
+
+`test:acceptance` 会先构建普通 CLI 与 SEA，再以真实子进程运行图片、文本、加密、`info`/`verify` 与 SEA 用例；SEA 用例在 `PATH` 不含 Node 的隔离环境中执行。
