@@ -25,9 +25,11 @@ on:
         type: boolean
         default: false
 
-# 仅创建 Release 需要写权限；本流程不推送代码。
+# contents 写权限用于创建 Release；pages/id-token 用于把本次 tag 的演示站覆盖到 GitHub Pages。
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 env:
   NODE_VERSION: '26.10.0'
@@ -327,9 +329,92 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  site:
+    name: 构建演示站并打包
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 安装 Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      # 演示站直接引用 UI 源码，而 UI 源码依赖 engine/crypto 的 dist，必须按拓扑顺序构建。
+      - name: 构建依赖包
+        run: |
+          pnpm --filter @ofdrw/ofdrw-viewer-engine build
+          pnpm --filter @ofdrw/ofdrw-viewer-crypto build
+          pnpm --filter @ofdrw/ofdrw-viewer-ui build
+
+      # 构建两套产物：Release 附件用根路径（解压即托管），Pages 需要 /<repo>/ 子路径。
+      - name: 构建演示站（根路径，用于 Release 附件）
+        env:
+          BASE_PATH: /
+        run: pnpm -C site build
+
+      - name: 打包演示站附件
+        run: node .github/scripts/package-site-assets.mjs
+
+      - name: 构建演示站（Pages 子路径）
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REPOSITORY" == *.github.io ]]; then
+            base=/
+          else
+            base="/${GITHUB_REPOSITORY#*/}/"
+          fi
+          echo "Pages 路径：$base"
+          BASE_PATH="$base" pnpm -C site build
+
+      - name: 上传站点产物（Release 附件）
+        uses: actions/upload-artifact@v7
+        with:
+          name: site
+          path: release-assets/site-*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: 配置 Pages
+        uses: actions/configure-pages@v6
+
+      - name: 上传站点产物（Pages）
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site-dist
+
+  deploy-pages:
+    name: 部署演示站到 GitHub Pages
+    needs: [verify, site]
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 部署
+        id: deployment
+        uses: actions/deploy-pages@v5
+
   release:
     name: 创建 GitHub Release
-    needs: [verify, publish-npm, build-cli, cdn]
+    needs: [verify, publish-npm, build-cli, cdn, site]
     if: startsWith(github.ref, 'refs/tags/v') || inputs.publish == true
     runs-on: ubuntu-24.04
     timeout-minutes: 20

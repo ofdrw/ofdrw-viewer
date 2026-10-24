@@ -107,6 +107,22 @@ function resolveRepository() {
 }
 
 /**
+ * 推导 GitHub Pages 演示站地址。
+ *
+ * @param {string | null} repository GitHub 仓库标识 `owner/repo`
+ * @returns {string | null} 演示站根地址（以 `/` 结尾）；仓库为 `<owner>.github.io` 时解析为其根域名，解析失败时返回 null
+ */
+function resolvePagesUrl(repository) {
+  if (!repository) return null;
+  const [owner, repo] = repository.split('/');
+  if (!owner || !repo) return null;
+  if (repo.toLowerCase() === `${owner.toLowerCase()}.github.io`) {
+    return `https://${repo}/`;
+  }
+  return `https://${owner}.github.io/${repo}/`;
+}
+
+/**
  * 查找当前标签之前最近的一个标签。
  *
  * @param {string} tag 当前发布标签
@@ -239,6 +255,17 @@ function renderNotes({ tag, version, previousTag, commits, packages, repository 
     `\`cdn-${version}.zip\` 内含 engine 与 crypto 的 IIFE 产物，请按 engine → crypto 的顺序加载。`,
     '',
   );
+
+  lines.push('### 在线演示站', '');
+  lines.push(
+    `\`site-${version}.zip\` 是可直接静态托管的演示站（按根路径构建），解压后把 \`site-${version}/\` ` +
+      '目录作为站点根目录交给任意静态服务器即可。',
+    '',
+  );
+  const siteUrl = resolvePagesUrl(repository);
+  if (siteUrl) {
+    lines.push(`线上演示站已同步更新：<${siteUrl}>`, '');
+  }
 
   lines.push('## 校验', '');
   lines.push('下载 `SHA256SUMS` 后，在同一目录执行：', '');

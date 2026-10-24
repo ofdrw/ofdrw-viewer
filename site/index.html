@@ -22,7 +22,10 @@
   <body>
     <ofd-viewer id="viewer" theme="light" locale="zh-CN"></ofd-viewer>
 
-    <div class="dock" role="toolbar" aria-label="演示控件">
+    <!-- 鼠标感应区：靠近视口底部时唤出演示控件，脚本就绪后开启，见 style.css。 -->
+    <div class="dock-hover-zone" id="dock-hover-zone"></div>
+
+    <div class="dock" id="dock" role="toolbar" aria-label="演示控件">
       <label class="file-button">
         <input id="file" type="file" accept=".ofd,application/ofd" />
         打开本地 OFD

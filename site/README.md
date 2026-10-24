@@ -22,6 +22,27 @@ https://ofdrw.github.io/ofdrw-viewer/?file=https%3A%2F%2Fexample.com%2Fdemo.ofd
 本目录是独立的 pnpm workspace 包 `@ofdrw/ofdrw-viewer-site`，不属于 UI 包：它直接引用
 `packages/ofdrw-viewer-ui/src` 源码构建，不经过 UI 包的 `dist`。
 
+## 底部演示控件的隐藏
+
+页面底部的悬浮控件（打开本地 OFD、示例、主题、语言、版本号、GitHub）默认**自动隐藏**：
+
+- 进入页面时（未使用 `?dock=off`）先完整显示 **2 秒**再淡出，提示底部有这些入口；
+- 鼠标靠近视口底部（进入 72px 高的感应区）或悬停在控件上时淡入，移出后延时 400ms 淡出；
+- 手机等触摸设备轻触底部唤出，操作控件期间保持可见；
+- 用键盘 Tab 聚焦到控件内时保持可见。
+
+需要彻底隐藏（适合嵌入 iframe、截图、只读分享等场景），使用地址参数：
+
+```text
+https://ofdrw.github.io/ofdrw-viewer/?dock=off&file=samples/doc1File.ofd
+```
+
+- `?dock=off`（等价写法：`ui=0`、`dock=0`、`dock=hidden`）：控件完全隐藏，仅保留阅读器内置工具栏。
+- `?dock=on` / `?dock=auto`：恢复自动隐藏，同时清除已记住的隐藏偏好。
+- 隐藏选择会写入 `sessionStorage`，之后去掉参数刷新仍然保持隐藏，关闭浏览器标签页后清除；
+  带 `dock` 参数打开时会同步写回地址栏，便于复制分享。
+- 状态提示（toast）不受该参数影响。
+
 ## 本地开发
 
 演示站直接引用 UI 源码，而源码依赖 engine/crypto 的 `dist`，因此首次运行前需要按拓扑顺序构建依赖包：
@@ -63,8 +84,8 @@ BASE_PATH=/ofdrw-viewer/ pnpm -C site build
 
 ```
 site/
-├── index.html        # 页面骨架：顶栏、阅读器、状态栏
-├── main.ts           # 交互逻辑：打开文件/样例、主题/语言、页码与版本
+├── index.html        # 页面骨架：阅读器、底部演示控件与状态提示
+├── main.ts           # 交互逻辑：打开文件/样例、主题/语言、版本与控件自动隐藏
 ├── style.css         # 页面外壳样式（不覆盖阅读器内部样式）
 ├── vite.config.ts    # base、端口与构建输出
 ├── vite-env.d.ts     # Vite 环境类型
