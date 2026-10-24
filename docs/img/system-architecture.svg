@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1340" height="540" viewBox="0 0 1340 540" role="img" aria-labelledby="arch-title arch-desc" font-family="'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <title id="arch-title">OFDRW-Viewer 系统体系架构</title>
+  <desc id="arch-desc">三层架构：应用与接入、核心库、宿主与资源。阅读器与 CLI 经包根公共入口调用 engine 与 crypto，engine 通过宿主注入接口获取字节、字体与画布。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <rect width="1340" height="540" fill="#f4f7fb"/>
+
+  <!-- 层背景 -->
+  <g stroke="#e0e7f1">
+    <rect x="70" y="40" width="1200" height="134" rx="18" fill="#eaeff7"/>
+    <rect x="70" y="192" width="1200" height="152" rx="18" fill="#eaeff7"/>
+    <rect x="70" y="364" width="1200" height="134" rx="18" fill="#eaeff7"/>
+  </g>
+
+  <!-- 层标签 -->
+  <circle cx="108" cy="78" r="13" fill="#2563eb"/>
+  <text x="108" y="82.5" text-anchor="middle" font-size="11" font-weight="700" fill="#ffffff">01</text>
+  <text x="130" y="83" font-size="15" font-weight="700" fill="#0f172a">应用与接入</text>
+  <text x="130" y="100" font-size="9" letter-spacing="1.1" fill="#64748b">APPLICATIONS</text>
+
+  <circle cx="108" cy="230" r="13" fill="#7c3aed"/>
+  <text x="108" y="234.5" text-anchor="middle" font-size="11" font-weight="700" fill="#ffffff">02</text>
+  <text x="130" y="235" font-size="15" font-weight="700" fill="#0f172a">核心库</text>
+  <text x="130" y="252" font-size="9" letter-spacing="1.1" fill="#64748b">CORE LIBRARIES</text>
+
+  <circle cx="108" cy="402" r="13" fill="#475569"/>
+  <text x="108" y="406.5" text-anchor="middle" font-size="11" font-weight="700" fill="#ffffff">03</text>
+  <text x="130" y="407" font-size="15" font-weight="700" fill="#0f172a">宿主与资源</text>
+  <text x="130" y="424" font-size="9" letter-spacing="1.1" fill="#64748b">HOST &amp; INPUTS</text>
+
+  <!-- ============ 层1：应用与接入 ============ -->
+  <!-- 阅读器 -->
+  <rect x="280" y="54" width="480" height="100" rx="14" fill="#ffffff" stroke="#dbe3ee"/>
+  <rect x="280" y="54" width="5" height="100" rx="2.5" fill="#7c3aed"/>
+  <text x="304" y="84" font-size="19" font-weight="700" fill="#0f172a">HTML5 OFD 阅读器</text>
+  <text x="304" y="104" font-size="11" font-family="'JetBrains Mono', 'Cascadia Code', Consolas, monospace" fill="#64748b">ofdrw-viewer-ui</text>
+  <g font-size="11.5" fill="#334155">
+    <rect x="304" y="116" width="68" height="24" rx="12" fill="#f6f1fd"/>
+    <text x="338" y="132" text-anchor="middle">滚动缩放</text>
+    <rect x="382" y="116" width="102" height="24" rx="12" fill="#f6f1fd"/>
+    <text x="433" y="132" text-anchor="middle">缩略图 / 大纲</text>
+    <rect x="494" y="116" width="136" height="24" rx="12" fill="#f6f1fd"/>
+    <text x="562" y="132" text-anchor="middle">搜索 / 打印 / 导出</text>
+  </g>
+
+  <!-- CLI -->
+  <rect x="790" y="54" width="480" height="100" rx="14" fill="#ffffff" stroke="#dbe3ee"/>
+  <rect x="790" y="54" width="5" height="100" rx="2.5" fill="#f59e0b"/>
+  <text x="814" y="84" font-size="19" font-weight="700" fill="#0f172a">命令行工具</text>
+  <text x="814" y="104" font-size="11" font-family="'JetBrains Mono', 'Cascadia Code', Consolas, monospace" fill="#64748b">ofdrw-viewer-cli</text>
+  <g font-size="11.5" fill="#334155">
+    <rect x="814" y="116" width="68" height="24" rx="12" fill="#fdf5e9"/>
+    <text x="848" y="132" text-anchor="middle">批量转图</text>
+    <rect x="892" y="116" width="68" height="24" rx="12" fill="#fdf5e9"/>
+    <text x="926" y="132" text-anchor="middle">文档信息</text>
+    <rect x="970" y="116" width="68" height="24" rx="12" fill="#fdf5e9"/>
+    <text x="1004" y="132" text-anchor="middle">签名验证</text>
+  </g>
+
+  <!-- ============ 层2：核心库 ============ -->
+  <!-- engine -->
+  <rect x="280" y="208" width="590" height="120" rx="14" fill="#ffffff" stroke="#dbe3ee"/>
+  <rect x="280" y="208" width="5" height="120" rx="2.5" fill="#2563eb"/>
+  <text x="304" y="236" font-size="20" font-weight="700" fill="#0f172a">OFD 渲染引擎</text>
+  <rect x="792" y="217" width="58" height="22" rx="11" fill="#e8efff"/>
+  <text x="821" y="232" text-anchor="middle" font-size="10.5" font-weight="600" fill="#1d4ed8">跨平台</text>
+  <text x="304" y="256" font-size="11" font-family="'JetBrains Mono', 'Cascadia Code', Consolas, monospace" fill="#64748b">ofdrw-viewer-engine</text>
+  <g font-size="12.5" fill="#334155">
+    <rect x="304" y="266" width="94" height="28" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="351" y="285" text-anchor="middle">解析与布局</text>
+    <rect x="408" y="266" width="94" height="28" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="455" y="285" text-anchor="middle">字体与图片</text>
+    <rect x="512" y="266" width="116" height="28" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="570" y="285" text-anchor="middle">Canvas2D 绘制</text>
+  </g>
+  <text x="304" y="316" font-size="11" fill="#64748b">不联网 · 不读文件 · 不做密码学</text>
+
+  <!-- crypto -->
+  <rect x="900" y="208" width="370" height="120" rx="14" fill="#ffffff" stroke="#dbe3ee"/>
+  <rect x="900" y="208" width="5" height="120" rx="2.5" fill="#0891b2"/>
+  <text x="924" y="236" font-size="20" font-weight="700" fill="#0f172a">密码能力</text>
+  <rect x="1188" y="217" width="60" height="22" rx="11" fill="#e0f2fe"/>
+  <text x="1218" y="232" text-anchor="middle" font-size="10.5" font-weight="600" fill="#0369a1">纯 JS</text>
+  <text x="924" y="256" font-size="11" font-family="'JetBrains Mono', 'Cascadia Code', Consolas, monospace" fill="#64748b">ofdrw-viewer-crypto</text>
+  <g font-size="12.5" fill="#334155">
+    <rect x="924" y="266" width="64" height="28" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="956" y="285" text-anchor="middle">解密</text>
+    <rect x="998" y="266" width="88" height="28" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="1042" y="285" text-anchor="middle">签章验签</text>
+    <rect x="1096" y="266" width="78" height="28" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="1135" y="285" text-anchor="middle">证书链</text>
+  </g>
+  <text x="924" y="316" font-size="11" fill="#64748b">SM2 / SM3 / SM4 · 时间戳 · 完整性</text>
+
+  <!-- ============ 层3：宿主与资源 ============ -->
+  <rect x="280" y="378" width="310" height="100" rx="14" fill="#ffffff" stroke="#dbe3ee"/>
+  <circle cx="304" cy="403" r="4" fill="#475569"/>
+  <text x="316" y="408" font-size="16" font-weight="700" fill="#0f172a">运行平台</text>
+  <text x="304" y="434" font-size="11.5" fill="#334155">浏览器 · Node.js · 小程序</text>
+  <text x="304" y="456" font-size="10.5" fill="#64748b">注入 Canvas 与字节源</text>
+
+  <rect x="610" y="378" width="310" height="100" rx="14" fill="#ffffff" stroke="#dbe3ee"/>
+  <circle cx="634" cy="403" r="4" fill="#0d9488"/>
+  <text x="646" y="408" font-size="16" font-weight="700" fill="#0f172a">输入资源</text>
+  <text x="634" y="434" font-size="11.5" fill="#334155">OFD 字节 · 字体 · 证书</text>
+  <text x="634" y="456" font-size="10.5" fill="#64748b">由宿主读取后传入</text>
+
+  <rect x="940" y="378" width="310" height="100" rx="14" fill="#ffffff" stroke="#dbe3ee"/>
+  <circle cx="964" cy="403" r="4" fill="#b45309"/>
+  <text x="976" y="408" font-size="16" font-weight="700" fill="#0f172a">渲染目标</text>
+  <text x="964" y="434" font-size="11.5" fill="#334155">Canvas 2D 页面</text>
+  <text x="964" y="456" font-size="10.5" fill="#64748b">PNG / JPEG / WebP</text>
+
+  <!-- ============ 依赖箭头 ============ -->
+  <line x1="520" y1="156" x2="520" y2="202" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <line x1="1030" y1="156" x2="1030" y2="202" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <line x1="896" y1="280" x2="876" y2="280" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <line x1="575" y1="330" x2="575" y2="372" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <text x="589" y="354" font-size="10.5" fill="#64748b">宿主注入接口</text>
+</svg>
