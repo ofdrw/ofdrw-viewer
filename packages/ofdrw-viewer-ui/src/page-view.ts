@@ -242,6 +242,11 @@ export class PageView {
     return this.renderedKeyValue;
   }
 
+  /** 当前 canvas 对应的渲染缩放倍率（非 1:1 的 CSS 缩放）；未渲染为 0。 */
+  get renderedScale(): number {
+    return this.renderedKeyValue === null ? 0 : this.currentScale;
+  }
+
   /** 当前 canvas；未创建为 null。 */
   get canvas(): HTMLCanvasElement | null {
     return this.canvasElement;

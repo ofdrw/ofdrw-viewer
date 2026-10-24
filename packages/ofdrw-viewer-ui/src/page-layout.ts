@@ -12,6 +12,7 @@
  */
 
 import type { PageInfo } from '@ofdrw/ofdrw-viewer-engine';
+import { MAX_SCALE, MIN_SCALE } from './options';
 import type { Rotation, VisiblePageRange } from './state';
 
 /** 毫米到 96 DPI CSS 像素的换算系数（1 mm = 96 / 25.4 px）。 */
@@ -432,8 +433,8 @@ function clamp(value: number, min: number, max: number): number {
  * 限制到阅读器允许的缩放范围。
  *
  * @param value 倍率。
- * @returns 0.1..25 的倍率。
+ * @returns {@link MIN_SCALE}..{@link MAX_SCALE}（25%..2500%）的倍率。
  */
 function clampScale(value: number): number {
-  return clamp(value, 0.1, 25);
+  return clamp(value, MIN_SCALE, MAX_SCALE);
 }

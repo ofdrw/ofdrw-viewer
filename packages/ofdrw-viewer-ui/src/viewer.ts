@@ -1194,7 +1194,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /**
    * 设置实际缩放倍率。
    *
-   * @param scale 倍率，限制在 0.1..25。
+   * @param scale 倍率，限制在 {@link MIN_SCALE}..{@link MAX_SCALE}（25%..2500%）。
    */
   setScale(scale: number): void {
     this.assertFeature('zoom');
@@ -1221,11 +1221,12 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.setScale(next);
   }
 
-  /** 缩小到上一个预置档位。 */
+  /** 缩小到上一个预置档位；已到最低档位时保持不动。 */
   zoomOut(): void {
     this.assertFeature('zoom');
     const current = this.state.view.scale;
-    const next = [...ZOOM_LEVELS].reverse().find((level) => level < current - 0.001) ?? MIN_SCALE;
+    const next = [...ZOOM_LEVELS].reverse().find((level) => level < current - 0.001);
+    if (next === undefined || next < MIN_SCALE) return;
     this.setScale(next);
   }
 
@@ -2016,6 +2017,10 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     if (!pageView || pageView.isDestroyed) return;
     const key = this.renderKey();
     if (!force && pageView.renderedKey === key) return;
+    // 屏幕外预渲染页不跟随缩小降低渲染 DPI：直接复用已画好的 canvas，
+    // 避免一次缩小触发所有缓存页以低质量重绘。
+    const offscreen = index < this.lastVisibleRange.start || index > this.lastVisibleRange.end;
+    if (!force && offscreen && pageView.renderedScale > this.state.view.scale) return;
     const generation = pageView.beginRender(key);
     this.queue.enqueue({
       key: `page:${index}`,

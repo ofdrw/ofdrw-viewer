@@ -50,16 +50,20 @@ export const DEFAULT_INITIAL_SCALE: ScaleValue = 'auto';
 /** 默认初始旋转。 */
 export const DEFAULT_ROTATION: Rotation = 0;
 
-/** 最小缩放倍率（10%）。 */
-export const MIN_SCALE = 0.1;
+/**
+ * 最小缩放倍率（25%）。
+ *
+ * 主画布按缩放倍率换算渲染 DPI，低于此倍率继续缩小会以更低的 DPI 重绘，
+ * 显示质量随之下降；因此缩放到底后不再继续缩小。缩略图使用独立尺寸，不受此限制。
+ */
+export const MIN_SCALE = 0.25;
 
 /** 最大缩放倍率（2500%）。 */
 export const MAX_SCALE = 25;
 
-/** 预置缩放档位；UI 的 +/- 与下拉菜单共用。 */
+/** 预置缩放档位；UI 的 +/- 与下拉菜单共用，最低档与 {@link MIN_SCALE} 一致。 */
 export const ZOOM_LEVELS: readonly number[] = Object.freeze([
-  0.1, 0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 7.5, 10, 15,
-  20, 25,
+  0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 7.5, 10, 15, 20, 25,
 ]);
 
 /**
