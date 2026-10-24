@@ -8,7 +8,10 @@ name: 发布
 #   2. 打标签并推送，如 git tag v0.1.0 && git push origin v0.1.0；
 #   3. 发布说明由 CI 根据提交历史生成，之后可在 Release 页面继续编辑。
 #
-# 当前阶段只构建产物、创建 GitHub Release 并部署 Pages，不发布 npm 包。
+# 执行顺序：校验 → 构建 CLI/CDN/演示站 → 部署 Pages → 创建 GitHub Release → 发布 npm。
+# npm 放在最后，因为版本号一经发布不可覆盖，构建失败时不应消耗版本号。
+#
+# 需要配置的 Secret：NPM_TOKEN（对 @ofdrw scope 有发布权限）。
 on:
   push:
     tags:
@@ -20,7 +23,7 @@ on:
         required: true
         type: string
       publish:
-        description: 是否真正发布（GitHub Release + Pages）；关闭时仅构建
+        description: 是否真正发布（GitHub Release + Pages + npm）；关闭时仅构建
         required: true
         type: boolean
         default: false
@@ -402,3 +405,76 @@ jobs:
             release-assets/*.zip
             release-assets/SHA256SUMS
           fail_on_unmatched_files: true
+
+  # npm 版本号一经发布不可覆盖，因此放在流水线最后：只有全部构建、冒烟测试和
+  # GitHub Release 都成功后才消耗版本号，避免构建失败时白白占用一个版本。
+  publish-npm:
+    name: 发布 npm 包
+    needs: [verify, release]
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: 安装 Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      # 按依赖拓扑构建：crypto 依赖 engine 的 CDN 产物，ui/cli 依赖前两者的类型声明。
+      - name: 构建四个包
+        run: |
+          pnpm --filter @ofdrw/ofdrw-viewer-engine build
+          pnpm --filter @ofdrw/ofdrw-viewer-crypto build
+          pnpm --filter @ofdrw/ofdrw-viewer-ui build
+          pnpm --filter @ofdrw/ofdrw-viewer-cli build
+
+      # 已发布过的版本直接跳过，保证 workflow 重跑幂等；正式版发 latest，预发布发 next。
+      - name: 发布到 npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo '::error::缺少 NPM_TOKEN secret，无法发布 npm 包'
+            exit 1
+          fi
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > "$HOME/.npmrc"
+
+          if [[ "$VERSION" == *-* ]]; then
+            dist_tag=next
+          else
+            dist_tag=latest
+          fi
+
+          for pkg in \
+            @ofdrw/ofdrw-viewer-engine \
+            @ofdrw/ofdrw-viewer-crypto \
+            @ofdrw/ofdrw-viewer-ui \
+            @ofdrw/ofdrw-viewer-cli
+          do
+            if npm view "$pkg@$VERSION" version >/dev/null 2>&1; then
+              echo "跳过 $pkg@$VERSION：该版本已存在于 npm"
+              continue
+            fi
+            echo "发布 $pkg@$VERSION（dist-tag：$dist_tag）"
+            pnpm --filter "$pkg" publish --access public --no-git-checks --tag "$dist_tag"
+          done
+
+          rm -f "$HOME/.npmrc"
