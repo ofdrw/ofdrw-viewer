@@ -256,7 +256,7 @@ OFDPage.getTextContent
 | `blob` | 浏览器 `Blob`/`File`，由宿主提供 |
 | `custom` | 宿主实现 `ByteSource`，提供 `size`、`read(offset,length)`，可选 `ready()`/`close()` |
 
-engine 不发起网络请求、不读取本地路径，也不把 URL 当来源。URL/本地文件必须先由宿主读成字节，或实现 `ByteSource`；浏览器 `File`/`Blob` 可以直接作为 blob 来源，也可以读成 `arraybuffer`。字体也遵循同一原则：`FontInput` 只收已读好的字节，按需读取由 `FontProvider.match()` 完成。网络/文件来源的职责划分见 [网络获取委托设计](网络获取委托设计.md)。
+engine 不发起网络请求、不读取本地路径，也不把 URL 当来源。URL/本地文件必须先由宿主读成字节，或实现 `ByteSource`；浏览器 `File`/`Blob` 可以直接作为 blob 来源，也可以读成 `arraybuffer`。字体也遵循同一原则：`FontInput` 只收已读好的字节，按需读取由 `FontProvider.match()` 完成。网络/文件来源的职责划分见 [网络与文件获取委托设计](网络获取委托设计.md)。
 
 `VirtualContainer` 是 engine 的统一只读容器：
 
