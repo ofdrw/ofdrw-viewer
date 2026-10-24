@@ -130,14 +130,16 @@ function scheduleHideDock(delay: number = DOCK_HIDE_DELAY): void {
 }
 
 /**
- * 按隐藏策略初始化演示控件，并绑定悬停、触摸与键盘的唤出行为。
+ * 按显示策略初始化演示控件，并绑定悬停、触摸与键盘的唤出行为。
  *
- * @param mode 显示策略：on 显示一段时间后自动隐藏，off 彻底隐藏
+ * @param mode 显示策略：on 显示一段时间后自动隐藏，off 视为不存在
  */
 function setupDock(mode: DockMode): void {
   if (mode === 'off') {
+    // dock 及其感应区从文档中整体移除，不占布局、不可聚焦、不进无障碍树；
     // 恢复入口在地址参数里（去掉 dock 参数或 ?dock=on）。
-    dockEl.hidden = true;
+    dockEl.remove();
+    dockZoneEl.remove();
     return;
   }
 
