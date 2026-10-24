@@ -139,9 +139,14 @@ describe('scanFontDirectory', () => {
       'C.TTC',
       'D.otc',
     ]);
-    // 扫描结果取 realpath：macOS 上 /var 会解析为 /private/var，Windows 上盘符与大小写
-    // 也会被改写，因此只断言“仍位于扫描根目录之下”，不做前缀字符串比较。
-    expect(result.every((item) => isPathInside(item.path, root))).toBe(true);
+    // 扫描结果取 realpath：macOS 上 /var 会解析为 /private/var，Windows 上盘符、大小写
+    // 与 `RUNNER~1` 这类 8.3 短名也会被改写，所以先对根目录取 realpath 再比较，
+    // 只断言“仍位于扫描根目录之下”，不做前缀字符串比较。
+    // 逐条收集命中与否，失败时能直接看到越界的路径，而不是一个布尔值。
+    const realRoot = await realpath(root);
+    expect(result.map((item) => [item.path, isPathInside(item.path, realRoot)])).toEqual(
+      result.map((item) => [item.path, true]),
+    );
   });
 
   it('按路径字典序返回', async () => {
@@ -302,7 +307,10 @@ describe('discoverSystemFonts', () => {
       'c.ttc',
       'd.otc',
     ]);
-    expect(result.fonts.every((font) => isPathInside(font.path, realRoot))).toBe(true);
+    // 逐条收集命中与否，失败时能直接看到越界的路径，而不是一个布尔值。
+    expect(result.fonts.map((font) => [font.path, isPathInside(font.path, realRoot)])).toEqual(
+      result.fonts.map((font) => [font.path, true]),
+    );
     expect(result.scannedFiles).toBe(4);
     const expectedBytes = (
       await Promise.all(result.fonts.map(async (font) => (await stat(font.path)).size))
