@@ -91,6 +91,73 @@ viewer.destroy();
 
 `container` 是唯一必填选项；`source` 省略时按查询参数解析，两者都没有则 `ready` 以 `OFD_INVALID_OPTION` 拒绝。默认初始页为 1、初始缩放为 `auto`、主题为 `auto`、语言为 `zh-CN`。
 
+## 网络与文件获取委托（UI 侧）
+
+在浏览器中，UI 是 OFD 网络读取的唯一入口：URL 字符串与 `{ url, headers? }` 在打开时被规范化为一个 `HttpByteSource`，crypto 检测与 engine 渲染共用同一实例，只探测/读取一次；`File`/`Blob`/`ArrayBuffer`/`Uint8Array` 不经过网络，直接交给 engine。引擎包不再接受 URL，也不代替宿主读取字体文件；字体字节同样由宿主提供。设计背景与分层边界见 [网络获取委托设计](../../../docs/网络获取委托设计.md)，完整选项见 [API.md 构造选项](./API.md#ofdvieweroptions)。
+
+### URL 来源与鉴权
+
+```ts
+const viewer = new OFDViewer({
+  container: '#viewer',
+  source: {
+    url: '/api/ofd/123',
+    headers: { Authorization: `Bearer ${token}` },
+  },
+});
+await viewer.ready;
+```
+
+- `requestInit.headers` 先合并，来源对象 `headers` 覆盖同名键（来源优先）；`requestInit.credentials` 不转发，fetch 使用浏览器默认的 `same-origin` 凭据策略。
+- 跨域时服务端需允许 `Range` 请求，并通过 `Access-Control-Expose-Headers` 暴露 `Content-Range`；`Authorization` 等自定义头也要在 CORS 允许列表中。
+- 服务器忽略 Range 或响应启用 `Content-Encoding` 时，UI 会整包下载并缓存；`HttpByteSourceOptions.allowFullDownload` 设为 `false` 可禁用该回退。
+- 探测/HTTP 状态/非法 `Content-Range` 抛 `OFD_INVALID_PACKAGE`；关闭后读取抛 `OFD_CLOSED`。鉴权 token 的刷新、重试与存储由宿主负责。
+
+### 宿主自行读取：fetch → Blob/ArrayBuffer
+
+```ts
+const viewer = new OFDViewer({ container: '#viewer', source: '/sample.ofd' });
+await viewer.ready;
+
+const response = await fetch('/api/ofd/456', {
+  headers: { Authorization: `Bearer ${token}` },
+});
+if (!response.ok) throw new Error(`HTTP ${response.status}`);
+const bytes = await response.arrayBuffer(); // 也可 await response.blob()
+await viewer.open(bytes); // 字节已由宿主读取，UI 不再发起网络请求
+```
+
+需要宿主统一处理鉴权、重试或 CORS 时，先 `fetch` 再 `viewer.open(blob | arrayBuffer)`；后续切换文档同样接受 `File`/`Blob`。
+
+### 直接使用 HttpByteSource
+
+`HttpByteSource` 也作为公共 API 导出，便于宿主预读、探测或接入自定义加载流程：
+
+```ts
+import { HttpByteSource } from '@ofdrw/ofdrw-viewer-ui';
+
+const source = new HttpByteSource('/api/ofd/789', {
+  headers: { Authorization: `Bearer ${token}` },
+  signal: abortController.signal,
+});
+await source.ready(); // HEAD/Range 探测；失败抛 OFD_INVALID_PACKAGE
+const head = await source.read(0, 8); // 按需 Range 读取，越界截断
+await source.close(); // 幂等；之后 read() 抛 OFD_CLOSED
+```
+
+`ByteSource` 不是 `OFDViewer.source` 的合法类型；要复用同一份字节，请直接传 URL（UI 内部复用同一实例）或传读取后的字节。构造参数与错误语义见 [API.md HttpByteSource](./API.md#httpbytesource)。
+
+### 省略 source：?file= / ?base64=
+
+`source` 可省略，此时读取页面查询参数预览：
+
+```text
+https://viewer.example.com/?file=https%3A%2F%2Ffiles.example.com%2Fdemo.ofd
+https://viewer.example.com/?base64=UEsDBBQAAAAI
+```
+
+来源优先级为：`viewer.open(source)` 显式参数 > 构造选项 `source` > `?file=` > `?base64=`；`file` 与 `base64` 同时存在时用 `file`，并产生一条 `W_QUERY_SOURCE` warning。无任何来源时 `ready` 以 `OFD_INVALID_OPTION` 拒绝；`?file=` 只接受 `http(s)`，非法协议、空 URL、非法/超限 base64 同样抛 `OFD_INVALID_OPTION`。编码细节、安全提醒与链接生成见下文《通过 URI 参数预览》。
+
 ## 文档来源
 
 `source` 支持 `File`/`Blob`、`ArrayBuffer`/`Uint8Array`、URL 字符串、`{ url, headers? }`。切换文档直接 `await viewer.open(nextSource)`；`await viewer.open()` 会重新按构造来源或当前查询参数打开。

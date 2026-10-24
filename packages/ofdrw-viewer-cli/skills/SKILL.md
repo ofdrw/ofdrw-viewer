@@ -171,6 +171,57 @@ OFD 版本: 1.0
 - 字体字节由 CLI 自行读取后交给 engine；engine 不联网、不读取字体路径。单个字体文件读取失败上报 `W_FONT_MISSING` 并跳过；转换中仍缺字形时按 `W_FONT_MISSING`/`W_GLYPH_MISSING` 警告处理，转换继续；
 - `--font-dir` 目录不存在、不是目录或不可读时退出 1；目录内没有字体文件时输出 `W_FONT_DIR_EMPTY` 警告并继续；出现缺字警告时向用户询问字体目录并追加，不要自动下载字体。
 
+## 网络与文件获取委托（CLI 侧）
+
+CLI 只接受**本地文件路径**：不接收 URL、不做远程下载，也不自动下载 OFD、字体或证书。需要远程文档时由调用方先自行下载到本地（鉴权、代理/CORS、重试与取消都由调用方负责），再把路径交给 CLI；完整边界与决策见 [网络获取委托设计](../../../docs/网络获取委托设计.md)。
+
+文件读取全部由 CLI 完成，engine 与 crypto 只消费交给它们的字节源或字节，不联网、不按路径读文件：
+
+- **OFD 输入**：`NodeFileByteSource.open(path)` 用 `fs.FileHandle` 随机读，再以 `{ kind: 'custom', source }` 传给 `OFDDocument.open`；不整包读入内存，文档关闭时释放文件句柄。
+- **加密文档**：`openCryptoSource(path)` 用 `NodeFileByteSource` 打开输入，并包装为 crypto 的 `{ kind: 'byte-source', source }` 做检测/解密，解密后的明文容器再交给 engine；`info` 的明文文档与 `verify` 也复用同一文件句柄读取，不重复打开路径。
+- **字体**：`loadFontInputs(fontFiles, logger)` 在转换开始时读取字体字节，以 `supplementaryFonts: [{ data }]` 注入；engine 只接受已读好的 `data`。扫描范围、优先级与预算见上一节「字体与缺省渲染」。
+- **信任根**：`readTrustRoots(paths)` 读取 `--root` 文件原始字节，再经 crypto 的 `certificatesToDer` 转成逐张 DER（支持 PEM 单/多证书、DER/CER 与 Base64），engine/crypto 都不按路径读证书。
+
+典型命令（先自行下载 OFD 到本地，再限定页码与字体目录）：
+
+```bash
+CLI="${OFDRW_VIEWER_CLI:-ofdrw-viewer-cli}"
+"$CLI" ./downloads/input.ofd -o ./out --pages 1-2 --font-dir ./fonts
+```
+
+Node 宿主示例：自己用 `fs.open` 建随机访问源并以 `custom` 交给 engine，字体也由宿主读成 `{ data }`：
+
+```ts
+import { open, readFile } from 'node:fs/promises';
+import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
+import type { ByteSource } from '@ofdrw/ofdrw-viewer-engine';
+
+const handle = await open('./input.ofd', 'r');
+const { size } = await handle.stat();
+const source: ByteSource = {
+  size,
+  async read(offset: number, length: number): Promise<Uint8Array> {
+    const buffer = new Uint8Array(Math.min(length, Math.max(0, size - offset)));
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset);
+    return buffer.subarray(0, bytesRead);
+  },
+  close: () => handle.close(),
+};
+
+const fontData = new Uint8Array(await readFile('./fonts/fallback.ttf'));
+const document = await OFDDocument.open({
+  source: { kind: 'custom', source },
+  supplementaryFonts: [{ data: fontData }],
+});
+
+// 转图片时另需注入 createCanvas/encodeImage 等宿主适配项，见 engine SKILL。
+await document.close();
+```
+
+- 远程场景：宿主先 `fetch`/HTTP 下载为本地文件或内存字节，再按 `custom`（文件）或 `arraybuffer`（内存）交给 engine；engine 没有 URL 来源。
+- 字体失败：字体文件读不到或字形缺失时输出 `W_FONT_MISSING`/`W_GLYPH_MISSING` 警告并继续转换；CLI 不会自动下载字体，缺字时向用户询问 `--font-dir`，或由宿主读取 `{ data }` 传入。
+- 相关能力：[engine SKILL](../../ofdrw-viewer-engine/skills/SKILL.md)（`ByteSource`、`FontProvider`、`OFDSource`）、[crypto SKILL](../../ofdrw-viewer-crypto/skills/SKILL.md)（`byte-source` 输入、`certificatesToDer`）。
+
 ## 输出文件与文本 JSON
 
 默认输出目录为当前工作目录下的输入文件名（不含扩展名），`-o` 覆盖：

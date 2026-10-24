@@ -28,6 +28,96 @@ import {
 
 Node.js >= 22；浏览器需 ES2022。源码不 import `node:*`，Node 文件优先包成 `byte-source`（见下文），否则先读成 `arraybuffer`。浏览器需全局 `Blob`；只有 PBES2 加密私钥需要 `globalThis.crypto.subtle`。排查环境问题时可用 `getVersion()` 读取包版本（与 `VERSION` 相同，内置于产物）。
 
+## 网络与文件获取委托（crypto 侧）
+
+crypto **不实现网络策略**：不做 HEAD/Range 探测、不重试/退避、不定制重定向/代理/缓存策略（跟随运行环境默认 `fetch` 行为）、不刷新 token，也不提供下载进度；这些属于宿主或 `@ofdrw/ofdrw-viewer-ui`。crypto 只消费 `CryptoSource`，把包当作只读字节源解析/解密/验签。
+
+| 来源 | crypto 的行为 |
+| --- | --- |
+| `{ kind: 'byte-source', source }` | 随机按需读取（ZIP 中央目录/条目）；Range、鉴权、进度、取消、重试策略全部由宿主实现；同一个 `ByteSource` 可被 `inspect`、`openDecryptingContainer`、`verifyOfd` 复用，避免重复下载 |
+| `{ kind: 'url', url, headers? }` | 便捷入口：包内 `fetch` **整包**读取并拼接为内存字节（受 `maxSourceBytes` 限制）；支持 `headers`/`signal`，但没有 Range/进度/重试；只适合公开或简单鉴权的小文件 |
+| `{ kind: 'blob', blob }` / `{ kind: 'arraybuffer', data }` | 已在内存/浏览器文件中的整包字节；无需额外生命周期 |
+
+`CryptoSource.url` 是 crypto 自己的兼容入口，**不是 engine 的 URL 能力**：engine 的 `OFDSource.url` 已删除，`url` 只会在 crypto 内被读成字节。需要宿主统一管理鉴权、进度、Range、取消或重试时，用 `byte-source`（UI 正是把 URL → `HttpByteSource` → `{ kind: 'byte-source' }` 复用给 crypto 与 engine）。`url` 虽然能传 `headers`/`signal`，但没有进度回调，也不参与宿主的统一重试/刷新策略；这类场景不要用 `url` 代替 `byte-source`。详见 [网络获取委托设计](../../../docs/网络获取委托设计.md)、[engine SKILL](../../ofdrw-viewer-engine/skills/SKILL.md) 与 [UI SKILL](../../ofdrw-viewer-ui/skills/SKILL.md)。
+
+### 同一个 ByteSource：先 inspect 再解密
+
+```ts
+import { OFDDocument, type ByteSource } from '@ofdrw/ofdrw-viewer-engine';
+import {
+  inspect,
+  openDecryptingContainer,
+  isCryptoError,
+  type CryptoCredential,
+  type CryptoSource,
+} from '@ofdrw/ofdrw-viewer-crypto';
+
+// source 由宿主创建并拥有（Node fs / HTTP Range / 小程序文件）；创建见下一节。
+// 这里用 declare 表示由调用方注入，避免伪造本包不存在的工厂。
+declare const source: ByteSource;
+const cryptoSource: CryptoSource = { kind: 'byte-source', source };
+const controller = new AbortController(); // 宿主取消时调用 controller.abort()
+const credentials: CryptoCredential = {
+  kind: 'password',
+  userName: 'alice',
+  password: 'secret',
+};
+// 证书用户改为：
+// const credentials: CryptoCredential = {
+//   kind: 'private-key',
+//   userName: 'alice',
+//   privateKey: { pem: pemText },
+// };
+
+try {
+  const info = await inspect(cryptoSource, { signal: controller.signal });
+  console.log(info.encrypted, info.signatures.length);
+
+  const result = await openDecryptingContainer({
+    source: cryptoSource, // 同一个 ByteSource，不重复下载
+    credentials,
+    signal: controller.signal,
+    onWarning: (warning) => console.warn(warning.code, warning.message),
+  });
+
+  try {
+    const doc = await OFDDocument.open({ container: result.container });
+    try {
+      const page = await doc.getPage(0);
+      console.log(page.getSize());
+    } finally {
+      await doc.close(); // engine 只借用容器，不关闭
+    }
+  } finally {
+    await result.container.close(); // 先关容器
+  }
+} catch (error) {
+  if (isCryptoError(error) && error.code === 'CRYPTO_ABORTED') {
+    // 用户取消/关闭竞态：不要当作包损坏。
+  }
+  throw error;
+} finally {
+  await source.close?.(); // 最后关宿主源；crypto 始终不关闭它
+}
+```
+
+关闭顺序很重要：`doc.close()` → `result.container.close()` → 宿主 `source.close()`。`crypto` 对 `byte-source` 只创建不转发 `close` 的隔离视图，`openDecryptingContainer` 失败/取消时也不会返回半解密容器；所以无论成功还是失败，宿主都应在自己的 `finally` 里关闭源。若 `source` 还有 `ready()`，crypto 会按需等待它完成。
+
+### blob / arraybuffer 替代
+
+```ts
+const fromBlob: CryptoSource = { kind: 'blob', blob: file };
+const fromBytes: CryptoSource = { kind: 'arraybuffer', data: bytes };
+```
+
+这两种都是整包输入，不产生额外句柄；浏览器/Worker 的环境约束见下一节《浏览器与 Worker》。
+
+### 取消与来源错误
+
+- 取消：`signal` 会传入 `inspect`/`openDecryptingContainer`/`verifyOfd`；中止时抛 `CRYPTO_ABORTED`，不是包损坏，也不应盲目重试。
+- 来源非法：缺少 `read()`、`size` 不是非负安全整数、`read()` 返回非 `Uint8Array`、不支持的 `kind`、当前环境没有 `Blob`/`fetch`、URL 非 2xx 或读取失败，都会抛 `CRYPTO_SOURCE_UNSUPPORTED`；超过 `maxSourceBytes` 则抛 `CRYPTO_LIMIT_EXCEEDED`。
+- `byte-source` 的 `read(offset, length)` 参数单位均为 byte；返回可以短于 `length`，但不能越界或返回非 `Uint8Array`。
+
 ## 运行环境与输入源
 
 ### Node.js 随机读取（byte-source）
@@ -149,7 +239,7 @@ try { /* 渲染/读取页面 */ } finally {
 - 取消时抛 `CRYPTO_ABORTED`，不会返回半解密容器；超过 `maxDecryptLayers`（默认 4）抛 `CRYPTO_DECRYPT_LAYER_LIMIT`，层循环抛 `CRYPTO_LAYER_LOOP`；
 - 容器交接语义见 [engine SKILL](../../ofdrw-viewer-engine/skills/SKILL.md)。
 
-若经 `@ofdrw/ofdrw-viewer-ui` 接入，URL/网络获取与生命周期由 UI 统一管理，UI 会把字节源映射为 `{ kind: 'byte-source', source }` 再交给本包；直接调用 crypto 的宿主仍可使用 `CryptoSource.url`，自行控制 `fetch` 鉴权与取消。详见 [UI SKILL](../../ofdrw-viewer-ui/skills/SKILL.md)。
+若经 `@ofdrw/ofdrw-viewer-ui` 接入，URL/网络获取与生命周期由 UI 统一管理，UI 会把字节源映射为 `{ kind: 'byte-source', source }` 再交给本包；直接调用 crypto 的宿主仍可使用 `CryptoSource.url`，自行控制 `fetch` 鉴权与取消。见上文《网络与文件获取委托（crypto 侧）》与 [UI SKILL](../../ofdrw-viewer-ui/skills/SKILL.md)。
 
 ## 一次性验证
 

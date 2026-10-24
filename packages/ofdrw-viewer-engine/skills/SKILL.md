@@ -64,6 +64,81 @@ try {
 
 浏览器主线程通常不需要任何平台钩子。**engine 不联网、不读本地文件**：`source` 只接受 `arraybuffer`/`blob` 或宿主实现的 `custom ByteSource`；URL 与本地路径要先由宿主读成字节，浏览器 `File`/`Blob` 可直接作为 `blob` 来源，也可读成 `arraybuffer`。
 
+## 网络与文件获取委托（engine 侧）
+
+engine 不调用 `fetch`、不读文件，也不内置任何网络或路径策略；URL、本地文件先由宿主读成 `ArrayBuffer`/`Blob`，或实现随机读的 `ByteSource` 后以 `custom` 传入。字体同理：engine 只接受宿主读好的 `{ data }`，需要按需加载时由宿主实现 `FontProvider.match()` 并返回 `{ data }`。因此取消、鉴权、Cookie、代理、重试、进度与 Range 都由宿主掌握，engine 只消费字节；完整对照表见[下一节](#来源与字体由宿主提供engine-不联网)，设计细节见[《网络获取委托设计》](../../../docs/网络获取委托设计.md)。
+
+浏览器把 URL 读成 `arraybuffer`：
+
+```ts
+const response = await fetch(url, {
+  headers: { Authorization: `Bearer ${token}` },
+  signal, // 取消由宿主传给 fetch
+});
+if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+const doc = await OFDDocument.open({
+  source: { kind: 'arraybuffer', data: await response.arrayBuffer() },
+});
+```
+
+Node.js 用 `fs.open` 实现 `custom ByteSource`（按需随机读，`close()` 幂等）：
+
+```ts
+import { open } from 'node:fs/promises';
+import { OFDDocument, type ByteSource } from '@ofdrw/ofdrw-viewer-engine';
+
+const handle = await open('/path/to/file.ofd', 'r');
+const { size } = await handle.stat();
+let closed = false;
+
+const byteSource: ByteSource = {
+  size, // 总字节数，单位 byte
+  async read(offset, length) {
+    const buffer = new Uint8Array(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, offset);
+    return buffer.subarray(0, bytesRead); // 越界截断
+  },
+  async close() {
+    if (closed) return; // 幂等：engine 关闭容器时与宿主主动关闭都可能调用
+    closed = true;
+    await handle.close();
+  },
+};
+
+const doc = await OFDDocument.open({
+  source: { kind: 'custom', source: byteSource },
+});
+// doc.close() 时 engine 会关闭容器并调用 byteSource.close()。
+```
+
+字体只传宿主读好的字节，或用 `FontProvider.match()` 按需返回字节：
+
+```ts
+import { readFile } from 'node:fs/promises';
+import type { FontInput, FontProvider } from '@ofdrw/ofdrw-viewer-engine';
+
+// 一次性读好：defaultFonts / supplementaryFonts 只接受 { data }
+const font: FontInput = {
+  data: new Uint8Array(await readFile('/fonts/NotoSansSC-Regular.otf')),
+  family: 'Noto Sans SC',
+};
+
+// 按需读取：match() 内由宿主读文件或网络，engine 只收 { data }
+const FONT_FILES: Record<string, string> = {
+  'Noto Sans SC': '/fonts/NotoSansSC-Regular.otf',
+};
+const fontProvider: FontProvider = {
+  async match(request) {
+    const path = request.familyName ? FONT_FILES[request.familyName] : undefined;
+    if (!path) return null;
+    return { data: new Uint8Array(await readFile(path)), family: request.familyName };
+  },
+};
+```
+
+> 取消、鉴权、Cookie、代理、重试、下载进度与 Range 都由宿主负责；engine 不接触 `fetch` 或文件句柄，只通过 `ByteSource.read()` 取字节。
+
 ## 来源与字体由宿主提供（engine 不联网）
 
 engine 只消费“已经可读的字节 / 随机读源”，网络与文件读取全部由宿主负责。这样鉴权、Cookie、代理、重试、Range、取消和下载进度都在宿主手里，engine 不做平台分支。
