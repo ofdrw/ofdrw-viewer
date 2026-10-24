@@ -442,7 +442,8 @@ FEK (16 byte) + IV（种子项）
 
 - 先从 `OFD.xml` 的 `DocBody/Signatures` 定位签名清单；缺失时回退到根 `Signatures.xml`。
 - 每个 `Signature` 条目包含 ID、类型、`BaseLoc` 和约定的 `SignedValue` 路径；`BaseLoc` 可以是根路径或相对路径。
-- 单个 `BaseLoc` 非法只影响该签名，不终止整个验证；该签名记录 `invalid` 并附 issue。
+- 单个 `BaseLoc` 缺失或非法只影响该签名，不终止整个验证；该签名记录 `invalid` 并附 `SIGNATURE_BASELOC_INVALID`。
+- `inspect` 的签名摘要同样逐条容错：缺失 `Type`/`BaseLoc` 时对应字段为空串，不以 `CRYPTO_INVALID_PACKAGE` 中断只读检测（否则打开文档会误报“解密失败”）；只有 `BaseLoc` 路径穿越等非法路径才作为包结构错误抛出。
 - `VerifyOfdOptions.signatureIds` 非空时只验证指定 ID；未知 ID 不凭空构造签名，结果只包含实际存在的签名。
 - 签名清单解析失败时构造一个合成的非法签名条目，使报告体现“存在签名但无法验证”，而不是静默返回空数组。
 
