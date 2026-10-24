@@ -365,6 +365,25 @@ export class PageView {
   }
 
   /**
+   * 应用手势预览缩放（不改布局、不触发重绘）。
+   *
+   * 只通过 CSS `transform: scale()` 缩放页盒，由合成层完成，代价接近零；
+   * `scale` 为 1 时清除预览。真正的高清渲染由阅读器在手势结束后执行。
+   *
+   * @param scale 预览缩放倍率（相对当前已渲染布局）。
+   */
+  setPreviewScale(scale: number): void {
+    if (this.destroyed) return;
+    if (scale === 1) {
+      this.element.classList.remove('ofd-page--preview');
+      this.element.style.removeProperty('--preview-scale');
+      return;
+    }
+    this.element.classList.add('ofd-page--preview');
+    this.element.style.setProperty('--preview-scale', String(scale));
+  }
+
+  /**
    * 更新总页数以刷新可访问性文案。
    *
    * @param totalPages 总页数。

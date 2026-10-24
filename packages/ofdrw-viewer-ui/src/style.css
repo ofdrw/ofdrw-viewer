@@ -649,6 +649,16 @@
   margin-bottom: 0;
 }
 
+/*
+ * 手势缩放预览：只做合成层缩放，不触发重排与重绘。
+ * 布局尺寸保持不变（滚动条不跳动），视觉上跟随手指而无需重新渲染 canvas；
+ * 手势结束后阅读器按最终倍率重绘一次并移除本类。
+ */
+.ofd-page--preview {
+  scale: var(--preview-scale, 1);
+  will-change: scale;
+}
+
 .ofd-page__canvas-wrapper {
   position: absolute;
   top: 0;

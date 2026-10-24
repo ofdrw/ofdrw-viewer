@@ -616,9 +616,18 @@ describe('OFDViewer 核心', () => {
       clientY: 250,
     });
     expect(main.dispatchEvent(wheel)).toBe(false);
+    // 手势预览：倍率立即可读，但布局与 canvas 尚未重绘，页盒进入 preview 状态。
     await vi.waitFor(() => expect(viewer.getScale()).toBeCloseTo(1.1, 5));
-    await vi.waitFor(() => expect(viewer.getState().view.scrollTop).toBeGreaterThan(200));
-    const after = pagePositionAt(viewer, viewer.getState().view.scrollTop + 200);
+    expect(viewer.getPageView(before!.pageNumber)?.element.classList.contains('ofd-page--preview')).toBe(
+      true,
+    );
+    // 停止移动 150 ms 后才按最终倍率重绘，并以指针为锚点保持页内位置。
+    await vi.waitFor(
+      () => expect(viewer.getPageView(before!.pageNumber)?.element.classList.contains('ofd-page--preview')).toBe(false),
+      { timeout: 2000 },
+    );
+    // 以真实滚动位置计算页内比例：预览阶段的 state 更新经 rAF 合并，读取 DOM 更准确。
+    const after = pagePositionAt(viewer, main.scrollTop + 200);
     expect(after?.pageNumber).toBe(before?.pageNumber);
     expect(Math.abs((after?.ratio ?? 0) - (before?.ratio ?? 0))).toBeLessThan(0.002);
 
@@ -694,9 +703,13 @@ describe('OFDViewer 核心', () => {
     expect(dispatchTouchPointer(main, 'pointerdown', 1, 300, 400).defaultPrevented).toBe(true);
     const move = dispatchTouchPointer(main, 'pointermove', 1, 600, 400);
     expect(move.defaultPrevented).toBe(true);
+    // 预览立即生效（不重绘），180 ms 静止后才提交为正式布局倍率。
     await vi.waitFor(() => expect(viewer.getScale()).toBeCloseTo(2, 5));
-    await vi.waitFor(() => expect(viewer.getState().view.scrollTop).not.toBe(100));
-    const after = pagePositionAt(viewer, viewer.getState().view.scrollTop + 400);
+    await vi.waitFor(
+      () => expect(viewer.getPageView(1)?.element.classList.contains('ofd-page--preview')).toBe(false),
+      { timeout: 3000 },
+    );
+    const after = pagePositionAt(viewer, main.scrollTop + 400);
     expect(after?.pageNumber).toBe(before?.pageNumber);
     expect(Math.abs((after?.ratio ?? 0) - (before?.ratio ?? 0))).toBeLessThan(0.003);
 
@@ -707,6 +720,62 @@ describe('OFDViewer 核心', () => {
     const single = dispatchTouchPointer(main, 'pointermove', 1, 520, 400);
     expect(single.defaultPrevented).toBe(false);
     expect(viewer.getScale()).toBeCloseTo(2, 5);
+    viewer.destroy();
+  });
+
+  it('连续手势缩放期间不重绘页面，停止后才提交一次', async () => {
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+      initialScale: 1,
+    });
+    await viewer.ready;
+    await vi.waitFor(() => expect(contextMock.clearRect.mock.calls.length).toBeGreaterThan(0));
+    const main = viewer.getElements().main;
+    vi.spyOn(main, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 800,
+      bottom: 800,
+      width: 800,
+      height: 800,
+      toJSON: () => ({}),
+    } as DOMRect);
+    const rendersBefore = contextMock.clearRect.mock.calls.length;
+    const wheel = (): WheelEvent =>
+      new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        deltaY: -120,
+        clientX: 300,
+        clientY: 400,
+      });
+    // 连续 8 次滚轮：只更新视觉缩放，不得触发任何页面重绘。
+    for (let index = 0; index < 8; index += 1) main.dispatchEvent(wheel());
+    expect(viewer.getScale()).toBeGreaterThan(1);
+    expect(
+      viewer.getPageViews().some((view) => view.element.classList.contains('ofd-page--preview')),
+    ).toBe(true);
+    // 等一帧确认滚动合并也不会引起重绘。
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(contextMock.clearRect.mock.calls.length).toBe(rendersBefore);
+    // 停止 180 ms 后按最终倍率重绘一次。
+    await vi.waitFor(
+      () =>
+        expect(
+          viewer
+            .getPageViews()
+            .every((view) => !view.element.classList.contains('ofd-page--preview')),
+        ).toBe(true),
+      { timeout: 3000 },
+    );
+    await vi.waitFor(() =>
+      expect(contextMock.clearRect.mock.calls.length).toBeGreaterThan(rendersBefore),
+    );
     viewer.destroy();
   });
 

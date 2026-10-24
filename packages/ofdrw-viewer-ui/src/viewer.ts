@@ -120,6 +120,9 @@ import {
 } from './crypto';
 import { UI_WARNING_CODES } from './diagnostics';
 
+/** 手势缩放停止后提交重绘的延迟，单位毫秒；手指静止超过 180 ms 即按最终倍率重绘。 */
+const PREVIEW_COMMIT_DELAY_MS = 180;
+
 /** 阅读器扩展：在实例创建/注册时执行，返回清理函数。 */
 export type ViewerExtension = (viewer: OFDViewer) => void | (() => void);
 
@@ -392,6 +395,12 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private pinchStartDistance = 0;
   /** 捏合开始时的缩放倍率。 */
   private pinchStartScale = 1;
+  /** 手势预览的目标倍率；null 表示当前没有进行中的预览。 */
+  private previewScale: number | null = null;
+  /** 手势预览的提交计时器：停止移动 180 ms 后按最终倍率重绘一次。 */
+  private previewCommitTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 最近一次预览时指针所在的内容坐标与偏移；提交时用来还原滚动位置。 */
+  private previewPointer: { readonly absolute: number; readonly offset: number } | null = null;
   /** 已执行 pointer capture 的触点，用于手势结束释放。 */
   private readonly capturedPointers = new Set<number>();
   /** 控制台诊断打印机；负责过滤、去重与 `console.warn`/`console.error` 输出。 */
@@ -631,7 +640,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
 
   /** 当前缩放倍率。 */
   getScale(): number {
-    return this.state.view.scale;
+    // 手势预览期间布局倍率尚未提交，但对调用方而言“当前倍率”应以视觉缩放为准。
+    return this.previewScale ?? this.state.view.scale;
   }
 
   /** 当前旋转角度。 */
@@ -2231,7 +2241,9 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         0,
       ),
     });
-    this.renderVisible();
+    // 手势缩放期间不调度页面渲染：预览只做合成层缩放，此时重绘会直接拖垮帧率。
+    // 预览结束后由 commitPreviewScale 统一重绘。
+    if (this.previewScale === null) this.renderVisible();
     this.commit();
     this.syncHash();
   }
@@ -2351,11 +2363,10 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     event.preventDefault();
     if (Math.abs(event.deltaY) < 1e-6) return;
     const factor = event.deltaY < 0 ? 1.1 : 0.9;
-    const next = clampScale(this.state.view.scale * factor);
-    this.applyScale(next, this.state.view.zoomMode, {
-      clientX: event.clientX,
-      clientY: event.clientY,
-    });
+    const base = this.previewScale ?? this.state.view.scale;
+    const next = clampScale(base * factor);
+    // 与捏合手势共用预览机制：连续滚轮只在停止后按最终倍率重绘一次。
+    this.previewZoom(next, { clientX: event.clientX, clientY: event.clientY });
   }
 
   /**
@@ -2399,10 +2410,129 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     const second = points[1]!;
     const distance = Math.hypot(first.x - second.x, first.y - second.y);
     const next = clampScale(this.pinchStartScale * (distance / this.pinchStartDistance));
-    this.applyScale(next, this.state.view.zoomMode, {
+    // 手势期间只做合成层缩放，不重排、不重绘：每次移动都重绘 canvas 会让帧率降到个位数，
+    // 表现为“不跟手”。停止移动 PREVIEW_COMMIT_DELAY_MS 后按最终倍率一次性重绘。
+    this.previewZoom(next, {
       clientX: (first.x + second.x) / 2,
       clientY: (first.y + second.y) / 2,
     });
+  }
+
+  /**
+   * 手势缩放预览：只改视觉缩放并保持指针锚点，不触发页面重排/重绘。
+   *
+   * 目标倍率记录在 `previewScale`，由 {@link schedulePreviewCommit} 在停止移动后提交为
+   * 真正的布局倍率，届时才重新渲染 canvas。
+   *
+   * @param nextScale 目标倍率。
+   * @param origin 指针视口坐标，单位 px。
+   */
+  private previewZoom(
+    nextScale: number,
+    origin?: { readonly clientX: number; readonly clientY: number },
+  ): void {
+    const baseScale = this.state.view.scale;
+    if (Math.abs(nextScale - baseScale) < 0.0001) {
+      // 回到已提交倍率：撤销预览，不做任何重绘。
+      if (this.previewScale !== null) {
+        this.previewScale = null;
+        for (const pageView of this.pageViews) pageView.setPreviewScale(1);
+      }
+      return;
+    }
+    this.previewScale = nextScale;
+    const ratio = nextScale / baseScale;
+    // scale 以页盒中心为原点：越靠上的页，其视觉位移越小。按指针所在的“页面坐标”
+    // 反算滚动补偿，保证缩放过程中指针下的内容不跑掉。
+    if (origin) this.keepPointerAnchor(origin, ratio);
+    for (const pageView of this.pageViews) pageView.setPreviewScale(ratio);
+    this.schedulePreviewCommit();
+  }
+
+  /**
+   * 手势预览锚定：让指针下的页面坐标在视觉缩放后仍处于指针位置。
+   *
+   * 预览只对页盒做 CSS `scale()`（原点为页盒中心），页间间距与页盒偏移不参与缩放，
+   * 因此不能把滚动位置整体线性折算；这里按几何关系精确求解：设某页中心在滚动内容中的
+   * 坐标为 `c`，指针相对视口顶部的偏移为 `offset`，内容坐标 `y` 的视觉位置为
+   * `c + (y - c) * r - scrollTop`；令其仍等于 `offset` 即可解出新的滚动位置。
+   *
+   * @param origin 指针视口坐标，单位 px。
+   * @param ratio 预览倍率相对当前布局倍率的比例。
+   */
+  private keepPointerAnchor(
+    origin: { readonly clientX: number; readonly clientY: number },
+    ratio: number,
+  ): void {
+    const offset = this.pointerOffsetY(origin.clientY);
+    const absolute = this.mainScrollTop + offset;
+    this.previewPointer = { absolute, offset };
+    const boxes = this.layout.getBoxes();
+    // 锚点所在页：其内容在缩放后需与指针重合。
+    const anchor = this.layout.getAnchor(absolute);
+    const box = boxes[anchor.pageIndex];
+    if (!box || box.height <= 0) {
+      this.mainScrollTop = absolute * ratio - offset;
+      return;
+    }
+    const center = box.top + box.height / 2;
+    // 指针相对滚动视口顶部的偏移固定为 offset；内容坐标 y 的视觉位置为
+    // center + (y - center) * ratio - scrollTop，令其等于 offset 反解 scrollTop。
+    const desiredScrollTop = center + (absolute - center) * ratio - offset;
+    this.mainScrollTop = desiredScrollTop;
+  }
+
+  /**
+   * 安排一次预览提交：停止移动 {@link PREVIEW_COMMIT_DELAY_MS} 后按最终倍率重绘。
+   */
+  private schedulePreviewCommit(): void {
+    if (this.previewCommitTimer !== null) clearTimeout(this.previewCommitTimer);
+    this.previewCommitTimer = setTimeout(() => {
+      this.previewCommitTimer = null;
+      this.commitPreviewScale();
+    }, PREVIEW_COMMIT_DELAY_MS);
+  }
+
+  /**
+   * 提交预览缩放：以最终倍率执行一次完整缩放（重排 + 重绘）。
+   */
+  private commitPreviewScale(): void {
+    const target = this.previewScale;
+    this.previewScale = null;
+    if (this.previewCommitTimer !== null) {
+      clearTimeout(this.previewCommitTimer);
+      this.previewCommitTimer = null;
+    }
+    for (const pageView of this.pageViews) pageView.setPreviewScale(1);
+    if (target === null) return;
+    const previous = this.state.view.scale;
+    // 预览阶段已把指针下的内容锚定在原位；提交时须按“指针下的页面内容”恢复滚动位置，
+    // 否则 applyScale 的默认页顶锚点会把内容整体推移。
+    const pointer = this.previewPointer;
+    this.previewPointer = null;
+    if (pointer) {
+      // 提交时保持“指针下的页内比例”不变：先在旧布局中求出指针所在页与该页内比例，
+      // 再按新布局换算滚动位置。页面坐标不能按倍率线性折算——页顶偏移与间距不随缩放变化。
+      const offset = pointer.offset;
+      const anchor = this.layout.getAnchor(pointer.absolute);
+      this.layout.setScale(target);
+      this.patchView({ scale: target, zoomMode: this.state.view.zoomMode });
+      this.reflow();
+      this.mainScrollTop = this.layout.getOffsetForAnchor(anchor) - offset;
+    } else {
+      this.layout.setScale(target);
+      this.patchView({ scale: target, zoomMode: this.state.view.zoomMode });
+      this.reflow(this.captureAnchor());
+    }
+    this.emit('scalechanging', {
+      scale: target,
+      zoomMode: this.state.view.zoomMode,
+      previous,
+    });
+    this.cancelAllPageTasks();
+    this.renderVisible(true);
+    this.commit();
+    this.syncHash();
   }
 
   /**
@@ -2416,6 +2546,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     if (this.touchPoints.size < 2) {
       this.pinchStartDistance = 0;
       this.releaseTouchPointers();
+      // 松手立即按最终倍率重绘，不必等待预览提交计时器。
+      if (this.previewScale !== null) this.commitPreviewScale();
     }
   }
 
