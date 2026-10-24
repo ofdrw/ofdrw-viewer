@@ -31,6 +31,10 @@
 | `document.getSignedValue(id)` | `Promise<SignedValueFile \| undefined>` | 签章值原始字节 |
 | `document.getPermissions()` | `Promise<DocumentPermissions>` | 权限声明（只读） |
 | `document.getAttachments()` | `Promise<readonly AttachmentInfo[]>` | 附件元信息 |
+| `document.getAttachmentByName(name, options?)` | `Promise<AttachmentInfo \| undefined>` | 按名称精确查找附件 |
+| `document.getAttachmentsByFormat(format, options?)` | `Promise<readonly AttachmentInfo[]>` | 按格式筛选附件（大小写不敏感） |
+| `document.getAttachmentSize(id, options?)` | `Promise<number \| undefined>` | 附件声明大小，byte |
+| `document.saveAttachment(id, sink, options?)` | `Promise<number>` | 分块回调写出附件内容，返回写出字节数 |
 | `document.getAttachmentData(id)` | `Promise<Uint8Array \| undefined>` | 附件原始字节 |
 | `document.close()` | `Promise<void>` | 中止活动操作并释放资源 |
 | `document.events` | `OFDEventBus` | 文档/页面事件总线 |
@@ -170,7 +174,37 @@ const doc2 = await OFDDocument.open({
 
 - 打开阶段解析 OFD.xml/DocInfo 并缓存；无 DocInfo 时仍返回 `version`、`pageCount`（以及可得的 `packageSize`）。
 - 日期字段保留 OFD 原文，不做时区推断；非法日期上报 `W_METADATA_FIELD` 并省略该字段。
-- `DocumentMetadata` 必含 `version`、`pageCount`；可选 `packageSize`、`title`、`author`、`subject`、`abstract`、`creationDate`、`modDate`、`creator`、`creatorVersion`、`keywords`、`docId`、`customData`。
+- 新增字段与原字段一样遵循“缺失即省略”，不放入 `undefined`。
+
+`DocumentMetadata` 字段：
+
+| 字段 | 类型 | 来源 | 说明 |
+| --- | --- | --- | --- |
+| `version` | `string` | OFD.xml | 必含；OFD 版本 |
+| `pageCount` | `number` | Document.xml | 必含；总页数 |
+| `packageSize` | `number?` | 容器 | 压缩包总字节数，byte |
+| `title` / `author` / `subject` / `abstract` | `string?` | DocInfo | 文档属性原文 |
+| `creationDate` / `modDate` | `string?` | DocInfo | 日期原文，非法时省略并上报 `W_METADATA_FIELD` |
+| `creator` / `creatorVersion` | `string?` | DocInfo | 创建工具与版本 |
+| `keywords` | `readonly string[]?` | DocInfo | 关键字，XML 顺序 |
+| `docId` | `string?` | DocInfo | 文档 ID |
+| `customData` | `Readonly<Record<string, string>>?` | DocInfo | 自定义键值对 |
+| `docUsage` | `string?` | DocInfo/DocUsage | 文档用途 |
+| `docType` | `string?` | OFD.xml `OFD@DocType` | 例如 `OFD`/`Render`/`None` |
+| `documentHeader` | `DocumentHeader?` | Document.xml | 文档头声明，见下表 |
+| `packageInfo` | `OfdPackageInfo?` | OFD.xml | 包级结构，见下表 |
+| `commonData` | `CommonDataSummary?` | CommonData | 公共数据摘要，见下表 |
+
+子类型字段（几何单位 mm，包内路径已由 `resolvePackagePath` 规范化并去掉前导 `/`）：
+
+| 类型 | 字段 |
+| --- | --- |
+| `DocumentHeader` | 可选 `docId`、`version`、`maxUnitId`（均为 XML 原文/整数）、`pageArea`（`DocumentPageArea`）、`publicRes`/`documentRes`/`templatePageRes`（`readonly string[]`，包内路径列表，无声明时省略）、`defaultCs`、`docUsage` |
+| `DocumentPageArea` | 可选 `physicalBox`、`applicationBox`、`bleedBox`，均为 `Box`（mm）；三者全缺失时省略整个 `pageArea` |
+| `OfdPackageInfo` | `docRoot`（选中文档根目录，包内路径）、`docBodyCount`（OFD.xml 声明的 DocBody 数量）必含；可选 `maxUnitId`（选中 DocBody 的 MaxUnitID） |
+| `CommonDataSummary` | 可选 `pageArea`、`defaultColorSpaceId`、`documentVersion`、`dataDir` |
+
+- 非法数值/路径省略并上报 `W_METADATA_FIELD`，不阻断打开。
 
 ### 3.9 `document.getSignatureEntries(options?: { signal?: AbortSignal }): Promise<readonly SignatureEntryInfo[]>`
 
@@ -202,13 +236,44 @@ const doc2 = await OFDDocument.open({
 - 无 `Attachments.xml` 返回 `[]`；索引读取/解析失败 warning 后返回 `[]`。
 - `Attachment@ID`、`Name` 必填，缺失时跳过该条并上报 `W_ATTACHMENT_FIELD`；重复 `ID` 保留先出现者并上报 `W_DUPLICATE_RESOURCE`。
 - `Visible` 缺省 `true`，`Usage` 缺省 `none`；`Size` 按 XML 的 KB × 1024 换算为 byte，非法时省略并上报 `W_ATTACHMENT_FIELD`。
-- `AttachmentInfo`：`id`、`name`，可选 `format`、`size`（byte）、`creationDate`、`modDate`、`visible`、`usage`；条目保持 XML 顺序。
+- `AttachmentInfo`：`id`、`name`，可选 `format`、`size`（byte）、`creationDate`、`modDate`、`visible`、`usage`、`contentType`（MIME，优先 `Attachment@ContentType`，否则按 `format` 推断）、`description`（`Attachment@Desc`）、`submissionDate`（`Attachment@SubmissionDate` 原文）、`isEncrypted`（`Attachment@IsEncrypted`，非法时省略并上报 `W_ATTACHMENT_FIELD`）；条目保持 XML 顺序。
+
+### 3.12.1 附件查询与分块保存
+
+四个方法均已加入 `OFDDocumentApi`；索引读取复用 `getAttachments()` 的缓存（`Attachments.xml` 只解析一次），内容读取按需进行且不缓存。
+
+```ts
+getAttachmentByName(name: string, options?: { signal?: AbortSignal }): Promise<AttachmentInfo | undefined>;
+
+getAttachmentsByFormat(format: string, options?: { signal?: AbortSignal }): Promise<readonly AttachmentInfo[]>;
+
+getAttachmentSize(attachmentId: string, options?: { signal?: AbortSignal }): Promise<number | undefined>;
+
+saveAttachment(
+  attachmentId: string,
+  sink: (chunk: Uint8Array) => void | Promise<void>,
+  options?: { signal?: AbortSignal; chunkSize?: number },
+): Promise<number>;
+```
+
+- `getAttachmentByName(name, options?)`：按 `name` 精确匹配（大小写敏感），重名返回第一个并上报 `W_DUPLICATE_RESOURCE`；未找到返回 `undefined`（不 warning）。
+- `getAttachmentsByFormat(format, options?)`：格式比较大小写不敏感（两侧 trim + 小写），保持 XML 顺序；只匹配声明了 `format` 的条目；空串返回 `[]`。
+- `getAttachmentSize(attachmentId, options?)`：只读 `Attachments.xml` 声明的大小（byte），不读内容；ID 不存在上报 `W_ATTACHMENT_RESOURCE`、未声明 `Size` 时返回 `undefined`；**声明大小超过上限时同样抛 `OFD_LIMIT_EXCEEDED`**（虽只是元数据查询，但与读取接口口径一致，便于调用方在读取前统一拦截）。
+- `saveAttachment(attachmentId, sink, options?)`：边读边回调，chunk 顺序等于包内字节顺序，返回写入字节总数；`options.chunkSize`（byte，默认 65536）控制单块大小，非法值回退默认值。
+  - 底层不是流式 I/O：容器只提供整块读取，引擎先把附件读入内存（受单附件上限约束），再按 `chunkSize` 顺序回调。
+  - `chunk` 是本次读取缓冲的 `subarray` 视图；引擎在回调返回后可能复用该缓冲，需要跨回调保留时应自行拷贝（UI 即使用 `chunk.slice()`）。
+  - 单附件上限取 `limits.maxAttachmentBytes`，未配置/非法回退 `maxEntryBytes`（默认 64 MiB）；声明大小或实际大小超限抛 `OFD_LIMIT_EXCEEDED`，不返回部分数据（`getAttachmentData`/`getAttachmentSize` 同）。
+  - `sink` 抛错原样向上抛出，引擎不再继续读取，已写入字节不回滚。
+  - 附件不可用（无 `Attachments.xml`/ID 不存在/缺 `FileLoc`/文件缺失）时上报 `W_ATTACHMENT_RESOURCE` 并返回 `0`。
+  - 取消抛 `OFD_ABORTED`，关闭后抛 `OFD_CLOSED`。
+- 辅助类型：`AttachmentSink = (chunk: Uint8Array) => void | Promise<void>`；`AttachmentOperationOptions = { signal?; chunkSize? }`。
 
 ### 3.13 `document.getAttachmentData(attachmentId: string, options?: { signal?: AbortSignal }): Promise<Uint8Array | undefined>`
 
 - 返回附件原始字节，不解析内容；`attachmentId` 按资源 ID 规则规范化后匹配。
 - 无 `Attachments.xml`（未声明附件索引）：返回 `undefined`，不 warning。
 - 索引存在但 ID 不存在、条目缺少可用 `FileLoc`、附件文件缺失/读取失败：上报 `W_ATTACHMENT_RESOURCE` 并返回 `undefined`。
+- 声明大小或实际大小超过 `limits.maxAttachmentBytes`（未配置回退 `maxEntryBytes`）时抛 `OFD_LIMIT_EXCEEDED`。
 - `OFD_LIMIT_EXCEEDED`/`OFD_INVALID_PACKAGE` 等不可降级错误原样抛出。
 - 每次调用按需读取，不缓存附件内容；返回字节归调用方所有。
 
@@ -611,6 +676,7 @@ function toOFDError(error: unknown, code: OFDErrorCode, message: string): OFDErr
 | `OFD_RENDERER_UNSUPPORTED` | 自定义 renderer 不支持、缺画布/编码器、格式不支持、编码失败/空结果 |
 | `OFD_ABORTED` | `RenderTask.cancel()`/`AbortSignal` 中止 |
 | `OFD_CLOSED` | 文档已关闭后继续调用 |
+| `OFD_NOT_OPENED` | 文档从未成功打开时请求文档级信息（区别于已打开后被关闭的 `OFD_CLOSED`）；由 UI `getDocumentInfo()` 抛出 |
 | `OFD_LIMIT_EXCEEDED` | 包/条目/解压/图片/递归等资源限制 |
 | `OFD_FONT_PARSE` | 底层字体解析错误；公共流程通常降级为 `W_FONT_MISSING` |
 | `OFD_IMAGE_DECODE` | 图片解码失败；多数渲染路径降级为 `W_IMAGE_DECODE`，不可降级场景抛出 |
@@ -683,7 +749,8 @@ interface OFDWarning {
 | --- | --- | --- | --- |
 | `maxPackageBytes` | 256 MiB | byte | 压缩包总大小 |
 | `maxEntries` | 20,000 | 个 | ZIP 条目数 |
-| `maxEntryBytes` | 64 MiB | byte | 单条目解压后大小 |
+| `maxEntryBytes` | 64 MiB | byte | 单条目解压后大小（附件上限回退值） |
+| `maxAttachmentBytes` | 未配置（回退 `maxEntryBytes`） | byte | 单附件读取大小上限 |
 | `maxTotalUncompressedBytes` | 512 MiB | byte | 总解压大小 |
 | `maxCompressionRatio` | 200 | 倍 | 单条目最大压缩比 |
 | `maxXmlBytes` | 32 MiB | byte | 单个 XML 大小 |
@@ -730,7 +797,7 @@ interface OFDWarning {
 
 | 名称 | 说明 |
 | --- | --- |
-| `OFDDocument` | 文档入口；`open/getPage/getPageInfos/getOutline/getBookmarks/getMetadata/getSignatureEntries/getSignedValue/getPermissions/getAttachments/getAttachmentData/close` |
+| `OFDDocument` | 文档入口；`open/getPage/getPageInfos/getOutline/getBookmarks/getMetadata/getSignatureEntries/getSignedValue/getPermissions/getAttachments/getAttachmentByName/getAttachmentsByFormat/getAttachmentSize/saveAttachment/getAttachmentData/close` |
 | `OFDPage` | 页面入口；`getSize/getViewport/prepare/getTextContent/render/exportImage` |
 | `RenderTask` | 渲染句柄；`id/promise/cancel` |
 | `OFDEventBus` | 事件总线实现 |
@@ -857,7 +924,9 @@ interface OFDWarning {
 | `PageInfoOptions` | `getPageInfos` 参数（`start/count/signal`） |
 | `PageInfo` | 页尺寸/页区域，mm |
 | `DocumentPermissions` | 权限声明（只读，不做 DRM 强制） |
-| `AttachmentInfo` | 附件元信息（`size` 单位 byte） |
+| `AttachmentInfo` | 附件元信息（`size` 单位 byte，含 contentType/description/submissionDate/isEncrypted） |
+| `AttachmentSink` | 附件分块写出回调 |
+| `AttachmentOperationOptions` | 附件查询/保存参数（`signal`、`chunkSize`） |
 | `DestinationType` | 大纲/书签目标类型 |
 | `DocumentDestination` | 跳转目标，mm/zoom |
 | `OutlineNode` | 大纲节点与子节点 |
@@ -867,7 +936,11 @@ interface OFDWarning {
 | `SignatureStampInfo` | 签章戳记位置，mm |
 | `SignatureEntryInfo` | 签章 XML 条目元数据 |
 | `SignedValueFile` | 签章值原始字节（`signatureId/path/data/byteLength`） |
-| `DocumentMetadata` | 文档属性 |
+| `DocumentMetadata` | 文档属性（含可选 `docUsage`/`docType`/`documentHeader`/`packageInfo`/`commonData`） |
+| `DocumentHeader` | Document.xml 头部声明，mm/包内路径 |
+| `DocumentPageArea` | 页面区三组矩形（物理/显示/出血），mm |
+| `OfdPackageInfo` | OFD 包级结构（DocRoot/MaxUnitID/DocBody 数） |
+| `CommonDataSummary` | CommonData 摘要（页面区/默认颜色空间/数据目录） |
 | `PagePrepareOptions` | `page.prepare` 参数 |
 | `TextContent` | 页面文本层，px |
 | `TextContentOptions` | `getTextContent` 参数 |

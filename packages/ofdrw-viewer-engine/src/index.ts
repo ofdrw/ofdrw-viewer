@@ -105,11 +105,17 @@ export type {
 } from './api/types';
 export type {
   AttachmentInfo,
+  AttachmentOperationOptions,
+  AttachmentSink,
   BookmarkItem,
   DestinationType,
+  CommonDataSummary,
   DocumentDestination,
+  DocumentHeader,
   DocumentMetadata,
+  DocumentPageArea,
   DocumentPermissions,
+  OfdPackageInfo,
   OFDDocumentApi,
   OFDPageApi,
   OutlineNode,

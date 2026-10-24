@@ -109,6 +109,7 @@ describe('document.getAttachments / getAttachmentData', () => {
           id: '1',
           name: '报告.pdf',
           format: 'PDF',
+          contentType: 'application/pdf',
           size: 36_494,
           creationDate: '2020-05-20T10:20:30+08:00',
           modDate: '2020-05-21',

@@ -20,7 +20,8 @@ const ATTACHMENT_FIELD_WARNING = 'W_ATTACHMENT_FIELD';
  * 解码 Attachments.xml。
  *
  * `Attachment@ID` 与 `Attachment@Name` 为必选；缺失时跳过该条。重复 ID 保留先出现者。
- * `Visible` 缺省 true，`Usage` 缺省 `none`；日期与格式保留 XML 原文。
+ * `Visible` 缺省 true，`Usage` 缺省 `none`；日期、格式、ContentType、Desc 保留 XML 原文；
+ * `IsEncrypted` 未声明时省略，声明值非法时省略并 warning。
  *
  * @param root Attachments.xml 根节点。
  * @param filePath Attachments.xml 的包内路径，用于解析相对 FileLoc。
@@ -80,6 +81,14 @@ export function decodeAttachments(
     if (creationDate) model.creationDate = creationDate;
     const modDate = (attr(node, 'ModDate') ?? '').trim();
     if (modDate) model.modDate = modDate;
+    const contentType = (attr(node, 'ContentType') ?? '').trim();
+    if (contentType) model.contentType = contentType;
+    const description = (attr(node, 'Desc') ?? '').trim();
+    if (description) model.description = description;
+    const submissionDate = (attr(node, 'SubmissionDate') ?? '').trim();
+    if (submissionDate) model.submissionDate = submissionDate;
+    const isEncrypted = decodeIsEncrypted(node, id, options);
+    if (isEncrypted !== undefined) model.isEncrypted = isEncrypted;
 
     const fileLoc = (childText(node, 'FileLoc') ?? attr(node, 'FileLoc') ?? '').trim();
     if (fileLoc) {
@@ -120,6 +129,33 @@ function decodeVisible(node: XmlNode, id: ResourceId, options: DecodeOptions): b
     { resourceId: id },
   );
   return true;
+}
+
+/**
+ * 解析 Attachment@IsEncrypted。
+ *
+ * @param node Attachment 节点。
+ * @param id 附件 ID，用于 warning 定位。
+ * @param options 解码选项。
+ * @returns 是否加密；未声明或非法时 undefined。
+ */
+function decodeIsEncrypted(
+  node: XmlNode,
+  id: ResourceId,
+  options: DecodeOptions,
+): boolean | undefined {
+  const raw = attr(node, 'IsEncrypted');
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const value = raw.trim().toLowerCase();
+  if (value === 'true' || value === '1' || value === 'yes') return true;
+  if (value === 'false' || value === '0' || value === 'no') return false;
+  emitWarning(
+    { ...(options.onWarning ? { onWarning: options.onWarning } : {}) },
+    ATTACHMENT_FIELD_WARNING,
+    `附件 ${id} 的 IsEncrypted 非法：${JSON.stringify(raw)}，已省略`,
+    { resourceId: id },
+  );
+  return undefined;
 }
 
 /**

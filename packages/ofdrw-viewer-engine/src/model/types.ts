@@ -8,6 +8,7 @@
 
 import type { Box, LineCap, LineJoin, Matrix, Rgba, PathCommand } from '../common/types';
 import type { DisplayList } from '../common/display-list';
+import type { DocumentHeader } from '../api/ui-types';
 import type { ResolvedStyle } from '../style/types';
 
 /** 资源 ID 统一使用十进制文本，避免精度/非数字问题。 */
@@ -646,6 +647,14 @@ export interface AttachmentModel {
   visible: boolean;
   /** Attachment@Usage；缺省 `none`。 */
   usage: string;
+  /** Attachment@ContentType 原文；未声明时省略。 */
+  contentType?: string;
+  /** Attachment@Desc 原文；未声明时省略。 */
+  description?: string;
+  /** Attachment@SubmissionDate 原文；未声明时省略。 */
+  submissionDate?: string;
+  /** Attachment@IsEncrypted 声明值；未声明时省略。 */
+  isEncrypted?: boolean;
   /** FileLoc 解析后的包内路径；未声明或路径非法时省略。 */
   fileLoc?: string;
 }
@@ -678,6 +687,8 @@ export interface DocumentModel {
   permissions: PermissionModel;
   /** Document.xml 声明的附件列表 Attachments.xml 包内路径；无附件时缺省。 */
   attachmentsFile?: string;
+  /** Document.xml 头部声明；无可识别字段时缺省。 */
+  header?: DocumentHeader;
 }
 
 /** 页树前序遍历结果。 */

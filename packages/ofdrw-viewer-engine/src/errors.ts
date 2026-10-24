@@ -17,6 +17,8 @@ export type OFDErrorCode =
   | 'OFD_RENDERER_UNSUPPORTED'
   | 'OFD_ABORTED'
   | 'OFD_CLOSED'
+  /** 文档从未成功打开时请求文档级信息（区别于已打开后被关闭的 `OFD_CLOSED`）。 */
+  | 'OFD_NOT_OPENED'
   | 'OFD_LIMIT_EXCEEDED'
   | 'OFD_FONT_PARSE'
   | 'OFD_IMAGE_DECODE';

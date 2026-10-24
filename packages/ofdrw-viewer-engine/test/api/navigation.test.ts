@@ -229,6 +229,21 @@ describe('UI API：大纲/书签/文档属性', () => {
         creationDate: '2020-04-25',
         creator: 'OFD R&W',
         creatorVersion: '1.2.0',
+        docType: 'OFD',
+        documentHeader: {
+          maxUnitId: 88,
+          pageArea: {
+            physicalBox: { x: 0, y: 0, w: 210, h: 297 },
+            applicationBox: { x: 0, y: 0, w: 210, h: 297 },
+          },
+        },
+        packageInfo: { docRoot: 'Doc_0/Document.xml', docBodyCount: 1 },
+        commonData: {
+          pageArea: {
+            physicalBox: { x: 0, y: 0, w: 210, h: 297 },
+            applicationBox: { x: 0, y: 0, w: 210, h: 297 },
+          },
+        },
       });
     } finally {
       await doc.close();
@@ -355,6 +370,118 @@ describe('UI API：大纲/书签/文档属性', () => {
       expect(readEntry).not.toHaveBeenCalled();
     } finally {
       readEntry.mockRestore();
+      await doc.close();
+    }
+  });
+
+  it('getMetadata 暴露 docUsage/docType/documentHeader/packageInfo/commonData', async () => {
+    const ofdXml = buildXmlDocument({
+      name: 'ofd:OFD',
+      attrs: { 'xmlns:ofd': OFD_NS, DocType: 'OFD', Version: '1.1' },
+      children: [
+        {
+          name: 'ofd:DocBody',
+          attrs: { MaxUnitID: '512' },
+          children: [
+            {
+              name: 'ofd:DocInfo',
+              children: [
+                { name: 'ofd:DocID', children: ['meta-id'] },
+                { name: 'ofd:DocUsage', children: ['Normal'] },
+              ],
+            },
+            { name: 'ofd:DocRoot', children: ['Doc_0/Document.xml'] },
+          ],
+        },
+      ],
+    });
+    const doc = await openTestDocument(
+      buildFixtureOfd({
+        pages: [{ id: 1, widthMm: 100, heightMm: 100, objects: [] }],
+        commonPageArea: { widthMm: 210, heightMm: 297 },
+        ofdXml,
+      }),
+    );
+    try {
+      const metadata = await doc.getMetadata();
+      expect(metadata.docUsage).toBe('Normal');
+      expect(metadata.docType).toBe('OFD');
+      expect(metadata.packageInfo).toEqual({
+        docRoot: 'Doc_0/Document.xml',
+        maxUnitId: 512,
+        docBodyCount: 1,
+      });
+      expect(metadata.documentHeader).toEqual({
+        version: '1.1',
+        pageArea: { physicalBox: { x: 0, y: 0, w: 210, h: 297 } },
+      });
+      expect(metadata.commonData).toEqual({
+        pageArea: { physicalBox: { x: 0, y: 0, w: 210, h: 297 } },
+        documentVersion: '1.1',
+      });
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('packageInfo 按选中文档下标取 MaxUnitID，缺失时省略；commonData.dataDir 取首个文档资源目录', async () => {
+    const ofdXml = buildXmlDocument({
+      name: 'ofd:OFD',
+      attrs: { 'xmlns:ofd': OFD_NS, Version: '1.0' },
+      children: [
+        {
+          name: 'ofd:DocBody',
+          children: [
+            { name: 'ofd:DocRoot', children: ['Doc_0/Document.xml'] },
+          ],
+        },
+      ],
+    });
+    const doc = await openTestDocument(
+      buildFixtureOfd({
+        pages: [{ id: 1, widthMm: 100, heightMm: 100, objects: [] }],
+        documentRes: [{ path: 'Doc_0/Res/DocumentRes.xml', children: [] }],
+        ofdXml,
+      }),
+    );
+    try {
+      const metadata = await doc.getMetadata();
+      // DocBody 未声明 MaxUnitID：maxUnitId 键不存在，其余字段保留。
+      expect(metadata.packageInfo).toEqual({
+        docRoot: 'Doc_0/Document.xml',
+        docBodyCount: 1,
+      });
+      expect(metadata.packageInfo).not.toHaveProperty('maxUnitId');
+      // 头部资源路径按包根相对解析：Doc_0/Res/DocumentRes.xml → 目录 Res。
+      expect(metadata.commonData?.dataDir).toBe('Res');
+      // 未声明 DocType 时省略。
+      expect(metadata).not.toHaveProperty('docType');
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('新元数据字段全部缺失时不出现对应键（省略而非 undefined）', async () => {
+    const ofdXml = buildXmlDocument({
+      name: 'ofd:OFD',
+      attrs: { 'xmlns:ofd': OFD_NS, Version: '1.0' },
+      children: [
+        { name: 'ofd:DocBody', children: [{ name: 'ofd:DocRoot', children: ['Doc_0/Document.xml'] }] },
+      ],
+    });
+    const doc = await openTestDocument(
+      buildFixtureOfd({ pages: [{ id: 1, widthMm: 100, heightMm: 100, objects: [] }], ofdXml }),
+    );
+    try {
+      const metadata = await doc.getMetadata();
+      expect(metadata).not.toHaveProperty('docUsage');
+      expect(metadata).not.toHaveProperty('docType');
+      // 夹具的 Document.xml 固定带 Version="1.1"，因此 documentHeader 只含 version。
+      expect(metadata.documentHeader).toEqual({ version: '1.1' });
+      expect(metadata).not.toHaveProperty('commonData');
+      // packageInfo 始终存在（docRoot/docBodyCount 为必填）。
+      expect(metadata.packageInfo?.docRoot).toBe('Doc_0/Document.xml');
+    } finally {
       await doc.close();
     }
   });

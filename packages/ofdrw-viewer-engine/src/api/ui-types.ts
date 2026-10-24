@@ -175,6 +175,82 @@ export interface DocumentMetadata {
   docId?: string;
   /** 自定义元数据；键值均为字符串。 */
   customData?: Readonly<Record<string, string>>;
+
+  // —— 新增字段，全部可选；缺失即省略 ——
+  /** DocInfo/DocUsage，文档用途声明。 */
+  docUsage?: string;
+  /** OFD@DocType，例如 `OFD`/`Render`/`None`。 */
+  docType?: string;
+  /** Document.xml 头部声明。 */
+  documentHeader?: DocumentHeader;
+  /** OFD 包级结构信息。 */
+  packageInfo?: OfdPackageInfo;
+  /** CommonData 摘要。 */
+  commonData?: CommonDataSummary;
+}
+
+/**
+ * Document.xml 头部声明。
+ *
+ * 几何字段单位为 mm（与 PageInfo、SignatureStampInfo 的坐标约定一致），
+ * 同时保留 XML 原文能力由包内路径字段体现。
+ */
+export interface DocumentHeader {
+  /** Document@DocID。 */
+  docId?: string;
+  /** Document@Version。 */
+  version?: string;
+  /** Document@MaxUnitID。 */
+  maxUnitId?: number;
+  /** 页面区声明。 */
+  pageArea?: DocumentPageArea;
+  /** PublicRes 包内路径列表（已规范化）；无声明时省略。 */
+  publicRes?: readonly string[];
+  /** DocumentRes 包内路径列表（已规范化）；无声明时省略。 */
+  documentRes?: readonly string[];
+  /** TemplatePageRes 包内路径列表（已规范化）；无声明时省略。 */
+  templatePageRes?: readonly string[];
+  /** DefaultCS 颜色空间 ID。 */
+  defaultCs?: string;
+  /** Document@DocUsage。 */
+  docUsage?: string;
+}
+
+/**
+ * 页面区三组矩形；几何单位 mm。
+ *
+ * 页面区声明来自 Document.xml 的 `PageArea` 或 `CommonData/PageArea`，
+ * 三组矩形均归一化保留原值（不交换宽高）。
+ */
+export interface DocumentPageArea {
+  /** 物理页面区。 */
+  physicalBox?: Box;
+  /** 显示区。 */
+  applicationBox?: Box;
+  /** 出血区。 */
+  bleedBox?: Box;
+}
+
+/** OFD 包级结构信息。 */
+export interface OfdPackageInfo {
+  /** 选中文档根目录，包内绝对路径，已去掉前导 `/`。 */
+  docRoot: string;
+  /** 选中文档的 DocBody@MaxUnitID。 */
+  maxUnitId?: number;
+  /** OFD.xml 声明的 DocBody 数量。 */
+  docBodyCount: number;
+}
+
+/** CommonData 摘要。 */
+export interface CommonDataSummary {
+  /** 公共页面区，mm。 */
+  pageArea?: DocumentPageArea;
+  /** 默认颜色空间 ID。 */
+  defaultColorSpaceId?: string;
+  /** Document.xml@Version。 */
+  documentVersion?: string;
+  /** 数据目录，包内路径；已规范化。 */
+  dataDir?: string;
 }
 
 /** 文档权限声明；字段缺省值按 OFD 规格回退。 */
@@ -225,6 +301,37 @@ export interface AttachmentInfo {
   visible?: boolean;
   /** Attachment@Usage；缺省 `none`。 */
   usage?: string;
+  /** MIME 类型；由 Attachment@ContentType 或 format 推断，未声明时省略。 */
+  contentType?: string;
+  /** Attachment@Desc。 */
+  description?: string;
+  /** Attachment@SubmissionDate 原文。 */
+  submissionDate?: string;
+  /** 是否加密存储；未声明时省略。 */
+  isEncrypted?: boolean;
+}
+
+/**
+ * 附件分块写出回调。
+ *
+ * 引擎按包内字节顺序调用，每次给出一个非空 chunk；实现可同步或异步，
+ * 抛错时 `saveAttachment` 原样向上抛出且不再继续读取。
+ *
+ * @param chunk 本次字节块；调用方应在回调返回前完成拷贝（引擎可能复用缓冲区）。
+ * @returns 可为 Promise；引擎会等待其完成后再写下一块。
+ */
+export type AttachmentSink = (chunk: Uint8Array) => void | Promise<void>;
+
+/** 附件查询/读取参数。 */
+export interface AttachmentOperationOptions {
+  /** 取消信号；中止后 promise 以 `OFD_ABORTED` 拒绝。 */
+  signal?: AbortSignal;
+  /**
+   * 分块写入时的单块字节数，byte；默认 65536，非法值回退默认值。
+   *
+   * 只在 `saveAttachment` 生效；内存中整块回调实现按整块给出。
+   */
+  chunkSize?: number;
 }
 
 /** 页面预取参数。 */
@@ -430,6 +537,27 @@ export interface OFDDocumentApi {
   getPermissions(options?: { signal?: AbortSignal }): Promise<DocumentPermissions>;
   /** 读取附件元信息；无 Attachments.xml 返回空数组。 */
   getAttachments(options?: { signal?: AbortSignal }): Promise<readonly AttachmentInfo[]>;
+  /** 按名称精确查找；重名时返回第一个并上报 `W_DUPLICATE_RESOURCE`。 */
+  getAttachmentByName(
+    name: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<AttachmentInfo | undefined>;
+  /** 按格式（大小写不敏感）筛选，保持 XML 顺序。 */
+  getAttachmentsByFormat(
+    format: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<readonly AttachmentInfo[]>;
+  /** 读取附件声明的大小，byte；未声明或附件不存在时返回 undefined。 */
+  getAttachmentSize(
+    attachmentId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<number | undefined>;
+  /** 流式写出附件内容；返回写入字节总数（byte）。 */
+  saveAttachment(
+    attachmentId: string,
+    sink: AttachmentSink,
+    options?: AttachmentOperationOptions,
+  ): Promise<number>;
   /** 读取附件原始字节；附件不存在或内容缺失时返回 undefined。 */
   getAttachmentData(
     attachmentId: string,

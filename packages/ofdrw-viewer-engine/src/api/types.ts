@@ -38,6 +38,12 @@ export interface ResourceLimits {
   maxEntries: number;
   /** 单条目解压大小上限，byte，默认 64 MiB。 */
   maxEntryBytes: number;
+  /**
+   * 单附件读取大小上限，byte；未配置时回退 `maxEntryBytes`。
+   *
+   * 只作用于附件接口（`getAttachmentData`/`saveAttachment`/`getAttachmentSize`）。
+   */
+  maxAttachmentBytes?: number;
   /** 总解压大小上限，byte，默认 512 MiB。 */
   maxTotalUncompressedBytes: number;
   /** 单条目最大压缩比，默认 200。 */

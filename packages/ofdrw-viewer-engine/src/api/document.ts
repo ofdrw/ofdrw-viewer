@@ -60,13 +60,18 @@ import type {
 } from './events';
 import type {
   AttachmentInfo,
+  AttachmentOperationOptions,
+  AttachmentSink,
   BookmarkItem,
+  CommonDataSummary,
   DocumentMetadata,
+  DocumentPageArea,
   DocumentPermissions,
   OFDDocumentApi,
   OutlineNode,
   PageInfo,
   PageInfoOptions,
+  OfdPackageInfo,
   PagePrepareOptions,
   SignatureEntryInfo,
   SignatureStampInfo,
@@ -75,6 +80,7 @@ import type {
   TextContentOptions,
 } from './ui-types';
 import type { FontFaceSet } from '../font/types';
+import type { OfdRootInfo } from '../model/decode';
 import type { PageAreaCandidate } from '../model/page-area';
 import { decodePageAreaXml } from '../model/page-info';
 import type { PageAreaInfo } from '../model/page-info';
@@ -839,6 +845,10 @@ export class OFDDocument {
           pageCount: document.pageCount,
           packageSize: container.packageSize,
           ...metadataFromDocInfo(rootInfo.docInfos[documentIndex]),
+          ...(rootInfo.docType ? { docType: rootInfo.docType } : {}),
+          ...(document.header ? { documentHeader: document.header } : {}),
+          packageInfo: packageInfoOf(rootInfo, documentIndex, docRoot),
+          ...commonDataSummaryOf(document),
         };
         throwIfAborted(signal);
         return {
@@ -1640,6 +1650,129 @@ export class OFDDocument {
   }
 
   /**
+   * 按名称精确查找附件元信息。
+   *
+   * 名称按 XML 原文（已去前后空白）比较，大小写敏感；重名时返回第一个并上报
+   * `W_DUPLICATE_RESOURCE`。无附件或未匹配时返回 undefined，不上报 warning。
+   *
+   * @param name 附件名称（Attachment@Name）。
+   * @param options 取消信号。
+   * @returns 第一个同名附件元信息；未找到时 undefined。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED。
+   */
+  async getAttachmentByName(
+    name: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<AttachmentInfo | undefined> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    const infos = await this.getAttachments(options);
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    const matches = infos.filter((item) => item.name === name);
+    if (matches.length > 1) {
+      this.documentWarningHandler({
+        code: 'W_DUPLICATE_RESOURCE',
+        message: `附件名称重复：${JSON.stringify(name)}，返回第一个`,
+        resourceId: matches[0]?.id ?? '',
+      });
+    }
+    return matches[0];
+  }
+
+  /**
+   * 按格式筛选附件元信息；格式比较大小写不敏感。
+   *
+   * 只匹配声明了 `format` 的条目，未声明格式的条目不会命中；返回顺序保持 XML 顺序。
+   *
+   * @param format 附件格式，例如 `PDF`；空串返回空数组。
+   * @param options 取消信号。
+   * @returns 匹配的附件元信息。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED。
+   */
+  async getAttachmentsByFormat(
+    format: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<readonly AttachmentInfo[]> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    const target = format.trim().toLowerCase();
+    if (!target) return [];
+    const infos = await this.getAttachments(options);
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    return infos.filter(
+      (item) => item.format !== undefined && item.format.trim().toLowerCase() === target,
+    );
+  }
+
+  /**
+   * 读取附件声明的大小。
+   *
+   * 只读取 Attachments.xml 中的 `Size`（已换算为 byte），不读取附件内容；
+   * 未声明大小或附件 ID 不存在时返回 undefined。
+   *
+   * @param attachmentId 附件 ID；按资源 ID 规则规范化后匹配。
+   * @param options 取消信号。
+   * @returns 附件大小，byte；未声明或不存在时 undefined。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED / OFD_LIMIT_EXCEEDED。
+   */
+  async getAttachmentSize(
+    attachmentId: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<number | undefined> {
+    const entry = await this.findAttachment(attachmentId, options);
+    if (!entry || entry.size === undefined) return undefined;
+    this.assertAttachmentSizeWithinLimit(entry);
+    return entry.size;
+  }
+
+  /**
+   * 流式写出附件内容，边读边回调，不返回整块字节。
+   *
+   * 行为约定：
+   * - `sink` 收到的 chunk 顺序严格等于包内字节顺序，每块非空；
+   * - 单附件大小上限取 `limits.maxAttachmentBytes`（未配置回退 `maxEntryBytes`），
+   *   超限抛 `OFD_LIMIT_EXCEEDED` 且不返回部分数据；
+   * - `sink` 抛错时原样向上抛出，引擎不再继续读取，已写入字节不回滚；
+   * - 未声明附件或 ID 不存在时上报 `W_ATTACHMENT_RESOURCE` 并返回 0。
+   *
+   * @param attachmentId 附件 ID；按资源 ID 规则规范化后匹配。
+   * @param sink 分块写出回调；可同步或异步。
+   * @param options 取消信号与可选的单块字节数（byte，默认 65536）。
+   * @returns 写入字节总数，byte；附件不可用时 0。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED / OFD_LIMIT_EXCEEDED / OFD_INVALID_PACKAGE；sink 自身错误。
+   */
+  async saveAttachment(
+    attachmentId: string,
+    sink: AttachmentSink,
+    options: AttachmentOperationOptions = {},
+  ): Promise<number> {
+    const entry = await this.findAttachment(attachmentId, options);
+    if (!entry) return 0;
+    this.assertAttachmentSizeWithinLimit(entry);
+    const maxBytes = Math.min(this.limits.maxEntryBytes, this.attachmentSizeLimit());
+    const path = this.resolveAttachmentPath(entry);
+    if (!path) return 0;
+    const signal = options.signal;
+    const combined = combineAbortSignals([signal, this.closeController.signal]);
+    const run = this.streamAttachmentBytes(
+      entry,
+      path,
+      sink,
+      options.chunkSize,
+      maxBytes,
+      combined.signal,
+    );
+    this.trackActiveRun(run);
+    try {
+      return await run;
+    } finally {
+      combined.dispose();
+    }
+  }
+
+  /**
    * 读取附件原始字节；不解析附件内容。
    *
    * 未声明 Attachments 或附件 ID 不存在时返回 undefined。声明了附件但文件缺失/
@@ -1654,32 +1787,12 @@ export class OFDDocument {
     attachmentId: string,
     options: { signal?: AbortSignal } = {},
   ): Promise<Uint8Array | undefined> {
-    this.assertOpen();
-    throwIfAborted(options.signal);
-    const normalizedId = normalizeResourceId(attachmentId);
-    const models = await this.getAttachmentModels(options.signal);
-    this.assertOpen();
-    throwIfAborted(options.signal);
-    if (!this.document.attachmentsFile) return undefined;
-    const entry = models.find((item) => item.id === normalizedId);
-    if (!entry) {
-      this.documentWarningHandler({
-        code: 'W_ATTACHMENT_RESOURCE',
-        message: `附件 ${JSON.stringify(attachmentId)} 不存在`,
-        objectId: normalizedId || attachmentId,
-      });
-      return undefined;
-    }
-    const path = entry.fileLoc;
-    if (!path) {
-      this.documentWarningHandler({
-        code: 'W_ATTACHMENT_RESOURCE',
-        message: `附件 ${entry.id} 未声明可用的 FileLoc`,
-        resourceId: entry.id,
-        objectId: entry.id,
-      });
-      return undefined;
-    }
+    const entry = await this.findAttachment(attachmentId, options);
+    if (!entry) return undefined;
+    this.assertAttachmentSizeWithinLimit(entry);
+    const path = this.resolveAttachmentPath(entry);
+    if (!path) return undefined;
+    const maxBytes = Math.min(this.limits.maxEntryBytes, this.attachmentSizeLimit());
     const combined = combineAbortSignals([options.signal, this.closeController.signal]);
     const run = (async (): Promise<Uint8Array | undefined> => {
       try {
@@ -1687,7 +1800,7 @@ export class OFDDocument {
         let bytes: Uint8Array;
         try {
           bytes = await this.containerOrThrow().read(path, {
-            maxBytes: this.limits.maxEntryBytes,
+            maxBytes,
             onWarning: this.documentWarningHandler,
             signal: combined.signal,
           });
@@ -1713,6 +1826,152 @@ export class OFDDocument {
     this.trackActiveRun(run);
     return run;
   }
+
+  /**
+   * 查找附件模型。
+   *
+   * 未声明 Attachments 时直接返回 undefined 且不 warning；声明了索引但 ID 找不到时
+   * 上报 `W_ATTACHMENT_RESOURCE`。
+   *
+   * @param attachmentId 附件 ID 原文。
+   * @param options 取消信号。
+   * @returns 附件模型；不可用时 undefined。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED。
+   */
+  private async findAttachment(
+    attachmentId: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<AttachmentModel | undefined> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    if (!this.document.attachmentsFile) return undefined;
+    const normalizedId = normalizeResourceId(attachmentId);
+    const models = await this.getAttachmentModels(options.signal);
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    const entry = models.find((item) => item.id === normalizedId);
+    if (!entry) {
+      this.documentWarningHandler({
+        code: 'W_ATTACHMENT_RESOURCE',
+        message: `附件 ${JSON.stringify(attachmentId)} 不存在`,
+        objectId: normalizedId || attachmentId,
+      });
+      return undefined;
+    }
+    return entry;
+  }
+
+  /**
+   * 解析附件内容的包内路径。
+   *
+   * @param entry 附件模型。
+   * @returns 包内路径；未声明 FileLoc 时 warning 并返回 undefined。
+   */
+  private resolveAttachmentPath(entry: AttachmentModel): string | undefined {
+    const path = entry.fileLoc;
+    if (path) return path;
+    this.documentWarningHandler({
+      code: 'W_ATTACHMENT_RESOURCE',
+      message: `附件 ${entry.id} 未声明可用的 FileLoc`,
+      resourceId: entry.id,
+      objectId: entry.id,
+    });
+    return undefined;
+  }
+
+  /**
+   * 单附件大小上限。
+   *
+   * @returns 上限，byte；`limits.maxAttachmentBytes` 未配置或非法时回退 `maxEntryBytes`。
+   */
+  private attachmentSizeLimit(): number {
+    const configured = this.limits.maxAttachmentBytes;
+    if (configured === undefined || !Number.isFinite(configured) || configured <= 0) {
+      return this.limits.maxEntryBytes;
+    }
+    return configured;
+  }
+
+  /**
+   * 按声明大小（byte）校验是否超过单附件上限；超限抛错，不读取内容。
+   *
+   * @param entry 附件模型。
+   * @throws OFDError `OFD_LIMIT_EXCEEDED` 当声明大小超过上限时。
+   */
+  private assertAttachmentSizeWithinLimit(entry: AttachmentModel): void {
+    if (entry.size === undefined) return;
+    const limit = this.attachmentSizeLimit();
+    if (entry.size > limit) {
+      throw new OFDError(
+        'OFD_LIMIT_EXCEEDED',
+        `附件 ${entry.id} 声明大小 ${entry.size} byte 超过上限 ${limit} byte`,
+      );
+    }
+  }
+
+  /**
+   * 读取附件内容并按块回调写出。
+   *
+   * 容器只提供整块读取时，在内存中按 `chunkSize` 切分后顺序回调，避免调用方同时
+   * 持有解码副本与容器副本；sink 抛错立即中止。
+   *
+   * @param entry 附件模型。
+   * @param path 附件内容包内路径。
+   * @param sink 分块写出回调。
+   * @param chunkSize 单块字节数；非法值回退默认值。
+   * @param maxBytes 读取大小上限，byte。
+   * @param signal 合并后的取消信号。
+   * @returns 写入字节总数，byte。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED / OFD_LIMIT_EXCEEDED / OFD_INVALID_PACKAGE；sink 自身错误。
+   */
+  private async streamAttachmentBytes(
+    entry: AttachmentModel,
+    path: string,
+    sink: AttachmentSink,
+    chunkSize: number | undefined,
+    maxBytes: number,
+    signal: AbortSignal,
+  ): Promise<number> {
+    throwIfAborted(signal);
+    let bytes: Uint8Array;
+    try {
+      bytes = await this.containerOrThrow().read(path, {
+        maxBytes,
+        onWarning: this.documentWarningHandler,
+        signal,
+      });
+    } catch (error) {
+      if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭', { cause: error });
+      if (signal.aborted) throw createAbortError();
+      if (isOFDError(error) && error.code === 'OFD_ENTRY_NOT_FOUND') {
+        this.documentWarningHandler({
+          code: 'W_ATTACHMENT_RESOURCE',
+          message: `附件 ${entry.id} 读取失败：${path}（${errorMessage(error)}）`,
+          resourceId: entry.id,
+          objectId: entry.id,
+        });
+        return 0;
+      }
+      throw error;
+    }
+    if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭');
+    if (bytes.byteLength > maxBytes) {
+      throw new OFDError(
+        'OFD_LIMIT_EXCEEDED',
+        `附件 ${entry.id} 大小 ${bytes.byteLength} byte 超过上限 ${maxBytes} byte`,
+      );
+    }
+    const size = normalizeAttachmentChunkSize(chunkSize);
+    let written = 0;
+    for (let offset = 0; offset < bytes.byteLength; offset += size) {
+      throwIfAborted(signal);
+      const chunk = bytes.subarray(offset, Math.min(offset + size, bytes.byteLength));
+      await sink(chunk);
+      written += chunk.byteLength;
+    }
+    return written;
+  }
+
 
   /**
    * 读取签章 XML 元数据；按 Signatures.xml 顺序返回并缓存到 close。
@@ -3253,6 +3512,22 @@ export class OFDDocument {
   }
 }
 
+/** 附件流式写出的默认单块字节数：64 KiB。 */
+const DEFAULT_ATTACHMENT_CHUNK_BYTES = 64 * 1024;
+
+/**
+ * 规范化附件分块大小。
+ *
+ * @param chunkSize 调用方请求的单块字节数，byte。
+ * @returns 合法正整数值；未提供或非法时返回默认 64 KiB。
+ */
+function normalizeAttachmentChunkSize(chunkSize: number | undefined): number {
+  if (chunkSize === undefined || !Number.isInteger(chunkSize) || chunkSize <= 0) {
+    return DEFAULT_ATTACHMENT_CHUNK_BYTES;
+  }
+  return chunkSize;
+}
+
 /**
  * 把附件模型转换为公开 API 类型，隐藏包内 FileLoc。
  *
@@ -3270,7 +3545,57 @@ function toAttachmentInfo(model: AttachmentModel): AttachmentInfo {
   if (model.size !== undefined) info.size = model.size;
   if (model.creationDate !== undefined) info.creationDate = model.creationDate;
   if (model.modDate !== undefined) info.modDate = model.modDate;
+  if (model.description !== undefined) info.description = model.description;
+  if (model.submissionDate !== undefined) info.submissionDate = model.submissionDate;
+  if (model.isEncrypted !== undefined) info.isEncrypted = model.isEncrypted;
+  const contentType = resolveAttachmentContentType(model);
+  if (contentType !== undefined) info.contentType = contentType;
   return info;
+}
+
+/** 常见附件格式到 MIME 类型的映射；键为小写格式名。 */
+const ATTACHMENT_MIME_BY_FORMAT: Readonly<Record<string, string>> = Object.freeze({
+  pdf: 'application/pdf',
+  txt: 'text/plain',
+  xml: 'application/xml',
+  json: 'application/json',
+  xmlofd: 'application/xml',
+  html: 'text/html',
+  htm: 'text/html',
+  csv: 'text/csv',
+  zip: 'application/zip',
+  ofd: 'application/ofd',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  bmp: 'image/bmp',
+  webp: 'image/webp',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
+  svg: 'image/svg+xml',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+});
+
+/**
+ * 解析附件 MIME 类型。
+ *
+ * 优先使用 `Attachment@ContentType`；未声明时按 `format` 查表推断；
+ * 两者都不可用时返回 undefined（省略该字段）。
+ *
+ * @param model 附件模型。
+ * @returns MIME 类型；无法确定时 undefined。
+ */
+function resolveAttachmentContentType(model: AttachmentModel): string | undefined {
+  if (model.contentType !== undefined) return model.contentType;
+  const format = model.format?.trim().toLowerCase().replace(/^\./, '');
+  if (!format) return undefined;
+  return ATTACHMENT_MIME_BY_FORMAT[format];
 }
 
 /**
@@ -3467,6 +3792,58 @@ function waitForAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> 
 }
 
 /**
+ * 组装包级结构信息。
+ *
+ * @param rootInfo OFD.xml 解析结果。
+ * @param documentIndex 选中文档索引。
+ * @param docRoot 选中文档根目录，包内绝对路径。
+ * @returns 包级结构信息；MaxUnitID 未声明时省略。
+ */
+function packageInfoOf(
+  rootInfo: OfdRootInfo,
+  documentIndex: number,
+  docRoot: string,
+): OfdPackageInfo {
+  const maxUnitId = rootInfo.maxUnitIds[documentIndex];
+  return {
+    docRoot,
+    ...(maxUnitId !== undefined ? { maxUnitId } : {}),
+    docBodyCount: rootInfo.docBodyCount,
+  };
+}
+
+/**
+ * 把模型 CommonData 映射为公共摘要。
+ *
+ * @param document 已解码文档模型。
+ * @returns 摘要字段；全部缺失时返回空对象（不写入 metadata）。
+ */
+function commonDataSummaryOf(document: DocumentModel): { commonData?: CommonDataSummary } {
+  const commonData = document.commonData;
+  if (!commonData) return {};
+  const summary: CommonDataSummary = {};
+  const pageArea: DocumentPageArea = {
+    ...(commonData.pageArea ? { physicalBox: commonData.pageArea } : {}),
+  };
+  if (document.header?.pageArea) {
+    if (document.header.pageArea.applicationBox) {
+      pageArea.applicationBox = document.header.pageArea.applicationBox;
+    }
+    if (document.header.pageArea.bleedBox) pageArea.bleedBox = document.header.pageArea.bleedBox;
+  }
+  if (Object.keys(pageArea).length > 0) summary.pageArea = pageArea;
+  if (commonData.defaultColorSpaceId) {
+    summary.defaultColorSpaceId = commonData.defaultColorSpaceId;
+  }
+  if (document.version) summary.documentVersion = document.version;
+  const dataDir = document.header?.documentRes?.[0]
+    ? dirnameOf(document.header.documentRes[0])
+    : undefined;
+  if (dataDir) summary.dataDir = dataDir;
+  return Object.keys(summary).length > 0 ? { commonData: summary } : {};
+}
+
+/**
  * 把模型 DocInfo 映射为公共 DocumentMetadata 的可选字段。
  *
  * @param info 已解码 DocInfo；无 DocInfo 时为 undefined。
@@ -3486,6 +3863,7 @@ function metadataFromDocInfo(info: DocInfo | undefined): Partial<DocumentMetadat
   if (info.keywords) result.keywords = info.keywords;
   if (info.docId) result.docId = info.docId;
   if (info.customData) result.customData = info.customData;
+  if (info.docUsage) result.docUsage = info.docUsage;
   return result;
 }
 

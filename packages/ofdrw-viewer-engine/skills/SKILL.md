@@ -1,6 +1,6 @@
 ---
 name: ofdrw-viewer-engine
-description: Render OFD documents to Canvas with @ofdrw/ofdrw-viewer-engine. Use this skill whenever a task involves opening, previewing, rendering, or exporting .ofd pages in JavaScript/TypeScript, including browser pages, Web Workers/OffscreenCanvas, Node.js tools, Electron/Tauri, or WeChat Mini Programs. Covers page rendering, content filtering by layer/template/annotation type, thumbnails, PNG/JPEG/WebP export, searchable text layers with pixel coordinates, outlines/metadata/attachments/signatures, DPI/canvas sizing, virtual container/encrypted-document injection, host-provided document sources (arraybuffer/blob/custom ByteSource, engine does not fetch URLs or read files), platform hooks (createCanvas, encodeImage, imageDecoders, custom ByteSource, FontProvider), cancellation, and debugging warnings such as missing fonts or images. Also use for OFD 预览、按内容层过滤、OFD 转图片、文字层坐标、engine 不联网/来源委托, or when wiring a custom Canvas host. See the bundled API.md for exact signatures and defaults.
+description: Render OFD documents to Canvas with @ofdrw/ofdrw-viewer-engine. Use this skill whenever a task involves opening, previewing, rendering, or exporting .ofd pages in JavaScript/TypeScript, including browser pages, Web Workers/OffscreenCanvas, Node.js tools, Electron/Tauri, or WeChat Mini Programs. Covers page rendering, content filtering by layer/template/annotation type, thumbnails, PNG/JPEG/WebP export, searchable text layers with pixel coordinates, outlines/metadata/attachments/signatures, document metadata extensions (docType, documentHeader, packageInfo, commonData), attachment queries by name/format/size with chunked saveAttachment, DPI/canvas sizing, virtual container/encrypted-document injection, host-provided document sources (arraybuffer/blob/custom ByteSource, engine does not fetch URLs or read files), platform hooks (createCanvas, encodeImage, imageDecoders, custom ByteSource, FontProvider), cancellation, and debugging warnings such as missing fonts or images. Also use for OFD 预览、按内容层过滤、OFD 转图片、文字层坐标、engine 不联网/来源委托, or when wiring a custom Canvas host. See the bundled API.md for exact signatures and defaults.
 ---
 
 # OFD 页面渲染引擎（@ofdrw/ofdrw-viewer-engine）
@@ -477,6 +477,57 @@ const raw = await doc.getSignedValue(signatures[0]?.id ?? '');
 
 `getOutline`/`getBookmarks`/`getMetadata`/`getPermissions`/`getAttachments`/`getSignatureEntries` 只读元数据或索引；`getAttachmentData`/`getSignedValue` 返回原始字节，但不解析内容、不验签。
 
+### 文档元数据与包结构
+
+`getMetadata()` 在 `open()` 阶段随 OFD.xml/Document.xml 一起解析并缓存，调用时只读内存、不额外读包内条目。除版本/页数/DocInfo 外，还可选带包级结构字段，解析不到时省略 key：
+
+```ts
+const meta = await doc.getMetadata();
+console.log(meta.docType);          // OFD@DocType，例如 'OFD'
+console.log(meta.docUsage);         // DocInfo/DocUsage
+console.log(meta.packageInfo);      // { docRoot, docBodyCount, maxUnitId? }
+console.log(meta.documentHeader);   // Document.xml 头部声明
+console.log(meta.commonData);       // CommonData 摘要
+```
+
+| 字段 | 类型 | 内容 |
+| --- | --- | --- |
+| `docUsage` | `string?` | 文档用途 |
+| `docType` | `string?` | `OFD.xml` 的 `OFD@DocType` |
+| `documentHeader` | `DocumentHeader?` | `docId`/`version`/`maxUnitId`/`pageArea`/`publicRes`/`documentRes`/`templatePageRes`/`defaultCs`/`docUsage` |
+| `packageInfo` | `OfdPackageInfo?` | `docRoot`、`docBodyCount`，可选 `maxUnitId` |
+| `commonData` | `CommonDataSummary?` | `pageArea`、`defaultColorSpaceId`、`documentVersion`、`dataDir` |
+
+- `publicRes`/`documentRes`/`templatePageRes` 是 `readonly string[]`（OFD 允许同名多路径声明），已规范化为包内路径。
+- 几何字段（`pageArea` 的 `physicalBox`/`applicationBox`/`bleedBox`）单位 **mm**，与 `PageInfo` 一致。
+- 非法数值/路径省略并上报 `W_METADATA_FIELD`，不阻断打开。
+
+### 附件查询与分块保存
+
+除 `getAttachments()`/`getAttachmentData()` 外，还有按名/按格式查询、只查大小和回调式分块保存：
+
+```ts
+const list = await doc.getAttachments();                       // AttachmentInfo[]，保持 XML 顺序
+const byName = await doc.getAttachmentByName('发票.xml');      // 未找到为 undefined
+const pdfs = await doc.getAttachmentsByFormat('pdf');          // 大小写不敏感
+const size = await doc.getAttachmentSize(list[0]?.id ?? '');   // 声明大小，byte；未声明为 undefined
+
+const written = await doc.saveAttachment(list[0]?.id ?? '', (chunk) => {
+  sink.write(chunk.slice()); // 引擎可能复用缓冲，保留必须拷贝
+}, { chunkSize: 64 * 1024 });
+console.log(written); // 写入字节总数，byte
+```
+
+- `getAttachmentByName`：按 `name` 精确匹配（大小写敏感），重名返回第一个并上报 `W_DUPLICATE_RESOURCE`。
+- `getAttachmentsByFormat`：两侧 trim 后小写比较，只匹配声明了 `format` 的条目，空串返回 `[]`。
+- `getAttachmentSize`：只读 `Attachments.xml` 的声明大小（byte），不读内容；ID 不存在上报 `W_ATTACHMENT_RESOURCE` 并返回 `undefined`；**声明大小超过上限时同样抛 `OFD_LIMIT_EXCEEDED`**。
+- `saveAttachment`：chunk 顺序等于包内字节顺序，`chunkSize` 默认 65536 byte（非法值回退默认值）。它**不是流式 I/O**——容器只提供整块读取，引擎先把附件读入内存，再按 `chunkSize` 切分回调；`chunk` 是缓冲的 `subarray` 视图，跨回调保留必须自行拷贝。`sink` 抛错原样上抛、引擎停止读取、已写字节不回滚。
+- 附件不可用（无 `Attachments.xml`/ID 不存在/缺 `FileLoc`/文件缺失）时上报 `W_ATTACHMENT_RESOURCE`：`saveAttachment` 返回 `0`，`getAttachmentData`/`getAttachmentSize` 返回 `undefined`。
+- 单附件上限取 `limits.maxAttachmentBytes`，未配置（或非法）回退 `maxEntryBytes`（默认 64 MiB）；声明大小或实际大小超限一律抛 `OFD_LIMIT_EXCEEDED`，不返回部分数据，三个读取接口口径一致。
+- 取消抛 `OFD_ABORTED`，关闭后抛 `OFD_CLOSED`。
+
+完整签名与字段表见 [API.md](./API.md) 的 `getMetadata`（§3.8）与 `getAttachments`/附件查询与分块保存（§3.12、§3.12.1）小节。
+
 ### 缺省字体与补充字体
 
 - `defaultFonts`：文档缺字体时的默认替代，优先级高于 `supplementaryFonts`；只接受 `{ data }`。
@@ -530,6 +581,8 @@ warning 不中断渲染，同一 `(code, pageIndex, objectId)` 只上报一次�
 - `contentFilter` 是白名单：只写要显示的内容。写 `{ layers: { background: false } }` 不是“隐藏背景、其余照画”，而是只指定了一个不画的层，结果接近空白页；要隐藏某层，把其余要画的内容都显式写上。
 - `exportImage`/`getTextContent` 不会自动继承上一次 `render` 的 `contentFilter`；需要一致时传同一个对象。
 - 不要把 `limits` 设为 0 上线；不要忽略 `W_FONT_MISSING` 导致的文字缺字。
+- `saveAttachment` 不是流式读取：附件先整块读入内存再按 `chunkSize` 回调，大附件请调大单附件上限或改用 `getAttachmentSize` 先判断；回调里的 `chunk` 是缓冲视图，越权保留会读到被覆盖的数据。
+- `getAttachmentSize` 只查元数据，但声明大小超上限同样抛 `OFD_LIMIT_EXCEEDED`，不要把它当成“永不抛错”的探测接口。
 - 不要用引擎做签章验签、证书解析或加密文档解密；这些不在引擎范围。
 
 ## 参考

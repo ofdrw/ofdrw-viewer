@@ -29,6 +29,7 @@ import { decodeResourceSet } from './resource-decode';
 import { flattenPageTree } from './page-tree';
 import { decodeDocumentNavigation } from './navigation';
 import { decodeDocInfo } from './doc-info';
+import { decodeDocumentHeader } from './document-header';
 import { decodePermissions } from './permissions';
 
 /**
@@ -50,12 +51,22 @@ export interface DecodeOptions {
 export interface OfdRootInfo {
   /** OFD 版本，例如 `1.0`。 */
   version: string;
+  /** OFD@DocType，例如 `OFD`/`Render`/`None`；未声明时省略。 */
+  docType?: string;
   /** 文档根目录（DocRoot），包内绝对路径，已去掉前导 `/`。 */
   docRoots: string[];
   /** 选中的文档索引；默认 0。 */
   docRootIndex: number;
   /** DocBody 顺序对应的 DocInfo；DocBody 无 DocInfo 时为 undefined。 */
   docInfos: Array<DocInfo | undefined>;
+  /**
+   * 与 `docRoots` 下标对齐的 DocBody@MaxUnitID；DocBody 未声明或数值非法时为 undefined。
+   *
+   * 只读数组，长度与 `docRoots` 相同。
+   */
+  maxUnitIds: Array<number | undefined>;
+  /** OFD.xml 中声明的 DocBody 节点总数（含无有效 DocRoot 的条目）。 */
+  docBodyCount: number;
 }
 
 /**
@@ -63,12 +74,14 @@ export interface OfdRootInfo {
  *
  * @param root OFD.xml 根节点。
  * @param options 解码选项；DocInfo 非法字段通过 warning 上报。
- * @returns 版本、DocRoot 列表与各 DocBody 的 DocInfo。
+ * @returns 版本、DocType、DocRoot 列表、各 DocBody 的 DocInfo 与 MaxUnitID。
  */
 export function decodeOfdRoot(root: XmlNode, options?: DecodeOptions): OfdRootInfo {
   const version = (attr(root, 'Version') ?? '1.0').trim() || '1.0';
+  const docType = (attr(root, 'DocType') ?? '').trim();
   const docRoots: string[] = [];
   const docInfos: Array<DocInfo | undefined> = [];
+  const maxUnitIds: Array<number | undefined> = [];
   const pushDocRoot = (value: string | undefined): boolean => {
     if (value === undefined) return false;
     const normalized = normalizeDocRoot(value);
@@ -77,18 +90,46 @@ export function decodeOfdRoot(root: XmlNode, options?: DecodeOptions): OfdRootIn
     return true;
   };
   // 标准结构：OFD/DocBody/DocRoot；同时兼容根节点直接放 DocRoot 的简化文件。
-  for (const docBody of children(root, 'DocBody')) {
+  const docBodyNodes = children(root, 'DocBody');
+  for (const docBody of docBodyNodes) {
     const pushed = pushDocRoot(childText(docBody, 'DocRoot'));
     if (pushed) {
       const infoNode = child(docBody, 'DocInfo');
       docInfos.push(infoNode ? decodeDocInfo(infoNode, options) : undefined);
+      maxUnitIds.push(decodeMaxUnitId(docBody, options));
     }
   }
   // 简化文件可能把 DocRoot 直接放在 OFD 根下；支持多个。
   for (const docRoot of children(root, 'DocRoot')) {
     pushDocRoot((docRoot.text ?? '').trim());
   }
-  return { version, docRoots, docRootIndex: 0, docInfos };
+  return {
+    version,
+    ...(docType ? { docType } : {}),
+    docRoots,
+    docRootIndex: 0,
+    docInfos,
+    maxUnitIds,
+    docBodyCount: docBodyNodes.length,
+  };
+}
+
+/**
+ * 读取 DocBody@MaxUnitID。
+ *
+ * @param docBody DocBody 节点。
+ * @param options 解码选项；非法数值省略并上报 `W_METADATA_FIELD`。
+ * @returns 非负整数；未声明或非法时 undefined。
+ */
+function decodeMaxUnitId(docBody: XmlNode, options?: DecodeOptions): number | undefined {
+  const raw = attr(docBody, 'MaxUnitID');
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const value = Number(raw.trim());
+  if (!Number.isInteger(value) || value < 0) {
+    emitWarning(options, 'W_METADATA_FIELD', `DocBody@MaxUnitID 不是合法的非负整数：${JSON.stringify(raw)}`);
+    return undefined;
+  }
+  return value;
 }
 
 /**
@@ -148,10 +189,12 @@ export function decodeDocument(
     options,
   );
   const permissions = decodePermissions(child(root, 'Permissions'), options);
+  const header = decodeDocumentHeader(root, options);
   return {
     id: normalizeResourceId(attr(root, 'ID')),
     version,
     docRoot: baseDir,
+    ...(header ? { header } : {}),
     ofdFile: '',
     pages: tree.pages,
     pageCount: tree.pageCount,
