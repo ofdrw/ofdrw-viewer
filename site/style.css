@@ -110,6 +110,12 @@ ofd-viewer {
   transform: translate(-50%, 8px);
 }
 
+/* 参数彻底隐藏（?dock=off）：上面的 display: flex 会盖住 [hidden] 的
+ * 浏览器默认 display: none，必须显式覆盖，否则 dock 仍然显示。 */
+.dock[hidden] {
+  display: none;
+}
+
 /* 用键盘 Tab 聚焦控件内部任意元素时保持可见，避免焦点落在隐形控件上。 */
 .dock:focus-within {
   opacity: 1;
