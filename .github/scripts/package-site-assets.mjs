@@ -2,7 +2,7 @@
 /**
  * 把演示站构建产物打成发布附件压缩包。
  *
- * 产物：`release-assets/site-<version>.zip`，压缩包内为站点根目录内容
+ * 产物：`release-assets/ofdrw-viewer-ui-demo-<version>.zip`，压缩包内为站点根目录内容
  * （`index.html`、`assets/`、`samples/` 等），解压后直接作为静态站点根目录托管。
  *
  * 前置条件：已执行 `BASE_PATH=/ pnpm -C site build`（默认站点基路径为根路径），
@@ -19,6 +19,9 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /** 站点构建输出目录（相对仓库根）。 */
 const SITE_DIST = 'site-dist';
+
+/** 发布附件压缩包的文件名前缀，压缩包内顶层目录同名。 */
+const ARCHIVE_STEM = 'ofdrw-viewer-ui-demo';
 
 /** 压缩包内必须存在的文件，用于确认构建产物完整。 */
 const REQUIRED_FILES = ['index.html'];
@@ -92,8 +95,9 @@ async function main() {
   await assertArtifacts();
   const version = await readVersion();
   const releaseDir = join(REPO_ROOT, 'release-assets');
-  const archivePath = join(releaseDir, `site-${version}.zip`);
-  const topDir = `site-${version}`;
+  const archiveName = `${ARCHIVE_STEM}-${version}`;
+  const archivePath = join(releaseDir, `${archiveName}.zip`);
+  const topDir = archiveName;
   const stagingRoot = join(REPO_ROOT, '.site-package');
   const stagingDir = join(stagingRoot, topDir);
 
@@ -108,7 +112,7 @@ async function main() {
     await rm(stagingRoot, { recursive: true, force: true });
   }
 
-  console.log(`演示站产物已生成：release-assets/site-${version}.zip`);
+  console.log(`演示站产物已生成：release-assets/${archiveName}.zip`);
 }
 
 main().catch((error) => {

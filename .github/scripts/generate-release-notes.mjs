@@ -257,8 +257,9 @@ function renderNotes({ tag, version, previousTag, commits, packages, repository 
   );
 
   lines.push('### 在线演示站', '');
+  const siteArchive = `ofdrw-viewer-ui-demo-${version}`;
   lines.push(
-    `\`site-${version}.zip\` 是可直接静态托管的演示站（按根路径构建），解压后把 \`site-${version}/\` ` +
+    `\`${siteArchive}.zip\` 是可直接静态托管的演示站（按根路径构建），解压后把 \`${siteArchive}/\` ` +
       '目录作为站点根目录交给任意静态服务器即可。',
     '',
   );

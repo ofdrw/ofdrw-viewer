@@ -329,7 +329,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: site
-          path: release-assets/site-*.zip
+          path: release-assets/ofdrw-viewer-ui-demo-*.zip
           if-no-files-found: error
           retention-days: 7
 
