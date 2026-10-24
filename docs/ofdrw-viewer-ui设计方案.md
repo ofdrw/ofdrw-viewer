@@ -128,7 +128,9 @@ URL 字符串和 `{ url, headers }` 由 UI 的 `HttpByteSource` 读取：先探�
 
 `OFD_OPEN_FAILED`/`OFD_RENDER_FAILED` 不属于 `ViewerErrorCode`，不会作为 `open()` 或渲染 Promise 的 reject code，不要用它们做异常分支。若希望 RenderQueue 事件也统一显示底层 code，必须先改 RenderQueue 并补测试，当前文档不把该行为写成已实现。
 
-`open()` 的 reject 保留底层错误；唯一例外是 `OFD_ENCRYPTED`：crypto 关闭时映射为 `OFD_CRYPTO_UNSUPPORTED`，crypto 启用但无法解密时映射为 `OFD_CRYPTO_FAILED`。crypto 抛出的 `OFD_CRYPTO_CREDENTIAL_REQUIRED`、`OFD_CRYPTO_CANCELLED`、`OFD_CRYPTO_UNSUPPORTED`、`OFD_CRYPTO_FAILED` 原样 reject；打印/导出分别抛 `OFD_PRINT_FAILED`/`OFD_EXPORT_FAILED`；其他真实 UI 异常码为 `OFD_FEATURE_DISABLED`、`OFD_INVALID_OPTION`、`OFD_INVALID_PAGE`、`OFD_NOT_OPENED`、`OFD_DESTROYED`、`OFD_UNSUPPORTED`、`OFD_SIGNATURE_PARSE_FAILED`、`OFD_CLIPBOARD_FAILED`。引擎错误（如 `OFD_INVALID_PACKAGE`、`OFD_ABORTED`）也可能直接 reject，不会先包装成 `OFDViewerError`。
+`open()` 的 reject 保留底层错误；唯一例外是 `OFD_ENCRYPTED`：crypto 关闭时映射为 `OFD_CRYPTO_UNSUPPORTED`，crypto 启用但无法解密时映射为 `OFD_CRYPTO_FAILED`。crypto 的凭据/验证错误原样 reject（如 `OFD_CRYPTO_CREDENTIAL_REQUIRED`、`OFD_CRYPTO_CANCELLED`、`OFD_CRYPTO_FAILED`）；打印/导出分别抛 `OFD_PRINT_FAILED`/`OFD_EXPORT_FAILED`，功能守卫失败抛 `OFD_FEATURE_DISABLED` 并携带 `feature`。引擎错误（如 `OFD_INVALID_PACKAGE`、`OFD_ABORTED`）也可能直接 reject，不会先包装成 `OFDViewerError`。
+
+UI 对 `error` 事件与错误卡只展示 `code`/`message`，需要定位时读 `cause`；不要复制错误码表，也不要用诊断码做异常分支。`ViewerErrorCode` 的完整注册表见 [CONTRACTS §8.5 UI 与 CLI 错误](./CONTRACTS.md#85-ui-与-cli-错误)。
 
 `onWarning` 是同步直接回调，不在事件总线隔离范围内：宿主回调抛错会沿 warning 调用栈传播，可能使当前打开/读取失败，后续 `warning` 事件也不会继续派发。当前 UI 的 warning 转发没有这层 try/catch；若要由阅读器保证隔离，需要在 UI 的 warning 转发处捕获并另行记录，宿主在自己的 `onWarning` 中 try/catch 只能保护宿主侧。通过 `on()`/`once()` 注册的事件监听器异常由总线隔离为 `W_UI_LISTENER` warning。
 
