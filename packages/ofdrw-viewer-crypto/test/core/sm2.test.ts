@@ -108,7 +108,9 @@ describe('SM2 加解密', () => {
   it('支持 04 前缀 present/absent/auto', () => {
     const plaintext = fromHex(JAVA_SM2.plaintext);
     const withoutPrefix = sm2Encrypt(plaintext, JAVA_PUBLIC_KEY);
-    expect(toHex(withoutPrefix.subarray(0, 1))).not.toBe('04');
+    // sm2Encrypt 固定输出 C1X||C1Y（64 byte）+ C3（32 byte）+ C2，首字节是 C1X 高字节，
+    // 可能随机等于 0x04，不能据此判断是否带前缀，改用总长度断言。
+    expect(withoutPrefix.length).toBe(96 + plaintext.length);
     const withPrefix = new Uint8Array(withoutPrefix.length + 1);
     withPrefix[0] = 0x04;
     withPrefix.set(withoutPrefix, 1);
