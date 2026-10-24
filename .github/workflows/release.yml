@@ -203,9 +203,13 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
-      - name: 构建 engine 与普通 CLI
+      # CLI 通过包名引入 crypto 与 engine（node_modules 解析到各自的 dist 类型声明），
+      # 干净检出时 dist 不存在，必须先按拓扑构建 engine → crypto，否则 tsc 报 TS2307
+      # 找不到 @ofdrw/ofdrw-viewer-crypto，并连带产生大量类型推断错误。
+      - name: 构建 engine、crypto 与普通 CLI
         run: |
           pnpm -C packages/ofdrw-viewer-engine build
+          pnpm -C packages/ofdrw-viewer-crypto build
           pnpm -C packages/ofdrw-viewer-cli build
 
       - name: 类型检查与单元测试
