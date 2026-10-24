@@ -420,6 +420,9 @@ function pageLoading(viewer: OFDViewer, pageNumber: number): {
   return { page, loading, error, visible: !loading.hidden, errorVisible: !error.hidden };
 }
 
+/** 全屏 loading 显示后的最短展示时长，单位毫秒（与 viewer.ts 的常量保持一致）。 */
+const DOCUMENT_LOADING_MIN_VISIBLE_MS = 300;
+
 /**
  * 等待指定毫秒。
  *
@@ -498,13 +501,21 @@ describe('文档全屏 loading 与引擎打开事件', () => {
     expect(shown.status.querySelector('.ofd-viewer__loading-name')?.textContent).toBe('文档');
     expect(shown.status.querySelector('.ofd-viewer__loading-ring')).not.toBeNull();
 
+    /** 全屏 loading 控制器：最短展示从展示时刻起算。 */
+    const overlay = (viewer as unknown as { documentLoading: { shownAt: number } }).documentLoading;
     call.settleSuccess();
     await viewer.ready;
-    await wait(250);
-    // 已展示 300ms 后进入 150ms 淡出，不是立即隐藏。
+    // finish() 按“展示时刻 + 300ms 最短展示”安排淡出；打开耗时本身已占去一部分，
+    // 因此按剩余时长计算等待，避免固定 sleep 在慢机上越过淡出窗口而漏掉“仍在展示”的断言。
+    const remainingVisible = Math.max(
+      0,
+      overlay.shownAt + DOCUMENT_LOADING_MIN_VISIBLE_MS - Date.now(),
+    );
+    await wait(Math.max(0, remainingVisible - 50));
+    // 最短展示未满：仍在展示，不是立即隐藏。
     expect(overlayState(viewer).visible).toBe(true);
-    await wait(230);
-    expect(overlayState(viewer).visible).toBe(false);
+    // 最短展示满后再等 150ms 淡出结束，遮罩隐藏。
+    await until(() => overlayState(viewer).visible === false, 1000);
     expect(bus.listenerCount('document:open:start')).toBe(1);
   });
 
