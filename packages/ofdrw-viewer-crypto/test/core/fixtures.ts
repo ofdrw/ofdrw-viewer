@@ -13,6 +13,15 @@ import { fileURLToPath } from 'node:url';
 const FIXTURE_ROOT = new URL('../fixtures/crypto/', import.meta.url);
 
 /**
+ * 证书有效期判断使用的固定「当前时间」。
+ *
+ * 夹具证书有效期为 2025-01-01～2040-01-01，该时间落在全部夹具证书的有效区间内。
+ * 测试必须显式注入该时间，不得依赖真实系统时间：否则夹具到期（2040-01-01）后，
+ * 所有断言证书链为 `valid` 的用例都会统一失败。
+ */
+export const FIXED_NOW = new Date('2026-10-23T00:00:00Z');
+
+/**
  * 读取 fixture 字节。
  *
  * @param segments 相对 `test/fixtures/crypto/` 的路径片段。

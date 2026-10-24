@@ -64,3 +64,31 @@ describe('限制与选项解析', () => {
     expect(() => resolveCryptoOptions({ sm2UserId: 'x'.repeat(8193) })).toThrowError(/sm2UserId/);
   });
 });
+
+describe('now 选项', () => {
+  it('省略 now 时回落到当前系统时间（仅作为默认值，判定用例必须显式注入）', () => {
+    const before = Date.now();
+    const options = resolveCryptoOptions();
+    const after = Date.now();
+    expect(options.now).toBeInstanceOf(Date);
+    expect(options.now.getTime()).toBeGreaterThanOrEqual(before);
+    expect(options.now.getTime()).toBeLessThanOrEqual(after);
+  });
+
+  it('非法 now 抛 CRYPTO_INVALID_ARGUMENT', () => {
+    // 注意：`null`/`undefined` 属于“未提供”，按 ?? 回落到当前时间，不算非法值。
+    for (const now of [new Date('invalid'), '2030-01-01' as never, 0 as never]) {
+      expect(() => resolveCryptoOptions({ now })).toThrowError(/now 必须是有效 Date/);
+      expect(() => resolveCryptoOptions({ now })).toThrowError(
+        expect.objectContaining({ code: 'CRYPTO_INVALID_ARGUMENT' }),
+      );
+    }
+  });
+
+  it('now 原样保留，不被复制或改写时区', () => {
+    const now = new Date('2030-01-01T00:00:00.000Z');
+    const options = resolveCryptoOptions({ now });
+    expect(options.now).toBe(now);
+    expect(options.now.toISOString()).toBe('2030-01-01T00:00:00.000Z');
+  });
+});

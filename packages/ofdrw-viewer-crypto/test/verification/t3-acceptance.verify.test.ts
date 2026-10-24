@@ -17,7 +17,7 @@ import {
   verifyOfd,
   type VerificationReport,
 } from '@ofdrw/ofdrw-viewer-crypto';
-import { fixtureBytes } from '../core/fixtures';
+import { FIXED_NOW, fixtureBytes } from '../core/fixtures';
 import {
   buildV1SignedContainer,
   readFixtureEntries,
@@ -33,6 +33,8 @@ const WRONG_ROOT = fixtureBytes('certs', 'tsa.crt.der');
 /**
  * 打开 fixture 容器并执行验证。
  *
+ * `now` 默认注入 {@link FIXED_NOW}，避免断言证书链 `valid` 依赖真实系统时间。
+ *
  * @param file `test/fixtures/crypto/` 下的文件名。
  * @param options 额外验证参数。
  * @returns 验证报告。
@@ -46,7 +48,7 @@ async function verifyFixture(
     data: fixtureBytes(file),
   });
   try {
-    return await verifyOfd({ container, ...options });
+    return await verifyOfd({ container, now: FIXED_NOW, ...options });
   } finally {
     await container.close();
   }
@@ -115,7 +117,7 @@ describe('t3-A 证书链不参与最终判定', () => {
       signerKey: untrustedKey.privateKey,
     });
     try {
-      const report = await verifyOfd({ container, roots: [ROOT] });
+      const report = await verifyOfd({ container, roots: [ROOT], now: FIXED_NOW });
       const signature = report.signatures[0]!;
 
       expect(report.overall).toBe('valid');
@@ -168,7 +170,7 @@ describe('t3-A 篡改与缺证书必须 invalid', () => {
   it('缺少签章者证书：数学无法验证 => overall=invalid，链 not-present', async () => {
     const container = await buildV1SignedContainer({ signerCert: new Uint8Array() });
     try {
-      const report = await verifyOfd({ container, roots: [ROOT] });
+      const report = await verifyOfd({ container, roots: [ROOT], now: FIXED_NOW });
       const signature = report.signatures[0]!;
 
       expect(report.overall).toBe('invalid');
@@ -200,7 +202,7 @@ describe('t3-A 时间戳与签发时间', () => {
     entries.set(path, { bytes: rebuilt });
     const container = wrapEntries(entries);
     try {
-      const report = await verifyOfd({ container, roots: [ROOT] });
+      const report = await verifyOfd({ container, roots: [ROOT], now: FIXED_NOW });
       expect(report.overall).toBe('valid');
       expect(report.signatures[0]?.signature.status).toBe('valid');
       expect(report.signatures[0]?.timestamp.status).toBe('parse-error');
@@ -227,7 +229,7 @@ describe('t3-A 时间戳与签发时间', () => {
   it('签发时间优先 timeInfo，其次 SignatureDateTime，无值则字段省略', async () => {
     const withTimeInfo = await buildV1SignedContainer();
     try {
-      const report = await verifyOfd({ container: withTimeInfo, roots: [ROOT] });
+      const report = await verifyOfd({ container: withTimeInfo, roots: [ROOT], now: FIXED_NOW });
       expect(report.signatures[0]?.signingTime).toBe('2026-10-23 10:00:00');
       expect(report.signatures[0]?.signingTimeSource).toBe('time-info');
     } finally {
@@ -238,7 +240,7 @@ describe('t3-A 时间戳与签发时间', () => {
       timeInfo: derOctetString(new Uint8Array()),
     });
     try {
-      const report = await verifyOfd({ container: fallback, roots: [ROOT] });
+      const report = await verifyOfd({ container: fallback, roots: [ROOT], now: FIXED_NOW });
       expect(report.signatures[0]?.signingTime).toBe('2026-10-23 10:00:00');
       expect(report.signatures[0]?.signingTimeSource).toBe('signature-xml');
     } finally {
@@ -250,7 +252,7 @@ describe('t3-A 时间戳与签发时间', () => {
       omitSignatureDateTime: true,
     });
     try {
-      const report = await verifyOfd({ container: missing, roots: [ROOT] });
+      const report = await verifyOfd({ container: missing, roots: [ROOT], now: FIXED_NOW });
       expect(report.signatures[0]?.signingTime).toBeUndefined();
       expect(report.signatures[0]?.signingTimeSource).toBeUndefined();
       expect('signingTime' in report.signatures[0]!).toBe(false);

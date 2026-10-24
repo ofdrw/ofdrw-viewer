@@ -312,6 +312,7 @@ async function verifySignatures(
         signaturesLoc,
         `Signatures.xml 解析失败：${error instanceof Error ? error.message : '未知错误'}`,
         resolved.sm2UserId,
+        resolved.now,
       ),
     ];
   }
@@ -1059,12 +1060,14 @@ function mergeCertificates(
  * @param baseLoc Signatures.xml 路径。
  * @param message 失败原因。
  * @param sm2UserId SM2 userId。
+ * @param now 证书有效期判断使用的时间，与调用方注入值一致。
  * @returns 无效签名结果。
  */
 function syntheticInvalidSignature(
   baseLoc: string,
   message: string,
   sm2UserId: string,
+  now: Date,
 ): SignatureVerification {
   return {
     id: '',
@@ -1079,7 +1082,7 @@ function syntheticInvalidSignature(
       status: 'not-present',
       trustRootConfigured: false,
       chain: [],
-      currentTime: new Date().toISOString(),
+      currentTime: now.toISOString(),
       revocation: 'not-checked',
       issues: [],
     },

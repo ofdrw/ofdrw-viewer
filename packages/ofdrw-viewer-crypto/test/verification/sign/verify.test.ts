@@ -106,7 +106,8 @@ describe('签名/证书链：有效、unknown 与错误根', () => {
   }
 
   it('未配置信任根 → 链 unknown，但签名与整体仍 valid', async () => {
-    const report = await verifyFixture('signed-sesv4.ofd', {});
+    // 显式清空 roots：verifyFixture 默认注入根证书与固定 now。
+    const report = await verifyFixture('signed-sesv4.ofd', { roots: [] });
     expect(report.overall).toBe('valid');
     const signature = report.signatures[0]!;
     expect(signature.status).toBe('valid');

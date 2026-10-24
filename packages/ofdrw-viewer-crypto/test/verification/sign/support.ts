@@ -30,6 +30,7 @@ import {
 } from '@ofdrw/ofdrw-viewer-crypto';
 import { MemoryVirtualContainer } from '../../../src/container/index';
 import type { VirtualContainer } from '@ofdrw/ofdrw-viewer-engine';
+import { FIXED_NOW } from '../../core/fixtures';
 
 /** fixture 根目录。 */
 const FIXTURE_ROOT = new URL('../../fixtures/crypto/', import.meta.url);
@@ -82,32 +83,46 @@ export const rootDer = fixtureBytes('certs/root-ca.crt.der');
 /** 错误根证书 DER（加密证书，不属于签名链）。 */
 export const wrongRootDer = fixtureBytes('certs/encrypt.crt.der');
 
-/** 生成 verifyOfd 选项，默认注入根证书。 */
+/** 生成 verifyOfd 选项，默认注入根证书与固定当前时间。 */
 export function verifyOptions(
   overrides: Partial<Omit<VerifyOfdOptions, 'container' | 'source'>> = {},
 ): Omit<VerifyOfdOptions, 'container' | 'source'> {
-  return { roots: [rootDer], ...overrides };
+  return { roots: [rootDer], now: FIXED_NOW, ...overrides };
 }
 
-/** 打开 fixture 并验证。 */
+/**
+ * 打开 fixture 并验证。
+ *
+ * 默认参数在函数体内合并，保证调用方传 `{}` 或不传时都会注入固定根证书与 {@link FIXED_NOW}。
+ *
+ * @param name 夹具文件名。
+ * @param options 额外验证选项；同名字段覆盖默认值。
+ * @returns 验证报告。
+ */
 export async function verifyFixture(
   name: string,
-  options: Omit<VerifyOfdOptions, 'container' | 'source'> = verifyOptions(),
+  options: Omit<VerifyOfdOptions, 'container' | 'source'> = {},
 ): Promise<VerificationReport> {
   const container = memoryContainer(fixtureEntries(name));
   try {
-    return await verifyOfd({ container, ...options });
+    return await verifyOfd({ container, ...verifyOptions(options) });
   } finally {
     await container.close();
   }
 }
 
-/** 对给定容器验证。 */
+/**
+ * 对给定容器验证。
+ *
+ * @param container 待验证容器。
+ * @param options 额外验证选项；同名字段覆盖默认值。
+ * @returns 验证报告。
+ */
 export async function verifyContainer(
   container: VirtualContainer,
-  options: Omit<VerifyOfdOptions, 'container' | 'source'> = verifyOptions(),
+  options: Omit<VerifyOfdOptions, 'container' | 'source'> = {},
 ): Promise<VerificationReport> {
-  return verifyOfd({ container, ...options });
+  return verifyOfd({ container, ...verifyOptions(options) });
 }
 
 /** 执行异步函数并返回 CryptoError 错误码。 */

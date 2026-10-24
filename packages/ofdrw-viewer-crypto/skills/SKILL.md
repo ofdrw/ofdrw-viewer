@@ -283,6 +283,7 @@ const roots = [...certificatesToDer(rootPem), ...certificatesToDer(rootDerBytes)
 - **未配置 roots**：证书链不会判 `valid`，通常为 `unknown` 并产生 `W_CRYPTO_TRUST_UNKNOWN`；可确定的过期/结构错误仍展示为 `expired`/`invalid`。证书链状态不参与签名、印章、完整性与 `overall` 判定，因此签名数学与引用通过时 `overall` 仍可为 `valid`；
 - 配置 roots 后：`valid` 必须锚定到 SHA-256 指纹一致的根；缺中间证书 `incomplete`、终点不是根 `untrusted`；这些链状态只作为独立明细展示，不改变签名/完整性/`overall`；
 - 有效期由 `now`（默认当前时间）判断，边界为 `notBefore <= now <= notAfter`；不检查 CRL/OCSP，`revocation` 固定 `'not-checked'`。
+- **测试约定**：断言证书链为 `valid` 的用例必须显式传 `now`（统一使用 `test/core/fixtures.ts` 的 `FIXED_NOW`），否则夹具证书 2040-01-01 到期后用例会随墙钟推移而失败；需“未配置根”的用例应显式传 `roots: []`，因为测试辅助函数默认注入根证书与 `FIXED_NOW`。
 
 ### 状态语义
 

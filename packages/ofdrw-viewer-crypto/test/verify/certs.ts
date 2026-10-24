@@ -76,6 +76,12 @@ export interface GeneratedCertificate {
   readonly publicKey: Uint8Array;
 }
 
+/** 合成证书默认生效时间（与夹具证书一致：2025-01-01）。 */
+export const DEFAULT_NOT_BEFORE = new Date('2025-01-01T00:00:00Z');
+
+/** 合成证书默认失效时间（与夹具证书一致：2040-01-01）。 */
+export const DEFAULT_NOT_AFTER = new Date('2040-01-01T00:00:00Z');
+
 /**
  * 从 fixture 私钥构造密钥对。
  *
@@ -187,8 +193,8 @@ export function makeCertificate(
     algorithm,
     name(issuerCn, options.issuerEncoding),
     derSequence(
-      derUtcTime(options.notBefore ?? new Date('2024-01-01T00:00:00Z')),
-      derUtcTime(options.notAfter ?? new Date('2035-01-01T00:00:00Z')),
+      derUtcTime(options.notBefore ?? DEFAULT_NOT_BEFORE),
+      derUtcTime(options.notAfter ?? DEFAULT_NOT_AFTER),
     ),
     name(options.cn, options.subjectEncoding),
     spki,

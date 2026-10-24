@@ -19,7 +19,7 @@ import {
   type CryptoCredential,
   type VerificationReport,
 } from '@ofdrw/ofdrw-viewer-crypto';
-import { fixtureBytes } from '../core/fixtures';
+import { FIXED_NOW, fixtureBytes } from '../core/fixtures';
 import {
   buildAuthAttrsIntegrityContainer,
   buildV1Seal,
@@ -54,6 +54,8 @@ async function open(file: string): Promise<VirtualContainer> {
 /**
  * 验证 fixture 容器并在结束后关闭。
  *
+ * `now` 默认注入 {@link FIXED_NOW}，避免断言证书链 `valid` 依赖真实系统时间。
+ *
  * @param file fixture 文件名。
  * @param options 额外验证选项。
  * @returns 验证报告。
@@ -64,7 +66,7 @@ async function verifyFile(
 ): Promise<VerificationReport> {
   const container = await open(file);
   try {
-    return await verifyOfd({ container, ...options });
+    return await verifyOfd({ container, now: FIXED_NOW, ...options });
   } finally {
     await container.close();
   }
@@ -196,7 +198,7 @@ describe('verifyOfd 签名验证', () => {
   it('验证不关闭调用方容器', async () => {
     const container = await open('signed-sesv5.ofd');
     try {
-      await verifyOfd({ container, roots: ROOTS });
+      await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(container.has('OFD.xml')).toBe(true);
     } finally {
       await container.close();
@@ -206,9 +208,9 @@ describe('verifyOfd 签名验证', () => {
   it('signatureIds 过滤', async () => {
     const container = await open('combined-signed-integrity.ofd');
     try {
-      const only = await verifyOfd({ container, roots: ROOTS, signatureIds: ['s001'] });
+      const only = await verifyOfd({ container, roots: ROOTS, signatureIds: ['s001'], now: FIXED_NOW });
       expect(only.signatures).toHaveLength(1);
-      const none = await verifyOfd({ container, roots: ROOTS, signatureIds: ['missing'] });
+      const none = await verifyOfd({ container, roots: ROOTS, signatureIds: ['missing'], now: FIXED_NOW });
       expect(none.signatures).toHaveLength(0);
       // 仍有完整性保护，overall 不因过滤变 not-applicable。
       expect(none.overall).toBe('valid');
@@ -220,7 +222,7 @@ describe('verifyOfd 签名验证', () => {
   it('合成 v1 签名端到端通过（含十六进制与 Base64 CheckValue）', async () => {
     const container = await buildV1SignedContainer();
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.overall).toBe('valid');
       const signature = report.signatures[0]!;
       expect(signature.version).toBe('v1');
@@ -246,7 +248,7 @@ describe('verifyOfd 签名验证', () => {
   it('timeInfo 为空时回退到 Signature.xml SignatureDateTime', async () => {
     const container = await buildV1SignedContainer({ timeInfo: derOctetString(new Uint8Array()) });
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.overall).toBe('valid');
       const signature = report.signatures[0]!;
       expect(signature.signingTime).toBe('2026-10-23 10:00:00');
@@ -262,7 +264,7 @@ describe('verifyOfd 签名验证', () => {
       omitSignatureDateTime: true,
     });
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.overall).toBe('valid');
       const signature = report.signatures[0]!;
       expect(signature.signingTime).toBeUndefined();
@@ -294,7 +296,7 @@ describe('证书链独立于最终判定', () => {
       signerKey: untrustedKey.privateKey,
     });
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.overall).toBe('valid');
       const signature = report.signatures[0]!;
       expect(signature.status).toBe('valid');
@@ -328,7 +330,7 @@ describe('证书链独立于最终判定', () => {
       signerKey: leafKey.privateKey,
     });
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.overall).toBe('valid');
       const signature = report.signatures[0]!;
       expect(signature.status).toBe('valid');
@@ -359,7 +361,7 @@ describe('证书链独立于最终判定', () => {
       signerKey: leafKey.privateKey,
     });
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.overall).toBe('valid');
       const signature = report.signatures[0]!;
       expect(signature.status).toBe('valid');
@@ -381,7 +383,7 @@ describe('证书链独立于最终判定', () => {
       signerKey: testKeyPair('signer').privateKey,
     });
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.overall).toBe('invalid');
       const signature = report.signatures[0]!;
       expect(signature.status).toBe('invalid');
@@ -428,7 +430,7 @@ describe('证书链独立于最终判定', () => {
     entries.set(path, { bytes: rebuilt });
     const container = wrapEntries(entries);
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.overall).toBe('valid');
       const signature = report.signatures[0]!;
       expect(signature.status).toBe('valid');
@@ -485,7 +487,7 @@ describe('verifyOfd 完整性验证', () => {
   it('authenticatedAttributes + messageDigest 变体通过', async () => {
     const container = await buildAuthAttrsIntegrityContainer();
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.overall).toBe('valid');
       expect(report.integrity).toMatchObject({
         status: 'valid',
@@ -503,7 +505,7 @@ describe('verifyOfd 完整性验证', () => {
   it('messageDigest 不符时完整性 invalid', async () => {
     const container = await buildAuthAttrsIntegrityContainer({ tamperDigest: true });
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.overall).toBe('invalid');
       expect(report.integrity?.status).toBe('invalid');
       expect(
@@ -519,7 +521,7 @@ describe('verifyOfd 完整性验证', () => {
     entries.delete('Doc_0/PublicRes.xml');
     const container = wrapEntries(entries);
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.integrity?.status).toBe('invalid');
       expect(report.integrity?.missingFiles).toEqual(['Doc_0/PublicRes.xml']);
     } finally {
@@ -565,7 +567,7 @@ describe('verifyOfd 负例', () => {
     entries.delete('Doc_0/Signs/Sign_0/SignedValue.dat');
     const container = wrapEntries(entries);
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.overall).toBe('invalid');
       const signature = report.signatures[0]!;
       expect(signature.status).toBe('invalid');
@@ -592,6 +594,7 @@ describe('verifyOfd 加密源与参数', () => {
       source: { kind: 'arraybuffer', data: fixtureBytes('combined-password-encrypted.ofd') },
       credentials: PASSWORD,
       roots: ROOTS,
+      now: FIXED_NOW,
     });
     expect(report.overall).toBe('valid');
     expect(report.package).toMatchObject({
@@ -616,6 +619,7 @@ describe('verifyOfd 加密源与参数', () => {
     const report = await verifyOfd({
       source: { kind: 'arraybuffer', data: fixtureBytes('signed-sesv4.ofd') },
       roots: ROOTS,
+      now: FIXED_NOW,
     });
     expect(report.overall).toBe('valid');
     expect(report.package.encrypted).toBe(false);
@@ -628,6 +632,7 @@ describe('verifyOfd 加密源与参数', () => {
       source: { kind: 'arraybuffer', data: fixtureBytes('signed-sesv4.ofd') },
       credentials: PASSWORD,
       roots: ROOTS,
+      now: FIXED_NOW,
     });
     expect(report.overall).toBe('valid');
     expect(report.warnings.map((warning) => warning.code)).toContain(
@@ -641,6 +646,7 @@ describe('verifyOfd 加密源与参数', () => {
       const report = await verifyOfd({
         container,
         roots: [fixtureBytes('certs', 'root-ca.crt.der')],
+        now: FIXED_NOW,
       });
       expect(report.overall).toBe('valid');
       expect(report.signatures[0]?.certificate.status).toBe('valid');
@@ -716,7 +722,7 @@ describe('t19 修复回归', () => {
   it('不支持的 SES 版本 → 签名 unsupported，不折叠为 invalid', async () => {
     const container = await buildV1SignedContainer({ versionNumber: 9 });
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.overall).toBe('unsupported');
       const signature = report.signatures[0]!;
       expect(signature.status).toBe('unsupported');
@@ -734,7 +740,7 @@ describe('t19 修复回归', () => {
       signatureAlgorithm: '1.2.156.10197.1.502',
     });
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.overall).toBe('unsupported');
       const signature = report.signatures[0]!;
       expect(signature.status).toBe('unsupported');
@@ -751,7 +757,7 @@ describe('t19 修复回归', () => {
       propertyInfo: '/Doc_0/Signs/Other/Signature.xml',
     });
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.overall).toBe('invalid');
       expect(
         report.signatures[0]!.issues.map((item) => item.code),
@@ -764,7 +770,7 @@ describe('t19 修复回归', () => {
   it('propertyInfo 路径越界 → invalid 而非中断', async () => {
     const container = await buildV1SignedContainer({ propertyInfo: '../escape.xml' });
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.overall).toBe('invalid');
       expect(
         report.signatures[0]!.issues.map((item) => item.code),
@@ -777,7 +783,7 @@ describe('t19 修复回归', () => {
   it('CheckMethod 使用 SM3 OID → 引用仍 valid', async () => {
     const container = await buildV1SignedContainer({ checkMethod: '1.2.156.10197.1.401' });
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.overall).toBe('valid');
       expect(report.signatures[0]!.references.status).toBe('valid');
     } finally {
@@ -788,7 +794,7 @@ describe('t19 修复回归', () => {
   it('非法 BaseLoc 只影响该签名，其余签名继续验证', async () => {
     const container = await buildV1SignedContainer({ badBaseLocRecord: true });
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.overall).toBe('invalid');
       expect(report.signatures).toHaveLength(2);
       const bad = report.signatures.find((item) => item.id === 'bad')!;
@@ -819,7 +825,7 @@ describe('t19 修复回归', () => {
         ),
       );
       try {
-        const report = await verifyOfd({ container, roots: ROOTS });
+        const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
         expect(report.signatures).toHaveLength(2);
         const bad = report.signatures.find((item) => item.id === 's002')!;
         const good = report.signatures.find((item) => item.id === 's001')!;
@@ -849,7 +855,7 @@ describe('t19 修复回归', () => {
           ),
         );
         try {
-          const report = await verifyOfd({ container, roots: ROOTS });
+          const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
           expect(report.overall).toBe('unsupported');
           const signature = report.signatures[0]!;
           expect(signature.status).toBe('unsupported');
@@ -874,7 +880,7 @@ describe('t19 修复回归', () => {
     for (const picture of ['missing', 'corrupt'] as const) {
       const container = await buildV1SignedContainer({ picture });
       try {
-        const report = await verifyOfd({ container, roots: ROOTS });
+        const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
         expect(report.overall).toBe('valid');
         expect(report.warnings.map((item) => item.code)).toContain(
           'W_CRYPTO_SEAL_PICTURE_INVALID',
@@ -908,7 +914,7 @@ describe('t19 修复回归', () => {
         ),
       );
       try {
-        const report = await verifyOfd({ container, roots: ROOTS });
+        const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
         expect(report.signatures).toHaveLength(2);
         const bad = report.signatures.find((item) => item.id === 's002')!;
         const good = report.signatures.find((item) => item.id === 's001')!;
@@ -931,7 +937,7 @@ describe('t19 修复回归', () => {
       mergeEntries(entries, new Map([['Doc_0/Signs/Sign_0/Seal.esl', { bytes: seal }]])),
     );
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.warnings.map((item) => item.code)).toContain('W_CRYPTO_TIMESTAMP_PARSE');
       const sealResult = report.signatures[0]!.seal!;
       const timestampIssues = sealResult.issues.filter(
@@ -948,7 +954,7 @@ describe('t19 修复回归', () => {
     const container = await open('signed-sesv4.ofd');
     try {
       await expect(
-        verifyOfd({ container, roots: ROOTS, limits: { maxAsn1Bytes: 8 } }),
+        verifyOfd({ container, roots: ROOTS, now: FIXED_NOW, limits: { maxAsn1Bytes: 8 } }),
       ).rejects.toMatchObject({ code: 'CRYPTO_LIMIT_EXCEEDED' });
     } finally {
       await container.close();
@@ -967,7 +973,7 @@ describe('t19 修复回归', () => {
       );
       try {
         await expect(
-          verifyOfd({ container, roots: ROOTS, limits: { maxCertificates: 1 } }),
+          verifyOfd({ container, roots: ROOTS, now: FIXED_NOW, limits: { maxCertificates: 1 } }),
         ).rejects.toMatchObject({ code: 'CRYPTO_LIMIT_EXCEEDED' });
       } finally {
         await container.close();
@@ -991,7 +997,7 @@ describe('t19 修复回归', () => {
   it('authenticatedAttributes 缺 contentType → integrity invalid', async () => {
     const container = await buildAuthAttrsIntegrityContainer({ omitContentType: true });
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.integrity?.status).toBe('invalid');
       expect(report.integrity?.issues.map((item) => item.code)).toContain(
         'INTEGRITY_AUTH_ATTR_INVALID',
@@ -1006,7 +1012,7 @@ describe('t19 修复回归', () => {
       eContentTypeOid: '1.2.840.113549.1.7.2',
     });
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.integrity?.status).toBe('invalid');
       expect(report.integrity?.issues.some((item) => item.message.includes('eContentType'))).toBe(
         true,
@@ -1021,7 +1027,7 @@ describe('t19 修复回归', () => {
       signerDigestAlgorithm: '2.16.840.1.101.3.4.2.1',
     });
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.overall).toBe('unsupported');
       expect(report.integrity?.status).toBe('unsupported');
       expect(report.integrity?.issues.map((item) => item.code)).toContain(
@@ -1039,8 +1045,8 @@ describe('t19 修复回归', () => {
       tamperDigest: true,
     });
     try {
-      expect((await verifyOfd({ container: valid, roots: ROOTS })).integrity?.status).toBe('valid');
-      expect((await verifyOfd({ container: tampered, roots: ROOTS })).integrity?.status).toBe(
+      expect((await verifyOfd({ container: valid, roots: ROOTS, now: FIXED_NOW })).integrity?.status).toBe('valid');
+      expect((await verifyOfd({ container: tampered, roots: ROOTS, now: FIXED_NOW })).integrity?.status).toBe(
         'invalid',
       );
     } finally {
@@ -1062,7 +1068,7 @@ describe('t19 修复回归', () => {
     entries.set(path, { bytes: copy });
     const container = wrapEntries(entries);
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.warnings.map((item) => item.code)).toContain(
         'W_CRYPTO_TIMESTAMP_IMPRINT_MISMATCH',
       );
@@ -1080,7 +1086,7 @@ describe('t19 修复回归', () => {
       digestAlgorithmsOid: '2.16.840.1.101.3.4.2.1',
     });
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.integrity?.status).toBe('unsupported');
       expect(report.integrity?.extraFiles).toEqual([]);
       expect(report.integrity?.missingFiles).toEqual([]);
@@ -1099,7 +1105,7 @@ describe('t19 修复回归', () => {
       mergeEntries(await readEntriesOf(integrity), await readEntriesOf(v1)),
     );
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.integrity?.status).toBe('invalid');
       expect(report.integrity?.extraFiles.length).toBeGreaterThan(0);
       expect(report.signatures[0]?.status).toBe('valid');
@@ -1129,7 +1135,7 @@ describe('t19 修复回归', () => {
       signerKey: leafKey.privateKey,
     });
     try {
-      const report = await verifyOfd({ container, roots: ROOTS });
+      const report = await verifyOfd({ container, roots: ROOTS, now: FIXED_NOW });
       expect(report.overall).toBe('valid');
       expect(report.warnings.map((item) => item.code)).toContain(
         'W_CRYPTO_KEY_USAGE_MISSING',
@@ -1203,6 +1209,7 @@ describe('t19 修复回归', () => {
       const report = await verifyOfd({
         container,
         roots: [rootCert],
+        now: FIXED_NOW,
       });
       expect(report.overall).toBe('valid');
       expect(report.integrity?.status).toBe('valid');

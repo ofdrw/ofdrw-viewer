@@ -22,6 +22,7 @@ ofdrw 2.4.0 生成的样例。
 | 未配置信任根 | `verify.test.ts` | 证书链 `unknown`，但签名数学/引用通过时签名与 `overall` 仍 `valid`；不把“无法确定信任锚”判为失败 |
 | 错误根证书 | `verify.test.ts` | 加密证书作根 → 证书链 `incomplete`，签名与 `overall` 仍 `valid` |
 | 有效期链 | `verify.test.ts` | `now=2041` → `expired`；`now=2019` → `not-yet-valid`；未配置根时过期仍展示 `expired`，均不改变签名/`overall` 的 `valid` |
+| 时间注入与环境无关 | `../cert/verify-time-injection.verify.test.ts`、`../cert/verify-time-compat.verify.test.ts` | 链状态只由注入 `now` 决定：有效起点/终点含端点均 `valid`，越界 `expired`/`not-yet-valid`；同一夹具在 2019/2026/2041 下分别得到 `not-yet-valid`/`valid`/`expired`；2041/2045/2050 等未来墙钟下结论稳定，不受夹具 2040 到期影响 |
 | Reference 篡改 | `verify.test.ts` | `negative-tampered-content.ofd` → `mismatch`，路径为 `Doc_0/Pages/Page_0/Content.xml`，Java 失败 |
 | SignedValue 篡改 | `verify.test.ts` | `negative-tampered-signedvalue.ofd` → 解析失败；另翻转签名值首字节（结构合法）→ 数学验签失败；均与 Java 失败一致 |
 | Seal.esl 篡改 | `verify.test.ts` | 截断 Seal → `SEAL_PARSE_FAILED`、Seal 与 SignedValue 不一致、Reference mismatch；翻转制章人签名值（结构合法）→ Seal 数学验签失败；Java 均失败 |
