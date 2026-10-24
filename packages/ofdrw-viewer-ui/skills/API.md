@@ -200,7 +200,7 @@ new OFDViewer({
 
 `FontSource` 与 `CertificateSource` 同为四态：`{ data }`（已读好的字节）、`{ url, headers? }`（UI 用 `fetch` 读取，`headers` 与 `requestInit.headers` 合并，来源优先）、`{ path }`/`{ filePath }`（由 `loader` 读取）。只接受**完整字体文件**（单文件覆盖目标字符集，如 `.ttf`/`.otf`/`.woff2`），不接受 CSS 的 unicode-range 子集切片；同一 URL 在一次实例生命周期内只读取一次。
 
-读取失败（非 2xx、网络错误、缺少 `loader`、`loader` 返回 `null`、字节为空）只跳过该来源并通过 `onWarning`/`ofd-warning` 上报 `W_FONT_MISSING`，**只 warning、不上报 `error`、不阻断文档打开**。Web Component 另有 `fonts` property 与 `font-default`/`font-supplementary` 简写属性，见 [Web Component](#web-component)。
+读取失败（非 2xx、网络错误、缺少 `loader`、`loader` 返回 `null`、字节为空）只跳过该来源并通过 `onWarning`/`ofd-warning` 上报 `W_FONT_MISSING`，**只 warning、不上报 `error`、不阻断文档打开**；因 `open()` 被取消（AbortError）导致的读取中断**不产生任何 warning**，由取消流程本身负责收尾。Web Component 另有 `fonts` property 与 `font-default`/`font-supplementary` 简写属性，见 [Web Component](#web-component)。
 
 ```ts
 new OFDViewer({

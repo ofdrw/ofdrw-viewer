@@ -281,7 +281,7 @@ const viewer = new OFDViewer({ container: '#viewer', source: '/api/doc.ofd' });
 - 回退：服务器忽略 Range（200）、响应启用 `Content-Encoding` 或总长不一致时整包下载并缓存；`allowFullDownload=false` 时改为报错。
 - 取消：`signal` 与 `close()` 合并生效；关闭后 `read()` 抛 `OFD_CLOSED`，`close()` 可重复调用。
 - CORS：跨域需要服务端允许 `Range`，并暴露 `Content-Range`。
-- 进度：`onProgress` 只在整包读取时可用；UI 不额外暴露字节级进度。
+- 进度：`onProgress` 只在整包读取时可用；字体下载在 `open()` 期间显示「正在加载字体…」，但 UI 不额外暴露字体字节级进度回调。
 - 字体：引擎不读取字体 URL/路径；UI 通过 `fonts.default`/`fonts.supplementary` 的 `{ url }` 来源读取字体字节（也可用 `data` 或 `loader`），读取失败只产生 `W_FONT_MISSING` warning，不阻断打开。
 
 完整构造参数、默认值与错误语义见 [API.md HttpByteSource](./API.md#httpbytesource)。
