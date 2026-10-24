@@ -1,6 +1,6 @@
 import { chmod, mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   CACHE_MARKER,
@@ -225,6 +225,19 @@ describe('SEA 缓存路径命名', () => {
     });
     expect(first.root).not.toBe(second.root);
     expect(first.dir).not.toBe(second.dir);
+  });
+
+  it('相对 TMPDIR 也解析为绝对缓存根，避免解压路径校验失败', () => {
+    // os.tmpdir() 会原样返回相对的 TMPDIR（如 `TMPDIR=tmp`），缓存根若保持相对，
+    // 解压时 `resolve(root, key)` 会越出根目录而报“资产键非法”。
+    const manifest = createManifest('0123456789abcdef');
+    const paths = buildCachePaths(manifest, {
+      tmpDir: 'relative-tmp',
+      platform: 'linux',
+      uid: 1000,
+    });
+    expect(isAbsolute(paths.root)).toBe(true);
+    expect(isAbsolute(paths.dir)).toBe(true);
   });
 
   it('拒绝含 .. 或路径分隔符的清单字段', () => {

@@ -136,7 +136,9 @@ export function buildCachePaths(
   const namespace = uid === undefined ? 'win' : `u${uid}`;
   const rootName =
     uid === undefined ? CACHE_ROOT_NAME : `${CACHE_ROOT_NAME}-${namespace}`;
-  const root = join(options.tmpDir ?? tmpdir(), rootName);
+  // 缓存根必须为绝对路径：TMPDIR 为相对路径时（如 `TMPDIR=tmp`）`tmpdir()` 原样返回相对值，
+  // 会让 staging 目录路径不安全进而解压失败，这里统一解析为绝对路径。
+  const root = resolve(options.tmpDir ?? tmpdir(), rootName);
   const dir = join(
     root,
     `${namespace}-${manifest.cliVersion}-${manifest.platform}-${manifest.arch}-${manifest.digest}`,
