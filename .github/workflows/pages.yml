@@ -1,11 +1,9 @@
 name: 在线演示
 
-# main 分支变更后构建演示站并部署到 GitHub Pages；也可在 Actions 页面手动触发。
+# 日常 push 不部署演示站；推送 v* 标签时由 release.yml 统一构建并部署到 GitHub Pages。
+# 本工作流只保留 Actions 页面手动触发，用于应急重建或回填。
 # 前置条件：仓库 Settings → Pages → Source 选择 “GitHub Actions”。
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
