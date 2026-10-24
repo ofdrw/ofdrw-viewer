@@ -76,6 +76,13 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
+      # crypto 通过包名引入 engine（node_modules 解析到 engine/dist 的类型声明），
+      # ui/site 的 tsconfig paths 也直接指向 dist/index.d.ts。
+      # 干净检出时 dist 不存在，必须先按拓扑构建，否则类型检查报 TS2307
+      # 找不到 @ofdrw/ofdrw-viewer-engine。与 ci.yml 的“先构建再类型检查”保持一致。
+      - name: 构建全部包
+        run: pnpm build
+
       - name: 类型检查
         run: pnpm -r --if-present run typecheck
 
