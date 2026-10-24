@@ -141,6 +141,12 @@ export type {
 export { DEFAULT_DPI, MM_PER_INCH, getPageTransform, getPageViewport } from './api/viewport';
 
 // ---------------------------------------------------------------------------
+// 字体别名：内置别名组与扩展入口
+// ---------------------------------------------------------------------------
+export { DEFAULT_FONT_ALIASES, expandFontName, expandFontNames } from './font/aliases';
+export type { FontAliasTable } from './font/aliases';
+
+// ---------------------------------------------------------------------------
 // 平台接口
 // ---------------------------------------------------------------------------
 export type { ByteSource } from './platform/byte-source';

@@ -78,6 +78,7 @@ static open(options: OFDOpenFromContainerOptions): Promise<OFDDocument>;
 | `defaultFonts` | `readonly FontInput[]` | — | 缺字体时的默认替代字体，优先级高于 `supplementaryFonts` |
 | `supplementaryFonts` | `FontInput[]` | — | 补充字体，按需参与缺字/缺字体回退 |
 | `fontProvider` | `FontProvider` | — | 按需字体来源；`match()` 是唯一读取入口 |
+| `aliases` | `FontAliasTable` | 内置别名组 | 宿主扩展字体别名组；传入即整体替换内置组，需要保留内置映射时应先拼接 |
 | `imageDecoders` | `ImageDecoderPlugin[]` | `[]` | 宿主图片解码插件；同格式优先于内置解码器 |
 | `onWarning` | `(warning: OFDWarning) => void` | 静默 | warning 回调；去重与异常语义见 §10 |
 | `strictImageCtm` | `boolean` | `true` | 图片缺 CTM 时按 identity 单位矩形绘制 |
@@ -843,6 +844,9 @@ interface OFDWarning {
 | `EncodeImage` | 编码钩子类型 |
 | `CanvasImageEncodeSource` | 带可选编码入口的 canvas |
 | `FontInput` | 宿主字体来源（`data`/`family`） |
+| `FontAliasTable` | 字体别名组表：同一组内名称互为别名 |
+| `DEFAULT_FONT_ALIASES` | 内置字体别名组（常见中文字体与英文/PostScript 名） |
+| `expandFontName` / `expandFontNames` | 按别名表展开归一化字体名 |
 | `ResourceLimits` | 资源限制 |
 | `CacheOptions` | 缓存预算 |
 

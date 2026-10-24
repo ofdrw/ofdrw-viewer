@@ -15,6 +15,7 @@
  */
 
 import type { FontInput, FontProvider } from '../platform/font-provider';
+import type { FontAliasTable } from '../font/aliases';
 import type { ImageDecoderPlugin } from '../platform/image-decoder';
 import type { VirtualContainer } from '../platform/virtual-container';
 import type { Box, DecodedImage, Viewport } from '../common/types';
@@ -244,6 +245,8 @@ interface DocumentInit {
   defaultFonts?: readonly FontInput[];
   /** 宿主补充字体；矢量章独立打开内嵌 OFD 时继承。 */
   supplementaryFonts?: readonly FontInput[];
+  /** 宿主扩展字体别名组；矢量章独立打开内嵌 OFD 时继承。 */
+  aliases?: FontAliasTable;
   /** 本文档使用的事件总线：注入时与宿主对象相同，否则由 engine 创建。 */
   eventBus: OFDEventBusClass;
   /** 内部事件派发器；与打开阶段共享同一操作号计数。 */
@@ -430,6 +433,8 @@ export class OFDDocument {
   private readonly defaultFonts: readonly FontInput[] | undefined;
   /** 宿主补充字体；供矢量章嵌套文档继承。 */
   private readonly supplementaryFonts: readonly FontInput[] | undefined;
+  /** 宿主扩展字体别名组；供矢量章嵌套文档继承。 */
+  private readonly fontAliases: FontAliasTable | undefined;
   /** 是否允许加载签章；矢量章嵌套文档关闭，避免递归。 */
   private signatureLoading = true;
 
@@ -526,6 +531,7 @@ export class OFDDocument {
     this.fontProvider = init.fontProvider;
     this.defaultFonts = init.defaultFonts;
     this.supplementaryFonts = init.supplementaryFonts;
+    this.fontAliases = init.aliases;
     this.pageCount = init.document.pageCount;
     this.xmlCache = new DisposableLruCache<string, XmlCacheEntry>({
       maxBytes: init.cacheOptions.xmlBytes,
@@ -822,6 +828,7 @@ export class OFDDocument {
           ...(options.supplementaryFonts
             ? { supplementaryFonts: options.supplementaryFonts }
             : {}),
+          ...(options.aliases ? { aliases: options.aliases } : {}),
           onWarning: (code, message, context) => {
             const warning: OFDWarning = { code, message };
             if (context?.resourceId !== undefined) warning.resourceId = context.resourceId;
@@ -878,6 +885,7 @@ export class OFDDocument {
           ...(options.supplementaryFonts
             ? { supplementaryFonts: options.supplementaryFonts }
             : {}),
+          ...(options.aliases ? { aliases: options.aliases } : {}),
         };
       };
 
@@ -3199,6 +3207,7 @@ export class OFDDocument {
       ...(this.fontProvider ? { fontProvider: this.fontProvider } : {}),
       ...(this.defaultFonts ? { defaultFonts: [...this.defaultFonts] } : {}),
       ...(this.supplementaryFonts ? { supplementaryFonts: [...this.supplementaryFonts] } : {}),
+      ...(this.fontAliases ? { aliases: this.fontAliases } : {}),
     });
     nested.disableSignatureLoading();
     try {

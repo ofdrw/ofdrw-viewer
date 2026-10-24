@@ -6,6 +6,7 @@
  */
 
 import type { ResourceId, PageSize } from '../model/types';
+import type { FontAliasTable } from '../font/aliases';
 import type { FontInput, FontProvider } from '../platform/font-provider';
 import type { ImageDecoderPlugin } from '../platform/image-decoder';
 import type { VirtualContainer, VirtualContainerFactory } from '../platform/virtual-container';
@@ -216,6 +217,13 @@ export interface OFDOpenBaseOptions {
   readonly defaultFonts?: readonly FontInput[];
   /** 宿主补充字体，按需用于缺字/缺字体回退；只接受已读好的 `data`。 */
   supplementaryFonts?: FontInput[];
+  /**
+   * 宿主扩展字体别名组，用于同名/别名文档字体命中宿主字体。
+   *
+   * 语义是整体替换：传入时不再使用内置别名组（`DEFAULT_FONT_ALIASES`），
+   * 需要保留内置映射的宿主应先拼接内置组。不传时行为与未引入本参数时一致。
+   */
+  aliases?: FontAliasTable;
   /** 宿主字体提供者；`match()` 是字体按需读取的唯一入口。 */
   fontProvider?: FontProvider;
   /** JBIG2/TIFF 等图片解码插件。 */
