@@ -1,6 +1,6 @@
 {
   "name": "ofdrw-viewer-example-react",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,7 @@
     "preview": "vite preview --port 5182 --strictPort"
   },
   "dependencies": {
-    "@ofdrw/ofdrw-viewer-ui": "^0.1.0",
+    "@ofdrw/ofdrw-viewer-ui": "^0.1.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },

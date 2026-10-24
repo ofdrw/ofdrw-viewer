@@ -39,7 +39,7 @@ await doc.close();
 
 ## npm 包未发布时
 
-`package.json` 按正式发布后的方式引用 `@ofdrw/ofdrw-viewer-engine@^0.1.0`。发布前本地调试，
+`package.json` 按正式发布后的方式引用 `@ofdrw/ofdrw-viewer-engine@^0.1.1`。发布前本地调试，
 把依赖临时改成项目内的路径：
 
 ```json

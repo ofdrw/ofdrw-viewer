@@ -7,6 +7,6 @@
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.13",
-    "@ofdrw/ofdrw-viewer-engine": "^0.1.0"
+    "@ofdrw/ofdrw-viewer-engine": "^0.1.1"
   }
 }

@@ -30,7 +30,7 @@ npm install @ofdrw/ofdrw-viewer-engine
 若您处于浏览器H5开发环境，我们建议您采用cdn 或 release预发布的离线安装，并使用标签引用：
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@ofdrw/ofdrw-viewer-engine@0.1.0/dist/ofdrw-viewer-engine.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@ofdrw/ofdrw-viewer-engine@0.1.1/dist/ofdrw-viewer-engine.min.js"></script>
 ```
 
 脚本加载成功后，引擎注册全局变量 `window.OFDRWViewer`。
@@ -69,7 +69,7 @@ await doc.close();
 
 🧩 示例工程：
 
-- [engine-h5 示例](../../examples/engine-h5/)：单文件 `index.html`，引擎内联，双击即可浏览本地 OFD，适合快速验证浏览器渲染。
+- [engine-h5 示例](../../examples/engine-h5/)：单文件 `index.html`，引擎走 jsDelivr CDN，双击即可浏览本地 OFD，适合快速验证浏览器渲染。
 - [engine-node 示例](../../examples/engine-node/)：以 `@napi-rs/canvas` 提供 Canvas 与图片解码，逐页导出 144 DPI PNG。
 
 更多示例见 [examples 示例总览](../../examples/README.md)。

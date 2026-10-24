@@ -8,17 +8,17 @@ export const THIRD_PARTY_NOTICES = `OFD 阅读器开源软件许可
 
 本产品以 MIT 许可证开源，并使用了以下开源软件：
 
-1. @ofdrw/ofdrw-viewer-ui 0.1.0
+1. @ofdrw/ofdrw-viewer-ui 0.1.1
    许可证：MIT
    版权：Copyright (c) 2026 Quan Guanyu
    项目：https://github.com/ofdrw/ofdrw-viewer
 
-2. @ofdrw/ofdrw-viewer-engine 0.1.0
+2. @ofdrw/ofdrw-viewer-engine 0.1.1
    许可证：MIT
    版权：Copyright (c) 2026 Quan Guanyu
    项目：https://github.com/ofdrw/ofdrw-viewer
 
-3. @ofdrw/ofdrw-viewer-crypto 0.1.0
+3. @ofdrw/ofdrw-viewer-crypto 0.1.1
    许可证：MIT
    版权：Copyright (c) 2026 Quan Guanyu
    项目：https://github.com/ofdrw/ofdrw-viewer
