@@ -4,14 +4,11 @@
  * 只展示 `VerificationReport` 中该签名的结果；关闭后把焦点还给印章按钮。
  */
 
-import type {
-  CertificateChainVerification,
-  SignatureVerification,
-  VerificationStatus,
-} from '@ofdrw/ofdrw-viewer-crypto';
+import type { SignatureVerification } from '@ofdrw/ofdrw-viewer-crypto';
 import type { SealImageInfo } from '../types';
 import { createSealImageElement } from './seal-image';
 import type { SealImageHandle } from './seal-image';
+import { chainStatusText, verificationStatusText } from './text';
 import type { CryptoText } from './text';
 import { formatShanghaiDateTime } from './time';
 
@@ -31,8 +28,8 @@ export interface SignaturePopoverOptions {
   readonly sealImage?: SealImageInfo;
   /** 印章名称/编码，用于图片 alt 与降级文案。 */
   readonly sealLabel?: string;
-  /** 打开完整验证面板。 */
-  readonly onOpenPanel: () => void;
+  /** 打开签章详情（与侧栏点击一致）。 */
+  readonly onOpenDetails: () => void;
 }
 
 /** 浮层实例。 */
@@ -73,23 +70,23 @@ export function openSignaturePopover(
   const badge = doc.createElement('span');
   badge.className = 'ofd-signature-badge';
   badge.dataset.status = signature.status;
-  badge.textContent = statusText(signature.status, text);
+  badge.textContent = verificationStatusText(text, signature.status);
   header.append(title, badge, closeButton);
 
   const body = doc.createElement('dl');
   body.className = 'ofd-signature-popover__pairs';
   const pairs: (readonly [string, string])[] = [
-    [text.overall, statusText(signature.status, text)],
-    [text.math, statusText(signature.signature.status, text)],
+    [text.overall, verificationStatusText(text, signature.status)],
+    [text.math, verificationStatusText(text, signature.signature.status)],
     [
       text.references,
-      `${statusText(signature.references.status, text)} ${signature.references.checked}/${signature.references.total}`,
+      `${verificationStatusText(text, signature.references.status)} ${signature.references.checked}/${signature.references.total}`,
     ],
-    [text.chain, chainText(signature.certificate.status, text)],
+    [text.chainIndependent, chainStatusText(text, signature.certificate.status)],
     [
       text.seal,
       signature.seal
-        ? `${signature.seal.name ?? signature.seal.esId ?? text.none}（${statusText(signature.seal.status, text)}）`
+        ? `${signature.seal.name ?? signature.seal.esId ?? text.none}（${verificationStatusText(text, signature.seal.status)}）`
         : text.none,
     ],
     [text.timestamp, timestampText(signature, text)],
@@ -117,8 +114,8 @@ export function openSignaturePopover(
   const full = doc.createElement('button');
   full.type = 'button';
   full.className = 'ofd-button ofd-signature-popover__full';
-  full.dataset.ofdControl = 'signature-popover-full';
-  full.textContent = text.fullPanel;
+  full.dataset.ofdControl = 'signature-popover-details';
+  full.textContent = text.viewDetails;
 
   let sealBox: HTMLElement | null = null;
   const sealImageHandle: SealImageHandle | null = options.sealImage
@@ -247,6 +244,9 @@ export function openSignaturePopover(
   portalRoot.appendChild(popover);
   positionPopover();
   popover.style.visibility = '';
+  // 定位与尺寸测量完成后再启用入场动画，避免 transform 影响锚点对齐；
+  // 浮层只创建一次，内部内容重渲染不会重播该动画。
+  popover.classList.add('ofd-signature-popover--in');
 
   let closed = false;
   const close = (restoreFocus = true): void => {
@@ -286,7 +286,7 @@ export function openSignaturePopover(
   closeButton.addEventListener('click', () => close());
   full.addEventListener('click', () => {
     close(false);
-    options.onOpenPanel();
+    options.onOpenDetails();
   });
   doc.addEventListener('pointerdown', onOutside, true);
   doc.addEventListener('keydown', onKeydown, true);
@@ -296,53 +296,6 @@ export function openSignaturePopover(
   closeButton.focus();
 
   return { close };
-}
-
-/** 状态文案。 */
-function statusText(status: VerificationStatus, text: CryptoText): string {
-  switch (status) {
-    case 'valid':
-      return text.overallValid;
-    case 'invalid':
-      return text.overallInvalid;
-    case 'unknown':
-      return text.overallUnknown;
-    case 'not-applicable':
-      return text.overallNotApplicable;
-    case 'unsupported':
-      return text.overallUnsupported;
-    default:
-      return String(status);
-  }
-}
-
-/** 证书链状态文案。 */
-function chainText(
-  status: CertificateChainVerification['status'],
-  text: CryptoText,
-): string {
-  switch (status) {
-    case 'valid':
-      return text.overallValid;
-    case 'invalid':
-      return text.overallInvalid;
-    case 'unknown':
-      return text.overallUnknown;
-    case 'untrusted':
-      return text.chainUntrusted;
-    case 'incomplete':
-      return text.chainIncomplete;
-    case 'expired':
-      return text.chainExpired;
-    case 'not-yet-valid':
-      return text.chainNotYetValid;
-    case 'not-present':
-      return text.chainNotPresent;
-    case 'unsupported':
-      return text.overallUnsupported;
-    default:
-      return String(status);
-  }
 }
 
 /** 时间戳文案；固定“已解析，未验证”，并说明不参与总体状态。 */

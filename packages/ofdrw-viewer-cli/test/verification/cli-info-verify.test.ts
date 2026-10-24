@@ -196,42 +196,42 @@ describe('V-CLI verify：一次性完整性 + 签名 + 证书链', () => {
     expect(text.stdout).not.toContain('PASSWORD');
   });
 
-  it('未配置根证书为 unknown 退出 5，JSON 仍可机读且不误判 invalid', async () => {
+  it('未配置根证书时链 unknown 但 overall=valid、退出 0，JSON 仍可机读且不误判 invalid', async () => {
     const cwd = await createTempDir();
     const json = await runMain(['verify', fixture('signed-sesv4.ofd'), '--json'], cwd);
-    expect(json.code).toBe(5);
+    expect(json.code).toBe(0);
     const payload = parseJson<CliVerifyJson>(json.stdout);
-    expect(payload.report.overall).toBe('unknown');
+    expect(payload.report.overall).toBe('valid');
     expect(payload.report.rootsConfigured).toBe(false);
-    expect(payload.report.signatures[0]?.status).toBe('unknown');
+    expect(payload.report.signatures[0]?.status).toBe('valid');
     expect(payload.report.signatures[0]?.certificate.status).toBe('unknown');
     expect(payload.report.signatures[0]?.references.status).toBe('valid');
     expect(json.stderr).toContain('W_CRYPTO_TRUST_UNKNOWN');
 
     const text = await runMain(['verify', fixture('signed-sesv4.ofd')], cwd);
-    expect(text.code).toBe(5);
-    expect(text.stdout).toContain('验证结果: unknown');
+    expect(text.code).toBe(0);
+    expect(text.stdout).toContain('验证结果: valid');
     expect(text.stdout).toContain('根证书: 未配置 / 链 unknown');
     expect(text.stdout).toContain('证书链 unknown');
   });
 
-  it('错误根证书判定 invalid，PEM/DER 混用仍以正确根判定 valid', async () => {
+  it('错误根证书链 incomplete 但 overall=valid、退出 0，PEM/DER 混用仍以正确根判定 valid', async () => {
     const cwd = await createTempDir();
     const wrongRoot = join(FIXTURES, 'certs', 'encrypt.crt.pem');
     const wrong = await runMain(
       ['verify', fixture('signed-sesv4.ofd'), '--root', wrongRoot, '--json'],
       cwd,
     );
-    expect(wrong.code).toBe(5);
+    expect(wrong.code).toBe(0);
     expect(parseJson<CliVerifyJson>(wrong.stdout).report).toMatchObject({
-      overall: 'invalid',
-      signatures: [{ certificate: { status: 'incomplete' } }],
+      overall: 'valid',
+      signatures: [{ status: 'valid', certificate: { status: 'incomplete' } }],
     });
     const wrongText = await runMain(
       ['verify', fixture('signed-sesv4.ofd'), '--root', wrongRoot],
       cwd,
     );
-    expect(wrongText.code).toBe(5);
+    expect(wrongText.code).toBe(0);
     expect(wrongText.stdout).toContain('根证书: 已配置 1 / 链 incomplete');
 
     const mixed = await runMain(

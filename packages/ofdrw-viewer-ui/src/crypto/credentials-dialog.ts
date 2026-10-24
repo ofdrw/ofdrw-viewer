@@ -5,6 +5,8 @@
  * 输入引用与文件字节。解密失败保留弹窗与用户选择，允许重试或取消。
  */
 
+import { readBlobBytes, replaceChildren } from '../compat';
+
 import type { CryptoCredential, OfdInspection } from '@ofdrw/ofdrw-viewer-crypto';
 import type { UIShell } from '../ui/ui-shell';
 import { describeCredentialError } from './service';
@@ -241,7 +243,7 @@ export class CredentialDialog {
   /** 填充字段。 */
   private populateFields(fields: HTMLElement): void {
     const { text } = this.options;
-    fields.replaceChildren();
+    replaceChildren(fields);
     this.passwordInput = null;
     this.keyInput = null;
     this.passphraseInput = null;
@@ -359,7 +361,7 @@ export class CredentialDialog {
       return;
     }
     try {
-      this.keyBytes = new Uint8Array(await file.arrayBuffer());
+      this.keyBytes = await readBlobBytes(file);
       this.keyName = file.name;
     } catch {
       this.showError(this.options.text.credentialPrivateKeyInvalid);

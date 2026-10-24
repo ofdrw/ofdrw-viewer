@@ -107,6 +107,10 @@ export interface FakeHostOptions {
   readonly features?: Partial<Record<ViewerFeature, FeatureState>>;
   /** WebP 是否回退 PNG。 */
   readonly webpFallback?: boolean;
+  /** 原 OFD 导出字节；默认 `%PDF` 之外的最小占位字节。 */
+  readonly sourceBytes?: ArrayBuffer | Uint8Array;
+  /** 读取原文件时抛出的错误。 */
+  readonly sourceError?: Error;
 }
 
 /** 内存宿主；结构兼容 `OutputHost`。 */
@@ -188,6 +192,13 @@ export class FakeHost implements OutputHost {
 
   getState(): { readonly document: { readonly metadata?: { readonly title?: string } } } {
     return { document: { metadata: { title: this.options.title ?? '测试文档' } } };
+  }
+
+  /** 读取原 OFD 字节；默认返回占位 ZIP 头。 */
+  async readSourceBytes(): Promise<Uint8Array> {
+    if (this.options.sourceError) throw this.options.sourceError;
+    const bytes = this.options.sourceBytes ?? new Uint8Array([0x50, 0x4b, 0x03, 0x04]);
+    return new Uint8Array(bytes);
   }
 
   /** 模拟 OFDViewer 的内部事件总线；输出模块以此转发进度事件。 */

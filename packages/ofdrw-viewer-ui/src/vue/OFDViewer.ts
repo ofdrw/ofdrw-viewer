@@ -20,6 +20,8 @@ import {
   type CertificateSummary,
   type ExportImageOptions,
   type ExportImageResult,
+  type ExportOfdOptions,
+  type ExportOfdResult,
   type FeatureState,
   type FindOptions,
   type OFDViewerOptions,
@@ -324,6 +326,10 @@ export const OFDViewer = defineComponent({
         options?: ExportImageOptions,
       ): Promise<ExportImageResult | null> =>
         (await viewer.value?.exportImage(options)) ?? null,
+      exportOfd: async (
+        options?: ExportOfdOptions,
+      ): Promise<ExportOfdResult | null> =>
+        (await viewer.value?.exportOfd(options)) ?? null,
       getState: (): ViewerState | null => viewer.value?.getState() ?? null,
       getFeatureState: (feature: ViewerFeature): FeatureState | null =>
         viewer.value?.getFeatureState(feature) ?? null,

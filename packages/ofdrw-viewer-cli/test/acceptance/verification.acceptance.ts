@@ -104,7 +104,7 @@ describe('V-CLI 构建产物验收：info 与 verify', () => {
     expect(text.stderr).toBe('');
   });
 
-  it('verify 配根证书 valid、无根 unknown、篡改 invalid，JSON/文本一致', async () => {
+  it('verify 配根证书 valid、无根链 unknown 但 overall valid、篡改 invalid，JSON/文本一致', async () => {
     const cwd = await createTempDir();
     const valid = await runCli(
       ['verify', fixture('signed-sesv4.ofd'), '--root', CRYPTO_ROOT, '--json'],
@@ -127,13 +127,18 @@ describe('V-CLI 构建产物验收：info 与 verify', () => {
       ['verify', fixture('signed-sesv4.ofd'), '--json'],
       { cwd },
     );
-    expect(unknown.code).toBe(5);
+    expect(unknown.code).toBe(0);
     const unknownPayload = JSON.parse(unknown.stdout) as {
-      report: { overall: string; rootsConfigured: boolean };
+      report: {
+        overall: string;
+        rootsConfigured: boolean;
+        signatures: { status: string; certificate: { status: string } }[];
+      };
     };
     expect(unknownPayload.report).toMatchObject({
-      overall: 'unknown',
+      overall: 'valid',
       rootsConfigured: false,
+      signatures: [{ status: 'valid', certificate: { status: 'unknown' } }],
     });
     expect(unknown.stderr).toContain('W_CRYPTO_TRUST_UNKNOWN');
 

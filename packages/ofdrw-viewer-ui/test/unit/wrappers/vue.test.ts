@@ -100,10 +100,12 @@ describe('Vue wrapper', () => {
       getInstance: () => FakeViewer;
       goToPage: (page: number) => void;
       setScale: (scale: number) => void;
+      exportOfd: () => Promise<{ filename: string } | null>;
     };
 
     exposed.goToPage(3);
     exposed.setScale(2);
+    expect((await exposed.exportOfd())?.filename).toBe('fake.ofd');
     expect(viewer.pageCalls).toContain(3);
     expect(viewer.scaleCalls).toContain(2);
 

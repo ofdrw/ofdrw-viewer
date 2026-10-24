@@ -230,8 +230,12 @@ export class MoreMenu {
   open(): void {
     if (this.menuOpen) return;
     this.menuOpen = true;
+    // 先移除动画类再测量，避免 scale 动画影响 getBoundingClientRect 的尺寸；
+    // 定位完成后再加入，首帧从 0.96/透明开始，不改变最终坐标。
+    this.element.classList.remove('ofd-more-menu--open');
     this.element.hidden = false;
     this.positionMenu();
+    this.element.classList.add('ofd-more-menu--open');
     this.element.scrollTop = 0;
     setExpanded(this.options.button, true);
     this.doc.addEventListener('pointerdown', this.handleOutsidePointer, true);
@@ -255,6 +259,7 @@ export class MoreMenu {
     if (!this.menuOpen) return;
     this.menuOpen = false;
     this.element.hidden = true;
+    this.element.classList.remove('ofd-more-menu--open');
     setExpanded(this.options.button, false);
     this.doc.removeEventListener('pointerdown', this.handleOutsidePointer, true);
     this.doc.defaultView?.removeEventListener('resize', this.handleViewportChange);
@@ -340,19 +345,29 @@ export class MoreMenu {
     const maxHeight = Math.max(0, view.innerHeight - VIEWPORT_MARGIN * 2);
     this.element.style.maxHeight = `${maxHeight}px`;
     const anchor = this.options.button.getBoundingClientRect();
-    const size = this.element.getBoundingClientRect();
+    // 用布局尺寸而不是 getBoundingClientRect：打开动画的 scale 会缩小视觉矩形，
+    // 但不应该参与夹紧计算。
+    const size = {
+      width: this.element.offsetWidth,
+      height: this.element.offsetHeight,
+    };
     const left = Math.min(
       Math.max(anchor.right - size.width, VIEWPORT_MARGIN),
       Math.max(VIEWPORT_MARGIN, view.innerWidth - size.width - VIEWPORT_MARGIN),
     );
     let top = anchor.bottom + MENU_GAP;
+    let placement: 'above' | 'below' = 'below';
     if (top + size.height > view.innerHeight - VIEWPORT_MARGIN) {
       const above = anchor.top - MENU_GAP - size.height;
-      top =
-        above >= VIEWPORT_MARGIN
-          ? above
-          : Math.max(VIEWPORT_MARGIN, view.innerHeight - VIEWPORT_MARGIN - size.height);
+      if (above >= VIEWPORT_MARGIN) {
+        top = above;
+        placement = 'above';
+      } else {
+        top = Math.max(VIEWPORT_MARGIN, view.innerHeight - VIEWPORT_MARGIN - size.height);
+      }
     }
+    // 动画原点跟随展开方向：向下展开从右上角生长，向上展开从右下角生长。
+    this.element.dataset.placement = placement;
     if (this.viewportPortal) {
       this.element.style.left = `${Math.round(left)}px`;
       this.element.style.top = `${Math.round(top)}px`;

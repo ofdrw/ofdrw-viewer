@@ -20,6 +20,7 @@ import type { ViewerState, Rotation, SidebarView, ZoomMode } from '../state';
 import type {
   ExportImageOptions,
   ExportImagesOptions,
+  ExportOfdOptions,
   PageRange,
   PrintOptions,
   ViewerEventHandler,
@@ -81,6 +82,8 @@ export interface UIShellHost {
   exportImage(options?: ExportImageOptions): unknown;
   /** 导出多页图片（ZIP）。 */
   exportImages(options?: ExportImagesOptions): unknown;
+  /** 导出当前 OFD 原文件。 */
+  exportOfd(options?: ExportOfdOptions): unknown;
   /** 进入/退出全屏。 */
   setFullscreen(value: boolean): unknown;
   /** 打开验证面板；未启用密码能力时省略。 */
@@ -475,7 +478,7 @@ function openPrintDialog(viewer: UIShellHost, shell: UIShell): void {
 }
 
 /**
- * 打开导出图片选项对话框。
+ * 打开导出选项对话框（图片或 OFD 原文件）。
  *
  * @param viewer 阅读器实例。
  * @param shell 当前外壳。
@@ -490,10 +493,12 @@ function openExportDialog(viewer: UIShellHost, shell: UIShell): void {
 
   const format = doc.createElement('select');
   format.className = 'ofd-select';
-  for (const value of ['png', 'jpeg', 'webp']) {
+  format.dataset.ofdControl = 'output-format';
+  for (const value of ['png', 'jpeg', 'webp', 'ofd']) {
     const option = doc.createElement('option');
     option.value = value;
-    option.textContent = value.toUpperCase();
+    option.textContent =
+      value === 'ofd' ? translator.t('output.ofdFormat') : value.toUpperCase();
     format.append(option);
   }
 
@@ -546,25 +551,51 @@ function openExportDialog(viewer: UIShellHost, shell: UIShell): void {
     rotation.append(option);
   }
 
+  const dpiField = createOutputField(doc, translator.t('output.dpi'), dpi);
+  const qualityField = createOutputField(doc, translator.t('output.quality'), quality);
+  const backgroundField = createOutputField(doc, translator.t('output.background'), background);
+  const rotationField = createOutputField(doc, translator.t('output.rotation'), rotation);
+  const imageFields = [range.field, dpiField, qualityField, backgroundField, rotationField];
+  const ofdNote = doc.createElement('p');
+  ofdNote.className = 'ofd-output-note';
+  ofdNote.dataset.ofdControl = 'output-ofd-note';
+  ofdNote.hidden = true;
+  ofdNote.textContent = translator.t('output.ofdHint');
+
   const updateFormat = (): void => {
+    const ofd = format.value === 'ofd';
+    for (const field of imageFields) {
+      field.hidden = ofd;
+      for (const control of field.querySelectorAll<HTMLElement>('select,input')) {
+        (control as HTMLSelectElement | HTMLInputElement).disabled = ofd;
+      }
+    }
+    ofdNote.hidden = !ofd;
+    if (ofd) return;
     const supportsAlpha = format.value === 'png';
     background.disabled = !supportsAlpha;
     if (!supportsAlpha) background.value = 'white';
     quality.disabled = supportsAlpha;
   };
   format.addEventListener('change', updateFormat);
-  updateFormat();
 
   form.append(
     range.field,
     createOutputField(doc, translator.t('output.format'), format),
-    createOutputField(doc, translator.t('output.dpi'), dpi),
-    createOutputField(doc, translator.t('output.quality'), quality),
-    createOutputField(doc, translator.t('output.background'), background),
-    createOutputField(doc, translator.t('output.rotation'), rotation),
+    ofdNote,
+    dpiField,
+    qualityField,
+    backgroundField,
+    rotationField,
   );
+  updateFormat();
 
   const submit = (): void => {
+    if (format.value === 'ofd') {
+      shell.closeDialog(false);
+      settle(viewer.exportOfd({}), shell);
+      return;
+    }
     const pages = range.read(viewer.getState().document.pageCount);
     if (pages === null) return;
     const options: ExportImageOptions = {

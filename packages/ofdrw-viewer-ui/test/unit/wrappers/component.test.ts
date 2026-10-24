@@ -1,6 +1,7 @@
 /**
  * `<ofd-viewer>` Web Component：属性映射、property、事件与生命周期。
  */
+import { replaceChildren } from '../../../src/compat';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeViewer } from './mock-viewer';
 
@@ -23,16 +24,16 @@ async function tick(): Promise<void> {
 beforeEach(() => {
   FakeViewer.reset();
   defineOFDViewerElement();
-  document.body.replaceChildren();
+  replaceChildren(document.body);
 });
 
 afterEach(() => {
-  document.body.replaceChildren();
+  replaceChildren(document.body);
   vi.restoreAllMocks();
 });
 
 describe('<ofd-viewer>', () => {
-  it('注册标签并使用 light DOM 创建核心实例', () => {
+  it('注册标签并使用 light DOM 创建核心实例', async () => {
     expect(customElements.get(OFD_VIEWER_TAG)).toBe(OFDViewerElement);
 
     const element = document.createElement(OFD_VIEWER_TAG) as OFDViewerElement;
@@ -61,6 +62,7 @@ describe('<ofd-viewer>', () => {
     expect(element.shadowRoot).toBeNull();
     expect(element.querySelector('.fake-ofd-viewer')).not.toBeNull();
     expect(Object.getOwnPropertyDescriptor(OFDViewerElement.prototype, 'viewer')?.set).toBeUndefined();
+    expect((await element.exportOfd())?.filename).toBe('fake.ofd');
   });
 
   it('属性变化映射到实例方法且不重建实例', async () => {

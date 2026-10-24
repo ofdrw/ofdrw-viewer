@@ -40,27 +40,27 @@ describe('加载视觉样式契约', () => {
     expect(css).toMatch(/@keyframes\s+ofd-loading-spin\s*\{/);
     expect(css).toMatch(/@keyframes\s+ofd-loading-skeleton-pulse\s*\{/);
     expect(css).toMatch(
-      /\.ofd-page__loading-spinner\s*\{[^}]*animation:\s*ofd-loading-spin\s+900ms\s+linear\s+infinite;/s,
+      /\.ofd-page__loading-spinner\s*\{[^}]*animation:\s*ofd-loading-spin\s+900ms\s+linear\s+infinite;/,
     );
     expect(css).toMatch(
-      /\.ofd-viewer__loading-ring\s*\{[^}]*animation:\s*ofd-loading-spin\s+900ms\s+linear\s+infinite;/s,
+      /\.ofd-viewer__loading-ring\s*\{[^}]*animation:\s*ofd-loading-spin\s+900ms\s+linear\s+infinite;/,
     );
     expect(css).toMatch(
-      /\.ofd-page__loading-skeleton::after\s*\{[^}]*animation:\s*ofd-loading-skeleton-pulse/s,
+      /\.ofd-page__loading-skeleton::after\s*\{[^}]*animation:\s*ofd-loading-skeleton-pulse/,
     );
   });
 
   it('首次骨架/重渲染遮罩与 150/200/120 ms 计时样式齐全', async () => {
     const css = await readPackageFile('src/style.css');
-    expect(css).toMatch(/\.ofd-page__loading\[data-variant='skeleton'\]\s*\{[^}]*background:\s*transparent;/s);
-    expect(css).toMatch(/\.ofd-page__loading\[data-variant='overlay'\]\s+\.ofd-page__loading-skeleton\s*\{[^}]*display:\s*none;/s);
-    expect(css).toMatch(/\.ofd-page__loading\[data-fading='true'\]\s*\{[^}]*opacity:\s*0;/s);
-    expect(css).toMatch(/\.ofd-page__loading\s*\{[^}]*transition:\s*opacity\s+120ms\s+linear;/s);
-    expect(css).toMatch(/\.ofd-viewer__loading\s*\{[^}]*transition:\s*opacity\s+150ms\s+linear;/s);
-    expect(css).toMatch(/\.ofd-viewer__loading\[data-fading='true'\]\s*\{[^}]*opacity:\s*0;/s);
+    expect(css).toMatch(/\.ofd-page__loading\[data-variant='skeleton'\]\s*\{[^}]*background:\s*transparent;/);
+    expect(css).toMatch(/\.ofd-page__loading\[data-variant='overlay'\]\s+\.ofd-page__loading-skeleton\s*\{[^}]*display:\s*none;/);
+    expect(css).toMatch(/\.ofd-page__loading\[data-fading='true'\]\s*\{[^}]*opacity:\s*0;/);
+    expect(css).toMatch(/\.ofd-page__loading\s*\{[^}]*transition:\s*opacity\s+120ms\s+linear;/);
+    expect(css).toMatch(/\.ofd-viewer__loading\s*\{[^}]*transition:\s*opacity\s+150ms\s+linear;/);
+    expect(css).toMatch(/\.ofd-viewer__loading\[data-fading='true'\]\s*\{[^}]*opacity:\s*0;/);
     // 页面遮罩阻断点击/选择，但不拦截滚动。
-    expect(css).toMatch(/\.ofd-page__loading\s*\{[^}]*cursor:\s*progress;[^}]*user-select:\s*none;/s);
-    expect(css).not.toMatch(/\.ofd-page__loading\s*\{[^}]*touch-action:\s*none;/s);
+    expect(css).toMatch(/\.ofd-page__loading\s*\{[^}]*cursor:\s*progress;[^}]*user-select:\s*none;/);
+    expect(css).not.toMatch(/\.ofd-page__loading\s*\{[^}]*touch-action:\s*none;/);
   });
 
   it('prefers-reduced-motion 关闭脉冲/旋转/淡出；print 隐藏 loading', async () => {
@@ -77,7 +77,7 @@ describe('加载视觉样式契约', () => {
     expect(shared).toContain('var(--ofd-loading-skeleton-strong');
     expect(shared).toMatch(/animation:\s*ofd-nav-skeleton-pulse\s+1\.6s\s+ease-in-out\s+infinite/);
     expect(shared).toMatch(/@keyframes\s+ofd-nav-skeleton-pulse\s*\{/);
-    expect(shared).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[^}]*\.ofd-thumbnail__skeleton\s*\{\s*animation:\s*none;/s);
+    expect(shared).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[^}]*\.ofd-thumbnail__skeleton\s*\{\s*animation:\s*none;/);
     expect(shared).toContain(".ofd-thumbnail[data-state='failed']");
     expect(shared).toContain('.ofd-thumbnail__fallback[hidden]');
   });

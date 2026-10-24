@@ -191,10 +191,8 @@ export async function verifyIntegrity(
 
   const status = aggregateIntegrityStatus(
     signedData.status,
-    chain.status,
     missingFiles.length,
     extraFiles.length,
-    options.roots.length > 0,
   );
   return {
     integrity: {
@@ -221,37 +219,24 @@ export async function verifyIntegrity(
 /**
  * 聚合完整性状态（设计 §5.7）。
  *
- * @param signatureStatus 签名状态。
- * @param chainStatus 证书链状态。
+ * 证书链只作为独立明细展示，不参与完整性通过/失败判定。缺少匹配证书会让
+ * SignedData 签名验签失败（`signatureStatus=invalid`），仍由签名结果判为 invalid。
+ *
+ * @param signatureStatus SignedData 签名验签状态。
  * @param missingCount 缺失文件数。
  * @param extraCount 夹带文件数。
- * @param rootsConfigured 是否配置了信任根。
  * @returns 汇总状态。
  */
 function aggregateIntegrityStatus(
   signatureStatus: VerificationStatus,
-  chainStatus: ChainStatus,
   missingCount: number,
   extraCount: number,
-  rootsConfigured: boolean,
 ): VerificationStatus {
-  // 签名值本身不支持时，缺少可匹配证书不应把状态升级为 invalid。
-  if (signatureStatus === 'unsupported' && chainStatus === 'not-present') {
-    return 'unsupported';
-  }
-  if (
-    signatureStatus === 'invalid' ||
-    missingCount > 0 ||
-    extraCount > 0 ||
-    ['expired', 'not-yet-valid', 'untrusted', 'invalid', 'not-present'].includes(chainStatus)
-  ) {
+  if (signatureStatus === 'invalid' || missingCount > 0 || extraCount > 0) {
     return 'invalid';
   }
-  // 无信任根时 incomplete 只说明链终点不可判定，不能把完整性判成 invalid。
-  if (!rootsConfigured && chainStatus === 'incomplete') return 'unknown';
-  if (signatureStatus === 'unknown' || chainStatus === 'unknown') return 'unknown';
-  if (chainStatus === 'incomplete') return 'invalid';
-  if (signatureStatus === 'unsupported' || chainStatus === 'unsupported') return 'unsupported';
+  if (signatureStatus === 'unknown') return 'unknown';
+  if (signatureStatus === 'unsupported') return 'unsupported';
   return 'valid';
 }
 

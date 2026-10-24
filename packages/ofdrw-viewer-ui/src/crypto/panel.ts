@@ -5,8 +5,9 @@
  * overall。面板不读取 SignedValue/Seal 原始 ASN.1，也不保留第二套验签路径。
  */
 
+import { readBlobBytes, replaceChildren } from '../compat';
+
 import type {
-  CertificateChainVerification,
   CertificateSummary,
   SignatureVerification,
   VerificationReport,
@@ -15,10 +16,12 @@ import type {
 import { OFDViewerError, isOFDViewerError } from '../errors';
 import type { UIShell } from '../ui/ui-shell';
 import type { CryptoService, CryptoServiceHost } from './service';
+import { certificateFileName, downloadCertificateDer } from './certificate-download';
 import { createSealImageElement } from './seal-image';
 import type { SealImageHandle } from './seal-image';
+import { chainStatusText } from './text';
 import type { CryptoText } from './text';
-import { formatShanghaiDateTime } from './time';
+import { formatShanghaiDateTime, formatSigningTime } from './time';
 
 /** 面板实例序号，用于生成跨实例唯一的控件 id。 */
 let verificationPanelSequence = 0;
@@ -99,12 +102,12 @@ export class VerificationPanel {
         ? active.getAttribute('data-ofd-control')
         : null;
     this.ensureLiveRegion();
-    this.body.replaceChildren(...this.buildContent(), this.liveRegion!);
+    replaceChildren(this.body, ...this.buildContent(), this.liveRegion!);
     this.updateLiveText();
     if (focusedControl) {
       this.body
         .querySelector<HTMLElement>(
-          `[data-ofd-control="${focusedControl.replaceAll('"', '\"')}"]`,
+          `[data-ofd-control="${focusedControl.split('"').join('\\"')}"]`,
         )
         ?.focus({ preventScroll: true });
     }
@@ -131,14 +134,7 @@ export class VerificationPanel {
     const header = this.doc.createElement('div');
     header.className = 'ofd-verification-header';
     if (report) {
-      header.append(
-        this.statusBadge(report.overall, `${text.overall}：`),
-        this.createText(
-          'span',
-          'ofd-verification-header__time',
-          `${text.panelVerifiedAt}：${report.startedAt}（${report.durationMs}ms）`,
-        ),
-      );
+      header.appendChild(this.statusBadge(report.overall, `${text.overall}：`));
     } else {
       header.append(
         this.createText('span', 'ofd-verification-badge', text.panelNotVerified),
@@ -234,7 +230,7 @@ export class VerificationPanel {
       [text.integrityMissing, this.listText(integrity.missingFiles)],
       [text.integrityExtra, this.listText(integrity.extraFiles)],
       [text.math, this.statusText(integrity.signature.status)],
-      [text.chain, this.chainText(integrity.certificate)],
+      [text.chainIndependent, chainStatusText(text, integrity.certificate.status)],
     ]);
     this.appendIssues(card, integrity.issues);
     return card;
@@ -243,12 +239,11 @@ export class VerificationPanel {
   /**
    * 信任根缺失/不匹配时的解释性引导。
    *
-   * 只解释报告已有状态，不改变 overall，也不提供“忽略证书链”操作。
+   * 只解释证书链独立状态，不改变签名/完整性总体状态，也不提供“忽略证书链”操作。
    */
   private buildGuidance(report: VerificationReport): HTMLElement | null {
     const { text } = this;
     const chainUnknown =
-      report.overall === 'unknown' &&
       !report.rootsConfigured &&
       report.signatures.some((signature) => signature.certificate.status === 'unknown');
     const mismatch = report.signatures.some((signature) =>
@@ -292,13 +287,17 @@ export class VerificationPanel {
     card.appendChild(this.statusBadge(signature.status, ''));
     this.appendPairs(card, [
       [text.sesVersion, signature.version],
+      [
+        text.signingTime,
+        formatSigningTime(signature.signingTime) ?? text.signingTimeMissing,
+      ],
       [text.dataHash, `${this.statusText(signature.dataHash.status)}（${signature.dataHash.expected ?? text.none}）`],
       [
         text.references,
         `${this.statusText(signature.references.status)} ${signature.references.checked}/${signature.references.total}`,
       ],
       [text.math, this.statusText(signature.signature.status)],
-      [text.chain, this.chainText(signature.certificate)],
+      [text.chainIndependent, chainStatusText(text, signature.certificate.status)],
       [
         text.seal,
         signature.seal
@@ -307,13 +306,11 @@ export class VerificationPanel {
       ],
     ]);
 
-    if (signature.seal) {
-      const sealImage = this.doc.createElement('div');
-      sealImage.className = 'ofd-verification-signature__seal';
-      sealImage.dataset.ofdControl = 'verification-signature-seal-image';
-      card.appendChild(sealImage);
-      void this.loadSignatureSeal(signature, sealImage, this.renderGeneration);
-    }
+    const artifacts = this.doc.createElement('div');
+    artifacts.className = 'ofd-verification-signature__artifacts';
+    artifacts.dataset.ofdControl = 'verification-signature-artifacts';
+    card.appendChild(artifacts);
+    void this.loadSignatureArtifacts(signature, artifacts, this.renderGeneration);
 
     if (signature.references.failures.length > 0) {
       const failures = this.doc.createElement('ul');
@@ -366,12 +363,12 @@ export class VerificationPanel {
   }
 
   /**
-   * 异步加载签章详情中的印章图片。
+   * 异步加载签章图片与签章者证书下载。
    *
-   * 复用签章服务的 `getSignatureDetail`，只读取 SignedValue 内嵌 `picture.data`；
-   * 过期渲染或节点已移除时丢弃结果，避免把图片挂到旧面板。
+   * 复用签章服务的 `getSignatureDetail`，只读取 SignedValue 内嵌 `picture.data`
+   * 与证书 DER；过期渲染或节点已移除时丢弃结果，避免把内容挂到旧面板。
    */
-  private async loadSignatureSeal(
+  private async loadSignatureArtifacts(
     signature: SignatureVerification,
     container: HTMLElement,
     generation: number,
@@ -381,26 +378,64 @@ export class VerificationPanel {
       container.remove();
       return;
     }
+    let detail: Awaited<ReturnType<NonNullable<typeof getDetail>>>;
     try {
-      const detail = await getDetail.call(this.host, signature.id);
-      if (generation !== this.renderGeneration || !container.isConnected) return;
-      const handle = createSealImageElement(this.doc, detail.seal?.image, {
+      detail = await getDetail.call(this.host, signature.id);
+    } catch {
+      if (generation === this.renderGeneration) container.remove();
+      return;
+    }
+    if (generation !== this.renderGeneration || !container.isConnected) return;
+
+    let appended = false;
+    if (detail.seal?.image) {
+      const sealBox = this.doc.createElement('div');
+      sealBox.className = 'ofd-verification-signature__seal';
+      sealBox.dataset.ofdControl = 'verification-signature-seal-image';
+      const handle = createSealImageElement(this.doc, detail.seal.image, {
         label:
           signature.seal?.name ??
-          detail.seal?.name ??
+          detail.seal.name ??
           signature.seal?.esId ??
           signature.id,
       });
-      if (!handle) {
-        container.remove();
-        return;
+      if (handle) {
+        this.sealImageHandles.get(signature.id)?.revoke();
+        this.sealImageHandles.set(signature.id, handle);
+        replaceChildren(sealBox, handle.element);
+        container.appendChild(sealBox);
+        appended = true;
       }
-      this.sealImageHandles.get(signature.id)?.revoke();
-      this.sealImageHandles.set(signature.id, handle);
-      container.replaceChildren(handle.element);
-    } catch {
-      if (generation === this.renderGeneration) container.remove();
     }
+
+    const certificate = detail.signer?.certificate;
+    if (detail.signer?.certificateDer && certificate) {
+      const download = this.doc.createElement('button');
+      download.type = 'button';
+      download.className = 'ofd-button ofd-verification-cert-download';
+      download.dataset.ofdControl = 'verification-signer-cert-download';
+      download.textContent = this.text.downloadCertificate;
+      download.title = certificateFileName(
+        { subject: certificate.subject, serialNumber: certificate.serialNumber },
+        'signer',
+      );
+      download.setAttribute(
+        'aria-label',
+        `${this.text.signerCertificate}：${certificate.subject || this.text.none}`,
+      );
+      download.addEventListener('click', () => {
+        downloadCertificateDer(
+          this.doc,
+          detail.signer?.certificateDer,
+          { subject: certificate.subject, serialNumber: certificate.serialNumber },
+          'signer',
+        );
+      });
+      container.appendChild(download);
+      appended = true;
+    }
+
+    if (!appended) container.remove();
   }
 
   /** 释放全部印章图片 Blob URL；面板重建/关闭时调用。 */
@@ -423,11 +458,28 @@ export class VerificationPanel {
       const list = this.doc.createElement('ul');
       list.className = 'ofd-verification-root-list';
       for (const [index, item] of items.entries()) {
-        for (const summary of item.summaries) {
+        for (const [summaryIndex, summary] of item.summaries.entries()) {
           const row = this.doc.createElement('li');
           row.className = 'ofd-verification-root';
           row.dataset.fingerprint = summary.fingerprintSha256;
           row.appendChild(this.summaryText(summary));
+          const der = item.ders[summaryIndex];
+          if (der) {
+            const download = this.doc.createElement('button');
+            download.type = 'button';
+            download.className = 'ofd-button ofd-verification-root__download';
+            download.dataset.ofdControl = 'verification-root-download';
+            download.textContent = text.downloadCertificate;
+            download.title = certificateFileName(summary, 'root');
+            download.setAttribute(
+              'aria-label',
+              `${text.downloadCertificate}：${summary.subject}`,
+            );
+            download.addEventListener('click', () => {
+              downloadCertificateDer(this.doc, der, summary, 'root');
+            });
+            row.appendChild(download);
+          }
           const remove = this.doc.createElement('button');
           remove.type = 'button';
           remove.className = 'ofd-button ofd-verification-root__remove';
@@ -473,7 +525,7 @@ export class VerificationPanel {
     try {
       sources = await Promise.all(
         files.map(async (file) => ({
-          data: new Uint8Array(await file.arrayBuffer()),
+          data: await readBlobBytes(file),
           name: file.name,
         })),
       );
@@ -685,33 +737,6 @@ export class VerificationPanel {
     }
   }
 
-  /** 证书链文案。 */
-  private chainText(chain: CertificateChainVerification): string {
-    const { text } = this;
-    switch (chain.status) {
-      case 'valid':
-        return text.overallValid;
-      case 'invalid':
-        return text.overallInvalid;
-      case 'unknown':
-        return text.overallUnknown;
-      case 'untrusted':
-        return text.chainUntrusted;
-      case 'incomplete':
-        return text.chainIncomplete;
-      case 'expired':
-        return text.chainExpired;
-      case 'not-yet-valid':
-        return text.chainNotYetValid;
-      case 'not-present':
-        return text.chainNotPresent;
-      case 'unsupported':
-        return text.overallUnsupported;
-      default:
-        return String(chain.status);
-    }
-  }
-
   /** 证书摘要文本。 */
   private summaryText(summary: CertificateSummary): HTMLElement {
     const { text } = this;
@@ -719,6 +744,8 @@ export class VerificationPanel {
     box.className = 'ofd-verification-root__summary';
     const lines = [
       `${text.rootsSubject}：${summary.subject}`,
+      `${text.rootsIssuer}：${summary.issuer}`,
+      `${text.rootsSerial}：${summary.serialNumber}`,
       `${text.rootsFingerprint}：${summary.fingerprintSha256}`,
       `${text.rootsValidity}：${summary.notBefore} — ${summary.notAfter}`,
     ];

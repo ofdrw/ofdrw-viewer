@@ -318,6 +318,12 @@ export class FakeViewer {
     };
   }
 
+  /** 导出 OFD 原文件。 */
+  async exportOfd(): Promise<{ blob: Blob; filename: string; size: number }> {
+    this.exportCalls += 1;
+    return { blob: new Blob(), filename: 'fake.ofd', size: 4 };
+  }
+
   /** 销毁实例。 */
   destroy(): void {
     if (this.destroyed) return;

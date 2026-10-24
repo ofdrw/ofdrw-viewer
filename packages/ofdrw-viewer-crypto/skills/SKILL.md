@@ -1,6 +1,6 @@
 ---
 name: ofdrw-viewer-crypto
-description: Add OFD encryption inspection, decryption, electronic-seal/signature verification, anti-smuggling integrity and timestamp parsing to JavaScript/TypeScript. Use this skill whenever a task involves encrypted OFD files, password or SM2 private-key credentials, `@ofdrw/ofdrw-viewer-crypto`, `inspect`, `openDecryptingContainer`, `verifyOfd`, SES v1/v4/v5 signatures, `SignedValue.dat`/`Seal.esl`, trust roots, certificate chains, integrity `OFDEntries.xml`/`signedvalue.dat`, or OFD timestamp display. Covers Node 22/browser/worker setup, byte-source random access, engine `VirtualContainer` handoff, error/warning handling, and the security rules “timestamp parsed not verified”, “no roots = unknown” and “integrity null = not protected”.
+description: Add OFD encryption inspection, decryption, electronic-seal/signature verification, anti-smuggling integrity and timestamp parsing to JavaScript/TypeScript. Use this skill whenever a task involves encrypted OFD files, password or SM2 private-key credentials, `@ofdrw/ofdrw-viewer-crypto`, `inspect`, `openDecryptingContainer`, `verifyOfd`, SES v1/v4/v5 signatures, `SignedValue.dat`/`Seal.esl`, trust roots, certificate chains, integrity `OFDEntries.xml`/`signedvalue.dat`, or OFD timestamp display. Covers Node 22/browser/worker setup, byte-source random access, engine `VirtualContainer` handoff, error/warning handling, and the security rules “timestamp parsed not verified”, “certificate chain is independent of overall” and “integrity null = not protected”.
 ---
 
 # OFD 密码能力（@ofdrw/ofdrw-viewer-crypto）
@@ -280,8 +280,8 @@ const roots = [...certificatesToDer(rootPem), ...certificatesToDer(rootDerBytes)
 
 - `roots` 每项为一张证书 DER（`Uint8Array`）；核心不解析 PEM/Base64/CER，也不读取 URL/path/filePath，宿主读成**原始字节**后统一经 `certificatesToDer` 转 DER；
 - 非法根证书：`CRYPTO_TRUST_ROOT_INVALID`；
-- **未配置 roots**：证书链不会判 `valid`；可确定的过期/结构错误仍为 `expired`/`invalid`，其余情况为 `unknown` 并产生 `W_CRYPTO_TRUST_UNKNOWN`；
-- 配置 roots 后：`valid` 必须锚定到 SHA-256 指纹一致的根；缺中间证书 `incomplete`、终点不是根 `untrusted` 的签名汇总为 `invalid`；未配置 roots 时 `incomplete` 聚合为 `unknown`；
+- **未配置 roots**：证书链不会判 `valid`，通常为 `unknown` 并产生 `W_CRYPTO_TRUST_UNKNOWN`；可确定的过期/结构错误仍展示为 `expired`/`invalid`。证书链状态不参与签名、印章、完整性与 `overall` 判定，因此签名数学与引用通过时 `overall` 仍可为 `valid`；
+- 配置 roots 后：`valid` 必须锚定到 SHA-256 指纹一致的根；缺中间证书 `incomplete`、终点不是根 `untrusted`；这些链状态只作为独立明细展示，不改变签名/完整性/`overall`；
 - 有效期由 `now`（默认当前时间）判断，边界为 `notBefore <= now <= notAfter`；不检查 CRL/OCSP，`revocation` 固定 `'not-checked'`。
 
 ### 状态语义
@@ -292,14 +292,15 @@ const roots = [...certificatesToDer(rootPem), ...certificatesToDer(rootDerBytes)
 | `signature.status` | 同上的单个签名汇总 |
 | `signature.signature.status` | 同上，TBS 签名数学验签 |
 | `signature.references.status` | 同上，引用文件 CheckValue；无法校验按 `invalid` 聚合 |
-| `signature.certificate.status` | `valid`/`invalid`/`expired`/`not-yet-valid`/`untrusted`/`incomplete`/`unsupported`/`not-present`/`unknown` |
+| `signature.certificate.status` | `valid`/`invalid`/`expired`/`not-yet-valid`/`untrusted`/`incomplete`/`unsupported`/`not-present`/`unknown`；仅作独立明细展示 |
+| `signature.signingTime` / `signingTimeSource` | 签发时间展示值与来源（`time-info`/`timestamp`/`signature-xml`）；只展示，不代表可信时间。当前 v1/v4/v5 实际只产生 `time-info` 或 `signature-xml`，`timestamp` 分支保留给未来结构变体 |
 | `signature.seal?.matchesSignedValue` | `boolean`；Seal.esl 与 SignedValue 内嵌印章字节一致，不等于验签通过 |
 | `integrity.status` | `valid`/`invalid`/`unknown`/`unsupported`，防夹带完整性 |
 | `timestamp.status` | `parsed-not-verified`/`not-present`/`parse-error`，只解析 |
 
-聚合优先级：`invalid` > `unknown` > `unsupported` > `valid`；无完整性且无签名时为 `not-applicable`。未配置信任根时，证书链的 `incomplete` 不会把签名升级为 `invalid`，而是保持 `unknown`。
+聚合优先级：`invalid` > `unknown` > `unsupported` > `valid`；无完整性且无签名时为 `not-applicable`。证书链状态不参与签名/印章/完整性/`overall` 聚合；未配置信任根、链过期、`untrusted`/`incomplete`/`unknown` 都不会把密码学校验通过的签名降级。缺少签名者证书会导致签名数学无法验证，仍为 `invalid`。
 
-`verifyOfd` 把签名/完整性/证书链问题写进 `report.overall`、子项 `status` 与 `issues`；只有入口参数、根证书、凭据、包结构、限额、取消等错误才抛 `CryptoError`。不要只捕获异常而忽略 `report`。
+`verifyOfd` 把签名/完整性/印章问题写进 `report.overall`、子项 `status` 与 `issues`；证书链状态只写入 `certificate` 明细与 warning，不改变 `overall`。只有入口参数、根证书、凭据、包结构、限额、取消等错误才抛 `CryptoError`。不要只捕获异常而忽略 `report`。
 
 完整性：`report.integrity === null` 表示没有可校验的完整性对象——未检测到 `OFDEntries.xml`，或清单可解析但其签名值缺失；不是“完整性有效”。`OFDEntries.xml` 存在但不可解析、或 `SignedValueLoc` 路径非法时仍返回 `status='invalid'` 的对象，不是 `null`。`missingFiles`/`extraFiles` 分别表示清单登记但包内缺失、以及包内未登记的夹带文件。
 
@@ -315,7 +316,7 @@ const ts = parseTimestamp(tokenBytes, { signatureValue: sesSignatureBytes });
 
 - `parseSeal`/`parseSignedValue` 支持 SES v1/v4/v5，只解析、**不验签、不查链**；
 - `parseSeal` 的图片损坏/缺失只产生 warning，不影响印章结构；
-- `parseSignedValue` 的 `dataHash` 是 `TBS_Sign` 声明的 `Signature.xml` SM3（小写十六进制，仅解析不比对），`seal` 是内嵌 SESeal 的公开解析；
+- `parseSignedValue` 的 `dataHash` 是 `TBS_Sign` 声明的 `Signature.xml` SM3（小写十六进制，仅解析不比对），`seal` 是内嵌 SESeal 的公开解析，`certificateDer` 是签章者证书 DER（调用方拥有，可用于下载）；
 - `parseTimestamp` 对不可解析内容返回 `parse-error`（参数本身非法仍抛错），无令牌返回 `not-present`，可解析时固定 `parsed-not-verified`；
 - 校验签名请用 `verifyOfd`，不要用 `parseSeal`/`parseSignedValue` 的返回值自行推断“有效”。
 
@@ -348,7 +349,7 @@ warning 不中断流程，通过 `onWarning` 接收。常见 warning：`W_CRYPTO
 ## 安全边界（必须遵守）
 
 1. **时间戳只解析，不验证**；不得显示“时间戳有效/可信时间”。
-2. **无根证书 ≠ valid**；通常为 `unknown`（过期/结构错误仍可为 `expired`/`invalid`），不得把 `unknown` 当 `valid`/`invalid`，也不得省略 warning。
+2. **证书链状态独立展示**；未配置根时链通常为 `unknown`，不得把链状态当成签名/完整性/`overall` 的通过或失败依据，也不得省略 warning。缺少签名者证书仍会使签名 `invalid`。
 3. **完整性未保护 ≠ 有效**；`integrity === null` 表示未检测到可校验的完整性对象（无清单或签名值缺失），不是有效证明。
 4. **不检查吊销**；不要把“未发现吊销”写成“证书有效”。
 5. **验证的是密码学一致性**，不保证文档业务内容真实、合法或未泄露。
@@ -358,8 +359,8 @@ warning 不中断流程，通过 `onWarning` 接收。常见 warning：`W_CRYPTO
 
 ## 常见坑
 
-- 把 `verifyOfd` 的 `overall=valid` 当作“文档内容可信”：它只证明签名/完整性/链的密码学结果。
-- 没有配置 `roots` 却显示“验证通过”：应为 `unknown`，并展示未配置根证书。
+- 把 `verifyOfd` 的 `overall=valid` 当作“文档内容可信”：它只证明签名/完整性/印章的密码学结果，不等于证书链可信。
+- 把证书链 `unknown`/`untrusted`/`expired` 当作签名失败：链状态是独立明细，不影响签名/完整性/`overall`；应单独展示。
 - 看到 `integrity=null` 就显示“完整性通过”：应显示“未受保护”。
 - 在 `doc.close()` 之前关闭 `result.container`：engine 读取会与容器生命周期冲突。
 - 用 `container.encrypted=true` 直接调用 `verifyOfd`：应先 `openDecryptingContainer`；把 PEM 直接塞进 `roots` 前必须先 `certificatesToDer`。

@@ -5,6 +5,8 @@
  * 文档权限、引擎/环境能力与功能依赖后的有效状态。
  */
 
+import { objectFromEntries } from './compat';
+
 /**
  * 全部功能键，顺序与设计方案 §4.7 一致。
  *
@@ -74,10 +76,7 @@ export const DEFAULT_FEATURE_DISPLAY: FeatureDisplayMode = 'hide';
 
 /** 默认功能开关：全部开启。 */
 export const DEFAULT_FEATURES: Readonly<Record<ViewerFeature, boolean>> = Object.freeze(
-  Object.fromEntries(VIEWER_FEATURES.map((feature) => [feature, true])) as Record<
-    ViewerFeature,
-    boolean
-  >,
+  objectFromEntries(VIEWER_FEATURES.map((feature) => [feature, true] as const)),
 );
 
 /**
@@ -121,9 +120,9 @@ export function isViewerFeature(value: unknown): value is ViewerFeature {
  * @returns 每个功能均为 `{ enabled: true, visible: true }`。
  */
 export function createDefaultFeatureStates(): ViewerFeatureStates {
-  return Object.fromEntries(
-    VIEWER_FEATURES.map((feature) => [feature, { enabled: true, visible: true }]),
-  ) as ViewerFeatureStates;
+  return objectFromEntries(
+    VIEWER_FEATURES.map((feature) => [feature, { enabled: true, visible: true }] as const),
+  );
 }
 
 /**
@@ -139,9 +138,11 @@ export function resolveFeatureDisplay(
     typeof display === 'string' ? display : DEFAULT_FEATURE_DISPLAY;
   const overrides: Partial<Record<ViewerFeature, FeatureDisplayMode>> =
     typeof display === 'object' && display !== null ? display : {};
-  return Object.fromEntries(
-    VIEWER_FEATURES.map((feature) => [feature, overrides[feature] ?? fallback]),
-  ) as ResolvedFeatureDisplay;
+  return objectFromEntries(
+    VIEWER_FEATURES.map(
+      (feature) => [feature, overrides[feature] ?? fallback] as const,
+    ),
+  );
 }
 
 /**

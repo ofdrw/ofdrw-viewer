@@ -68,7 +68,7 @@ describe('style.css 主题与布局契约', () => {
   it('输入占位符使用次要文本色且不透明', async () => {
     const css = await loadStyle();
     expect(css).toMatch(
-      /\.ofd-input::placeholder\s*\{[^}]*color:\s*var\(--ofd-text-secondary\);[^}]*opacity:\s*1;/s,
+      /\.ofd-input::placeholder\s*\{[^}]*color:\s*var\(--ofd-text-secondary\);[^}]*opacity:\s*1;/,
     );
     // 正常输入文字仍使用主文本色，不受占位符规则影响。
     expect(css).toMatch(/\.ofd-input,[\s\S]*?color:\s*var\(--ofd-text\);/);
@@ -79,19 +79,19 @@ describe('style.css 主题与布局契约', () => {
     expect(css).toContain('--ofd-accent-hover: #0a58b5');
     expect(css).toContain('--ofd-accent-hover: #8cbcff');
     expect(css).toMatch(
-      /\.ofd-dialog__action--primary:hover,\s*\.ofd-dialog__action--primary:focus-visible\s*\{[^}]*background:\s*var\(--ofd-accent-hover\);/s,
+      /\.ofd-dialog__action--primary:hover,\s*\.ofd-dialog__action--primary:focus-visible\s*\{[^}]*background:\s*var\(--ofd-accent-hover\);/,
     );
     expect(css).toMatch(
-      /\.ofd-select option:checked\s*\{[^}]*background-color:\s*var\(--ofd-accent\);/s,
+      /\.ofd-select option:checked\s*\{[^}]*background-color:\s*var\(--ofd-accent\);/,
     );
     expect(css).toMatch(
-      /\.ofd-output-check:hover,[\s\S]*?background:\s*var\(--ofd-hover-bg\);/s,
+      /\.ofd-output-check:hover,[\s\S]*?background:\s*var\(--ofd-hover-bg\);/,
     );
     expect(css).toMatch(
-      /\.ofd-output-quality\s*\{[^}]*accent-color:\s*var\(--ofd-accent\);/s,
+      /\.ofd-output-quality\s*\{[^}]*accent-color:\s*var\(--ofd-accent\);/,
     );
     expect(css).not.toMatch(
-      /\.ofd-output-(?:form|check|quality)[^{]*\{[^}]*!important/s,
+      /\.ofd-output-(?:form|check|quality)[^{]*\{[^}]*!important/,
     );
   });
 

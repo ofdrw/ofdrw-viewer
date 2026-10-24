@@ -122,6 +122,10 @@ export interface V1BuildOptions {
   readonly signerCert?: Uint8Array;
   /** 签章者私钥标量。 */
   readonly signerKey?: Uint8Array;
+  /** TBS_Sign.timeInfo 原始编码；省略时写入默认时间文本。 */
+  readonly timeInfo?: Uint8Array;
+  /** 是否省略 Signature.xml 的 SignatureDateTime。 */
+  readonly omitSignatureDateTime?: boolean;
   /** 印章图片形态。 */
   readonly picture?: 'valid' | 'missing' | 'corrupt';
   /** 是否额外加入一条 BaseLoc 非法的签名记录。 */
@@ -201,7 +205,9 @@ export async function buildV1SignedContainer(
       '<ofd:SignedInfo>' +
       '<ofd:Provider ProviderName="synthetic" Company="test" Version="1"/>' +
       `<ofd:SignatureMethod>${OID_SM3_WITH_SM2}</ofd:SignatureMethod>` +
-      '<ofd:SignatureDateTime>2026-10-23 10:00:00</ofd:SignatureDateTime>' +
+      (options.omitSignatureDateTime
+        ? ''
+        : '<ofd:SignatureDateTime>2026-10-23 10:00:00</ofd:SignatureDateTime>') +
       '<ofd:Seal><ofd:BaseLoc>/Doc_0/Signs/Sign_0/Seal.esl</ofd:BaseLoc></ofd:Seal>' +
       `<ofd:References CheckMethod="${options.checkMethod ?? 'SM3'}">` +
       `<ofd:Reference FileRef="/OFD.xml"><ofd:CheckValue>${hex(sm3Digest(ofdXml))}</ofd:CheckValue></ofd:Reference>` +
@@ -218,7 +224,7 @@ export async function buildV1SignedContainer(
   const tbs = derSequence(
     derInteger(BigInt(options.versionNumber ?? 1)),
     seal,
-    derOctetString(new TextEncoder().encode('2026-10-23 10:00:00')),
+    options.timeInfo ?? derOctetString(new TextEncoder().encode('2026-10-23 10:00:00')),
     derOctetString(dataHash),
     derUtf8String(options.propertyInfo ?? '/Doc_0/Signs/Sign_0/Signature.xml'),
     derOctetString(signerCert),

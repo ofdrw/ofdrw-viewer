@@ -48,7 +48,7 @@ CLI="${OFDRW_VIEWER_CLI:-ofdrw-viewer-cli}"
 "$CLI" input.ofd -o ./out --font-dir ./fonts
 "$CLI" input.ofd -o ./out --no-system-fonts
 
-# 版本、查询与验签（未配置根证书时链状态为 unknown，退出 5）
+# 版本、查询与验签（未配置根时链状态单独显示 unknown，不改变 overall；overall=valid 仍退出 0）
 "$CLI" version
 "$CLI" version --json
 "$CLI" info input.ofd --json
@@ -142,10 +142,10 @@ OFD 版本: 1.0
 - `验证结果` 取报告的 `overall`：`valid`/`invalid`/`unknown`/`unsupported`/`not-applicable`；加密文档先解密，文本额外输出一行 `解密: 已解密（N 层）`；
 - `完整性: 未保护` 表示包内没有 `OFDEntries.xml` + `signedvalue.dat`，既不是通过也不是失败；受保护时显示 `status（FileList N，缺失 X，额外 Y）`；
 - 每个签名一行，含状态、SES 版本、引用计数、证书链状态与（存在时）印章状态；无签名时输出 `签名: 无`；时间戳只解析、不验证，固定显示 `parsed-not-verified（已解析，未验证）`，解析失败时显示原因；
-- `根证书` 行给出命中的信任锚数量（按指纹去重，不是 `--root` 路径数；未命中任何锚时回退为本次配置的路径数）与链状态；多签名与完整性状态按顺序去重聚合（如 `valid/incomplete`）；
+- `根证书` 行给出命中的信任锚数量（按指纹去重，不是 `--root` 路径数；未命中任何锚时回退为本次配置的路径数）与链状态；多签名与完整性状态按顺序去重聚合（如 `valid/incomplete`）。证书链状态只在本行/签名行单独展示，不参与 `overall` 判定；
 - `verify --json` 固定为 `{ command: "verify", input, report }`，`report` 含 `overall`、`package`、`decryption?`、`integrity`、`signatures`、`rootsConfigured`、`warnings`、`startedAt`、`durationMs`；即使 `invalid`/`unknown` 也输出完整报告再退出 5。
 
-只有 `overall=valid` 才退出 0；`invalid`/`unknown`/`unsupported`/`not-applicable` 均退出 5。**未配置 `--root` 时不会被判 `valid`：通常为 `unknown`（退出 5），不能当成验证通过**；配置正确根证书后才会 `valid`。既无签名又无完整性保护的文档为 `not-applicable`，同样退出 5。
+只有 `overall=valid` 才退出 0；`invalid`/`unknown`/`unsupported`/`not-applicable` 均退出 5。`overall` 只由签名数学、dataHash、References、防夹带完整性与印章结构/数学决定；**证书链 untrusted/expired/incomplete/unknown 等不影响 `overall`**，未配置 `--root` 时链状态显示 `unknown`，但签名与完整性通过时 `overall` 仍可为 `valid`（退出 0）。既无签名又无完整性保护的文档为 `not-applicable`，同样退出 5。
 
 ## 加密文档
 
@@ -258,7 +258,7 @@ out/
 | `2` | 文档级失败 | 非 OFD、包损坏、无法打开、文本 API 缺失、页面像素超限、SEA 资产失败等 |
 | `3` | 页级失败（部分或全部页） | 保留已产出文件，按 stderr 定位失败页；其他页结果仍可用 |
 | `4` | 加密/凭据失败 | 缺少凭据、用户名不存在、口令/私钥错误、解密失败；向用户确认凭据 |
-| `5` | 验证未通过 | `invalid`/`unknown`/`unsupported`/`not-applicable`；无根 `unknown` 属预期 |
+| `5` | 验证未通过 | `invalid`/`unknown`/`unsupported`/`not-applicable`；未配置根时链 `unknown` 仍可退出 0（只要 `overall=valid`），链状态在输出中单独展示 |
 | `130` | 用户中断（SIGINT/取消，如 `OFD_ABORTED`） | 已完成的页保留，可重跑 |
 
 常见错误码：
@@ -267,7 +267,7 @@ out/
 - 文档级（退出 2）：`OFD_INVALID_PACKAGE`、`CRYPTO_INVALID_PACKAGE`、`CLI_TEXT_UNSUPPORTED`（去掉 `--text`）、`CLI_PAGE_TOO_LARGE`（降低 `--dpi`）、`CLI_SEA_EXTRACT_FAILED`（清理或更换 `TMPDIR`）、`CLI_UNEXPECTED`；`info`/`verify` 在参数校验通过后打开输入失败（`CLI_INPUT_UNREADABLE`）也按 2 处理；
 - 加密/凭据（退出 4）：`CLI_CREDENTIALS_REQUIRED`、`CRYPTO_CREDENTIALS_REQUIRED`、`CRYPTO_USER_NOT_FOUND`、`CRYPTO_USER_AMBIGUOUS`、`CRYPTO_WRONG_PASSWORD`、`CRYPTO_PRIVATE_KEY_INVALID`、`CRYPTO_PRIVATE_KEY_PASSPHRASE_REQUIRED`、`CRYPTO_PRIVATE_KEY_MISMATCH`、`CRYPTO_UNSUPPORTED_ENCRYPTION`；
 - 页级（退出 3）：`CLI_IMAGE_WRITE_FAILED`、`CLI_TEXT_WRITE_FAILED`（检查输出目录权限与同名目录），以及 engine 的逐页错误码（如 `OFD_IMAGE_DECODE`）；
-- 验证（退出 5）：签名/完整性/证书链问题通过报告状态体现而不抛错；crypto 抛出的 ASN.1/算法/证书类错误（如 `CRYPTO_ASN1_INVALID`、`CRYPTO_CERTIFICATE_INVALID`）同样退出 5。
+- 验证（退出 5）：签名/完整性/印章问题通过报告状态体现而不抛错（证书链状态只单独展示，不决定退出码）；crypto 抛出的 ASN.1/算法/证书类错误（如 `CRYPTO_ASN1_INVALID`、`CRYPTO_CERTIFICATE_INVALID`）同样退出 5。
 
 ## JSON 与终端安全
 
@@ -280,7 +280,7 @@ out/
 
 1. **判断需求**：只要图片/坐标 → 转图片；只要元数据 → `info`；要信任结论 → `verify`。
 2. **先查询**：`info --json` 确认是否加密、有哪些用户与签名；需要渲染或验证时向用户索取口令或私钥，不要猜。
-3. **再验证**：`verify` 前向用户索取信任根；没有根时不会被判 `valid`：通常为 `unknown`，无签名且无完整性为 `not-applicable`，签名/证书本身失效时仍为 `invalid`/`unsupported`，均退出 5；不要向用户报告“验证通过”。
+3. **再验证**：`verify` 前向用户索取信任根；没有根时证书链状态单独显示 `unknown`，不改变 `overall`——签名与完整性通过时 `overall=valid` 并退出 0；无签名且无完整性为 `not-applicable`，签名/证书本身失效时仍为 `invalid`/`unsupported`；向用户说明“签名通过不等于证书链可信”，不得省略链状态。
 4. **小样本预览**：先 `--pages 1` 检查 PNG；需要坐标时加 `--text`，读取 JSON 按 `text` 搜索并用 `x/y/w/h` 定位。
 5. **处理缺字**：默认系统字体；仍有 `W_FONT_MISSING`/`W_GLYPH_MISSING` 时向用户询问字体目录并用 `--font-dir` 追加，不要下载字体。
 6. **大文档分批**：用 `--pages` 分段，避免一次生成过多图片与 JSON。

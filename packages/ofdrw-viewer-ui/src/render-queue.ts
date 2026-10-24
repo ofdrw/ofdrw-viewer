@@ -12,6 +12,8 @@
  * 队列不解析 OFD、不持有 DOM；实际绘制由 `run` 回调完成。
  */
 
+import { getGlobalObject } from './compat';
+
 /** 空闲回调截止信息。 */
 export interface IdleDeadlineLike {
   /** 是否因超时触发。 */
@@ -127,7 +129,7 @@ export interface RenderQueueStats {
 
 /** 创建默认调度器。 */
 function createDefaultScheduler(): RenderQueueScheduler {
-  const global = globalThis as typeof globalThis & {
+  const global = getGlobalObject() as typeof globalThis & {
     requestAnimationFrame?: (callback: FrameRequestCallback) => number;
     cancelAnimationFrame?: (handle: number) => void;
     requestIdleCallback?: (

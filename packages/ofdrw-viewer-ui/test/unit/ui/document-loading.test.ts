@@ -4,6 +4,7 @@
  * 用未决的引擎打开替身覆盖打开中的各个阶段：延迟显示、最短展示、淡出、
  * 取消与失败立即隐藏；断言只读取公开 DOM 与阅读器状态。
  */
+import { replaceChildren } from '../../../src/compat';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageInfo } from '@ofdrw/ofdrw-viewer-engine';
 
@@ -144,7 +145,7 @@ function statusButton(status: HTMLElement): HTMLButtonElement {
 
 beforeEach(() => {
   vi.useFakeTimers();
-  document.body.replaceChildren();
+  replaceChildren(document.body);
   engineMocks.open.mockReset();
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
     clearRect: vi.fn(),
@@ -161,7 +162,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
-  document.body.replaceChildren();
+  replaceChildren(document.body);
 });
 
 describe('文档全屏 loading', () => {

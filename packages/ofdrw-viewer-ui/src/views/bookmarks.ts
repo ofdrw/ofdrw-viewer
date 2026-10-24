@@ -5,6 +5,8 @@
  * 当前页对应条目高亮。无效 `dest` 只报警并保留条目。
  */
 
+import { replaceChildren } from '../compat';
+
 import type { BookmarkItem } from '@ofdrw/ofdrw-viewer-engine';
 import type { Translator } from '../i18n';
 import type { ViewerState } from '../state';
@@ -61,7 +63,7 @@ export class BookmarkView {
     this.root = this.host.ownerDocument.createElement('ul');
     this.root.className = 'ofd-bookmarks';
     this.root.setAttribute('role', 'list');
-    this.host.replaceChildren(this.root);
+    replaceChildren(this.host, this.root);
     this.active = this.viewer.getSidebarView() === 'bookmarks';
     const state = this.viewer.getState();
     this.lastBookmarks = state.document.bookmarks;
@@ -116,7 +118,7 @@ export class BookmarkView {
     const translator = this.getTranslator();
     this.root.setAttribute('aria-label', translator.t('sidebar.bookmarks'));
     this.entries = [];
-    this.root.replaceChildren();
+    replaceChildren(this.root);
 
     const state = this.viewer.getState();
     this.currentPageIndex = state.view.pageNumber - 1;

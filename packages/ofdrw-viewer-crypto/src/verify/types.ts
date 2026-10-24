@@ -76,6 +76,15 @@ export interface DataHashVerification {
   readonly status: VerificationStatus;
 }
 
+/**
+ * 签章时间来源。
+ *
+ * - `time-info`：`SignedValue.TBS_Sign.timeInfo`（v4/v5 为 ISO 8601，v1 可能是自由文本）；
+ * - `timestamp`：时间戳令牌 `TSTInfo.genTime`（只解析，未验证）；当前 v1/v4/v5 不可达，保留给未来允许缺省 `timeInfo` 的结构变体；
+ * - `signature-xml`：`Signature.xml/SignedInfo/SignatureDateTime` 原文。
+ */
+export type SigningTimeSource = 'time-info' | 'timestamp' | 'signature-xml';
+
 /** 单个文档签名校验结果。 */
 export interface SignatureVerification {
   /** 签名 ID。 */
@@ -88,15 +97,24 @@ export interface SignatureVerification {
   readonly baseLoc: string;
   /** SignedValue.dat 包内路径。 */
   readonly signedValuePath?: string;
-  /** 汇总状态。 */
+  /** 汇总状态；只由签名数学、dataHash、Reference、防夹带与印章结构/数学决定，证书链不参与。 */
   readonly status: VerificationStatus;
+  /**
+   * 签发时间展示值；按 `timeInfo` > `timestamp.genTime` > `SignatureDateTime` 取首个可用值。
+   *
+   * 无可用值时省略。`timeInfo`/`SignatureDateTime` 保留原文，`timestamp.genTime` 为 ISO 8601；
+   * 该字段只是展示值，不代表可信时间。
+   */
+  readonly signingTime?: string;
+  /** `signingTime` 的来源；与 `signingTime` 同时出现或同时省略。 */
+  readonly signingTimeSource?: SigningTimeSource;
   /** 签名数学验签结果。 */
   readonly signature: SignatureMathResult;
   /** dataHash 比对结果。 */
   readonly dataHash: DataHashVerification;
   /** Reference CheckValue 校验结果。 */
   readonly references: ReferenceCheckResult;
-  /** 签章者证书链。 */
+  /** 签章者证书链；明细始终保留，但不参与 `status`/`overall` 判定。 */
   readonly certificate: CertificateChainVerification;
   /** 印章校验；无 Seal 节点时省略。 */
   readonly seal?: SealVerification;

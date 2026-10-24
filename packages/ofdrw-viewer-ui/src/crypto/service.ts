@@ -7,6 +7,8 @@
  * - 凭据、口令与私钥只在调用栈/当前弹窗中存在，不写入状态、存储或日志。
  */
 
+import { flatMapArray } from '../compat';
+
 import {
   certificatesToDer,
   inspect,
@@ -230,7 +232,7 @@ export class CryptoService {
 
   /** 当前根证书摘要。 */
   getRoots(): readonly CertificateSummary[] {
-    return this.rootItems.flatMap((item) => item.summaries);
+    return flatMapArray(this.rootItems, (item) => item.summaries);
   }
 
   /**
@@ -383,7 +385,7 @@ export class CryptoService {
       const report = await verifyOfd({
         ...this.targetOptions(this.target),
         ...this.cryptoOptions(),
-        roots: this.rootItems.flatMap((item) => item.ders),
+        roots: flatMapArray(this.rootItems, (item) => item.ders),
         ...(options.signatureIds ? { signatureIds: options.signatureIds } : {}),
         signal: controller.signal,
       });

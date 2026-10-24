@@ -255,7 +255,7 @@ function isUrlSource(value: unknown): value is { url: string; headers?: Record<s
  * @param extra 覆盖头。
  * @returns 合并后的普通对象；都为空时 undefined。
  */
-function mergeHeaders(
+export function mergeHeaders(
   base: HeadersInit | undefined,
   extra: HeadersInit | undefined,
 ): Record<string, string> | undefined {

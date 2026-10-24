@@ -1,7 +1,7 @@
 /**
  * 密码能力 UI 文案。
  *
- * 仅覆盖凭据弹窗、验证面板与印章浮层；工具栏/功能名仍使用全局 i18n 字典。
+ * 覆盖凭据弹窗、验证面板、签章详情与印章浮层；工具栏/功能名仍使用全局 i18n 字典。
  */
 
 /** 密码 UI 文案键。 */
@@ -58,10 +58,10 @@ export interface CryptoText {
   readonly panelNotVerified: string;
   /** 重新验证。 */
   readonly panelReverify: string;
-  /** 完成验证。 */
-  readonly panelVerifiedAt: string;
-  /** 耗时。 */
-  readonly panelDuration: string;
+  /** 签发时间。 */
+  readonly signingTime: string;
+  /** 签发时间未提供。 */
+  readonly signingTimeMissing: string;
   /** 总体状态。 */
   readonly overall: string;
   /** 包信息。 */
@@ -99,6 +99,30 @@ export interface CryptoText {
   readonly math: string;
   /** 证书链。 */
   readonly chain: string;
+  /** 证书链独立说明。 */
+  readonly chainIndependent: string;
+  /** 证书链独立验证栏标题。 */
+  readonly chainSectionTitle: string;
+  /** 链状态。 */
+  readonly chainStatus: string;
+  /** 是否配置信任根。 */
+  readonly chainRootsConfigured: string;
+  /** 是。 */
+  readonly yes: string;
+  /** 否。 */
+  readonly no: string;
+  /** 签名者证书。 */
+  readonly chainSignerCertificate: string;
+  /** 信任锚。 */
+  readonly chainTrustAnchor: string;
+  /** 未找到信任锚。 */
+  readonly chainTrustAnchorMissing: string;
+  /** 链成员。 */
+  readonly chainMembers: string;
+  /** 无报告时链未验证说明。 */
+  readonly chainNotVerified: string;
+  /** 证书链不影响签名/完整性结果。 */
+  readonly chainIndependentNote: string;
   /** 印章。 */
   readonly seal: string;
   /** 时间戳。 */
@@ -117,6 +141,10 @@ export interface CryptoText {
   readonly rootsRemove: string;
   /** 根证书主题。 */
   readonly rootsSubject: string;
+  /** 根证书颁发者。 */
+  readonly rootsIssuer: string;
+  /** 根证书序列号。 */
+  readonly rootsSerial: string;
   /** 根证书指纹。 */
   readonly rootsFingerprint: string;
   /** 根证书有效期。 */
@@ -129,8 +157,18 @@ export interface CryptoText {
   readonly rootsUnknownNote: string;
   /** 验证问题。 */
   readonly issues: string;
-  /** 查看完整验证面板。 */
-  readonly fullPanel: string;
+  /** 可信。 */
+  readonly trusted: string;
+  /** 可信状态未知。 */
+  readonly trustUnknown: string;
+  /** 下载证书。 */
+  readonly downloadCertificate: string;
+  /** 签章者证书。 */
+  readonly signerCertificate: string;
+  /** 未找到签章者证书。 */
+  readonly signerCertificateMissing: string;
+  /** 查看签章详情。 */
+  readonly viewDetails: string;
   /** 关闭。 */
   readonly close: string;
   /** 未验证（印章浮层）。 */
@@ -215,8 +253,8 @@ const ZH: CryptoText = {
   panelLoading: '正在验证…',
   panelNotVerified: '尚未验证本文档',
   panelReverify: '重新验证',
-  panelVerifiedAt: '验证时间',
-  panelDuration: '耗时',
+  signingTime: '签发时间',
+  signingTimeMissing: '未提供',
   overall: '总体状态',
   packageInfo: '文档信息',
   packageEncrypted: '是否加密',
@@ -236,6 +274,18 @@ const ZH: CryptoText = {
   references: 'Reference',
   math: '数学签名',
   chain: '证书链',
+  chainIndependent: '证书链（不影响总体状态）',
+  chainSectionTitle: '根证书链验证',
+  chainStatus: '链状态',
+  chainRootsConfigured: '是否配置信任根',
+  yes: '是',
+  no: '否',
+  chainSignerCertificate: '签名者证书',
+  chainTrustAnchor: '信任锚',
+  chainTrustAnchorMissing: '未找到信任锚',
+  chainMembers: '链成员',
+  chainNotVerified: '未验证：尚未生成验证报告，证书链未校验。',
+  chainIndependentNote: '证书链结果独立展示，不影响签名/完整性验证结果。',
   seal: '印章',
   timestamp: '时间戳',
   none: '无',
@@ -245,13 +295,20 @@ const ZH: CryptoText = {
   rootsAdd: '配置根证书',
   rootsRemove: '删除',
   rootsSubject: '主题',
+  rootsIssuer: '颁发者',
+  rootsSerial: '序列号',
   rootsFingerprint: '指纹',
   rootsValidity: '有效期',
   rootsInvalid: '根证书解析失败，已忽略',
   rootsAdded: '根证书已添加',
   rootsUnknownNote: '未配置根证书，证书链状态 unknown',
   issues: '问题',
-  fullPanel: '查看完整验证面板',
+  trusted: '可信',
+  trustUnknown: '可信状态未知',
+  downloadCertificate: '下载证书 (.der)',
+  signerCertificate: '签章者证书',
+  signerCertificateMissing: '未找到签章者证书',
+  viewDetails: '查看签章详情',
   close: '关闭',
   notVerified: '未验证',
   timestampParsedNotVerified: '已解析，未验证',
@@ -261,12 +318,14 @@ const ZH: CryptoText = {
   timestampSerial: '序列号',
   timestampPolicy: '策略',
   timestampMissing: '未包含',
-  trustRootMissing: '未配置与签章链匹配的信任根，证书链无法验证',
-  trustRootGuidance: '请向签发方获取签发该文档的根证书，在“信任根”中导入后重新验证。',
+  trustRootMissing: '未配置与签章链匹配的信任根，证书链无法建立信任',
+  trustRootGuidance:
+    '请向签发方获取签发该文档的根证书，在“信任根”中导入后重新验证；证书链结果独立展示，不改变签名/完整性总体状态。',
   trustRootMismatch: '当前信任根与签章链不匹配（CHAIN_SIGNATURE_INVALID）',
-  trustRootMismatchGuidance: '请改用签发方根证书；不要将签名数学有效解释为总体有效。',
+  trustRootMismatchGuidance:
+    '请改用签发方根证书；证书链结果独立展示，不要将其解释为签名/完整性总体无效。',
   signatureMathNotTrust:
-    '签名数学、数据哈希与引用完整性可能为有效，但证书链未建立信任，总体状态仍为“未知/无效”。',
+    '签名数学、数据哈希、引用完整性与印章结构/数学可独立判定；证书链未建立信任只影响链状态，不改变总体状态。',
   timestampUnparsable: '不可解析',
   signer: '签名者',
   overallValid: '有效',
@@ -315,8 +374,8 @@ const EN: CryptoText = {
   panelLoading: 'Verifying…',
   panelNotVerified: 'This document has not been verified',
   panelReverify: 'Verify again',
-  panelVerifiedAt: 'Verified at',
-  panelDuration: 'Duration',
+  signingTime: 'Signing time',
+  signingTimeMissing: 'Not provided',
   overall: 'Overall',
   packageInfo: 'Document',
   packageEncrypted: 'Encrypted',
@@ -336,6 +395,19 @@ const EN: CryptoText = {
   references: 'References',
   math: 'Signature math',
   chain: 'Certificate chain',
+  chainIndependent: 'Certificate chain (does not affect overall status)',
+  chainSectionTitle: 'Root certificate chain verification',
+  chainStatus: 'Chain status',
+  chainRootsConfigured: 'Trust roots configured',
+  yes: 'Yes',
+  no: 'No',
+  chainSignerCertificate: 'Signer certificate',
+  chainTrustAnchor: 'Trust anchor',
+  chainTrustAnchorMissing: 'No trust anchor found',
+  chainMembers: 'Chain members',
+  chainNotVerified: 'Not verified: no verification report yet; the certificate chain has not been checked.',
+  chainIndependentNote:
+    'The certificate chain result is shown separately and does not affect signature/integrity verification results.',
   seal: 'Seal',
   timestamp: 'Timestamp',
   none: 'None',
@@ -345,13 +417,20 @@ const EN: CryptoText = {
   rootsAdd: 'Configure trust root',
   rootsRemove: 'Remove',
   rootsSubject: 'Subject',
+  rootsIssuer: 'Issuer',
+  rootsSerial: 'Serial number',
   rootsFingerprint: 'Fingerprint',
   rootsValidity: 'Validity',
   rootsInvalid: 'Failed to parse the trust root; ignored',
   rootsAdded: 'Trust root added',
   rootsUnknownNote: 'No trust roots configured; certificate chain status is unknown',
   issues: 'Issues',
-  fullPanel: 'Open full verification panel',
+  trusted: 'Trusted',
+  trustUnknown: 'Trust status unknown',
+  downloadCertificate: 'Download certificate (.der)',
+  signerCertificate: 'Signer certificate',
+  signerCertificateMissing: 'Signer certificate not found',
+  viewDetails: 'View signature details',
   close: 'Close',
   notVerified: 'Not verified',
   timestampParsedNotVerified: 'Parsed, not verified',
@@ -361,14 +440,14 @@ const EN: CryptoText = {
   timestampSerial: 'Serial number',
   timestampPolicy: 'Policy',
   timestampMissing: 'Not present',
-  trustRootMissing: 'No trust root matching this signature chain is configured; the chain cannot be verified',
+  trustRootMissing: 'No trust root matching this signature chain is configured; the chain cannot be trusted',
   trustRootGuidance:
-    'Obtain the issuer root certificate from the signer and import it under Trust roots, then verify again.',
+    'Obtain the issuer root certificate from the signer, import it under Trust roots and verify again; the chain result is shown separately and does not change signature/integrity overall status.',
   trustRootMismatch: 'The configured trust root does not match this signature chain (CHAIN_SIGNATURE_INVALID)',
   trustRootMismatchGuidance:
-    'Use the issuer root certificate; do not treat a mathematically valid signature as an overall valid result.',
+    'Use the issuer root certificate; the chain result is shown separately, so do not treat it as a signature/integrity overall failure.',
   signatureMathNotTrust:
-    'Signature math, data hash and references may be valid, but the chain is untrusted, so the overall status remains unknown or invalid.',
+    'Signature math, data hash, references and seal structure/math are evaluated independently; an untrusted chain only changes the chain status, not the overall status.',
   timestampUnparsable: 'Unparsable',
   signer: 'Signer',
   overallValid: 'Valid',
@@ -397,4 +476,56 @@ const EN: CryptoText = {
  */
 export function createCryptoText(locale: string | undefined): CryptoText {
   return locale?.toLowerCase().startsWith('en') ? EN : ZH;
+}
+
+/**
+ * 证书链状态文案。
+ *
+ * @param text 文案字典。
+ * @param status 链状态。
+ * @returns 人类可读状态。
+ */
+export function chainStatusText(text: CryptoText, status: string | undefined): string {
+  switch (status) {
+    case 'valid':
+      return text.overallValid;
+    case 'invalid':
+      return text.overallInvalid;
+    case 'expired':
+      return text.chainExpired;
+    case 'not-yet-valid':
+      return text.chainNotYetValid;
+    case 'untrusted':
+      return text.chainUntrusted;
+    case 'incomplete':
+      return text.chainIncomplete;
+    case 'unsupported':
+      return text.overallUnsupported;
+    case 'not-present':
+      return text.chainNotPresent;
+    default:
+      return text.overallUnknown;
+  }
+}
+
+/**
+ * 签名/完整性总体状态文案。
+ *
+ * @param text 文案字典。
+ * @param status 验证状态。
+ * @returns 人类可读状态。
+ */
+export function verificationStatusText(text: CryptoText, status: string | undefined): string {
+  switch (status) {
+    case 'valid':
+      return text.overallValid;
+    case 'invalid':
+      return text.overallInvalid;
+    case 'not-applicable':
+      return text.overallNotApplicable;
+    case 'unsupported':
+      return text.overallUnsupported;
+    default:
+      return text.overallUnknown;
+  }
 }

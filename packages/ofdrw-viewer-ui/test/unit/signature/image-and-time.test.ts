@@ -10,7 +10,7 @@ import {
   createSealImageElement,
   sealImageMime,
 } from '../../../src/crypto/seal-image';
-import { formatShanghaiDateTime } from '../../../src/crypto/time';
+import { formatShanghaiDateTime, formatSigningTime } from '../../../src/crypto/time';
 import { captureDownloads } from '../../helpers/environment';
 import type { DownloadCapture } from '../../helpers/environment';
 
@@ -35,6 +35,21 @@ describe('formatShanghaiDateTime', () => {
     expect(formatShanghaiDateTime(undefined)).toBeUndefined();
     expect(formatShanghaiDateTime('')).toBeUndefined();
     expect(formatShanghaiDateTime('not-a-date')).toBeUndefined();
+  });
+});
+
+describe('formatSigningTime', () => {
+  it('带时区的 ISO 时间换算 UTC+8，无时区字面量保持原值', () => {
+    expect(formatSigningTime('2026-10-23T07:59:26.000Z')).toBe('2026-10-23 15:59:26');
+    expect(formatSigningTime('2026-10-23T15:59:26+08:00')).toBe('2026-10-23 15:59:26');
+    expect(formatSigningTime('2026-10-23 15:59:26')).toBe('2026-10-23 15:59:26');
+    expect(formatSigningTime('2026-10-23T15:59:26')).toBe('2026-10-23 15:59:26');
+  });
+
+  it('缺失/空白返回 undefined，无法解析时原样展示', () => {
+    expect(formatSigningTime(undefined)).toBeUndefined();
+    expect(formatSigningTime('   ')).toBeUndefined();
+    expect(formatSigningTime('not-a-date')).toBe('not-a-date');
   });
 });
 

@@ -16,6 +16,8 @@ export type {
 } from './service';
 export { openSignaturePopover } from './popover';
 export type { SignaturePopoverHandle, SignaturePopoverOptions } from './popover';
+export { certificateFileName, downloadCertificateDer } from './certificate-download';
+export type { DownloadableCertificateSummary } from './certificate-download';
 export { VerificationPanel } from './panel';
-export { createCryptoText } from './text';
+export { chainStatusText, createCryptoText, verificationStatusText } from './text';
 export type { CryptoText } from './text';

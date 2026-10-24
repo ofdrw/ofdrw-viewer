@@ -105,29 +105,29 @@ describe('签名/证书链：有效、unknown 与错误根', () => {
     });
   }
 
-  it('未配置信任根 → overall/signature/cert 均为 unknown，而不是失败', async () => {
+  it('未配置信任根 → 链 unknown，但签名与整体仍 valid', async () => {
     const report = await verifyFixture('signed-sesv4.ofd', {});
-    expect(report.overall).toBe('unknown');
+    expect(report.overall).toBe('valid');
     const signature = report.signatures[0]!;
-    expect(signature.status).toBe('unknown');
+    expect(signature.status).toBe('valid');
     expect(signature.signature.status).toBe('valid');
     expect(signature.dataHash.status).toBe('valid');
     expect(signature.references.status).toBe('valid');
     expect(signature.certificate.status).toBe('unknown');
     expect(signature.certificate.trustRootConfigured).toBe(false);
     expect(signature.certificate.trustAnchor).toBeUndefined();
-    // 未配置根不是“验签失败”，不能把数学/引用校验的 valid 降级为 invalid。
-    expect(signature.seal?.status).not.toBe('invalid');
+    // 未配置根不是“验签失败”，不能把数学/引用校验的 valid 降级。
+    expect(signature.seal?.status).toBe('valid');
   });
 
-  it('错误根证书 → incomplete/invalid', async () => {
+  it('错误根证书 → 链 incomplete，但签名与整体仍 valid', async () => {
     const report = await verifyFixture('signed-sesv4.ofd', {
       roots: [wrongRootDer],
     });
-    expect(report.overall).toBe('invalid');
+    expect(report.overall).toBe('valid');
     expect(javaSignature('negative-tampered-content.ofd').valid).toBe(false);
     const signature = report.signatures[0]!;
-    expect(signature.status).toBe('invalid');
+    expect(signature.status).toBe('valid');
     expect(signature.certificate.status).toBe('incomplete');
     expect(signature.certificate.issues.some((issue) => issue.code === 'CHAIN_INCOMPLETE')).toBe(
       true,
@@ -136,12 +136,13 @@ describe('签名/证书链：有效、unknown 与错误根', () => {
     expect(signature.references.status).toBe('valid');
   });
 
-  it('证书过期 → expired/invalid', async () => {
+  it('证书过期 → 链 expired，但签名与整体仍 valid', async () => {
     const report = await verifyFixture('signed-sesv4.ofd', {
       now: new Date('2041-01-01T00:00:00.000Z'),
     });
-    expect(report.overall).toBe('invalid');
+    expect(report.overall).toBe('valid');
     const signature = report.signatures[0]!;
+    expect(signature.status).toBe('valid');
     expect(signature.certificate.status).toBe('expired');
     expect(signature.certificate.issues.some((issue) => issue.code === 'CHAIN_EXPIRED')).toBe(true);
   });
@@ -155,16 +156,17 @@ describe('签名/证书链：有效、unknown 与错误根', () => {
       roots: [],
       now: new Date('2041-01-01T00:00:00.000Z'),
     });
-    expect(report.overall).toBe('invalid');
-    expect(noRoot.overall).toBe('invalid');
+    expect(report.overall).toBe('valid');
+    expect(noRoot.overall).toBe('valid');
     expect(noRoot.signatures[0]?.certificate.status).toBe('expired');
   });
 
-  it('证书尚未生效 → not-yet-valid/invalid', async () => {
+  it('证书尚未生效 → 链 not-yet-valid，但签名与整体仍 valid', async () => {
     const report = await verifyFixture('signed-sesv4.ofd', {
       now: new Date('2019-01-01T00:00:00.000Z'),
     });
-    expect(report.overall).toBe('invalid');
+    expect(report.overall).toBe('valid');
+    expect(report.signatures[0]?.status).toBe('valid');
     expect(report.signatures[0]?.certificate.status).toBe('not-yet-valid');
   });
 

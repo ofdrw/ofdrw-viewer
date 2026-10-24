@@ -5,6 +5,8 @@
  * MIME 推断、Blob URL 生命周期与不可渲染时的文字降级；不解析 ASN.1、不验签。
  */
 
+import { replaceChildren } from '../compat';
+
 import type { SealImageInfo } from '../types';
 
 /** 图片格式 → MIME；未知/矢量格式返回 undefined。 */
@@ -73,7 +75,7 @@ export function createSealImageElement(
     const text = doc.createElement('p');
     text.className = 'ofd-seal-image__fallback';
     text.textContent = message;
-    figure.replaceChildren(text);
+    replaceChildren(figure, text);
     return { element: figure, revoke: () => undefined };
   };
 

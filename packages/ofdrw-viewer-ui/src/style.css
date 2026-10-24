@@ -59,6 +59,8 @@
   --ofd-sidebar-shadow: 0 0 16px rgba(0, 0, 0, 0.24);
   --ofd-print-bg: #ffffff;
   --ofd-touch-target: 44px;
+  /* 弹出层打开动效时长；关闭不做退出动画。 */
+  --ofd-motion-duration: 180ms;
   --ofd-z-findbar: 10;
   --ofd-z-scrim: 14;
   --ofd-z-sidebar: 15;
@@ -292,6 +294,14 @@
   background: var(--ofd-hover-bg);
 }
 
+/* chrome67: focus fallback（67 无 :focus-visible，改用 :focus 提供焦点环） */
+.ofd-button:focus,
+.ofd-input:focus,
+.ofd-select:focus {
+  outline: 2px solid var(--ofd-accent);
+  outline-offset: 1px;
+}
+
 .ofd-button:focus-visible,
 .ofd-input:focus-visible,
 .ofd-select:focus-visible {
@@ -480,21 +490,72 @@
 }
 
 .ofd-signature-summary-item {
-  display: block;
+  display: grid;
+  gap: 4px;
   width: 100%;
-  margin-bottom: 8px;
-  padding: 8px;
+  min-width: 0;
+  margin: 0 0 8px;
+  padding: 10px 12px;
   color: var(--ofd-text);
-  background: transparent;
+  background: var(--ofd-surface);
   border: 1px solid var(--ofd-border);
-  border-radius: var(--ofd-radius);
+  border-radius: 10px;
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .ofd-signature-summary-item:hover {
+  background: var(--ofd-hover-bg);
   border-color: var(--ofd-accent);
+}
+
+/* chrome67: focus fallback（67 无 :focus-visible，改用 :focus 提供焦点环） */
+.ofd-signature-summary-item:focus {
+  outline: 2px solid var(--ofd-accent);
+  outline-offset: 2px;
+}
+
+.ofd-signature-summary-item:focus-visible {
+  outline: 2px solid var(--ofd-accent);
+  outline-offset: 2px;
+}
+
+.ofd-signature-summary-item[data-selected='true'] {
+  background: var(--ofd-accent-soft);
+  border-color: var(--ofd-accent);
+  box-shadow: 0 0 0 1px var(--ofd-accent);
+}
+
+.ofd-signature-summary-item__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ofd-signature-summary-item__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ofd-signature-summary-item__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+  color: var(--ofd-text-secondary);
+  font-size: 12px;
+  overflow-wrap: break-word; /* chrome67: anywhere 需 Chrome 84+ */
+  overflow-wrap: anywhere;
 }
 
 .ofd-signature-badge {
@@ -535,6 +596,28 @@
 .ofd-signature-badge[data-status='not-verified'] {
   color: var(--ofd-text-secondary);
   border-color: var(--ofd-border);
+}
+
+/* 签章者可信 tag：文字 + 颜色双重编码，不出现“证书链通过”措辞。 */
+.ofd-trust-tag {
+  display: inline-block;
+  margin-inline-start: 6px;
+  padding: 0 6px;
+  color: var(--ofd-status-unknown);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.7;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.ofd-trust-tag[data-trust='trusted'] {
+  color: var(--ofd-success);
+}
+
+.ofd-trust-tag[data-trust='unknown'] {
+  color: var(--ofd-status-unknown);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -652,6 +735,12 @@
 .ofd-signature-box:focus-visible {
   border-color: var(--ofd-accent);
   box-shadow: var(--ofd-signature-hover-shadow);
+}
+
+/* chrome67: focus fallback（67 无 :focus-visible，改用 :focus 提供焦点环） */
+.ofd-signature-box:focus {
+  outline: 2px solid var(--ofd-accent);
+  outline-offset: 1px;
 }
 
 .ofd-signature-box:focus-visible {
@@ -795,6 +884,12 @@
   background: var(--ofd-hover-bg);
 }
 
+/* chrome67: focus fallback（67 无 :focus-visible，改用 :focus 提供焦点环） */
+.ofd-page__retry:focus {
+  outline: 2px solid var(--ofd-accent);
+  outline-offset: 1px;
+}
+
 .ofd-page__retry:focus-visible {
   outline: 2px solid var(--ofd-accent);
   outline-offset: 1px;
@@ -870,6 +965,9 @@
   position: absolute;
   top: 50%;
   left: 50%;
+  /* chrome67: min() 回退；width 上限 + max-width 与 min() 等价。 */
+  width: 480px;
+  max-width: calc(100% - 32px);
   width: min(480px, calc(100% - 32px));
   max-height: calc(100% - 32px);
   overflow: auto;
@@ -887,6 +985,8 @@
   position: absolute;
   right: 12px;
   bottom: 12px;
+  /* chrome67: min() 回退；窄视口切换见文末。 */
+  max-width: 360px;
   max-width: min(360px, calc(100% - 24px));
   padding: 8px 12px;
   color: var(--ofd-text);
@@ -941,6 +1041,9 @@
   flex-direction: column;
   align-items: center;
   gap: 12px;
+  /* chrome67: min() 回退；width 上限 + max-width 与 min() 等价。 */
+  width: 360px;
+  max-width: 100%;
   width: min(360px, 100%);
   padding: 24px;
   background: var(--ofd-toolbar-bg);
@@ -1058,7 +1161,8 @@
 @media (max-width: 767px) {
   .ofd-viewer:not([data-viewport]) {
     --ofd-toolbar-height: 44px;
-    --ofd-sidebar-width: min(80vw, 280px);
+    /* chrome67: 自定义属性含 min() 在 67 会 IACVT，回退固定宽度；窄视口见文末。 */
+    --ofd-sidebar-width: 280px;
     --ofd-page-margin: 8px;
   }
 
@@ -1256,6 +1360,8 @@
   flex-direction: column;
   gap: 2px;
   min-width: 12rem;
+  /* chrome67: min() 回退；<360px 视口切换为 80vw（见文末）。 */
+  max-width: 18rem;
   max-width: min(80vw, 18rem);
   max-height: calc(100vh - 16px);
   overflow-y: auto;
@@ -1293,6 +1399,12 @@
   background: var(--ofd-hover-bg);
 }
 
+/* chrome67: focus fallback（67 无 :focus-visible，改用 :focus 提供焦点环） */
+.ofd-more-menu__item:focus {
+  outline: var(--ofd-focus-width) solid var(--ofd-accent);
+  outline-offset: -2px;
+}
+
 .ofd-more-menu__item:focus-visible {
   outline: var(--ofd-focus-width) solid var(--ofd-accent);
   outline-offset: -2px;
@@ -1311,7 +1423,11 @@
   display: none;
 }
 
-.ofd-viewer:where([data-viewport='compact'], [data-viewport='mobile'], [data-viewport='narrow'])
+.ofd-viewer[data-viewport='compact']
+  .ofd-more-menu__item[data-menu-visibility='overflow'],
+.ofd-viewer[data-viewport='mobile']
+  .ofd-more-menu__item[data-menu-visibility='overflow'],
+.ofd-viewer[data-viewport='narrow']
   .ofd-more-menu__item[data-menu-visibility='overflow'] {
   display: flex;
 }
@@ -1330,7 +1446,13 @@
 /* 工具栏断点：紧凑/移动隐藏次要控件，窄屏再隐藏翻页与缩放                     */
 /* ------------------------------------------------------------------------- */
 
-.ofd-viewer:where([data-viewport='compact'], [data-viewport='mobile'], [data-viewport='narrow'])
+.ofd-viewer[data-viewport='compact']
+  .ofd-viewer__toolbar
+  [data-overflow='compact'],
+.ofd-viewer[data-viewport='mobile']
+  .ofd-viewer__toolbar
+  [data-overflow='compact'],
+.ofd-viewer[data-viewport='narrow']
   .ofd-viewer__toolbar
   [data-overflow='compact'] {
   display: none;
@@ -1364,9 +1486,15 @@
   position: relative;
 }
 
-.ofd-viewer:where([data-sidebar-layout='overlay'], [data-sidebar-layout='drawer'])
+.ofd-viewer[data-sidebar-layout='overlay']
   .ofd-viewer__sidebar,
-.ofd-viewer:where([data-viewport='compact'], [data-viewport='mobile'], [data-viewport='narrow'])
+.ofd-viewer[data-sidebar-layout='drawer']
+  .ofd-viewer__sidebar,
+.ofd-viewer[data-viewport='compact']
+  .ofd-viewer__sidebar,
+.ofd-viewer[data-viewport='mobile']
+  .ofd-viewer__sidebar,
+.ofd-viewer[data-viewport='narrow']
   .ofd-viewer__sidebar {
   position: absolute;
   top: 0;
@@ -1376,8 +1504,10 @@
   box-shadow: var(--ofd-sidebar-shadow);
 }
 
-.ofd-viewer:where([data-viewport='mobile'], [data-viewport='narrow']) .ofd-viewer__sidebar {
-  --ofd-sidebar-width: min(80vw, 280px);
+.ofd-viewer[data-viewport='mobile'] .ofd-viewer__sidebar,
+.ofd-viewer[data-viewport='narrow'] .ofd-viewer__sidebar {
+  /* chrome67: 自定义属性含 min() 在 67 会 IACVT，回退固定宽度；窄视口见文末。 */
+  --ofd-sidebar-width: 280px;
 }
 
 .ofd-viewer__sidebar-mask,
@@ -1417,7 +1547,8 @@
   border-radius: 0;
 }
 
-.ofd-viewer__sidebar:is([data-mode='overlay'], [data-mode='drawer']) .ofd-sidebar__close {
+.ofd-viewer__sidebar[data-mode='overlay'] .ofd-sidebar__close,
+.ofd-viewer__sidebar[data-mode='drawer'] .ofd-sidebar__close {
   display: inline-flex;
 }
 
@@ -1439,6 +1570,12 @@
   padding: 8px;
 }
 
+/* chrome67: focus fallback（67 无 :focus-visible，改用 :focus 提供焦点环） */
+.ofd-sidebar__panel:focus {
+  outline: var(--ofd-focus-width) solid var(--ofd-accent);
+  outline-offset: -2px;
+}
+
 .ofd-sidebar__panel:focus-visible {
   outline: var(--ofd-focus-width) solid var(--ofd-accent);
   outline-offset: -2px;
@@ -1455,12 +1592,19 @@
   touch-action: none;
 }
 
+/* chrome67: focus fallback（67 无 :focus-visible，改用 :focus 提供焦点环） */
+.ofd-sidebar__resizer:focus {
+  outline: var(--ofd-focus-width) solid var(--ofd-accent);
+  outline-offset: -2px;
+}
+
 .ofd-sidebar__resizer:focus-visible {
   outline: var(--ofd-focus-width) solid var(--ofd-accent);
   outline-offset: -2px;
 }
 
-.ofd-viewer__sidebar:is([data-mode='overlay'], [data-mode='drawer']) .ofd-sidebar__resizer {
+.ofd-viewer__sidebar[data-mode='overlay'] .ofd-sidebar__resizer,
+.ofd-viewer__sidebar[data-mode='drawer'] .ofd-sidebar__resizer {
   display: none;
 }
 
@@ -1521,7 +1665,8 @@
   min-width: 28px;
 }
 
-.ofd-viewer:where([data-viewport='mobile'], [data-viewport='narrow']) .ofd-viewer__findbar {
+.ofd-viewer[data-viewport='mobile'] .ofd-viewer__findbar,
+.ofd-viewer[data-viewport='narrow'] .ofd-viewer__findbar {
   top: auto;
   right: 8px;
   bottom: 8px;
@@ -1553,6 +1698,9 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* chrome67: min() 回退；width 上限 + max-width 与 min() 等价。 */
+  width: 520px;
+  max-width: calc(100% - 32px);
   width: min(520px, calc(100% - 32px));
   padding: 0;
   overflow: hidden;
@@ -1623,17 +1771,27 @@
   border-color: var(--ofd-accent-hover);
 }
 
+/* chrome67: focus fallback（67 无 :focus-visible，改用 :focus 提供焦点环） */
+.ofd-dialog__action--primary:focus {
+  outline-color: var(--ofd-text);
+}
+
 .ofd-dialog__action--primary:focus-visible {
   outline-color: var(--ofd-text);
 }
 
-.ofd-viewer:where([data-viewport='mobile'], [data-viewport='narrow']) .ofd-dialog {
+.ofd-viewer[data-viewport='mobile'] .ofd-dialog,
+.ofd-viewer[data-viewport='narrow'] .ofd-dialog {
   width: calc(100% - 16px);
 }
 
 .ofd-viewer--fullscreen-fallback {
   position: fixed;
-  inset: 0;
+  /* chrome67: inset 简写需 Chrome 87+，展开四边。 */
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   z-index: var(--ofd-z-dialog);
   width: 100%;
   height: 100%;
@@ -1648,6 +1806,8 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  /* chrome67: min() 回退；窄视口切换见文末。 */
+  min-width: 320px;
   min-width: min(320px, 70vw);
 }
 
@@ -1683,6 +1843,12 @@
   accent-color: var(--ofd-accent);
 }
 
+/* chrome67: focus fallback（67 无 :focus-visible，改用 :focus 提供焦点环） */
+.ofd-output-check input[type='checkbox']:focus {
+  outline: 2px solid var(--ofd-accent);
+  outline-offset: 2px;
+}
+
 .ofd-output-check input[type='checkbox']:focus-visible {
   outline: 2px solid var(--ofd-accent);
   outline-offset: 2px;
@@ -1698,6 +1864,12 @@
 .ofd-output-quality:hover,
 .ofd-output-quality:focus-visible {
   accent-color: var(--ofd-accent-hover);
+}
+
+/* chrome67: focus fallback（67 无 :focus-visible，改用 :focus 提供焦点环） */
+.ofd-output-quality:focus {
+  outline: 2px solid var(--ofd-accent);
+  outline-offset: 2px;
 }
 
 .ofd-output-quality:focus-visible {
@@ -1724,6 +1896,15 @@
 .ofd-output-error {
   margin: 0;
   color: var(--ofd-danger);
+  font-size: 12px;
+}
+
+.ofd-output-note {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--ofd-text-secondary);
+  background: var(--ofd-accent-soft);
+  border-radius: 6px;
   font-size: 12px;
 }
 
@@ -1765,30 +1946,36 @@
 /* 断点布局（以根节点 data-viewport 为准，容器宽度变化不重建 DOM）              */
 /* ------------------------------------------------------------------------- */
 
-.ofd-viewer:where([data-viewport='compact']) .ofd-viewer__main {
+.ofd-viewer[data-viewport='compact'] .ofd-viewer__main {
   padding: 16px 0;
 }
 
-.ofd-viewer:where([data-viewport='mobile'], [data-viewport='narrow']) {
+.ofd-viewer[data-viewport='mobile'],
+.ofd-viewer[data-viewport='narrow'] {
   --ofd-toolbar-height: 44px;
   --ofd-page-margin: 8px;
 }
 
-.ofd-viewer:where([data-viewport='mobile'], [data-viewport='narrow']) .ofd-viewer__main {
+.ofd-viewer[data-viewport='mobile'] .ofd-viewer__main,
+.ofd-viewer[data-viewport='narrow'] .ofd-viewer__main {
   padding: 8px 0;
 }
 
-.ofd-viewer:where([data-viewport='mobile'], [data-viewport='narrow']) .ofd-viewer__toolbar {
+.ofd-viewer[data-viewport='mobile'] .ofd-viewer__toolbar,
+.ofd-viewer[data-viewport='narrow'] .ofd-viewer__toolbar {
   padding: 0 4px;
 }
 
-.ofd-viewer:where([data-viewport='mobile'], [data-viewport='narrow']) .ofd-button {
+.ofd-viewer[data-viewport='mobile'] .ofd-button,
+.ofd-viewer[data-viewport='narrow'] .ofd-button {
   min-width: var(--ofd-touch-target);
   min-height: var(--ofd-touch-target);
 }
 
-.ofd-viewer:where([data-viewport='mobile'], [data-viewport='narrow']) .ofd-input,
-.ofd-viewer:where([data-viewport='mobile'], [data-viewport='narrow']) .ofd-select {
+.ofd-viewer[data-viewport='mobile'] .ofd-input,
+.ofd-viewer[data-viewport='narrow'] .ofd-input,
+.ofd-viewer[data-viewport='mobile'] .ofd-select,
+.ofd-viewer[data-viewport='narrow'] .ofd-select {
   min-height: var(--ofd-touch-target);
 }
 
@@ -1821,7 +2008,9 @@
 }
 
 /* 对话框/Toast 在移动端保持可点击区域。 */
-.ofd-viewer:where([data-viewport='mobile'], [data-viewport='narrow'])
+.ofd-viewer[data-viewport='mobile']
+  .ofd-dialog__action,
+.ofd-viewer[data-viewport='narrow']
   .ofd-dialog__action {
   min-height: var(--ofd-touch-target);
 }
@@ -1879,14 +2068,20 @@
 /* 触控目标与轻量动效                                                         */
 /* ------------------------------------------------------------------------- */
 
-.ofd-viewer:where([data-viewport='mobile'], [data-viewport='narrow'])
+.ofd-viewer[data-viewport='mobile']
   .ofd-sidebar__tab,
-.ofd-viewer:where([data-viewport='mobile'], [data-viewport='narrow'])
+.ofd-viewer[data-viewport='narrow']
+  .ofd-sidebar__tab,
+.ofd-viewer[data-viewport='mobile']
+  .ofd-findbar__option,
+.ofd-viewer[data-viewport='narrow']
   .ofd-findbar__option {
   min-height: var(--ofd-touch-target);
 }
 
-.ofd-viewer:where([data-viewport='mobile'], [data-viewport='narrow'])
+.ofd-viewer[data-viewport='mobile']
+  .ofd-sidebar__close,
+.ofd-viewer[data-viewport='narrow']
   .ofd-sidebar__close {
   min-width: var(--ofd-touch-target);
   min-height: var(--ofd-touch-target);
@@ -1905,24 +2100,61 @@
   }
 }
 
-.ofd-viewer__sidebar:is([data-mode='overlay'], [data-mode='drawer'])[data-open='true'] {
-  animation: ofd-sidebar-in 180ms ease-out;
+/*
+ * 弹出层打开动效
+ *
+ * 统一 180ms ease-out，只做入场，不做退出动画；轻位移控制在 4–6px
+ * （侧栏保留抽屉滑入），不使用回弹曲线。遮罩、对话框、印章浮层、更多
+ * 菜单、查找栏、侧栏与 Toast 共用同一时长变量，宿主可通过
+ * --ofd-motion-duration 调整。
+ */
+.ofd-viewer__sidebar[data-mode='overlay'][data-open='true'],
+.ofd-viewer__sidebar[data-mode='drawer'][data-open='true'] {
+  animation: ofd-sidebar-in var(--ofd-motion-duration, 180ms) ease-out;
+}
+
+.ofd-viewer__sidebar-mask:not([hidden])[data-open='true'] {
+  animation: ofd-fade-in var(--ofd-motion-duration, 180ms) ease-out;
 }
 
 .ofd-viewer__findbar:not([hidden]) {
-  animation: ofd-fade-in 100ms ease-out;
+  animation: ofd-findbar-in var(--ofd-motion-duration, 180ms) ease-out;
+}
+
+.ofd-dialog__backdrop {
+  animation: ofd-fade-in var(--ofd-motion-duration, 180ms) ease-out;
 }
 
 .ofd-dialog {
-  animation: ofd-dialog-in 150ms ease-out;
+  animation: ofd-dialog-in var(--ofd-motion-duration, 180ms) ease-out;
+}
+
+.ofd-signature-popover--in {
+  transform-origin: top left;
+  animation: ofd-popover-in var(--ofd-motion-duration, 180ms) ease-out;
+}
+
+.ofd-more-menu--open {
+  transform-origin: top right;
+  animation: ofd-menu-in var(--ofd-motion-duration, 180ms) ease-out;
+}
+
+.ofd-more-menu--open[data-placement='above'] {
+  transform-origin: bottom right;
+}
+
+.ofd-toast {
+  animation: ofd-toast-in var(--ofd-motion-duration, 180ms) ease-out;
 }
 
 @keyframes ofd-sidebar-in {
   from {
+    opacity: 0.7;
     transform: translateX(-100%);
   }
 
   to {
+    opacity: 1;
     transform: translateX(0);
   }
 }
@@ -1940,12 +2172,78 @@
 @keyframes ofd-dialog-in {
   from {
     opacity: 0;
-    transform: translate(-50%, -48%);
+    /* 保持水平/垂直居中，仅向下轻移 6px 后回正，不改变最终定位。 */
+    transform: translate(-50%, calc(-50% + 6px));
   }
 
   to {
     opacity: 1;
     transform: translate(-50%, -50%);
+  }
+}
+
+@keyframes ofd-findbar-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@keyframes ofd-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ofd-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes ofd-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/*
+ * 浮层可能 portal 到 `.ofd-viewer` 之外（宿主容器回退），因此对新增
+ * 动画再做一次显式关闭，确保 prefers-reduced-motion 全覆盖。
+ */
+@media (prefers-reduced-motion: reduce) {
+  .ofd-dialog,
+  .ofd-dialog__backdrop,
+  .ofd-signature-popover,
+  .ofd-more-menu,
+  .ofd-viewer__findbar,
+  .ofd-viewer__sidebar,
+  .ofd-viewer__sidebar-mask,
+  .ofd-toast {
+    animation: none !important;
   }
 }
 
@@ -1956,6 +2254,8 @@
 .ofd-credential-form {
   display: grid;
   gap: 12px;
+  /* chrome67: min() 回退；窄视口切换见文末。 */
+  min-width: 360px;
   min-width: min(360px, 72vw);
 }
 
@@ -2006,6 +2306,8 @@
 .ofd-verification-panel {
   display: grid;
   gap: 12px;
+  /* chrome67: min() 回退；短视口优先 70vh，高视口失去 640px 上限。 */
+  max-height: 70vh;
   max-height: min(70vh, 640px);
   overflow: auto;
 }
@@ -2015,11 +2317,6 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.ofd-verification-header__time {
-  color: var(--ofd-text-muted, #5b6472);
-  font-size: 12px;
 }
 
 .ofd-verification-actions {
@@ -2199,6 +2496,53 @@
   margin: 0;
 }
 
+.ofd-verification-signature__artifacts {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+.ofd-verification-cert-download,
+.ofd-signature-cert-download {
+  justify-self: start;
+}
+
+/* 签章详情中的根证书链验证栏：与签名/完整性结果独立。 */
+.ofd-signature-chain {
+  padding: 10px 12px;
+  background: var(--ofd-surface);
+  border: 1px solid var(--ofd-border);
+  border-radius: 8px;
+}
+
+.ofd-signature-chain__note,
+.ofd-signature-chain__unverified {
+  margin: 0 0 8px;
+  color: var(--ofd-text-secondary);
+  font-size: 12px;
+}
+
+.ofd-signature-chain__certificate {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ofd-signature-chain__members,
+.ofd-signature-chain__issues {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  overflow-wrap: break-word; /* chrome67: anywhere 需 Chrome 84+ */
+  overflow-wrap: anywhere;
+}
+
+.ofd-signature-chain__issues {
+  color: var(--ofd-danger);
+  font-size: 12px;
+}
+
 .ofd-verification-root-list {
   display: grid;
   gap: 8px;
@@ -2240,6 +2584,9 @@
 .ofd-signature-popover {
   position: absolute;
   z-index: 30;
+  /* chrome67: min() 回退；width 上限 + max-width 与 min() 等价。 */
+  width: 320px;
+  max-width: 76vw;
   width: min(320px, 76vw);
   pointer-events: auto;
   padding: 12px;
@@ -2285,4 +2632,213 @@
 
 .ofd-signature-popover__full {
   width: 100%;
+}
+
+/* ========================================================================= */
+/* chrome67: 兼容回退（仅旧内核生效；现代 Chrome 继续走上方的现代声明）        */
+/* ========================================================================= */
+
+/* chrome67: focus suppression
+ * 上方为每条 :focus-visible 规则补了 :focus 回退，保证 Chrome 67 键盘焦点可见。
+ * 现代浏览器用 @supports selector(:focus-visible) 门控（Chrome 83+；67 解析为
+ * false 整块丢弃，因此不会影响 67 的 :focus 焦点环），仅在“非 :focus-visible”的
+ * 鼠标聚焦时抑制 outline，避免点击也出现焦点环。
+ */
+@supports selector(:focus-visible) {
+  .ofd-viewer :focus:not(:focus-visible) {
+    outline: none !important;
+  }
+}
+
+/* chrome67: flex-gap fallback
+ * Chrome 67 接受 gap 属性但 flex 布局忽略；compat 在 <html> 上设置
+ * data-ofd-flex-gap="none" 后才启用以下方向性 margin（现代内核不命中，视觉零变化）。
+ * 单行容器用 margin-right / margin-bottom，而不是 margin-left / margin-top，
+ * 避免覆盖子项自身的 margin-left:auto（工具栏右侧文档组、验证操作组）。
+ * flex-wrap 容器用“半间距 + 容器负 margin”（doc §5.1），行列间距都精确，
+ * 且不会因行尾多出的 margin 提前换行。
+ */
+[data-ofd-flex-gap='none'] .ofd-viewer__toolbar > *:not(:last-child) {
+  margin-right: 4px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-toolbar__group > *:not(:last-child) {
+  margin-right: 2px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-outline__item > *:not(:last-child) {
+  margin-right: 4px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-signature-summary-item__title > *:not(:last-child) {
+  margin-right: 6px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-signature-summary-item__meta {
+  margin: -2px -4px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-signature-summary-item__meta > * {
+  margin: 2px 4px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-page__loading > *:not(:last-child) {
+  margin-bottom: 8px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-page__error > *:not(:last-child) {
+  margin-bottom: 8px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-viewer__findbar > *:not(:last-child) {
+  margin-right: 6px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-viewer__loading-panel > *:not(:last-child) {
+  margin-bottom: 12px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-viewer__loading-actions {
+  margin: -4px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-viewer__loading-actions > * {
+  margin: 4px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-button > *:not(:last-child) {
+  margin-right: 4px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-toolbar__page-number > *:not(:last-child) {
+  margin-right: 2px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-more-menu > *:not(:last-child) {
+  margin-bottom: 2px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-findbar__options > *:not(:last-child) {
+  margin-right: 2px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-findbar__option > *:not(:last-child) {
+  margin-right: 2px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-dialog > *:not(:last-child) {
+  margin-bottom: 12px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-dialog__header > *:not(:last-child) {
+  margin-right: 8px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-dialog__body > *:not(:last-child) {
+  margin-bottom: 8px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-dialog__footer > *:not(:last-child) {
+  margin-right: 8px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-output-form > *:not(:last-child) {
+  margin-bottom: 10px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-output-field > *:not(:last-child) {
+  margin-bottom: 4px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-output-check > *:not(:last-child) {
+  margin-right: 6px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-toast > *:not(:last-child) {
+  margin-right: 8px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-toast__message > *:not(:last-child) {
+  margin-right: 6px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-viewer[data-viewport='narrow'] .ofd-viewer__toolbar > *:not(:last-child) {
+  margin-right: 2px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-credential-form__modes {
+  margin: -8px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-credential-form__modes > * {
+  margin: 8px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-credential-form__mode > *:not(:last-child) {
+  margin-right: 6px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-verification-header {
+  margin: -4px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-verification-header > * {
+  margin: 4px;
+}
+
+/* 覆盖上一条通用 margin：验证操作组仍需靠右。 */
+[data-ofd-flex-gap='none'] .ofd-verification-header > .ofd-verification-actions {
+  margin-left: auto;
+}
+
+[data-ofd-flex-gap='none'] .ofd-verification-root > *:not(:last-child) {
+  margin-right: 8px;
+}
+
+[data-ofd-flex-gap='none'] .ofd-signature-popover__header > *:not(:last-child) {
+  margin-right: 8px;
+}
+
+/* chrome67: min() 窄视口分段回退
+ * min(A, B) 无法只用一条旧声明等价表达时，按两者交叉点分段；每段取值与
+ * 现代浏览器的 min() 完全一致（像素取整误差 < 0.5px）。
+ */
+@media (max-width: 349px) {
+  /* min(80vw, 280px) → 80vw */
+  .ofd-viewer:not([data-viewport]) {
+    --ofd-sidebar-width: 80vw;
+  }
+
+  .ofd-viewer[data-viewport='mobile'] .ofd-viewer__sidebar,
+  .ofd-viewer[data-viewport='narrow'] .ofd-viewer__sidebar {
+    --ofd-sidebar-width: 80vw;
+  }
+}
+
+@media (max-width: 359px) {
+  /* min(80vw, 18rem) → 80vw */
+  .ofd-more-menu {
+    max-width: 80vw;
+  }
+}
+
+@media (max-width: 383px) {
+  /* min(360px, calc(100% - 24px)) → calc(100% - 24px) */
+  .ofd-toast {
+    max-width: calc(100% - 24px);
+  }
+}
+
+@media (max-width: 457px) {
+  /* min(320px, 70vw) → 70vw */
+  .ofd-output-form {
+    min-width: 70vw;
+  }
+}
+
+@media (max-width: 499px) {
+  /* min(360px, 72vw) → 72vw */
+  .ofd-credential-form {
+    min-width: 72vw;
+  }
 }

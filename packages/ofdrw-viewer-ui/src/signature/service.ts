@@ -10,6 +10,8 @@
  * 明确不做：验签、证书链/有效期校验、CRL/OCSP、时间戳验证；不读取 `Seal.esl`。
  */
 
+import { replaceChildren } from '../compat';
+
 import type {
   Box,
   SignatureEntryInfo,
@@ -17,7 +19,11 @@ import type {
   SignedValueFile,
 } from '@ofdrw/ofdrw-viewer-engine';
 import { parseSignedValue } from '@ofdrw/ofdrw-viewer-crypto';
-import type { SignatureVerification } from '@ofdrw/ofdrw-viewer-crypto';
+import type {
+  CertificateChainVerification,
+  CertificateSummary,
+  SignatureVerification,
+} from '@ofdrw/ofdrw-viewer-crypto';
 import { createFeatureDisabledError, OFDViewerError } from '../errors';
 import { MM_TO_CSS_PX } from '../page-layout';
 import type { PageView } from '../page-view';
@@ -25,11 +31,12 @@ import type { ViewerWarning } from '../state';
 import type { CertificateInfo, SealInfo, SignatureDetail, SignerInfo } from '../types';
 import { getUIShell } from '../ui';
 import type { OFDViewer, ViewerSignatureService } from '../viewer';
-import { createCryptoText } from '../crypto';
+import { certificateFileName, chainStatusText, createCryptoText, downloadCertificateDer } from '../crypto';
+import type { CryptoText } from '../crypto';
 import { openSignaturePopover } from '../crypto';
 import { createSealImageElement } from '../crypto/seal-image';
 import type { SealImageHandle } from '../crypto/seal-image';
-import { formatShanghaiDateTime } from '../crypto/time';
+import { formatShanghaiDateTime, formatSigningTime } from '../crypto/time';
 import { VERIFICATION_RESET_EVENT } from '../crypto/service';
 import { subjectCN, toSealInfo, toSignerInfo } from './mapping';
 
@@ -126,6 +133,8 @@ export class SignatureService implements ViewerSignatureService {
   private fallbackSealHandle: SealImageHandle | null = null;
   private detailToken = 0;
   private openDetailId: string | null = null;
+  /** 正在用新内容替换已打开的详情对话框；避免旧对话框的 onClose 清掉新状态。 */
+  private replacingDetailDialog = false;
   /** 签章详情中的印章图片句柄；按签名 ID 释放 Blob URL。 */
   private readonly sealImageHandles = new Map<string, SealImageHandle>();
   private destroyed = false;
@@ -247,7 +256,7 @@ export class SignatureService implements ViewerSignatureService {
     this.closeAnyDialog();
     this.revokeAllSealImages();
     if (this.panelHost) {
-      this.panelHost.replaceChildren();
+      replaceChildren(this.panelHost);
       this.panelHost = null;
     }
     this.summaryRefs.clear();
@@ -301,7 +310,7 @@ export class SignatureService implements ViewerSignatureService {
     if (!this.viewer.isFeatureEnabled('signatures')) {
       this.clearOverlays();
       this.closeAnyDialog();
-      this.panelHost?.replaceChildren();
+      if (this.panelHost) replaceChildren(this.panelHost);
       return;
     }
     this.syncEntriesFromViewer();
@@ -464,14 +473,14 @@ export class SignatureService implements ViewerSignatureService {
       this.details.set(id, verification ? { ...detail, verification } : omitVerification(detail));
     }
     this.updateOverlayTitles();
+    const detailId = this.openDetailId;
+    const detail = detailId ? this.details.get(detailId) : undefined;
+    // 先校验详情是否仍真正打开，再渲染侧栏；否则 renderPanel 会按过期的
+    // openDetailId 把已关闭详情对应的卡片重新标记为选中。
+    if (detailId && (!this.isDetailDialogOpen() || !detail)) this.openDetailId = null;
     this.renderPanel();
-    if (!this.openDetailId) return;
-    if (!this.isDetailDialogOpen()) {
-      this.openDetailId = null;
-      return;
-    }
-    const detail = this.details.get(this.openDetailId);
-    if (detail) this.openDialog(this.buildDetailContent(detail), false, detail);
+    if (!this.openDetailId || !detail) return;
+    this.openDialog(this.buildDetailContent(detail), false, detail);
   }
 
   /** 当前是否仍有签章详情对话框（内置或回退）处于打开状态。 */
@@ -664,7 +673,9 @@ export class SignatureService implements ViewerSignatureService {
             ...(detail?.seal
               ? { sealLabel: detail.seal.name ?? detail.seal.esId ?? id }
               : {}),
-            onOpenPanel: () => this.viewer.openVerificationPanel(),
+            onOpenDetails: () => {
+              void this.showSignature(id).catch(() => undefined);
+            },
           });
           return;
         }
@@ -687,6 +698,21 @@ export class SignatureService implements ViewerSignatureService {
         delete record.element.dataset.selected;
         record.element.style.removeProperty('outline');
         record.element.style.removeProperty('outline-offset');
+      }
+    }
+  }
+
+  /** 同步侧栏卡片的选中态；对话框打开/关闭时调用。 */
+  private markSelectedSummary(id: string | null): void {
+    const host = this.panelHost;
+    if (!host) return;
+    for (const item of host.querySelectorAll<HTMLElement>('.ofd-signature-summary-item')) {
+      if (item.dataset.signatureId === id) {
+        item.dataset.selected = 'true';
+        item.setAttribute('aria-current', 'true');
+      } else {
+        delete item.dataset.selected;
+        item.removeAttribute('aria-current');
       }
     }
   }
@@ -715,7 +741,7 @@ export class SignatureService implements ViewerSignatureService {
       this.renderPanel();
       return () => {
         if (this.panelHost === host) this.panelHost = null;
-        host.replaceChildren();
+        replaceChildren(host);
       };
     });
   }
@@ -724,7 +750,7 @@ export class SignatureService implements ViewerSignatureService {
   private renderPanel(): void {
     const host = this.panelHost;
     if (!host || this.destroyed) return;
-    host.replaceChildren();
+    replaceChildren(host);
     this.summaryRefs.clear();
 
     if (!this.viewer.isFeatureEnabled('signatures')) return;
@@ -766,47 +792,32 @@ export class SignatureService implements ViewerSignatureService {
     button.type = 'button';
     button.className = 'ofd-signature-summary-item';
     button.dataset.signatureId = entry.id;
+    button.setAttribute('aria-haspopup', 'dialog');
     if (item.pageNumber !== undefined) {
       button.dataset.pageNumber = String(item.pageNumber);
+    }
+    if (this.openDetailId === entry.id) {
+      button.dataset.selected = 'true';
+      button.setAttribute('aria-current', 'true');
     }
     button.addEventListener('click', () => {
       void this.showSignature(entry.id).catch(() => undefined);
     });
 
     const title = this.doc.createElement('div');
-    Object.assign(title.style, {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '6px',
-      marginBottom: '4px',
-    } satisfies Partial<CSSStyleDeclaration>);
-    const icon = this.doc.createElement('span');
-    icon.textContent = isSignType(entry.type) ? '✎' : '▣';
-    icon.setAttribute('aria-hidden', 'true');
+    title.className = 'ofd-signature-summary-item__title';
     const name = this.doc.createElement('span');
+    name.className = 'ofd-signature-summary-item__name';
     name.textContent = detail?.seal?.name ?? '未命名签章';
-    Object.assign(name.style, {
-      flex: '1 1 auto',
-      overflow: 'hidden',
-      textOverflow: 'ellipsis',
-      whiteSpace: 'nowrap',
-      fontWeight: '600',
-    } satisfies Partial<CSSStyleDeclaration>);
     const badge = this.doc.createElement('span');
     badge.className = 'ofd-signature-badge';
     const status = this.findVerification(entry.id)?.status;
     badge.textContent = status ? verificationLabel(status) : '未验证';
     badge.dataset.status = status ?? 'not-verified';
-    title.append(icon, name, badge);
+    title.append(name, badge);
 
     const meta = this.doc.createElement('div');
-    Object.assign(meta.style, {
-      display: 'flex',
-      flexWrap: 'wrap',
-      gap: '4px 8px',
-      fontSize: '12px',
-      color: 'var(--ofd-text-secondary)',
-    } satisfies Partial<CSSStyleDeclaration>);
+    meta.className = 'ofd-signature-summary-item__meta';
     const type = this.doc.createElement('span');
     type.textContent = signatureTypeLabel(entry.type);
     const time = this.doc.createElement('span');
@@ -821,6 +832,19 @@ export class SignatureService implements ViewerSignatureService {
     }
 
     button.append(title, meta);
+    button.setAttribute(
+      'aria-label',
+      [
+        name.textContent,
+        signatureTypeLabel(entry.type),
+        signatureTimeText(detail, entry),
+        signerText(detail),
+        item.pageNumber !== undefined ? `第 ${item.pageNumber} 页` : '',
+        badge.textContent,
+      ]
+        .filter((part) => part.length > 0)
+        .join('，'),
+    );
     const refs = this.summaryRefs.get(entry.id) ?? [];
     refs.push({ name, time, signer });
     this.summaryRefs.set(entry.id, refs);
@@ -876,12 +900,13 @@ export class SignatureService implements ViewerSignatureService {
       const detail = await this.getSignatureDetail(id);
       if (this.destroyed || token !== this.detailToken) return;
       this.openDetailId = id;
+      this.markSelectedSummary(id);
       this.openDialog(this.buildDetailContent(detail), false, detail);
       this.updateSummaryRefs(id);
       this.updateOverlayTitles();
     } catch (error) {
       if (this.destroyed || token !== this.detailToken) return;
-      this.openDetailId = null;
+      this.dismissDetail();
       this.openDialog(this.buildError(error));
     }
   }
@@ -894,31 +919,40 @@ export class SignatureService implements ViewerSignatureService {
     const shell = getUIShell(this.viewer);
     if (shell) {
       this.closeFallbackDialog();
-      shell.openDialog({
-        name: 'signatureDetail',
-        title,
-        content,
-        dismissible: !loading,
-        actions: loading ? [] : [{ label: '关闭', primary: true }],
-        ...(detailId && sealHandle
-          ? {
-              onClose: () => {
-                // 只释放本次对话框持有的图片；重新渲染已被新句柄替换时不能误释放。
-                if (this.sealImageHandles.get(detailId) === sealHandle) {
-                  this.revokeSealImage(detailId);
-                }
-              },
+      this.replacingDetailDialog = true;
+      try {
+        shell.openDialog({
+          name: 'signatureDetail',
+          title,
+          content,
+          dismissible: !loading,
+          actions: loading ? [] : [{ label: '关闭', primary: true }],
+          onClose: () => {
+            // 只释放本次对话框持有的图片；重新渲染已被新句柄替换时不能误释放。
+            if (detailId && sealHandle && this.sealImageHandles.get(detailId) === sealHandle) {
+              this.revokeSealImage(detailId);
             }
-          : {}),
-      });
+            // 用新内容替换旧详情时，旧对话框的 onClose 不能清掉新状态。
+            if (!this.replacingDetailDialog) this.dismissDetail();
+          },
+        });
+      } finally {
+        this.replacingDetailDialog = false;
+      }
       return;
     }
     this.openFallbackDialog(content, loading, title);
   }
 
+  /** 清除详情打开状态与侧栏选中态。 */
+  private dismissDetail(): void {
+    this.openDetailId = null;
+    this.markSelectedSummary(null);
+  }
+
   /** 关闭任意详情对话框。 */
   private closeAnyDialog(): void {
-    this.openDetailId = null;
+    this.dismissDetail();
     this.closeFallbackDialog();
     getUIShell(this.viewer)?.closeDialog(false);
   }
@@ -973,12 +1007,15 @@ export class SignatureService implements ViewerSignatureService {
 
     dialog.append(header, body);
     if (action) dialog.appendChild(footer);
-    layer.replaceChildren(backdrop, dialog);
+    replaceChildren(layer, backdrop, dialog);
     layer.hidden = false;
     this.fallbackDialog = dialog;
     this.fallbackBackdrop = backdrop;
 
-    const closeDialog = (): void => this.closeFallbackDialog();
+    const closeDialog = (): void => {
+      this.dismissDetail();
+      this.closeFallbackDialog();
+    };
     if (!loading) {
       backdrop.addEventListener('click', closeDialog);
     }
@@ -1061,10 +1098,13 @@ export class SignatureService implements ViewerSignatureService {
     this.revokeSealImage(detail.entry.id);
     const root = this.createContentRoot();
     const status = this.doc.createElement('div');
+    // chrome67: flex gap 不生效，改用 Chrome 57 起可用的 grid gap（行内两列）。
     Object.assign(status.style, {
-      display: 'flex',
+      display: 'grid',
+      gridAutoFlow: 'column',
+      justifyContent: 'start',
       alignItems: 'center',
-      gap: '8px',
+      gridColumnGap: '8px',
       marginBottom: '10px',
     } satisfies Partial<CSSStyleDeclaration>);
     const badge = this.doc.createElement('span');
@@ -1106,10 +1146,23 @@ export class SignatureService implements ViewerSignatureService {
     }
 
     const { entry, seal, signer } = detail;
+    const text = createCryptoText(this.viewer.getState().ui.locale);
+    const signerValue = this.doc.createElement('span');
+    signerValue.textContent = signer?.certificate
+      ? certificateSignerText(signer.certificate)
+      : text.signerCertificateMissing;
+    signerValue.appendChild(this.createTrustTag(verification?.certificate));
+    const certificateDownload = this.createSignerCertificateDownload(detail);
     root.appendChild(
       this.createSection('基本信息', [
         ['签章类型', signatureTypeLabel(entry.type)],
         ['签章 ID', entry.id],
+        [
+          text.signingTime,
+          formatSigningTime(
+            verification?.signingTime ?? signer?.signedAt ?? entry.signatureDateTime,
+          ) ?? text.signingTimeMissing,
+        ],
         ['签章时间', signatureTimeText(detail, entry)],
         ['签章提供者', providerText(entry)],
         ['保护范围', entry.references.map((reference) => reference.fileRef).join('、')],
@@ -1135,24 +1188,168 @@ export class SignatureService implements ViewerSignatureService {
       this.createSection(
         '签章者',
         signer
-          ? signerRows(signer, detail.verification?.timestamp)
+          ? signerRows(signer, verification?.timestamp, signerValue, certificateDownload, text)
           : [['签章者信息', '未获取到签章者信息']],
       ),
     );
 
+    root.appendChild(this.createChainSection(detail));
     root.appendChild(this.createPositions(entry));
     root.appendChild(this.createTechnical(detail));
     return root;
+  }
+
+  /** 签章者可信 tag：仅链 valid 显示“可信”，其余一律显示“可信状态未知”。 */
+  private createTrustTag(chain: CertificateChainVerification | undefined): HTMLElement {
+    const text = createCryptoText(this.viewer.getState().ui.locale);
+    const trusted = chain?.status === 'valid';
+    const tag = this.doc.createElement('span');
+    tag.className = 'ofd-trust-tag';
+    tag.dataset.trust = trusted ? 'trusted' : 'unknown';
+    tag.dataset.ofdControl = 'signature-trust-tag';
+    tag.textContent = trusted ? text.trusted : text.trustUnknown;
+    return tag;
+  }
+
+  /** 签章者证书下载按钮；没有 DER 字节时不渲染。 */
+  private createSignerCertificateDownload(detail: SignatureDetail): HTMLElement | null {
+    const signer = detail.signer;
+    const certificate = signer?.certificate;
+    if (!signer?.certificateDer || !certificate) return null;
+    const text = createCryptoText(this.viewer.getState().ui.locale);
+    const button = this.doc.createElement('button');
+    button.type = 'button';
+    button.className = 'ofd-button ofd-signature-cert-download';
+    button.dataset.ofdControl = 'signature-signer-cert-download';
+    button.textContent = text.downloadCertificate;
+    button.title = certificateFileName(
+      { subject: certificate.subject, serialNumber: certificate.serialNumber },
+      'signer',
+    );
+    button.addEventListener('click', () => {
+      downloadCertificateDer(
+        this.doc,
+        signer.certificateDer,
+        { subject: certificate.subject, serialNumber: certificate.serialNumber },
+        'signer',
+      );
+    });
+    return button;
+  }
+
+  /** 根证书链验证区；与签名/完整性总体状态独立。 */
+  private createChainSection(detail: SignatureDetail): HTMLElement {
+    const text = createCryptoText(this.viewer.getState().ui.locale);
+    const chain = detail.verification?.certificate;
+    const section = this.doc.createElement('section');
+    section.className = 'ofd-signature-chain';
+    section.dataset.ofdControl = 'signature-chain-section';
+    const heading = this.doc.createElement('h3');
+    heading.textContent = text.chainSectionTitle;
+    Object.assign(heading.style, { margin: '0 0 6px', fontSize: '14px' } satisfies Partial<CSSStyleDeclaration>);
+    const note = this.doc.createElement('p');
+    note.className = 'ofd-signature-chain__note';
+    note.textContent = text.chainIndependentNote;
+    section.append(heading, note);
+    if (!chain) {
+      const unverified = this.doc.createElement('p');
+      unverified.className = 'ofd-signature-chain__unverified';
+      unverified.textContent = text.chainNotVerified;
+      section.appendChild(unverified);
+      return section;
+    }
+
+    const rows: Array<readonly [string, string | Node]> = [
+      [text.chainStatus, chainStatusText(text, chain.status)],
+      [text.chainRootsConfigured, chain.trustRootConfigured ? text.yes : text.no],
+      [
+        text.chainSignerCertificate,
+        chain.signer
+          ? this.certificateSummaryNode(chain.signer, text)
+          : text.none,
+      ],
+      [
+        text.chainTrustAnchor,
+        chain.trustAnchor
+          ? this.certificateSummaryNode(chain.trustAnchor, text)
+          : text.chainTrustAnchorMissing,
+      ],
+      [text.chainMembers, this.chainMembersNode(chain.chain, text)],
+    ];
+    if (chain.issues.length > 0) {
+      rows.push([text.issues, this.issuesNode(chain.issues)]);
+    }
+    section.appendChild(this.createSection(undefined, rows));
+    return section;
+  }
+
+  /** 证书摘要节点：主题、颁发者、序列号、有效期、指纹。 */
+  private certificateSummaryNode(
+    summary: CertificateSummary,
+    text: ReturnType<typeof createCryptoText>,
+  ): HTMLElement {
+    const box = this.doc.createElement('div');
+    box.className = 'ofd-signature-chain__certificate';
+    const lines = [
+      `${text.rootsSubject}：${summary.subject}`,
+      `${text.rootsIssuer}：${summary.issuer}`,
+      `${text.rootsSerial}：${summary.serialNumber}`,
+      `${text.rootsValidity}：${formatShanghaiDateTime(summary.notBefore) ?? summary.notBefore} — ${
+        formatShanghaiDateTime(summary.notAfter) ?? summary.notAfter
+      }`,
+      `${text.rootsFingerprint}：${summary.fingerprintSha256}`,
+    ];
+    for (const line of lines) {
+      const item = this.doc.createElement('span');
+      item.textContent = line;
+      box.appendChild(item);
+    }
+    return box;
+  }
+
+  /** 链成员列表。 */
+  private chainMembersNode(
+    members: readonly CertificateSummary[],
+    text: ReturnType<typeof createCryptoText>,
+  ): HTMLElement {
+    if (members.length === 0) {
+      const none = this.doc.createElement('span');
+      none.textContent = text.none;
+      return none;
+    }
+    const list = this.doc.createElement('ul');
+    list.className = 'ofd-signature-chain__members';
+    for (const member of members) {
+      const item = this.doc.createElement('li');
+      item.appendChild(this.certificateSummaryNode(member, text));
+      list.appendChild(item);
+    }
+    return list;
+  }
+
+  /** 链问题列表。 */
+  private issuesNode(
+    issues: readonly { readonly code: string; readonly message: string }[],
+  ): HTMLElement {
+    const list = this.doc.createElement('ul');
+    list.className = 'ofd-signature-chain__issues';
+    for (const issue of issues) {
+      const item = this.doc.createElement('li');
+      item.textContent = `${issue.code}：${issue.message}`;
+      list.appendChild(item);
+    }
+    return list;
   }
 
   /** 创建详情内容根节点。 */
   private createContentRoot(): HTMLElement {
     const root = this.doc.createElement('div');
     root.className = 'ofd-signature-detail';
+    // chrome67: flex gap 不生效，改用 Chrome 57 起可用的 grid gap（纵向单列）。
     Object.assign(root.style, {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '12px',
+      display: 'grid',
+      gridAutoFlow: 'row',
+      gridRowGap: '12px',
     } satisfies Partial<CSSStyleDeclaration>);
     return root;
   }
@@ -1160,7 +1357,7 @@ export class SignatureService implements ViewerSignatureService {
   /** 创建“标题 + 键值表”区块。 */
   private createSection(
     title: string | undefined,
-    rows: ReadonlyArray<readonly [string, string | undefined]>,
+    rows: ReadonlyArray<readonly [string, string | Node | undefined]>,
   ): HTMLElement {
     const section = this.doc.createElement('section');
     if (title) {
@@ -1173,6 +1370,7 @@ export class SignatureService implements ViewerSignatureService {
       section.appendChild(heading);
     }
     const list = this.doc.createElement('dl');
+    list.className = 'ofd-signature-detail__pairs';
     Object.assign(list.style, {
       display: 'grid',
       gridTemplateColumns: 'auto 1fr',
@@ -1186,7 +1384,8 @@ export class SignatureService implements ViewerSignatureService {
       term.textContent = label;
       term.style.color = 'var(--ofd-text-secondary)';
       const description = this.doc.createElement('dd');
-      description.textContent = value;
+      if (typeof value === 'string') description.textContent = value;
+      else description.appendChild(value);
       description.style.margin = '0';
       description.style.wordBreak = 'break-all';
       list.append(term, description);
@@ -1263,11 +1462,6 @@ function omitVerification(detail: SignatureDetail): SignatureDetail {
   return next;
 }
 
-/** 是否为签名类型。 */
-function isSignType(type: string): boolean {
-  return type.trim().toLowerCase() === 'sign';
-}
-
 /** 签章类型文案。 */
 function signatureTypeLabel(type: string): string {
   const normalized = type.trim();
@@ -1276,12 +1470,18 @@ function signatureTypeLabel(type: string): string {
   return normalized || '签章';
 }
 
-/** 列表/详情中的签章时间。 */
+/** 列表/详情中的签章时间；优先验证报告的签发时间。 */
 function signatureTimeText(
   detail: SignatureDetail | undefined,
   entry: SignatureEntryInfo,
 ): string {
-  return detail?.signer?.signedAt ?? entry.signatureDateTime ?? '时间未知';
+  return (
+    formatSigningTime(
+      detail?.verification?.signingTime ??
+        detail?.signer?.signedAt ??
+        entry.signatureDateTime,
+    ) ?? '时间未知'
+  );
 }
 
 /** 签章者 CN；无证书时给出明确提示。 */
@@ -1360,11 +1560,11 @@ function verificationLabel(status: SignatureVerification['status']): string {
 function verificationNote(status: SignatureVerification['status']): string {
   switch (status) {
     case 'valid':
-      return '签名、引用完整性、证书链与印章校验通过。';
+      return '签名数学、dataHash、引用完整性与印章结构/数学校验通过。';
     case 'invalid':
-      return '存在校验失败项，详见工具栏验证面板。';
+      return '存在签名/完整性校验失败项，详见工具栏验证面板。';
     case 'unknown':
-      return '未配置信任根或无法确认证书链，详见工具栏验证面板。';
+      return '有签名/完整性校验项未能确认，详见工具栏验证面板。';
     case 'unsupported':
       return '当前环境不支持签名验证。';
     default:
@@ -1375,11 +1575,14 @@ function verificationNote(status: SignatureVerification['status']): string {
 /** 签章者信息行。 */
 function signerRows(
   signer: SignerInfo,
-  timestamp?: SignatureVerification['timestamp'],
-): ReadonlyArray<readonly [string, string]> {
+  timestamp: SignatureVerification['timestamp'] | undefined,
+  signerValue: Node,
+  certificateDownload: Node | null,
+  text: CryptoText,
+): ReadonlyArray<readonly [string, string | Node | undefined]> {
   const certificate = signer.certificate;
-  const rows: [string, string][] = [
-    ['签章者', certificate ? certificateSignerText(certificate) : '未找到签章者证书'],
+  const rows: Array<readonly [string, string | Node | undefined]> = [
+    ['签章者', signerValue],
     ['证书主题', certificate?.subject ?? '未找到或无法解析'],
     ['颁发者', certificate?.issuer ?? '未找到或无法解析'],
     ['序列号', certificate?.serialNumber ?? '未找到或无法解析'],
@@ -1396,6 +1599,7 @@ function signerRows(
         ? algorithmText(certificate.publicKeyAlgorithm)
         : '未知',
     ],
+    [text.signerCertificate, certificateDownload ?? undefined],
   ];
   if (timestamp?.status === 'parsed-not-verified') {
     rows.push(

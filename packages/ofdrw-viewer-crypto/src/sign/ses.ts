@@ -34,6 +34,12 @@ export interface ParsedSignedValue {
   readonly version: SesVersion;
   /** 签章者证书摘要。 */
   readonly certificate?: CertificateSummary;
+  /**
+   * 签章者证书 DER（原始 X.509 证书字节，不含 PEM/私钥/口令）。
+   *
+   * 调用方拥有返回值，可保存或提供给 UI 下载；crypto 不跨调用持有。
+   */
+  readonly certificateDer?: Uint8Array;
   /** 签名算法名称（例如 `SM3withSM2`）。 */
   readonly signatureAlgorithm?: string;
   /**
@@ -109,6 +115,8 @@ export function parseSignedValue(
   return {
     version: detail.version,
     certificate: toCertificateSummary(certificate),
+    // 返回独立副本，避免调用方修改影响内部结构。
+    certificateDer: copyBytes(detail.certificateDer),
     signatureAlgorithm: oidName(detail.signatureAlgorithmOid),
     signedAt: detail.signedAt,
     dataHash: hexOf(detail.dataHash),

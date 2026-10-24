@@ -237,16 +237,20 @@ describe('密码 CLI 验收：verify 一次性验证', () => {
     expect(result.stdout).not.toContain('EncryptedWK');
   });
 
-  it('未配置根证书为 unknown 并退出 5', async () => {
+  it('未配置根证书时链 unknown 但 overall=valid、退出 0', async () => {
     const cwd = await createTempDir();
     const result = await runCli(
       ['verify', fixture('signed-sesv4.ofd'), '--json'],
       { cwd },
     );
 
-    expect(result.code).toBe(5);
+    expect(result.code).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({
-      report: { overall: 'unknown', rootsConfigured: false },
+      report: {
+        overall: 'valid',
+        rootsConfigured: false,
+        signatures: [{ status: 'valid', certificate: { status: 'unknown' } }],
+      },
     });
     expect(result.stderr).toContain('W_CRYPTO_TRUST_UNKNOWN');
   });

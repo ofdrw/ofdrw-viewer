@@ -366,7 +366,7 @@ describe('runVerify', () => {
     expect(capture.stdoutText()).not.toContain('PRIVATE KEY');
   });
 
-  it('未配置根证书为 unknown，退出 5', async () => {
+  it('未配置根证书时链 unknown 但 overall=valid，退出 0', async () => {
     const { logger, capture } = createLogger();
     const code = await runVerify(
       {
@@ -377,10 +377,12 @@ describe('runVerify', () => {
       },
       { logger },
     );
-    expect(code).toBe(5);
+    expect(code).toBe(0);
     const payload = JSON.parse(capture.stdoutText()) as CliVerifyJson;
-    expect(payload.report.overall).toBe('unknown');
+    expect(payload.report.overall).toBe('valid');
     expect(payload.report.rootsConfigured).toBe(false);
+    expect(payload.report.signatures[0]?.status).toBe('valid');
+    expect(payload.report.signatures[0]?.certificate.status).toBe('unknown');
     expect(capture.stderrText()).toContain('W_CRYPTO_TRUST_UNKNOWN');
   });
 

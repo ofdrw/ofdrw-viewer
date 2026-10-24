@@ -4,6 +4,7 @@
  * `PageView` 直接单测：首次渲染骨架 + spinner、重渲染保留旧 canvas 的遮罩、
  * 150 ms 延迟 / 最短 200 ms / 120 ms 淡出、失败错误卡与取消静默隐藏。
  */
+import { replaceChildren } from '../../../src/compat';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageInfo } from '@ofdrw/ofdrw-viewer-engine';
 import { PageView } from '../../../src/page-view';
@@ -44,7 +45,7 @@ function errorOf(page: PageView): HTMLElement {
 
 beforeEach(() => {
   vi.useFakeTimers();
-  document.body.replaceChildren();
+  replaceChildren(document.body);
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
     clearRect: vi.fn(),
     fillRect: vi.fn(),
@@ -54,7 +55,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
-  document.body.replaceChildren();
+  replaceChildren(document.body);
 });
 
 describe('PageView 页面 loading', () => {

@@ -85,8 +85,9 @@ const sharedOptions = {
   format: 'iife',
   globalName: GLOBAL_NAME,
   platform: 'browser',
-  // SM2/ASN.1 使用 BigInt 字面量，ES2020 是能表达该语法的最低目标。
-  target: 'es2020',
+  // Chrome 67 原生支持 BigInt，`chrome67` 会保留 BigInt 字面量，同时把可选链/
+  // 空值合并/类字段降级，避免 es2020 目标在 Chrome 67 留下语法错误。
+  target: 'chrome67',
   charset: 'utf8',
   legalComments: 'eof',
   alias: {
@@ -212,6 +213,17 @@ async function assertGlobalExports(engineSource, source, label) {
   createContext(sandbox);
   runInContext(engineSource, sandbox, { filename: 'ofdrw-viewer-engine.js' });
   runInContext(source, sandbox, { filename: label });
+
+  // Chrome 67 兼容层必须已执行，且补齐/保留 Blob.prototype.arrayBuffer 与 globalThis。
+  const compatOk =
+    sandbox[Symbol.for('ofdrw.viewer.compat.crypto.v1')] === true &&
+    runInContext(
+      "typeof Blob.prototype.arrayBuffer === 'function' && globalThis.globalThis === globalThis",
+      sandbox,
+    );
+  if (!compatOk) {
+    throw new Error(`${label} 未正确安装 Chrome 67 兼容补丁`);
+  }
 
   const api = sandbox[GLOBAL_NAME];
   if (api === null || typeof api !== 'object') {

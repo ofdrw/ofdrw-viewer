@@ -13,6 +13,8 @@
  * `./react`、`./vue`、`./element` 子路径接入。
  */
 
+import './compat';
+
 import { registerViewerExtension } from './viewer';
 import { installUIShell } from './ui';
 

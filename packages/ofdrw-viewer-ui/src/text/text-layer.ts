@@ -8,6 +8,8 @@
  * 该服务不调用任何 Canvas 文字 API，也不修改 canvas 绘制结果。
  */
 
+import { replaceChildren, runMicrotask } from '../compat';
+
 import type { PageInfo, TextContent } from '@ofdrw/ofdrw-viewer-engine';
 import type { PageView } from '../page-view';
 import type { ViewerState } from '../state';
@@ -226,7 +228,7 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
   clearFindHighlights(): void {
     this.matches = [];
     this.current = 0;
-    for (const layer of this.findLayers.values()) layer.replaceChildren();
+    for (const layer of this.findLayers.values()) replaceChildren(layer);
   }
 
   /**
@@ -264,7 +266,7 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
   private scheduleRefresh(): void {
     if (this.disposed || this.refreshQueued) return;
     this.refreshQueued = true;
-    queueMicrotask(() => {
+    runMicrotask(() => {
       if (!this.refreshQueued) return;
       this.refresh();
     });
@@ -351,7 +353,7 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
     for (const spec of specs.spans) {
       fragment.appendChild(createTextSpan(doc, spec, pageNumber, selectable));
     }
-    layer.replaceChildren(fragment);
+    replaceChildren(layer, fragment);
     this.applyTextLayerGeometry(layer, specs, pageNumber);
     state.built = true;
     state.nodeCount = specs.spans.length;
@@ -404,7 +406,7 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
     this.pages.delete(pageNumber);
     const view = this.host.getPageView(pageNumber);
     if (view?.textLayer) {
-      view.textLayer.replaceChildren();
+      replaceChildren(view.textLayer);
       view.textLayer.removeAttribute('data-dpi');
       view.textLayer.style.pointerEvents = 'none';
     }
@@ -472,7 +474,7 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
         this.findLayers.set(match.pageNumber, layer);
       }
       if (!rendered.has(match.pageNumber)) {
-        layer.replaceChildren();
+        replaceChildren(layer);
         rendered.add(match.pageNumber);
       }
       const isCurrent = index + 1 === this.current;
@@ -490,7 +492,7 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
     }
     for (const [pageNumber, layer] of [...this.findLayers]) {
       if (rendered.has(pageNumber)) continue;
-      layer.replaceChildren();
+      replaceChildren(layer);
       if (!visible.has(pageNumber)) this.removeFindLayer(pageNumber);
     }
   }

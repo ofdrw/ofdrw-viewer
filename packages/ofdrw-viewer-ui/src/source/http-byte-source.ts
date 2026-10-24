@@ -12,6 +12,8 @@
  * （`Access-Control-Expose-Headers: Content-Range`）。
  */
 
+import { getGlobalObject } from '../compat';
+
 import { OFDError } from '@ofdrw/ofdrw-viewer-engine';
 import type { ByteSource } from '@ofdrw/ofdrw-viewer-engine';
 
@@ -68,9 +70,10 @@ export class HttpByteSource implements ByteSource {
     this.headers = { ...(options.headers ?? {}) };
     this.allowFullDownload = options.allowFullDownload ?? true;
     this.onProgress = options.onProgress;
-    const globalFetch = (globalThis as { fetch?: typeof fetch }).fetch;
-    // 浏览器原生 fetch 必须绑定 globalThis；注入的 fetch 保持原样，便于测试/宿主定制。
-    this.fetchImpl = options.fetch ?? (globalFetch ? globalFetch.bind(globalThis) : null);
+    const globalObject = getGlobalObject();
+    const globalFetch = (globalObject as { fetch?: typeof fetch }).fetch;
+    // 浏览器原生 fetch 必须绑定全局对象；注入的 fetch 保持原样，便于测试/宿主定制。
+    this.fetchImpl = options.fetch ?? (globalFetch ? globalFetch.bind(globalObject) : null);
     this.externalSignal = options.signal;
     if (options.signal) {
       if (options.signal.aborted) this.requestAbort.abort();

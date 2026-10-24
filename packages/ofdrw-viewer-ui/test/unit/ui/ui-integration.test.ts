@@ -146,6 +146,10 @@ function createFakeHost(width = 1280): FakeHost {
       record('exportImages');
       return Promise.resolve();
     },
+    exportOfd() {
+      record('exportOfd');
+      return Promise.resolve();
+    },
     setFullscreen(value) {
       record(`setFullscreen:${value}`);
       return Promise.resolve();
@@ -168,13 +172,26 @@ describe('内置 UI 接线', () => {
 
     (shell.toolbar.getControl('export') as HTMLButtonElement).click();
     dialog = document.querySelector<HTMLElement>('.ofd-dialog')!;
-    expect(dialog.textContent).toContain('导出图片选项');
+    expect(dialog.textContent).toContain('导出选项');
     expect(dialog.querySelectorAll('select')).toHaveLength(5);
     expect(dialog.querySelector<HTMLInputElement>('input[type="range"]')).not.toBeNull();
     const format = [...dialog.querySelectorAll<HTMLSelectElement>('select')].find((select) =>
       [...select.options].some((option) => option.value === 'webp'),
     )!;
-    expect([...format.options].map((option) => option.value)).toEqual(['png', 'jpeg', 'webp']);
+    expect([...format.options].map((option) => option.value)).toEqual([
+      'png',
+      'jpeg',
+      'webp',
+      'ofd',
+    ]);
+    // 选择 OFD 时隐藏图片专属字段并显示“原文件”说明。
+    format.value = 'ofd';
+    format.dispatchEvent(new Event('change'));
+    const fields = [...dialog.querySelectorAll<HTMLElement>('.ofd-output-field')];
+    expect(fields.filter((field) => field.hidden)).toHaveLength(5);
+    const note = dialog.querySelector<HTMLElement>('[data-ofd-control="output-ofd-note"]')!;
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toContain('OFD 原文件');
     (dialog.querySelector('.ofd-dialog__action:not(.ofd-dialog__action--primary)') as HTMLButtonElement).click();
     expect(document.querySelector('.ofd-dialog')).toBeNull();
     dispose();
@@ -239,6 +256,27 @@ describe('内置 UI 接线', () => {
     expect(exportSubmit.defaultPrevented).toBe(true);
     expect(document.querySelector('.ofd-dialog')).toBeNull();
     expect(host.calls).toContain('exportImages');
+    dispose();
+  });
+
+  it('导出对话框选择 OFD 后提交 exportOfd 且不读取图片范围', () => {
+    const host = createFakeHost();
+    const dispose = attachUIShell(host);
+    const shell = getUIShell(host)!;
+    (shell.toolbar.getControl('export') as HTMLButtonElement).click();
+    const dialog = document.querySelector<HTMLElement>('.ofd-dialog')!;
+    const form = dialog.querySelector<HTMLFormElement>('form')!;
+    const format = [...form.querySelectorAll<HTMLSelectElement>('select')].find((select) =>
+      [...select.options].some((option) => option.value === 'ofd'),
+    )!;
+    format.value = 'ofd';
+    format.dispatchEvent(new Event('change'));
+    const submit = new Event('submit', { bubbles: true, cancelable: true });
+    form.dispatchEvent(submit);
+    expect(submit.defaultPrevented).toBe(true);
+    expect(document.querySelector('.ofd-dialog')).toBeNull();
+    expect(host.calls).toContain('exportOfd');
+    expect(host.calls).not.toContain('exportImage');
     dispose();
   });
 

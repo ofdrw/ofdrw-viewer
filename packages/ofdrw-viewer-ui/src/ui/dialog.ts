@@ -4,6 +4,8 @@
  * 负责遮罩、层级、焦点陷阱、Esc 关闭与关闭后焦点回到触发按钮；
  * 具体内容（打印、导出、文档属性、签章详情）由调用方以节点/按钮注入。
  */
+
+import { replaceChildren } from '../compat';
 import { FocusTrap, getFocusableElements, restoreFocus } from '../a11y';
 import type { Translator } from '../i18n';
 import { createIcon } from './icons';
@@ -66,7 +68,7 @@ export class DialogManager {
     const id = `ofd-dialog-${++dialogSequence}`;
     const trigger = doc.activeElement instanceof HTMLElement ? doc.activeElement : null;
 
-    this.options.layer.replaceChildren();
+    replaceChildren(this.options.layer);
     const backdrop = doc.createElement('div');
     backdrop.className = 'ofd-dialog__backdrop';
     backdrop.setAttribute('aria-hidden', 'true');
@@ -166,7 +168,7 @@ export class DialogManager {
     if (!current) return;
     this.current = null;
     current.trap.deactivate({ restoreFocus: false });
-    this.options.layer.replaceChildren();
+    replaceChildren(this.options.layer);
     this.options.layer.hidden = true;
     if (restoreFocusOnClose) {
       restoreFocus(current.trigger);
@@ -186,6 +188,6 @@ export class DialogManager {
   /** 关闭并清理。 */
   destroy(): void {
     this.close(false);
-    this.options.layer.replaceChildren();
+    replaceChildren(this.options.layer);
   }
 }

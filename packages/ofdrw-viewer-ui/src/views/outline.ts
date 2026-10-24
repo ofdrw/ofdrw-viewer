@@ -5,6 +5,8 @@
  * 当前页高亮与跳转。无效 `dest` 只报警并保留节点。
  */
 
+import { replaceChildren } from '../compat';
+
 import type { OutlineNode } from '@ofdrw/ofdrw-viewer-engine';
 import type { Translator } from '../i18n';
 import type { ViewerState } from '../state';
@@ -66,7 +68,7 @@ export class OutlineView {
     this.root = this.host.ownerDocument.createElement('ul');
     this.root.className = 'ofd-outline__tree';
     this.root.setAttribute('role', 'tree');
-    this.host.replaceChildren(this.root);
+    replaceChildren(this.host, this.root);
     this.active = this.viewer.getSidebarView() === 'outline';
     const state = this.viewer.getState();
     this.lastOutline = state.document.outline;
@@ -121,7 +123,7 @@ export class OutlineView {
     const translator = this.getTranslator();
     this.root.setAttribute('aria-label', translator.t('sidebar.outline'));
     this.entries = [];
-    this.root.replaceChildren();
+    replaceChildren(this.root);
 
     const state = this.viewer.getState();
     this.currentPageIndex = state.view.pageNumber - 1;

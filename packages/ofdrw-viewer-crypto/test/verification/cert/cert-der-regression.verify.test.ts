@@ -290,13 +290,14 @@ describe('12 夹具 inspect / verify 在 arraybuffer 与 byte-source 下一致',
     }
   });
 
-  it('无根时签名夹具为 unknown，与 byte-source 一致', async () => {
+  it('无根时链为 unknown、签名仍 valid，与 byte-source 一致', async () => {
     for (const item of CASES.filter((entry) => entry.type === 'signed')) {
       const byteReport = await verifyOfd({ source: byteSource(item.path), now: FIXED_NOW });
       const arrayReport = await verifyOfd({ source: arraySource(item.path), now: FIXED_NOW });
       expect(stableReport(byteReport), item.path).toEqual(stableReport(arrayReport));
       expect(arrayReport.rootsConfigured, item.path).toBe(false);
-      expect(arrayReport.overall, item.path).toBe('unknown');
+      // 证书链不参与最终判定：无根时签名数学通过即为 valid，链详情单独保留 unknown。
+      expect(arrayReport.overall, item.path).toBe('valid');
       expect(arrayReport.signatures[0]?.certificate.status, item.path).toBe('unknown');
     }
   });

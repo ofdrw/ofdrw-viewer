@@ -6,6 +6,8 @@
  * 互相覆盖。
  */
 
+import { getGlobalObject } from '../compat';
+
 import { OFDViewerError } from '../errors';
 import type { ViewerWarning } from '../state';
 import type { ViewerSource } from '../types';
@@ -156,7 +158,7 @@ function decodeBase64Source(raw: string, maxBytes = DEFAULT_MAX_BASE64_BYTES): U
   }
 
   const padded = payload + '='.repeat((4 - (payload.length % 4)) % 4);
-  const decode = globalThis.atob;
+  const decode = getGlobalObject().atob;
   if (typeof decode !== 'function') {
     throw new OFDViewerError(
       'OFD_UNSUPPORTED',

@@ -17,6 +17,8 @@ import {
   type CertificateSummary,
   type ExportImageOptions,
   type ExportImageResult,
+  type ExportOfdOptions,
+  type ExportOfdResult,
   type FeatureState,
   type FindOptions,
   type OFDViewerOptions,
@@ -68,6 +70,8 @@ export interface OFDViewerHandle {
   print(): Promise<void>;
   /** 导出当前页图片。 */
   exportImage(options?: ExportImageOptions): Promise<ExportImageResult | null>;
+  /** 导出当前 OFD 原文件。 */
+  exportOfd(options?: ExportOfdOptions): Promise<ExportOfdResult | null>;
   /** 当前状态快照。 */
   getState(): ViewerState | null;
   /** 单个功能状态。 */
@@ -211,6 +215,7 @@ export const OFDViewer = forwardRef<OFDViewerHandle, OFDViewerProps>(
           await viewerRef.current?.print();
         },
         exportImage: async (options) => (await viewerRef.current?.exportImage(options)) ?? null,
+        exportOfd: async (options) => (await viewerRef.current?.exportOfd(options)) ?? null,
         getState: () => viewerRef.current?.getState() ?? null,
         getFeatureState: (feature) =>
           viewerRef.current?.getFeatureState(feature) ?? null,

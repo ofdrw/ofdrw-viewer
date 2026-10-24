@@ -5,6 +5,8 @@
  * 可读名称由按钮的 `aria-label` 提供。
  */
 
+import { replaceChildren } from '../compat';
+
 /** 图标名称。 */
 export type IconName =
   | 'sidebar'
@@ -177,5 +179,5 @@ export function createIcon(name: IconName): SVGSVGElement {
  */
 export function setButtonIcon(button: HTMLElement, name: IconName): void {
   const icon = createIcon(name);
-  button.replaceChildren(icon);
+  replaceChildren(button, icon);
 }

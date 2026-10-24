@@ -365,6 +365,17 @@ interface UIDialogOptions {
 
 这些方法没有功能守卫；非法值的行为由 TypeScript 类型约束，运行时不做完整校验。
 
+### 弹出层动效
+
+样式表为对话框、印章浮层、更多菜单、查找栏、侧栏 overlay/drawer 与 Toast 提供统一的打开动画：默认 `180ms ease-out`，只做入场；关闭、替换和隐藏立即生效，不等待动画。宿主可在 `.ofd-viewer` 上覆盖 `--ofd-motion-duration`，建议保持在 `160–200ms`。
+
+- 对话框：遮罩 `ofd-fade-in`，内容 `ofd-dialog-in`（6px 上移 + 淡入）；所有内置对话框都走 `.ofd-dialog`。
+- 印章浮层：`.ofd-signature-popover--in`（4px 上移 + 淡入），创建并完成定位后启用，内部重渲染不重播。
+- 更多菜单：`.ofd-more-menu--open`（`scale(0.96)→1` + 淡入），`data-placement="above|below"` 决定 transform-origin。
+- 查找栏/侧栏/Toast：分别使用 `ofd-findbar-in`、`ofd-sidebar-in`/`ofd-fade-in`、`ofd-toast-in`，节奏一致。
+
+`prefers-reduced-motion: reduce` 下所有新增动画均被关闭，内容直接出现在最终位置。动画不改变焦点、键盘操作或脚本定位；更多菜单使用布局尺寸计算位置，避免缩放影响夹紧结果。
+
 ### 文本、查找与选区
 
 | 方法 | 说明 |
@@ -402,6 +413,10 @@ interface UIDialogOptions {
 | `print(options?): Promise<void>` | 调用浏览器打印；默认当前页、自动 DPI、当前旋转、不含背景 |
 | `exportImage(options?): Promise<ExportImageResult>` | 导出单页图片并触发下载；默认当前页、PNG |
 | `exportImages(options?): Promise<void>` | 导出多页 ZIP 并触发下载；默认当前页 |
+| `exportOfd(options?): Promise<ExportOfdResult>` | 导出当前 OFD 原文件并触发下载；加密文档导出原始加密字节 |
+| `readSourceBytes(signal?): Promise<Uint8Array>` | 读取当前来源原始字节，供导出/宿主复用；与 `exportOfd()` 共用 `export` 功能与文档导出权限门控。功能关闭/文档禁止导出抛 `OFD_FEATURE_DISABLED`（`feature='export'`），未打开抛 `OFD_NOT_OPENED` |
+
+`exportOfd()` 与图片导出共用 `export` 功能开关和文档导出权限；公开的 `readSourceBytes()` 使用同一门控。URL 来源会按打开时的请求头重新读取；ArrayBuffer/Uint8Array/Blob 直接复用；自定义随机读源按顺序读取，实际读取长度必须等于声明的 `size`，短读不再静默截断而是抛 `OFD_EXPORT_FAILED`。导出过程不渲染、不解密、不重建 OFD，文件名默认 `{docName}.ofd`，可由 `filename` 覆盖并自动补 `.ofd`。读取失败、短读、空文件或宿主不支持时映射为 `OFD_EXPORT_FAILED`；取消仍保留 `AbortError`。
 
 打印失败抛 `OFD_PRINT_FAILED`；导出全部页失败抛 `OFD_EXPORT_FAILED`；单页失败降级为 `W_EXPORT_PAGE`/`W_EXPORT_PARTIAL` warning。取消通过 `signal` 传入：取消时统一转为 `AbortError`（`name='AbortError'`）拒绝；`OFD_INVALID_OPTION` 仅表示选项非法。
 
@@ -687,6 +702,23 @@ type PageRange =
 
 多页导出固定打包为 ZIP。多页导出时 `filename` 作为前缀追加 `-p{pageNumber}`；单页 `exportImage` 直接使用该名称。
 
+### `ExportOfdOptions` 与 `ExportOfdResult`
+
+```ts
+interface ExportOfdOptions {
+  readonly filename?: string; // 不含或包含 .ofd，均规范为 .ofd
+  readonly signal?: AbortSignal;
+}
+
+interface ExportOfdResult {
+  readonly blob: Blob;        // type: application/ofd，内容为原始 OFD 字节
+  readonly filename: string;  // 以 .ofd 结尾
+  readonly size: number;      // 字节数
+}
+```
+
+`exportOfd()` 导出阅读器打开时的原始 OFD 字节，不经过渲染或重新打包。加密文档导出的是原始加密包，不会用解密后的容器替换；宿主若自定义 `OutputHost.readSourceBytes`，必须返回打开时的原始字节，并在数据不足时返回错误。公开方法 `readSourceBytes()` 复用同一功能/权限门控，便于宿主自行保存或上传原文件。
+
 ### `ExportImageResult` 与 `ExportProgressEvent`
 
 ```ts
@@ -790,7 +822,7 @@ type CertificateInputLoader = (
 
 | 字段 | 说明 |
 | --- | --- |
-| `overall` | 汇总状态；时间戳不参与 |
+| `overall` | 汇总状态；只看签名数学、dataHash、Reference、防夹带完整性和印章结构/数学，时间戳与证书链不参与 |
 | `package` | 包级信息（版本、条目数等） |
 | `decryption` | 加密源内部解密摘要；明文时省略 |
 | `integrity` | 防夹带完整性结果；无保护时为 `null`，不能当作“通过” |
@@ -802,9 +834,9 @@ type CertificateInputLoader = (
 
 ### `SignatureVerification`
 
-每个签名结果包含：`id`、`type`、`version`、`baseLoc`、`signedValuePath?`、`status`、`signature`（数学验签）、`dataHash`（原文摘要比对）、`references`（保护范围校验）、`certificate`（证书链）、`seal?`（印章校验）、`timestamp`（只解析）、`issues`。`status` 为 `VerificationStatus`，取值为 `valid`/`invalid`/`unknown`/`not-applicable`/`unsupported`。
+每个签名结果包含：`id`、`type`、`version`、`baseLoc`、`signedValuePath?`、`status`、`signingTime?`、`signingTimeSource?`、`signature`（数学验签）、`dataHash`（原文摘要比对）、`references`（保护范围校验）、`certificate`（证书链）、`seal?`（印章校验）、`timestamp`（只解析）、`issues`。`status` 为 `VerificationStatus`，取值为 `valid`/`invalid`/`unknown`/`not-applicable`/`unsupported`。`signingTime` 为可解析的签发时间字符串，来源优先级为时间戳信息、时间戳 `genTime`、`Signature.xml` 的 `SignatureDateTime`；缺失时 UI 显示“未提供”。
 
-证书链状态可能为 `valid`/`invalid`/`expired`/`not-yet-valid`/`untrusted`/`incomplete`/`unsupported`/`not-present`/`unknown`；未配置根时通常为 `unknown`。时间戳状态固定为 `parsed-not-verified`/`not-present`/`parse-error`，永不参与 `overall`。
+证书链状态可能为 `valid`/`invalid`/`expired`/`not-yet-valid`/`untrusted`/`incomplete`/`unsupported`/`not-present`/`unknown`；未配置根时通常为 `unknown`。证书链独立展示在“根证书链验证”栏中，`untrusted`/`expired`/`incomplete`/`unknown` 等链结果不得改写 `overall`。时间戳状态固定为 `parsed-not-verified`/`not-present`/`parse-error`，永不参与 `overall`。
 
 ### 签章摘要与详情类型
 
@@ -814,12 +846,21 @@ type CertificateInputLoader = (
 - `SignatureDetail`：`{ entry, seal?, signer?, validation, warnings?, verification? }`。
 - `SealInfo`：`{ version, esId?, name?, typeCode?, typeLabel?, createDate?, validStart?, validEnd?, certificate?, image? }`。
 - `SealImageInfo`：`{ format, widthMm, heightMm, data? }`；`data` 仅用于 UI 以 Blob URL 渲染，不进入状态/日志。
-- `SignerInfo`：`{ certificate?, signedAt?, signedAtSource?, algorithm?, dataHash?, propertyInfo?, timestampPresent? }`；`SignedAtSource` 为 `timeInfo`/`signatureDateTime`/`timestamp-token`。
+- `SignerInfo`：`{ certificate?, certificateDer?, signedAt?, signedAtSource?, algorithm?, dataHash?, propertyInfo?, timestampPresent? }`；`certificateDer` 为调用方拥有的签名者证书 DER，可直接下载，不包含私钥或 PEM；`SignedAtSource` 为 `timeInfo`/`signatureDateTime`/`timestamp-token`。
 - `SignatureValidation`：`{ status: 'not-verified', note }`；详情页只展示解析信息，不宣称验签通过。
 - `CertificateInfo`：`{ subject, issuer, serialNumber, notBefore?, notAfter?, subjectAttributes?, signatureAlgorithm?, publicKeyAlgorithm? }`。
 - `CertificateAttributes`：`{ cn?, o?, ou?, c?, st?, l?, email?, serialNumber? }`。
 - `AlgorithmInfo`：`{ oid, name? }`。
 - `CertificateSummary`：`{ subject, issuer, serialNumber, notBefore, notAfter, fingerprintSha256, publicKeyAlgorithm?, signatureAlgorithm?, keyUsage?, isCA }`。
+
+### 验证结果展示约定
+
+- 总体徽标只由 `report.overall` 决定；`report.overall` 已排除证书链和时间戳。签名数学、dataHash、Reference、防夹带完整性与印章结构/数学通过即显示绿色“有效”，证书链不可信、过期、不完整或未知时不得改成无效/灰色。
+- 证书链在签章详情的“根证书链验证”栏独立展示链状态、是否配置信任根、签名者证书、信任锚、链成员和问题；无报告时明确显示“未验证”。链结果只影响该栏，不参与最终结论。
+- 验证面板不显示“验证时间/耗时”；签名卡片显示 crypto 提供的 `signingTime`，缺失时为“未提供”。带时区的 ISO 时间换算 UTC+8，无时区字面量保持原值。
+- 签章者旁用文字 + 颜色展示可信 tag：仅当 `certificate.status === 'valid'` 时为“可信”，其余/未知/未验证为“可信状态未知”，不出现“证书链通过”。
+- 签章者证书和信任根证书可下载为 `.der`；文件名取 CN/序列号并清洗非法字符，Blob URL 下载后释放。印章图片仍只以 Blob URL 临时渲染。
+- 侧栏签章列表为卡片式按钮，不使用 ▣/✎ 图标装饰，保留名称、类型、时间、签章者、页码和状态；支持键盘激活、焦点样式和 `aria-current` 选中态。页面印章浮层的“查看签章详情”与侧栏项调用同一个 `showSignature()` 详情面板。
 
 ### 验证状态与检测结果
 
@@ -868,6 +909,7 @@ type CertificateInputLoader = (
 | `setRootCertificates(roots)` | 替换信任根；无实例时返回空数组 |
 | `getRootCertificates()` | 当前信任根摘要 |
 | `openVerificationPanel()` | 打开验证面板 |
+| `exportOfd(options?)` | 导出当前 OFD 原文件；无实例时返回 `null` |
 | `destroy()` | 销毁实例；可重复调用 |
 
 ### 组件事件
@@ -912,11 +954,11 @@ type CertificateInputLoader = (
 - 实例：`getInstance()`、`getViewer()`；
 - 文档：`open(source?)`、`close()`；
 - 导航/视图：`goToPage`、`nextPage`、`previousPage`、`setScale`、`setZoomMode`、`setRotation`、`setFeatures`；
-- 查找/输出：`find`、`print`、`exportImage`；
+- 查找/输出：`find`、`print`、`exportImage`、`exportOfd`；
 - 状态：`getState`、`getFeatureState`、`isFeatureEnabled`；
 - 验证：`verify`、`getVerificationReport`、`setRootCertificates`、`getRootCertificates`、`openVerificationPanel`。
 
-`getInstance` 在挂载前返回 `null`；`exportImage` 在无实例时返回 `null`；`verify` 在无实例时抛 `Error('阅读器尚未挂载')`。
+`getInstance` 在挂载前返回 `null`；`exportImage`/`exportOfd` 在无实例时返回 `null`；`verify` 在无实例时抛 `Error('阅读器尚未挂载')`。
 
 ### React 受控同步
 
@@ -952,7 +994,7 @@ type CertificateInputLoader = (
 
 ### Expose
 
-模板 ref 暴露 `getInstance`、`getViewer`、`open`、`close`、`goToPage`、`nextPage`、`previousPage`、`setScale`、`setZoomMode`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage`、`getState`、`getFeatureState`、`isFeatureEnabled`、`verify`、`getVerificationReport`、`setRootCertificates`、`getRootCertificates`、`openVerificationPanel`。
+模板 ref 暴露 `getInstance`、`getViewer`、`open`、`close`、`goToPage`、`nextPage`、`previousPage`、`setScale`、`setZoomMode`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage`、`exportOfd`、`getState`、`getFeatureState`、`isFeatureEnabled`、`verify`、`getVerificationReport`、`setRootCertificates`、`getRootCertificates`、`openVerificationPanel`。
 
 ### Vue 受控同步
 

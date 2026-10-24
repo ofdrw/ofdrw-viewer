@@ -9,6 +9,8 @@
  * 签章覆盖层一起旋转；文字层坐标不需要重算。
  */
 
+import { replaceChildren } from './compat';
+
 import type { CanvasRenderingContext2DLike, PageInfo } from '@ofdrw/ofdrw-viewer-engine';
 import type { Translator } from './i18n';
 import type { PageBox } from './page-layout';
@@ -164,7 +166,10 @@ export class PageView {
     this.canvasWrapper = this.createElement('div', 'ofd-page__canvas-wrapper');
     Object.assign(this.canvasWrapper.style, {
       position: 'absolute',
-      inset: '0',
+      top: '0',
+      right: '0',
+      bottom: '0',
+      left: '0',
       overflow: 'hidden',
     } satisfies Partial<CSSStyleDeclaration>);
     this.surface.appendChild(this.canvasWrapper);
@@ -172,7 +177,10 @@ export class PageView {
     this.textLayer = this.createElement('div', 'ofd-page__text-layer');
     Object.assign(this.textLayer.style, {
       position: 'absolute',
-      inset: '0',
+      top: '0',
+      right: '0',
+      bottom: '0',
+      left: '0',
       overflow: 'hidden',
     } satisfies Partial<CSSStyleDeclaration>);
     this.textLayer.setAttribute('aria-hidden', 'false');
@@ -181,7 +189,10 @@ export class PageView {
     this.signatureLayer = this.createElement('div', 'ofd-page__signature-layer');
     Object.assign(this.signatureLayer.style, {
       position: 'absolute',
-      inset: '0',
+      top: '0',
+      right: '0',
+      bottom: '0',
+      left: '0',
       overflow: 'visible',
       pointerEvents: 'none',
     } satisfies Partial<CSSStyleDeclaration>);
@@ -613,8 +624,8 @@ export class PageView {
       this.canvasElement = null;
     }
     this.element.remove();
-    this.textLayer.replaceChildren();
-    this.signatureLayer.replaceChildren();
+    replaceChildren(this.textLayer);
+    replaceChildren(this.signatureLayer);
   }
 
   /** 显示 loading 层：首次渲染用骨架，重渲染用半透明遮罩。 */

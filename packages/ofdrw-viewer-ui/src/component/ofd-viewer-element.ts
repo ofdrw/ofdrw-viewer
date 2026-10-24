@@ -4,6 +4,8 @@
  * 使用 light DOM 挂载核心阅读器：属性映射到 `OFDViewer` 方法，复杂配置走
  * `features` property；组件只负责实例生命周期与事件桥接，不复制任何阅读器逻辑。
  */
+
+import '../compat';
 import { OFDViewer } from '../index';
 import {
   bindViewerEvents,
@@ -24,6 +26,8 @@ import type {
   CertificateSource,
   CertificateSummary,
   CryptoViewerOptions,
+  ExportOfdOptions,
+  ExportOfdResult,
   VerificationReport,
   ViewerSource,
 } from '../index';
@@ -272,6 +276,17 @@ export class OFDViewerElement extends HTMLElement {
   /** 打开工具栏验证面板。 */
   openVerificationPanel(): void {
     this.instance?.openVerificationPanel();
+  }
+
+  /**
+   * 导出当前 OFD 原文件。
+   *
+   * @param options 文件名与取消信号。
+   * @returns 原文件结果；实例尚未创建时为 null。
+   */
+  async exportOfd(options?: ExportOfdOptions): Promise<ExportOfdResult | null> {
+    if (!this.instance) return null;
+    return this.instance.exportOfd(options);
   }
 
   /** 销毁实例；可重复调用。 */

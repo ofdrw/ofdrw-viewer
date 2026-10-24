@@ -4,6 +4,8 @@
  * 同一时间只展示一条 Toast；`info`/`warning` 使用 `role="status"`，
  * `error` 使用 `role="alert"`。自动关闭计时可被新的 Toast 替换。
  */
+
+import { replaceChildren } from '../compat';
 import type { Translator } from '../i18n';
 import type { ToastLevel, ViewerToast } from '../state';
 import { createIcon } from './icons';
@@ -88,7 +90,7 @@ export class ToastManager {
     }
     this.current = null;
     this.closeButton = null;
-    this.options.layer.replaceChildren();
+    replaceChildren(this.options.layer);
     this.options.layer.hidden = true;
   }
 
@@ -114,7 +116,7 @@ export class ToastManager {
   private render(toast: ViewerToast): void {
     const doc = this.options.layer.ownerDocument;
     this.current = toast;
-    this.options.layer.replaceChildren();
+    replaceChildren(this.options.layer);
     const element = doc.createElement('div');
     element.className = 'ofd-toast';
     element.dataset.level = toast.level;

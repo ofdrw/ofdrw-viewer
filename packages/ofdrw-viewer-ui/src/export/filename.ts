@@ -102,6 +102,23 @@ export function buildZipFilename(options: {
 }
 
 /**
+ * 构造原 OFD 文件名。
+ *
+ * @param options 文档名与自定义名称。
+ * @returns 以 `.ofd` 结尾的文件名。
+ */
+export function buildOfdFilename(options: {
+  /** 文档名（已清洗）。 */
+  readonly documentName: string;
+  /** 自定义文件名；可带或不带 `.ofd`。 */
+  readonly customName?: string;
+}): string {
+  const raw = options.customName ? sanitizeFileName(options.customName) : '';
+  const base = raw || options.documentName;
+  return base.toLowerCase().endsWith('.ofd') ? base : `${base}.ofd`;
+}
+
+/**
  * 在 ZIP 中生成唯一名称；重名时追加序号。
  *
  * @param filename 期望名称。

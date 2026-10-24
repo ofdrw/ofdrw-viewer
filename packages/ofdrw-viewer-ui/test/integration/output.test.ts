@@ -168,6 +168,11 @@ describe('导出集成', () => {
       '预览-p3.png',
     ]);
     expect([...progress]).toEqual([1, 1, 2, 3]);
+    const ofd = await viewer.exportOfd({ filename: '原始件' });
+    expect(ofd.filename).toBe('原始件.ofd');
+    expect(ofd.size).toBe(8);
+    expect(ofd.blob.type).toBe('application/ofd');
+    expect(capture.downloads.at(-1)).toMatchObject({ filename: '原始件.ofd' });
     viewer.destroy();
     capture.restore();
   });
@@ -190,6 +195,10 @@ describe('导出集成', () => {
       reason: 'document',
     });
     await expect(viewer.exportImage()).rejects.toMatchObject({
+      code: 'OFD_FEATURE_DISABLED',
+      feature: 'export',
+    });
+    await expect(viewer.exportOfd()).rejects.toMatchObject({
       code: 'OFD_FEATURE_DISABLED',
       feature: 'export',
     });

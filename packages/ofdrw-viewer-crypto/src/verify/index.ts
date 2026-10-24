@@ -13,6 +13,7 @@ export type {
   PackageVerificationInfo,
   SealVerification,
   SignatureVerification,
+  SigningTimeSource,
   VerificationReport,
   VerifyOfdOptions,
 } from './types';

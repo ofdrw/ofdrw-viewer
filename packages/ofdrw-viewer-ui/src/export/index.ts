@@ -21,6 +21,7 @@ export { createStoreZip } from './zip';
 export type { ZipEntry } from './zip';
 export {
   buildImageFilename,
+  buildOfdFilename,
   buildZipFilename,
   downloadBlob,
   extensionForFormat,

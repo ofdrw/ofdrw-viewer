@@ -7,6 +7,8 @@
  * - 断点差异全部交给 CSS（`data-viewport`），工具栏不维护第二套 DOM；
  * - 桌面完整、紧凑/移动精简、窄屏仅保留核心控件，其余进入“更多”菜单。
  */
+
+import { replaceChildren } from '../compat';
 import { setExpanded, setPressed } from '../a11y';
 import type { ViewerFeature, ViewerFeatureStates } from '../features';
 import type { MessageKey, Translator } from '../i18n';
@@ -242,7 +244,7 @@ export class Toolbar {
   /** 释放事件与菜单。 */
   destroy(): void {
     this.moreMenu.destroy();
-    this.element.replaceChildren();
+    replaceChildren(this.element);
   }
 
   /** 构建工具栏 DOM。 */
@@ -250,7 +252,7 @@ export class Toolbar {
     this.element.classList.add('ofd-viewer__toolbar');
     this.element.setAttribute('role', 'toolbar');
     this.element.setAttribute('aria-label', this.translator.t('toolbar.label'));
-    this.element.replaceChildren();
+    replaceChildren(this.element);
 
     const sidebarGroup = this.createGroup('toolbar.groupSidebar');
     this.sidebarButton = this.createButton(
@@ -524,7 +526,7 @@ export class Toolbar {
   private buildZoomOptions(): void {
     const doc = this.element.ownerDocument;
     const previousValue = this.zoomSelect.value;
-    this.zoomSelect.replaceChildren();
+    replaceChildren(this.zoomSelect);
     for (const [mode, key] of ZOOM_MODE_OPTIONS) {
       const option = doc.createElement('option');
       option.value = mode;

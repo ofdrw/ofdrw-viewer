@@ -7,7 +7,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, expectNoPageErrors, test } from './fixtures';
 import type { Locator, Page } from '@playwright/test';
-import { FIXTURES, openViewer, viewerUrl } from './support';
+import { FIXTURES, expectOpeningMotion, openViewer, viewerUrl } from './support';
 
 const ARTIFACTS = join(process.cwd(), 'test', '.artifacts', 'ui-bugfix-20261023', 't1');
 mkdirSync(ARTIFACTS, { recursive: true });
@@ -224,6 +224,25 @@ test('文档属性常驻 info 按钮打开属性对话框，更多菜单不再�
   await properties.click();
   await expect(page.locator('.ofd-dialog')).toBeVisible();
   await expect(page.locator('.ofd-dialog__title')).toContainText('文档属性');
+  // 遮罩淡入 + 对话框轻移淡入，焦点立即进入对话框且动画不改变居中定位。
+  await expectOpeningMotion(page.locator('.ofd-dialog'), 'ofd-dialog-in');
+  await expectOpeningMotion(page.locator('.ofd-dialog__backdrop'), 'ofd-fade-in');
+  const dialogOrigin = await page.locator('.ofd-dialog').evaluate((element: HTMLElement) => {
+    const [originX, originY] = getComputedStyle(element).transformOrigin
+      .split(' ')
+      .map((value) => Number.parseFloat(value));
+    return {
+      dx: Math.abs(originX! - element.offsetWidth / 2),
+      dy: Math.abs(originY! - element.offsetHeight / 2),
+    };
+  });
+  expect(dialogOrigin.dx).toBeLessThanOrEqual(1);
+  expect(dialogOrigin.dy).toBeLessThanOrEqual(1);
+  expect(
+    await page.evaluate(() =>
+      document.querySelector<HTMLElement>('.ofd-dialog')!.contains(document.activeElement),
+    ),
+  ).toBe(true);
   await screenshot(page, 'properties-dialog-light');
   await page.keyboard.press('Escape');
   await expect(page.locator('.ofd-dialog')).toHaveCount(0);
@@ -234,6 +253,30 @@ test('文档属性常驻 info 按钮打开属性对话框，更多菜单不再�
   await expect(menu).toBeVisible();
   await expect(menu.locator('[data-ofd-control="menu-properties"]')).toHaveCount(0);
   await expect(menu.locator('[data-ofd-control="menu-about"]')).toHaveCount(1);
+  // 菜单从触发按钮方向缩放淡入；动画期间脚本写入的坐标不变化，焦点在菜单内。
+  await expectOpeningMotion(menu, 'ofd-menu-in');
+  const placement = await menu.getAttribute('data-placement');
+  expect(placement).toBe('below');
+  const menuOrigin = await menu.evaluate((element: HTMLElement) => {
+    const [originX, originY] = getComputedStyle(element).transformOrigin
+      .split(' ')
+      .map((value) => Number.parseFloat(value));
+    return {
+      rightGap: Math.abs(originX! - element.offsetWidth),
+      topGap: Math.abs(originY!),
+    };
+  });
+  expect(menuOrigin.rightGap).toBeLessThanOrEqual(1);
+  expect(menuOrigin.topGap).toBeLessThanOrEqual(1);
+  const menuPosition = await menu.evaluate((element) => ({
+    left: element.style.left,
+    top: element.style.top,
+  }));
+  await page.waitForTimeout(220);
+  expect(
+    await menu.evaluate((element) => ({ left: element.style.left, top: element.style.top })),
+  ).toEqual(menuPosition);
+  expect(await menu.evaluate((element) => element.contains(document.activeElement))).toBe(true);
   await page.keyboard.press('Escape');
   await expect(menu).toBeHidden();
 
@@ -262,6 +305,34 @@ test('文档属性常驻 info 按钮打开属性对话框，更多菜单不再�
   await expectNoPageErrors(page, issues);
 });
 
+test('prefers-reduced-motion：对话框与更多菜单立即可见且无动画', async ({ page, issues }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openViewer(page, FIXTURES.multi);
+
+  await page.locator('[data-ofd-control="document-properties"]').click();
+  await expect(page.locator('.ofd-dialog')).toBeVisible();
+  const dialogMotion = await page.evaluate(() => {
+    const dialog = document.querySelector<HTMLElement>('.ofd-dialog')!;
+    const backdrop = document.querySelector<HTMLElement>('.ofd-dialog__backdrop')!;
+    return {
+      dialog: getComputedStyle(dialog).animationName,
+      backdrop: getComputedStyle(backdrop).animationName,
+    };
+  });
+  expect(dialogMotion).toEqual({ dialog: 'none', backdrop: 'none' });
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.ofd-dialog')).toHaveCount(0);
+
+  await page.locator('[data-ofd-control="more"]').click();
+  const menu = page.locator('.ofd-more-menu');
+  await expect(menu).toBeVisible();
+  expect(await menu.evaluate((element) => getComputedStyle(element).animationName)).toBe('none');
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+  await expectNoPageErrors(page, issues);
+});
+
 /** 四种视口下更多按钮常驻、菜单完整且不被工具栏裁剪。 */
 test('360/480/768/1440 视口：更多按钮常驻、菜单完整、Esc/点外关闭', async ({ page, issues }) => {
   const cases = [
@@ -279,7 +350,7 @@ test('360/480/768/1440 视口：更多按钮常驻、菜单完整、Esc/点外�
         '旋转',
         '查找',
         '打印',
-        '导出图片',
+        '导出',
         '签章信息',
         '进入全屏',
         '关于',
@@ -289,13 +360,13 @@ test('360/480/768/1440 视口：更多按钮常驻、菜单完整、Esc/点外�
       width: 480,
       height: 800,
       viewport: 'mobile',
-      items: ['上一页', '下一页', '旋转', '查找', '打印', '导出图片', '签章信息', '进入全屏', '关于'],
+      items: ['上一页', '下一页', '旋转', '查找', '打印', '导出', '签章信息', '进入全屏', '关于'],
     },
     {
       width: 768,
       height: 1024,
       viewport: 'compact',
-      items: ['上一页', '下一页', '旋转', '查找', '打印', '导出图片', '签章信息', '进入全屏', '关于'],
+      items: ['上一页', '下一页', '旋转', '查找', '打印', '导出', '签章信息', '进入全屏', '关于'],
     },
     { width: 1440, height: 900, viewport: 'desktop', items: ['关于'] },
   ] as const;
@@ -479,6 +550,8 @@ test('打印/导出选项 light/dark hover/focus 对比度 ≥ 4.5:1', async ({ 
     await expect(page.locator('.ofd-viewer')).toHaveAttribute('data-theme', theme);
     await page.locator('[data-ofd-control="print"]').click();
     await expect(page.locator('.ofd-dialog')).toBeVisible();
+    await expectOpeningMotion(page.locator('.ofd-dialog'), 'ofd-dialog-in');
+    await expectOpeningMotion(page.locator('.ofd-dialog__backdrop'), 'ofd-fade-in');
     await screenshot(page, `print-${theme}-normal`);
 
     const rangeSelect = page.locator('.ofd-output-form select').first();
@@ -561,6 +634,7 @@ test('打印/导出选项 light/dark hover/focus 对比度 ≥ 4.5:1', async ({ 
     // 导出对话框覆盖 range 控件的 hover/focus（打印与导出共用输出控件样式）。
     await page.locator('[data-ofd-control="export"]').click();
     await expect(page.locator('.ofd-dialog')).toBeVisible();
+    await expectOpeningMotion(page.locator('.ofd-dialog'), 'ofd-dialog-in');
     const quality = page.locator('.ofd-output-quality');
     // PNG 下质量滑杆无意义被禁用；切换到 JPEG 后启用。
     await page.locator('.ofd-output-form select').nth(1).selectOption('jpeg');

@@ -86,6 +86,8 @@ describe('React wrapper', () => {
     ref.current!.setScale(1.25);
     ref.current!.setRotation(90);
     await ref.current!.print();
+    const exported = await ref.current!.exportOfd();
+    expect(exported?.filename).toBe('fake.ofd');
 
     expect(viewer.pageCalls).toContain(4);
     expect(viewer.scaleCalls).toContain(1.25);

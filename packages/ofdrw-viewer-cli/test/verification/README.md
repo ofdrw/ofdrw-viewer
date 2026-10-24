@@ -23,7 +23,7 @@
 | --- | --- |
 | 旧 `<input.ofd> [options]` 兼容；帮助/未知参数/未知子命令/退出码 | `cli-contract.test.ts`：默认输入/输出目录/格式/DPI/页码/`--text`/字体参数；`--help`、`--version`、`-h`、`-V`；未知选项、多输入、`info`/`verify` 缺输入、`frobnicate` 处理；所有用法错误 1 + 用法提示 |
 | `info` 只查询、不解密不验证；文本/JSON 字段；加密用户与不可读 | `cli-info-verify.test.ts`：明文/加密/签名/完整性/非法包；JSON 与 crypto `inspect` 的 packageSize/version/encrypted/layers/users/signatureCount/integrityPresent/warnings 对照；加密文本显示 `加密: 是（1 层）`、用户与 `method`，且不回显 `拿来主义`/`鲁迅` 正文；篡改签名包仍退出 0，仅报 `signatureCount` |
-| `verify` 有效/篡改/无根 unknown/配根 valid；JSON/文本；退出码 | `cli-info-verify.test.ts` + acceptance：PEM/DER 根、重复根、错误根、无根 warning；`valid`→0，`unknown`/`invalid`/`not-applicable`→5；引用内容篡改、夹带文件、自定义 SM2 userId、加密口令验证；文本与 JSON 的 overall/签名状态/时间戳一致；与 crypto `verifyOfd` oracle 对照 |
+| `verify` 有效/篡改/无根链 unknown/配根 valid；JSON/文本；退出码 | `cli-info-verify.test.ts` + acceptance：PEM/DER 根、重复根、错误根、无根 warning；无根时 `certificate.status=unknown` 但 overall 仍 `valid`→0；`invalid`/`unknown`/`not-applicable`→5；引用内容篡改、夹带文件、自定义 SM2 userId、加密口令验证；文本与 JSON 的 overall/签名状态/时间戳一致；与 crypto `verifyOfd` oracle 对照 |
 | 加密文档转图片：口令/私钥成功；错误凭据；不泄漏密钥 | `cli-convert.test.ts` + acceptance：`--user/--password`、`--user/--key`（PEM/DER）→ PNG + `--text` JSON；`--pages`/`--format jpeg` 保持；缺凭据/错口令/错私钥→4 且不产页；输出中无口令、`BEGIN PRIVATE KEY`、`EncryptedWK` |
 | 无独立 decrypt；CLI 复用 crypto、不重复密码逻辑 | `cli-contract.test.ts`：`decrypt` 固定 1；静态断言 `info.ts` 只 import `inspect`、`verify.ts` 只 import `verifyOfd`、`convert.ts` import `openDecryptingContainer`，CLI 源码无 `sm-crypto`/自实现 SM3/SM4/`EncryptedWK`；运行期所有验证/解密均由这些入口完成 |
 | 构建后 CLI/SEA 验收；测试证据 | `test/acceptance/verification.acceptance.ts`：真实 `dist/bin.js` 的帮助、info/verify、加密转换；SEA 的 info/verify 与口令解密转图；`pnpm test:acceptance` 全量 5 文件 82 用例通过（含既有 SEA 无 Node 用例） |

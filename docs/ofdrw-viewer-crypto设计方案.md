@@ -416,10 +416,14 @@ FEK (16 byte) + IV（种子项）
 | 状态 | 含义 |
 | --- | --- |
 | `valid` | 已检查项全部通过 |
-| `invalid` | 结构、摘要、签名、文件清单或证书链明确失败 |
-| `unknown` | 无法判定（例如未配置信任根、链终点不可知），不是失败 |
+| `invalid` | 结构、摘要、签名、文件清单或印章校验明确失败 |
+| `unknown` | 无法判定（例如签名算法或结构无法解释），不是失败 |
 | `unsupported` | 算法、SES 版本或结构类型不受支持 |
 | `not-applicable` | 没有完整性结果也没有签名，或子项本身不适用 |
+
+证书链状态独立于上述聚合：`certificate.status`、`issues`、`trustRootConfigured` 始终完整保留，但不参与签名、印章、完整性与 `overall` 的通过/失败判定。
+
+每个签名额外提供 `signingTime`/`signingTimeSource` 作为签发时间展示值，来源优先级为 `TBS_Sign.timeInfo` > 时间戳 `TSTInfo.genTime` > `Signature.xml/SignatureDateTime`；均无值时省略。`timeInfo` 与 `SignatureDateTime` 保留原文（v4/v5 的 `timeInfo` 为 ISO 8601，v1 可能为自由文本），该字段只用于展示，不代表可信时间。当前支持的 SES v1/v4/v5 中，v4/v5 的 `timeInfo` 为必需字段、v1 不含时间戳，因此实际只会产生 `time-info` 或 `signature-xml`；`timestamp` 分支保留给未来允许缺省 `timeInfo` 的结构变体，当前版本不可达。
 
 ### 5.2 完整性验证
 
@@ -432,7 +436,7 @@ FEK (16 byte) + IV（种子项）
 - 验签使用 SignedData 中的内嵌证书；签名算法必须是 SM3withSM2 或 SM2 sign，摘要算法必须是 SM3。
 - 文件清单与实际包内容比对：清单登记但缺失的文件记 `INTEGRITY_FILE_MISSING`；包内存在但未登记的夹带文件记 `INTEGRITY_EXTRA_FILE`；两类问题都会使完整性 `invalid`。
 - 实际文件计数排除清单文件和签名值文件自身。
-- 证书链状态参与完整性聚合：过期、未生效、不受信、非法或缺少证书通常使完整性 `invalid`；无根证书时 `incomplete` 降级为 `unknown`，不把“无法判定”误判为篡改。
+- 证书链状态独立记录、不参与完整性聚合：链状态为 `expired`、`not-yet-valid`、`untrusted`、`incomplete`、`invalid`、`not-present`、`unknown` 或 `unsupported` 时，只要 SignedData 签名数学、文件清单与摘要通过，完整性仍为 `valid`。缺少匹配证书会使签名验签失败，因此仍由签名结果判为 `invalid`。
 
 ### 5.3 签名发现与筛选
 
@@ -452,7 +456,7 @@ FEK (16 byte) + IV（种子项）
 | v4 | 4（另可带 `[0]` 时间戳） | 5 | TBS 内带印章、时间、dataHash、propertyInfo；顶层带证书、算法与签名 |
 | v5 | 4（另可带 `[0]` 时间戳） | 5 | 与 v4 结构相同，以 `version=5` 区分 |
 
-解析器保留 TBS 的原始 DER 字节，验签直接使用原始字节，不重新序列化；这是避免 ASN.1 重编码改变签名的关键约束。证书以 DER 形式嵌入；`SESeal` 与时间戳是可选字段。未知版本报 `CRYPTO_UNSUPPORTED_SES_VERSION`，不尝试按相近版本解析。
+解析器保留 TBS 的原始 DER 字节，验签直接使用原始字节，不重新序列化；这是避免 ASN.1 重编码改变签名的关键约束。证书以 DER 形式嵌入；`SESeal` 与时间戳是可选字段。未知版本报 `CRYPTO_UNSUPPORTED_SES_VERSION`，不尝试按相近版本解析。`parseSignedValue` 额外返回签章者证书 DER（`certificateDer`，独立副本、调用方拥有），供 UI 下载或展示；该字段不含 PEM、私钥或口令。
 
 ### 5.5 签名值与 References
 
@@ -490,6 +494,8 @@ FEK (16 byte) + IV（种子项）
 | `untrusted` | 链止于自签名证书，但该证书不在信任根集合 |
 | `unknown` | 未配置信任根，无法判定终点 |
 
+链状态只用于独立展示，**不参与**签名、印章、完整性与 `overall` 的通过/失败判定：`untrusted`/`expired`/`not-yet-valid`/`incomplete`/`unknown`/`unsupported` 都不会把密码学校验通过的结果降级；warning 仍保留。缺少签名者证书会导致签名数学无法验证，因此签名仍为 `invalid`。
+
 ### 5.7 印章
 
 `parseSeal` 解析 `Seal.esl` 的 SES 印章结构，返回印章头、证书、图片和签名信息。印章图片是 `Seal.esl` 内嵌的 `SES_ESPictrueInfo.data` 字节；包内路径只用于定位 `Seal.esl`，不用于读取外部图片。印章解析失败或内嵌图片不可读时：
@@ -513,7 +519,7 @@ FEK (16 byte) + IV（种子项）
 ### 5.9 解析 API 的边界
 
 - `parseSignatureXml`/`parseSignaturesXml` 只解析清单结构，不读取 `SignedValue`；文件存在性由调用方或验证编排检查。
-- `parseSignedValue` 解析 SES 并保留 TBS 原始字节，不做证书链或 `References` 校验。
+- `parseSignedValue` 解析 SES 并保留 TBS 原始字节，不做证书链或 `References` 校验；返回签章者证书摘要与证书 DER（`certificateDer`）。
 - `parseOfdEntriesXml` 解析清单及 `SignedValueLoc`，不验证 SignedData。
 - `parseSeal` 只解析印章，不验证印章签名。
 - `parseTimestamp` 只解析和比较 messageImprint，不验证 TSA 证书或签名。
@@ -529,6 +535,7 @@ crypto 不感知宿主平台，UI 与 CLI 只通过公开 API 组合能力。具
 - 调用方把用户选择的 OFD 来源转换为 `CryptoSource`：`arraybuffer`/`blob`/`byte-source` 由本包按需读取，`url` 由本包通过全局 `fetch` 整包读取。需要 Range、鉴权、重试、缓存、代理或进度时，调用方应自行读取并传入 `byte-source`。
 - 凭据以 `CryptoCredential` 传入；根证书先由调用方转换为逐张 `CertificateDer`；密码、私钥和证书来源的读取与错误文案由调用方负责。
 - 调用方展示 `VerificationReport`、`OfdInspection`、`CryptoError.code` 与 `CryptoWarning`；不得在 UI/CLI 重新实现 SM 算法、SES 解析或证书链校验。
+- 签名结果中的 `signingTime`/`signingTimeSource` 用于展示签发时间，`certificate` 明细用于独立展示证书链可信状态；需要下载签章者证书时使用 `parseSignedValue` 返回的 `certificateDer`。证书链状态不得改变签名/完整性/`overall` 的呈现结论。
 
 ### 6.2 生命周期与所有权
 
@@ -624,7 +631,8 @@ crypto 的测试覆盖以下层次：
 - 多层解密逐层移除元数据；输出容器不包含 `Encryptions.xml`、`decryptseed.dat`、`entriesmap.dat`。
 - 层循环和超限在返回容器前失败；取消后不返回部分明文。
 - 完整性缺失/夹带/篡改分别得到 `null`/`invalid`，而不是 `valid`。
-- 无根证书时链为 `unknown`；过期、未生效、不受信、非法分别有独立状态。
+- 无根证书时链为 `unknown`，但签名数学与引用通过时签名/`overall` 仍为 `valid`；过期、未生效、不受信、不完整分别保留独立链状态，且不改变最终判定。
+- `signingTime` 按 `timeInfo` > `timestamp.genTime` > `SignatureDateTime` 取值，无值时字段省略；当前 v1/v4/v5 实际只会产生 `time-info` 或 `signature-xml`，`timestamp` 分支为未来结构变体保留；签名者证书 DER 可下载且不含 PEM/私钥。
 - SES v1/v4/v5 的 TBS 原始字节保持；不支持的版本和算法不误判为 `valid`。
 - 时间戳只解析、不验证；messageImprint 不一致只产生 warning。
 - 内存容器 `read()` 返回副本，关闭后读取抛 `OFD_CLOSED`，重复关闭幂等。

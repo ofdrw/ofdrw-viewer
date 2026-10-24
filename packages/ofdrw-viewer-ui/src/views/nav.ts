@@ -9,6 +9,8 @@
  * 后续 `statechange`/`featureschange`/`sidebarviewchanged` 事件继续尝试。
  */
 
+import { runMicrotask } from '../compat';
+
 import type { Translator } from '../i18n';
 import { getUIShell } from '../ui';
 import { registerViewerExtension, type OFDViewer } from '../viewer';
@@ -102,7 +104,7 @@ export function attachNavigation(viewer: OFDViewer): () => void {
   };
 
   bind();
-  if (!services) queueMicrotask(bind);
+  if (!services) runMicrotask(bind);
 
   // 功能被关闭时同步关闭核心侧栏状态：核心只负责 hidden，UI 外壳只收起自己的
   // 选中态；两者保持一致需要导航层补一刀（不修改 viewer.ts）。

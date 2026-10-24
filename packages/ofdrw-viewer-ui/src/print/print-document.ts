@@ -170,7 +170,7 @@ export async function preparePrintDocument(
       options.onProgress?.({ current: index + 1, total: options.pages.length });
     }
     throwIfSignalAborted(options.signal);
-    const css = buildPrintCss(preparedPages);
+    const css = buildPrintCss(preparedPages, supportsNamedPages(doc.defaultView));
     style = doc.createElement('style');
     style.dataset.ofdPrintStyle = 'true';
     style.textContent = css;
@@ -225,15 +225,44 @@ export async function printPreparedDocument(prepared: PreparedPrintDocument): Pr
 }
 
 /**
+ * 检测命名页（`@page <name>` + `page` 属性）能力。
+ *
+ * `page` 属性 Chrome 85 才有；Chrome 67 会忽略命名页规则。用
+ * `CSS.supports('page', ...)` 判断（Chrome 28+ 可用，未知属性返回 false）。
+ * 无法探测的环境（无 `CSS`/`supports`）按支持处理，保持现代内核行为。
+ *
+ * @param view 目标窗口；省略时使用全局 `CSS`。
+ * @returns 支持命名页时 true。
+ */
+export function supportsNamedPages(view?: Window | null): boolean {
+  const scoped = (view as (Window & { CSS?: typeof CSS }) | null | undefined)?.CSS;
+  const css = scoped ?? (typeof CSS !== 'undefined' ? CSS : undefined);
+  if (!css || typeof css.supports !== 'function') return true;
+  try {
+    return css.supports('page', 'ofd-size-0');
+  } catch {
+    return true;
+  }
+}
+
+/**
  * 生成打印样式。
  *
+ * 统一尺寸直接设置一条 `@page`；混合尺寸在支持命名页时按尺寸分组使用命名页，
+ * 不支持时（Chrome 67）降级为“最大页尺寸的统一纸型 + 等比适配”，避免裁切。
+ *
  * @param pages 已准备页面。
+ * @param namedPages 是否支持命名页；省略时自动探测。
  * @returns CSS 文本。
  */
-export function buildPrintCss(pages: readonly PreparedPrintPage[]): string {
+export function buildPrintCss(
+  pages: readonly PreparedPrintPage[],
+  namedPages: boolean = supportsNamedPages(),
+): string {
   const groups = collectSizeGroups(pages);
   const mixed = groups.length > 1;
-  const namedRules = mixed
+  const useNamedPages = mixed && namedPages;
+  const namedRules = useNamedPages
     ? groups
         .map(
           (group) =>
@@ -241,19 +270,44 @@ export function buildPrintCss(pages: readonly PreparedPrintPage[]): string {
         )
         .join('\n')
     : '';
-  const pageRules = mixed
+  let pageRules: string;
+  if (useNamedPages) {
+    pageRules = [
+      '@page { size: auto; margin: 0; }',
+      ...groups.map(
+        (group) =>
+          `@page ofd-size-${group.index} { size: ${formatMm(group.widthMm)}mm ${formatMm(
+            group.heightMm,
+          )}mm; margin: 0; }`,
+      ),
+    ].join('\n');
+  } else {
+    // 统一尺寸或 Chrome 67 降级：统一尺寸用该页尺寸；混合尺寸取所有页的最大宽/高，
+    // 保证任何一页都不被裁切。
+    const unified =
+      groups.length <= 1
+        ? {
+            widthMm: groups[0]?.widthMm ?? A4_WIDTH_MM,
+            heightMm: groups[0]?.heightMm ?? A4_HEIGHT_MM,
+          }
+        : groups.reduce(
+            (size, group) => ({
+              widthMm: Math.max(size.widthMm, group.widthMm),
+              heightMm: Math.max(size.heightMm, group.heightMm),
+            }),
+            { widthMm: 0, heightMm: 0 },
+          );
+    pageRules = `@page { size: ${formatMm(unified.widthMm)}mm ${formatMm(
+      unified.heightMm,
+    )}mm; margin: 0; }`;
+  }
+  const fallbackRules = mixed && !namedPages
     ? [
-        '@page { size: auto; margin: 0; }',
-        ...groups.map(
-          (group) =>
-            `@page ofd-size-${group.index} { size: ${formatMm(group.widthMm)}mm ${formatMm(
-              group.heightMm,
-            )}mm; margin: 0; }`,
-        ),
-      ].join('\n')
-    : `@page { size: ${formatMm(groups[0]!.widthMm)}mm ${formatMm(
-        groups[0]!.heightMm,
-      )}mm; margin: 0; }`;
+        '  html, body { height: 100% !important; }',
+        '  .ofd-print-page { width: 100% !important; height: 100% !important; }',
+        '  .ofd-print-page__image { max-width: 100%; max-height: 100%; object-fit: contain; }',
+      ]
+    : [];
 
   return [
     '.ofd-print-root { display: none; }',
@@ -266,6 +320,7 @@ export function buildPrintCss(pages: readonly PreparedPrintPage[]): string {
     '  .ofd-print-page { position: relative; overflow: hidden; margin: 0; padding: 0; background: #fff; break-after: page; page-break-after: always; }',
     '  .ofd-print-page:last-child { break-after: auto; page-break-after: auto; }',
     '  .ofd-print-page__image { display: block; position: absolute; left: 50%; top: 50%; transform-origin: center center; }',
+    ...fallbackRules,
     namedRules,
     '}',
     '',

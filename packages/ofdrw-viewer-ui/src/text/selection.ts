@@ -9,6 +9,8 @@
  * 高亮影响。
  */
 
+import { runMicrotask } from '../compat';
+
 import { createFeatureDisabledError, OFDViewerError } from '../errors';
 import { isCjkChar, normalizeSelectionText } from './geometry';
 import type { TextViewerHost, ViewerBridge } from './viewer-bridge';
@@ -128,7 +130,7 @@ export class SelectionManager {
   private scheduleSelectionChange(): void {
     if (this.queued) return;
     this.queued = true;
-    queueMicrotask(() => {
+    runMicrotask(() => {
       this.queued = false;
       this.publishSelectionChange();
     });

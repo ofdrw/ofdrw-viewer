@@ -33,6 +33,11 @@
       "import": "./dist/element.js",
       "require": "./dist/element.cjs"
     },
+    "./compat": {
+      "types": "./dist/compat.d.ts",
+      "import": "./dist/compat.js",
+      "require": "./dist/compat.cjs"
+    },
     "./style.css": "./dist/style.css",
     "./package.json": "./package.json"
   },

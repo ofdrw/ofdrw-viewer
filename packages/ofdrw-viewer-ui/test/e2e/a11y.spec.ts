@@ -166,11 +166,12 @@ test('沉浸式全屏 fallback 下 Escape 退出且不与侧栏冲突', async ({
   await openViewer(page, FIXTURES.multi);
   await dismissFindbar(page);
   // 模拟浏览器缺少原生全屏能力，强制走沉浸式 fallback。
+  // Chrome 同时暴露标准与前缀实现，只删除标准方法会让兼容层回退到 webkit 方法。
   await page.evaluate(() => {
-    Object.defineProperty(window.__viewer!.getElements().root, 'requestFullscreen', {
-      configurable: true,
-      value: undefined,
-    });
+    const root = window.__viewer!.getElements().root;
+    for (const method of ['requestFullscreen', 'webkitRequestFullscreen'] as const) {
+      Object.defineProperty(root, method, { configurable: true, value: undefined });
+    }
   });
   const fullscreen = () =>
     page.evaluate(() => window.__viewer!.getState().view.fullscreen);

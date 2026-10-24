@@ -175,6 +175,24 @@ export interface ExportImageResult {
   readonly format: ImageFormat;
 }
 
+/** 原 OFD 导出选项。 */
+export interface ExportOfdOptions {
+  /** 自定义文件名（不含扩展名）；默认按文档名生成。 */
+  readonly filename?: string;
+  /** 取消信号。 */
+  readonly signal?: AbortSignal;
+}
+
+/** 原 OFD 导出结果。 */
+export interface ExportOfdResult {
+  /** 原文件 Blob；加密文档为原始加密字节。 */
+  readonly blob: Blob;
+  /** 下载文件名（含 `.ofd` 扩展名）。 */
+  readonly filename: string;
+  /** 字节数，单位 byte。 */
+  readonly size: number;
+}
+
 /** 导出进度。 */
 export interface ExportProgressEvent {
   /** 已完成页数。 */
@@ -283,6 +301,8 @@ export type SignedAtSource = 'timeInfo' | 'signatureDateTime' | 'timestamp-token
 export interface SignerInfo {
   /** 签章者证书。 */
   readonly certificate?: CertificateInfo;
+  /** 签章者证书 DER；仅用于下载，不进入持久状态。 */
+  readonly certificateDer?: Uint8Array;
   /** 签章时间。 */
   readonly signedAt?: string;
   /** 签章时间来源。 */

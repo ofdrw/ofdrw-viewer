@@ -19,9 +19,9 @@ ofdrw 2.4.0 生成的样例。
 | SES v4/v5 SignedValue、Seal.esl 字段 | [`parse.test.ts`](./parse.test.ts) | 版本、esId/name/type/有效期、制章者证书、签章者证书、图片 PNG/尺寸、byteLength；与 `java-expected.json` 的 `seals`/`signedValues` 对照 |
 | SES v1 | `parse.test.ts` | 独立构造 v1 `SES_Signature`/`SESeal`，解析字段且 `verifyOfd` 判定 `valid` |
 | 有效签名 + 信任根 | [`verify.test.ts`](./verify.test.ts) | v4/v5 `overall=valid`，签名/Ref/dataHash/Seal/证书链均 valid，Java `OFDValidator` 也通过 |
-| 未配置信任根 | `verify.test.ts` | `overall=unknown`、证书链 `unknown`，数学/引用仍 valid；不把“无法确定信任锚”判为失败 |
-| 错误根证书 | `verify.test.ts` | 加密证书作根 → 证书链 `incomplete`，整体 `invalid` |
-| 有效期链 | `verify.test.ts` | `now=2041` → `expired`；`now=2019` → `not-yet-valid`；未配置根时过期仍 `invalid` |
+| 未配置信任根 | `verify.test.ts` | 证书链 `unknown`，但签名数学/引用通过时签名与 `overall` 仍 `valid`；不把“无法确定信任锚”判为失败 |
+| 错误根证书 | `verify.test.ts` | 加密证书作根 → 证书链 `incomplete`，签名与 `overall` 仍 `valid` |
+| 有效期链 | `verify.test.ts` | `now=2041` → `expired`；`now=2019` → `not-yet-valid`；未配置根时过期仍展示 `expired`，均不改变签名/`overall` 的 `valid` |
 | Reference 篡改 | `verify.test.ts` | `negative-tampered-content.ofd` → `mismatch`，路径为 `Doc_0/Pages/Page_0/Content.xml`，Java 失败 |
 | SignedValue 篡改 | `verify.test.ts` | `negative-tampered-signedvalue.ofd` → 解析失败；另翻转签名值首字节（结构合法）→ 数学验签失败；均与 Java 失败一致 |
 | Seal.esl 篡改 | `verify.test.ts` | 截断 Seal → `SEAL_PARSE_FAILED`、Seal 与 SignedValue 不一致、Reference mismatch；翻转制章人签名值（结构合法）→ Seal 数学验签失败；Java 均失败 |
@@ -60,7 +60,7 @@ pnpm -C packages/ofdrw-viewer-crypto exec vitest run \
 ## 4. 结论
 
 - v4/v5 数学验签、Reference、Seal 一致性、证书链、完整性校验与 Java ofdrw 基线逐例一致。
-- 信任根缺失时正确返回 `unknown`；错误根/过期/尚未生效返回 `invalid`，没有把未知信任锚误判为失败。
+- 证书链状态独立展示：信任根缺失、错误根、过期与尚未生效都不会改变签名/完整性/`overall` 的密码学判定。
 - 四类篡改（引用文件、SignedValue、Seal、Signature.xml）都能给出具体原因；防夹带新增/缺失/OFDEntries
   篡改均能检出。
 - 时间戳保持“只解析、不验证”，不会产生任何“验证通过”语义。

@@ -6,6 +6,8 @@
  * 核心不直接 import 这些模块，避免并行目录互相依赖。
  */
 
+import { replaceChildren } from './compat';
+
 import type {
   DocumentPermissions,
   DocumentOpenAbortEvent,
@@ -89,6 +91,8 @@ import type {
   ExportImageOptions,
   ExportImageResult,
   ExportImagesOptions,
+  ExportOfdOptions,
+  ExportOfdResult,
   FindOptions,
   PageRange,
   PrintOptions,
@@ -103,6 +107,7 @@ import type { UIDialogOptions, UIShellElements } from './ui/types';
 import type { UIShellHost } from './ui';
 import type { CertificateSource } from './options';
 import { HttpByteSource } from './source/http-byte-source';
+import { readOFDSourceBytes, readViewerSourceBytes } from './source/read-source';
 import { readPreviewSourceFromLocation } from './source/query-source';
 import {
   CryptoService,
@@ -165,6 +170,8 @@ export interface ViewerExportService {
   exportImage(options?: ExportImageOptions): Promise<ExportImageResult>;
   /** 导出多页图片。 */
   exportImages(options?: ExportImagesOptions): Promise<void>;
+  /** 导出当前 OFD 原文件。 */
+  exportOfd(options?: ExportOfdOptions): Promise<ExportOfdResult>;
 }
 
 /** 扩展服务集合。 */
@@ -204,6 +211,26 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
 
 /** 视口宽度对应的断点。 */
 type ViewportMode = 'desktop' | 'compact' | 'mobile' | 'narrow';
+
+/** 带 `webkit` 前缀的全屏访问器；Chrome 67 只有前缀实现。 */
+interface PrefixedFullscreenAccess {
+  /** 标准请求方法（Chrome 71+）。 */
+  readonly requestFullscreen?: () => Promise<void> | void;
+  /** `webkit` 前缀请求方法（Chrome 15–70）。 */
+  readonly webkitRequestFullscreen?: () => Promise<void> | void;
+  /** 标准退出方法。 */
+  readonly exitFullscreen?: () => Promise<void> | void;
+  /** `webkit` 前缀退出方法。 */
+  readonly webkitExitFullscreen?: () => Promise<void> | void;
+  /** 标准全屏元素。 */
+  readonly fullscreenElement?: Element | null;
+  /** `webkit` 前缀全屏元素。 */
+  readonly webkitFullscreenElement?: Element | null;
+  /** 标准全屏可用性。 */
+  readonly fullscreenEnabled?: boolean;
+  /** `webkit` 前缀全屏可用性。 */
+  readonly webkitFullscreenEnabled?: boolean;
+}
 
 /** 捕获阶段忽略的错误；用于区分取消与真实失败。 */
 function isAbort(error: unknown): boolean {
@@ -371,7 +398,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private readonly onDoubleClick = (event: MouseEvent): void => this.handleDoubleClick(event);
   private readonly onWindowResize = (): void => this.scheduleViewportUpdate();
   private readonly onFullscreenChange = (): void => {
-    const value = !!this.ownerDocument.fullscreenElement;
+    const value = !!this.getFullscreenElement();
     if (!value) this.applyFullscreenFallback(false);
     if (value !== this.state.view.fullscreen) {
       this.patchView({ fullscreen: value });
@@ -525,6 +552,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     });
     if (typeof this.ownerDocument.addEventListener === 'function') {
       this.ownerDocument.addEventListener('fullscreenchange', this.onFullscreenChange);
+      // Chrome 67 只派发前缀事件；同时监听，重复触发时 onFullscreenChange 幂等。
+      this.ownerDocument.addEventListener('webkitfullscreenchange', this.onFullscreenChange);
       this.ownerDocument.addEventListener('keydown', this.onFullscreenFallbackEscape);
     }
     this.ready = this.open(this.options.source);
@@ -1101,6 +1130,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.resizeObserver?.disconnect();
     window.removeEventListener('resize', this.onWindowResize);
     this.ownerDocument.removeEventListener('fullscreenchange', this.onFullscreenChange);
+    this.ownerDocument.removeEventListener('webkitfullscreenchange', this.onFullscreenChange);
     this.ownerDocument.removeEventListener('keydown', this.onFullscreenFallbackEscape);
     if (this.scrollFrame !== null) cancelAnimationFrame(this.scrollFrame);
     if (this.reflowFrame !== null) cancelAnimationFrame(this.reflowFrame);
@@ -1275,29 +1305,76 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   }
 
   /**
+   * 读取当前全屏元素；优先标准属性，缺失时回退 `webkitFullscreenElement`。
+   *
+   * @returns 全屏元素；未全屏时为 null。
+   */
+  private getFullscreenElement(): Element | null {
+    const doc = this.ownerDocument as Document & PrefixedFullscreenAccess;
+    return doc.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
+  }
+
+  /**
+   * 解析原生全屏请求方法；标准 API 缺失时回退 `webkitRequestFullscreen`。
+   *
+   * @returns 已绑定根节点的请求方法；原生全屏不可用时为 null。
+   */
+  private getFullscreenRequestMethod(): (() => Promise<void> | void) | null {
+    if (!this.isFullscreenEnabled()) return null;
+    const root = this.root as HTMLElement & PrefixedFullscreenAccess;
+    const request =
+      (root as { requestFullscreen?: unknown }).requestFullscreen ?? root.webkitRequestFullscreen;
+    return typeof request === 'function'
+      ? (request as () => Promise<void> | void).bind(root)
+      : null;
+  }
+
+  /**
+   * 判断原生全屏是否可用；标准属性缺失时回退 `webkitFullscreenEnabled`。
+   *
+   * @returns 可用时 true；显式关闭时 false。
+   */
+  private isFullscreenEnabled(): boolean {
+    const doc = this.ownerDocument as Document & PrefixedFullscreenAccess;
+    if (doc.fullscreenEnabled === false) return false;
+    if (doc.fullscreenEnabled === true) return true;
+    return doc.webkitFullscreenEnabled !== false;
+  }
+
+  /**
+   * 退出原生全屏；标准 API 缺失时回退 `webkitExitFullscreen`。
+   */
+  private async exitFullscreen(): Promise<void> {
+    const doc = this.ownerDocument as Document & PrefixedFullscreenAccess;
+    const exit = (doc as { exitFullscreen?: unknown }).exitFullscreen ?? doc.webkitExitFullscreen;
+    if (typeof exit === 'function') await (exit as () => Promise<void> | void).call(doc);
+  }
+
+  /**
    * 进入/退出全屏。
+   *
+   * 主路径仍是无前缀 Fullscreen API；Chrome 67 只有 `webkit` 前缀实现，
+   * 两者都不可用时使用沉浸式回退，不抛错。
    *
    * @param value 是否全屏。
    */
   async setFullscreen(value: boolean): Promise<void> {
     this.assertFeature('fullscreen');
-    const nativeSupported =
-      typeof this.root.requestFullscreen === 'function' &&
-      this.ownerDocument.fullscreenEnabled !== false;
-    if (value && !nativeSupported) {
+    const request = this.getFullscreenRequestMethod();
+    if (value && !request) {
       this.applyFullscreenFallback(true);
       this.warn('W_FULLSCREEN_FALLBACK', '当前环境不支持原生全屏，已使用沉浸式回退');
       return;
     }
     try {
       if (value) {
-        if (this.ownerDocument.fullscreenElement !== this.root) {
-          await this.root.requestFullscreen();
+        if (this.getFullscreenElement() !== this.root) {
+          await request!();
         }
         this.applyFullscreenFallback(false);
       } else {
-        if (this.ownerDocument.fullscreenElement) {
-          await this.ownerDocument.exitFullscreen();
+        if (this.getFullscreenElement()) {
+          await this.exitFullscreen();
         }
         this.applyFullscreenFallback(false);
       }
@@ -1655,6 +1732,42 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     await service.exportImages(options);
   }
 
+  /**
+   * 导出当前 OFD 原文件（加密文档导出原始加密包）。
+   *
+   * @param options 文件名与取消信号。
+   * @returns 原文件 Blob、文件名与字节数。
+   */
+  async exportOfd(options: ExportOfdOptions = {}): Promise<ExportOfdResult> {
+    this.assertFeature('export');
+    const service = this.requireService('export', '导出服务');
+    return service.exportOfd(options);
+  }
+
+  /**
+   * 读取当前文档原始字节；供导出服务与宿主复用。
+   *
+   * 与 `exportOfd()` 使用同一门控：`export` 功能关闭或文档禁止导出时拒绝。
+   *
+   * @param signal 取消信号。
+   * @returns 原始 OFD 字节；未打开时拒绝。
+   * @throws {OFDViewerError} `export` 不可用抛 `OFD_FEATURE_DISABLED`；未打开抛 `OFD_NOT_OPENED`。
+   */
+  async readSourceBytes(signal?: AbortSignal): Promise<Uint8Array> {
+    this.assertFeature('export');
+    const permissions = await this.getPermissions().catch(() => null);
+    if (permissions?.export === false) {
+      throw createFeatureDisabledError('export', '当前文档不允许导出');
+    }
+    const source = this.lastOpenSource ?? this.options.source;
+    if (source !== undefined && source !== null) {
+      return readViewerSourceBytes(source, this.options.requestInit, signal);
+    }
+    const normalized = this.controller.source;
+    if (normalized) return readOFDSourceBytes(normalized);
+    throw new OFDViewerError('OFD_NOT_OPENED', '文档尚未打开，无法导出原文件');
+  }
+
   // -------------------------------------------------------------------------
   // 扩展挂载
   // -------------------------------------------------------------------------
@@ -1768,7 +1881,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     for (const pageView of this.pageViews) pageView.destroy();
     this.pageViews.length = 0;
     this.renderOrder.length = 0;
-    this.pagesElement.replaceChildren();
+    replaceChildren(this.pagesElement);
     this.pagesElement.style.height = '0px';
   }
 

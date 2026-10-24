@@ -310,6 +310,69 @@ describe('exportImages 多页导出', () => {
   });
 });
 
+describe('exportOfd 原文件导出', () => {
+  it('原样导出源字节为 .ofd 文件并触发下载', async () => {
+    const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3]);
+    const host = new FakeHost({ pageCount: 2, title: '合同 2026', sourceBytes: bytes });
+    const progress: Array<{ current: number; total: number }> = [];
+    const result = await new ExportService(host, {
+      onProgress: (event) => progress.push(event),
+    }).exportOfd();
+
+    expect(result.filename).toBe('合同 2026.ofd');
+    expect(result.size).toBe(bytes.byteLength);
+    expect(result.blob.type).toBe('application/ofd');
+    expect(new Uint8Array(await downloadedBlob().arrayBuffer())).toEqual(bytes);
+    expect(anchorClick).toHaveBeenCalledTimes(1);
+    expect(progress).toEqual([{ current: 1, total: 1 }]);
+    expect(host.events).toContainEqual({ event: 'exportprogress', payload: { current: 1, total: 1 } });
+    expect(host.pages.every((page) => page.exportImage.mock.calls.length === 0)).toBe(true);
+  });
+
+  it('自定义文件名补 .ofd，加密字节原样保留', async () => {
+    const encrypted = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0xde, 0xad, 0xbe, 0xef]);
+    const host = new FakeHost({ pageCount: 1, sourceBytes: encrypted });
+    const service = new ExportService(host);
+    const first = await service.exportOfd({ filename: '加密原件.ofd' });
+    expect(first.filename).toBe('加密原件.ofd');
+    expect(new Uint8Array(await downloadedBlob(0).arrayBuffer())).toEqual(encrypted);
+
+    const second = await service.exportOfd({ filename: '备份' });
+    expect(second.filename).toBe('备份.ofd');
+    expect(new Uint8Array(await downloadedBlob(1).arrayBuffer())).toEqual(encrypted);
+  });
+
+  it('受功能开关与文档导出权限约束，未打开时报 OFD_NOT_OPENED', async () => {
+    const disabled = new FakeHost({ pageCount: 1 });
+    disabled.getFeatureState = () => ({ enabled: false, visible: true, reason: 'host' });
+    await expectCode(() => new ExportService(disabled).exportOfd(), 'OFD_FEATURE_DISABLED');
+
+    const forbidden = new FakeHost({ pageCount: 1, permissions: { export: false } });
+    await expectCode(() => new ExportService(forbidden).exportOfd(), 'OFD_FEATURE_DISABLED');
+
+    const empty = new FakeHost({ pageCount: 0 });
+    await expectCode(() => new ExportService(empty).exportOfd(), 'OFD_NOT_OPENED');
+    expect(createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it('读取失败映射 OFD_EXPORT_FAILED，取消保留 AbortError', async () => {
+    const failed = new FakeHost({ pageCount: 1, sourceError: new Error('网络中断') });
+    await expectCode(() => new ExportService(failed).exportOfd(), 'OFD_EXPORT_FAILED');
+
+    const noSource = new FakeHost({ pageCount: 1 });
+    Object.defineProperty(noSource, 'readSourceBytes', { configurable: true, value: undefined });
+    await expectCode(() => new ExportService(noSource).exportOfd(), 'OFD_EXPORT_FAILED');
+
+    const host = new FakeHost({ pageCount: 1 });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      new ExportService(host).exportOfd({ signal: controller.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(createObjectURL).not.toHaveBeenCalled();
+  });
+});
+
 describe('导出错误类型', () => {
   it('引擎错误包装为 OFD_EXPORT_FAILED，取消保留 AbortError', async () => {
     const host = new FakeHost({ pageCount: 1 });

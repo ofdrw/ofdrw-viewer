@@ -7,6 +7,8 @@
  * `features.ts` 的 `resolveFeatureStates` 负责。
  */
 
+import { objectFromEntries } from './compat';
+
 import {
   isViewerFeature,
   mergeViewerFeatures,
@@ -188,12 +190,12 @@ export class FeatureGate {
  * @returns 逐项复制的状态对象。
  */
 export function cloneFeatureStates(states: ViewerFeatureStates): ViewerFeatureStates {
-  return Object.fromEntries(
+  return objectFromEntries(
     VIEWER_FEATURES.map((feature) => {
       const state = states[feature] ?? { enabled: true, visible: true };
-      return [feature, { ...state }];
+      return [feature, { ...state }] as const;
     }),
-  ) as ViewerFeatureStates;
+  );
 }
 
 /**

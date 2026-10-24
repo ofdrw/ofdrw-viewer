@@ -1,9 +1,8 @@
 /**
  * crypto 解析结果 → UI 展示模型。
  *
- * UI 不再解析 ASN.1；这里只做字段改名与 DN/算法友好名映射，原始证书/印章字节
- * 不进入 UI 状态。`CertificateSummary` 只提供 DN 文本与算法名，因此 OID 通过
- * 已知算法名反查，未知算法保留名称并省略 OID。
+ * UI 不再解析 ASN.1；这里只做字段改名与 DN/算法友好名映射，证书摘要为主。
+ * 签名者证书 DER 仅随详情透传用于下载，不写入阅读器持久状态。
  */
 
 import type {
@@ -95,6 +94,7 @@ export function toSignerInfo(
       : undefined;
   return {
     ...(certificate ? { certificate } : {}),
+    ...(parsed.certificateDer ? { certificateDer: parsed.certificateDer } : {}),
     ...(signedAt ? { signedAt } : {}),
     ...(signedAtSource ? { signedAtSource } : {}),
     ...(algorithm ? { algorithm } : {}),

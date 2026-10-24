@@ -2,7 +2,42 @@
  * E2E 共享操作：本地夹具、打开阅读器、等待渲染与读取状态。
  */
 import { expect } from '@playwright/test';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
+
+/**
+ * 断言弹出层打开了预期动画：名称、160–200ms、ease-out 类且只播放一次。
+ *
+ * @param locator 弹出层元素。
+ * @param animationName 预期 animation-name。
+ * @returns 计算后的 transform-origin，供菜单/浮层方向断言。
+ */
+export async function expectOpeningMotion(
+  locator: Locator,
+  animationName: string,
+): Promise<string> {
+  const metrics = await locator.evaluate((element, expected) => {
+    const style = getComputedStyle(element);
+    const animation = element.getAnimations()[0];
+    return {
+      animationName: style.animationName,
+      duration: style.animationDuration,
+      timing: style.animationTimingFunction,
+      iterations: style.animationIterationCount,
+      origin: style.transformOrigin,
+      hasAnimation: animation !== undefined,
+    };
+  }, animationName);
+  expect(metrics.animationName).toBe(animationName);
+  const seconds = metrics.duration.endsWith('ms')
+    ? Number.parseFloat(metrics.duration) / 1000
+    : Number.parseFloat(metrics.duration);
+  expect(seconds).toBeGreaterThanOrEqual(0.16);
+  expect(seconds).toBeLessThanOrEqual(0.2);
+  expect(metrics.timing).toMatch(/^ease-out$|^cubic-bezier/);
+  expect(metrics.iterations).toBe('1');
+  expect(metrics.hasAnimation).toBe(true);
+  return metrics.origin;
+}
 
 /** 本地 OFD 夹具路径。 */
 export const FIXTURES = {
@@ -30,6 +65,9 @@ export const FIXTURES = {
   cryptoCombined: '/packages/ofdrw-viewer-crypto/test/fixtures/crypto/combined-password-encrypted.ofd',
   /** 真实 SESv4 签章（含时间戳）。 */
   cryptoSigned: '/packages/ofdrw-viewer-crypto/test/fixtures/crypto/signed-sesv4.ofd',
+  /** 签名值被篡改：签名数学/摘要校验失败，用于 invalid 状态验收。 */
+  cryptoTamperedSignature:
+    '/packages/ofdrw-viewer-crypto/test/fixtures/crypto/negative-tampered-signature.ofd',
   /** 测试信任根证书。 */
   cryptoRoot: '/packages/ofdrw-viewer-crypto/test/fixtures/crypto/certs/root-ca.crt.pem',
 } as const;

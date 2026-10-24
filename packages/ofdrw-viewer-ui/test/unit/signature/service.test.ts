@@ -11,6 +11,7 @@ import type {
   SignatureEntryInfo,
   SignedValueFile,
 } from '@ofdrw/ofdrw-viewer-engine';
+import type { VerificationReport } from '@ofdrw/ofdrw-viewer-crypto';
 
 const engineMocks = vi.hoisted(() => ({
   open: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock('@ofdrw/ofdrw-viewer-engine', () => ({
 import { OFDViewer } from '../../../src/viewer';
 import { attachUIShell, getUIShell } from '../../../src/ui';
 import '../../../src/views/signatures';
+import { VERIFICATION_RESET_EVENT } from '../../../src/crypto/service';
 import { captureDownloads } from '../../helpers/environment';
 import {
   corruptSignedValue,
@@ -236,6 +238,15 @@ describe('SignatureService 覆盖层与详情', () => {
       expect(dialog!.textContent).toContain('OFD R&W 测试用印章');
       expect(dialog!.textContent).toContain('Test Certificate');
       expect(dialog!.textContent).toContain('本面板仅展示签章信息，未进行签名验证/证书链校验。');
+      expect(dialog!.textContent).toContain('根证书链验证');
+      expect(dialog!.textContent).toContain('证书链结果独立展示，不影响签名/完整性验证结果。');
+      expect(dialog!.textContent).toContain('未验证：尚未生成验证报告，证书链未校验。');
+      const trustTag = dialog!.querySelector<HTMLElement>(
+        '[data-ofd-control="signature-trust-tag"]',
+      );
+      expect(trustTag?.dataset.trust).toBe('unknown');
+      expect(trustTag?.textContent).toBe('可信状态未知');
+      expect(dialog!.textContent).not.toContain('证书链通过');
     });
     const dialog = document.querySelector('.ofd-dialog')!;
     expect(dialog.textContent).not.toContain('验签通过');
@@ -249,6 +260,125 @@ describe('SignatureService 覆盖层与详情', () => {
       status: 'not-verified',
       note: '本面板仅展示签章信息，未进行签名验证/证书链校验。',
     });
+  });
+
+  it('详情：链可信时签章者显示“可信”，签发时间与根证书链验证栏来自验证报告', async () => {
+    viewer = await createViewer();
+    const report = {
+      overall: 'valid',
+      package: {
+        ofdVersion: '1.0',
+        encrypted: false,
+        decrypted: false,
+        packageSize: 128,
+        entryCount: 9,
+        signatureCount: 1,
+        integrityPresent: false,
+      },
+      integrity: null,
+      signatures: [
+        {
+          id: 's1',
+          type: 'Seal',
+          version: 'v4',
+          baseLoc: 'Doc_0/Signs/Signatures.xml',
+          status: 'valid',
+          signature: { status: 'valid' },
+          dataHash: { status: 'valid' },
+          references: { status: 'valid', total: 1, checked: 1, failures: [] },
+          signingTime: '2026-10-23T07:59:26.000Z',
+          signingTimeSource: 'time-info',
+          certificate: {
+            status: 'valid',
+            trustRootConfigured: true,
+            signer: {
+              subject: 'CN=Test Certificate,O=ofdrw,C=CN',
+              issuer: 'CN=Root CA,O=ofdrw,C=CN',
+              serialNumber: '01',
+              notBefore: '2026-01-01T00:00:00Z',
+              notAfter: '2027-01-01T00:00:00Z',
+              fingerprintSha256: 'a'.repeat(64),
+              isCA: false,
+            },
+            trustAnchor: {
+              subject: 'CN=Root CA,O=ofdrw,C=CN',
+              issuer: 'CN=Root CA,O=ofdrw,C=CN',
+              serialNumber: '02',
+              notBefore: '2025-01-01T00:00:00Z',
+              notAfter: '2030-01-01T00:00:00Z',
+              fingerprintSha256: 'b'.repeat(64),
+              isCA: true,
+            },
+            chain: [
+              {
+                subject: 'CN=Test Certificate,O=ofdrw,C=CN',
+                issuer: 'CN=Root CA,O=ofdrw,C=CN',
+                serialNumber: '01',
+                notBefore: '2026-01-01T00:00:00Z',
+                notAfter: '2027-01-01T00:00:00Z',
+                fingerprintSha256: 'a'.repeat(64),
+                isCA: false,
+              },
+            ],
+            currentTime: '2026-10-24T00:00:00Z',
+            revocation: 'not-checked',
+            issues: [],
+          },
+          seal: { status: 'valid', esId: 'seal-1', name: '测试印章' },
+          timestamp: {
+            status: 'parsed-not-verified',
+            tokenPresent: true,
+            tokenLength: 64,
+            genTime: '2026-10-23T07:59:26.000Z',
+            note: '已解析，未验证',
+          },
+          issues: [],
+        },
+      ],
+      rootsConfigured: true,
+      warnings: [],
+      startedAt: '2026-10-24T00:00:00Z',
+      durationMs: 8,
+    } as unknown as VerificationReport;
+    vi.spyOn(viewer, 'isFeatureEnabled').mockReturnValue(true);
+    vi.spyOn(viewer, 'getVerificationReport').mockReturnValue(report);
+    const capture = captureDownloads();
+    try {
+      await viewer.showSignature('s1');
+      await vi.waitFor(() => {
+        const dialog = document.querySelector<HTMLElement>('.ofd-dialog');
+        expect(dialog).not.toBeNull();
+        expect(dialog!.textContent).toContain('根证书链验证');
+      });
+      const dialog = document.querySelector<HTMLElement>('.ofd-dialog')!;
+      expect(dialog.textContent).toContain('签发时间');
+      expect(dialog.textContent).toContain('2026-10-23 15:59:26');
+      const tag = dialog.querySelector<HTMLElement>('[data-ofd-control="signature-trust-tag"]')!;
+      expect(tag.dataset.trust).toBe('trusted');
+      expect(tag.textContent).toBe('可信');
+      const chain = dialog.querySelector<HTMLElement>('[data-ofd-control="signature-chain-section"]')!;
+      expect(chain.textContent).toContain('链状态');
+      expect(chain.textContent).toContain('有效');
+      expect(chain.textContent).toContain('是否配置信任根');
+      expect(chain.textContent).toContain('是');
+      expect(chain.textContent).toContain('CN=Test Certificate');
+      expect(chain.textContent).toContain('CN=Root CA');
+      expect(chain.textContent).toContain('a'.repeat(64));
+      expect(dialog.textContent).not.toContain('证书链通过');
+
+      const download = dialog.querySelector<HTMLButtonElement>(
+        '[data-ofd-control="signature-signer-cert-download"]',
+      );
+      expect(download).not.toBeNull();
+      download!.click();
+      await vi.waitFor(() => expect(capture.downloads).toHaveLength(1));
+      expect(capture.downloads[0]!.filename).toMatch(/\.der$/);
+      expect(capture.downloads[0]!.filename).toContain('Test Certificate');
+      expect(capture.downloads[0]!.blob?.type).toBe('application/pkix-cert');
+      expect((await capture.downloads[0]!.blob!.arrayBuffer()).byteLength).toBeGreaterThan(0);
+    } finally {
+      capture.restore();
+    }
   });
 
   it('签章详情用真实 picture.data 渲染图片，并在关闭时释放 Blob URL', async () => {
@@ -371,19 +501,110 @@ describe('SignatureService 侧栏列表', () => {
       expect(panel!.textContent).toContain('盖章');
       expect(panel!.textContent).toContain('签名');
       expect(panel!.textContent).toContain('第 2 页');
+      expect(panel!.textContent).not.toMatch(/[▣✎]/);
 
       const first = panel!.querySelector<HTMLButtonElement>(
         '.ofd-signature-summary-item[data-signature-id="s1"]',
       );
+      expect(first!.getAttribute('aria-haspopup')).toBe('dialog');
+      expect(first!.getAttribute('aria-label')).toContain('盖章');
+      expect(first!.getAttribute('aria-label')).toContain('第 1 页');
       first!.click();
       await vi.waitFor(() => {
         const dialog = document.querySelector('.ofd-dialog');
         expect(dialog).not.toBeNull();
         expect(dialog!.textContent).toContain('签章信息（未验证）');
         expect(dialog!.textContent).toContain('印章名称');
+        expect(first!.dataset.selected).toBe('true');
+        expect(first!.getAttribute('aria-current')).toBe('true');
       });
     } finally {
       detachShell();
     }
+  });
+
+  it('关闭详情后清除卡片选中态，报告刷新也不会重新标记', async () => {
+    viewer = await createViewer();
+    const detachShell = attachUIShell(viewer);
+    try {
+      viewer.openSidebar('signatures');
+      const shell = getUIShell(viewer)!;
+      const panel = shell.getSidebarPanel('signatures')!;
+      await vi.waitFor(() => {
+        expect(panel.querySelectorAll('.ofd-signature-summary-item')).toHaveLength(5);
+      });
+      const first = panel.querySelector<HTMLButtonElement>(
+        '.ofd-signature-summary-item[data-signature-id="s1"]',
+      )!;
+      first.click();
+      await vi.waitFor(() => {
+        expect(document.querySelector('.ofd-dialog')).not.toBeNull();
+        expect(first.dataset.selected).toBe('true');
+        expect(first.getAttribute('aria-current')).toBe('true');
+      });
+
+      document.querySelector<HTMLButtonElement>('.ofd-dialog__close')!.click();
+      await vi.waitFor(() => {
+        expect(document.querySelector('.ofd-dialog')).toBeNull();
+        expect(first.dataset.selected).toBeUndefined();
+        expect(first.hasAttribute('aria-current')).toBe(false);
+      });
+
+      viewer.getRoot().dispatchEvent(new Event(VERIFICATION_RESET_EVENT));
+      await vi.waitFor(() => {
+        expect(panel.querySelectorAll('[data-selected="true"]')).toHaveLength(0);
+        expect(panel.querySelectorAll('[aria-current="true"]')).toHaveLength(0);
+      });
+    } finally {
+      detachShell();
+    }
+  });
+
+  it('详情保持打开时报告刷新重渲染仍只标记对应卡片', async () => {
+    viewer = await createViewer();
+    const detachShell = attachUIShell(viewer);
+    try {
+      viewer.openSidebar('signatures');
+      const shell = getUIShell(viewer)!;
+      const panel = shell.getSidebarPanel('signatures')!;
+      await vi.waitFor(() => {
+        expect(panel.querySelectorAll('.ofd-signature-summary-item')).toHaveLength(5);
+      });
+      const first = panel.querySelector<HTMLButtonElement>(
+        '.ofd-signature-summary-item[data-signature-id="s1"]',
+      )!;
+      first.click();
+      await vi.waitFor(() => {
+        expect(document.querySelector('.ofd-dialog')).not.toBeNull();
+        expect(first.dataset.selected).toBe('true');
+      });
+
+      viewer.getRoot().dispatchEvent(new Event(VERIFICATION_RESET_EVENT));
+      await vi.waitFor(() => {
+        const selected = panel.querySelectorAll<HTMLElement>(
+          '.ofd-signature-summary-item[data-selected="true"]',
+        );
+        expect(selected).toHaveLength(1);
+        expect(selected[0]!.dataset.signatureId).toBe('s1');
+        expect(selected[0]!.getAttribute('aria-current')).toBe('true');
+        expect(document.querySelector('.ofd-dialog')).not.toBeNull();
+      });
+    } finally {
+      detachShell();
+    }
+  });
+
+  it('详情新增签发时间/签章者证书标签使用 CryptoText 英文文案', async () => {
+    viewer = await createViewer();
+    viewer.setLocale('en-US');
+    await viewer.showSignature('s1');
+    await vi.waitFor(() => {
+      expect(document.querySelector('.ofd-dialog')).not.toBeNull();
+    });
+    const dialog = document.querySelector<HTMLElement>('.ofd-dialog')!;
+    expect(dialog.textContent).toContain('Signing time');
+    expect(dialog.textContent).toContain('Signer certificate');
+    expect(dialog.textContent).not.toContain('签发时间');
+    expect(dialog.textContent).not.toContain('签章者证书');
   });
 });

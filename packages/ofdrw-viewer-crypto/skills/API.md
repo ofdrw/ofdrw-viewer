@@ -155,6 +155,9 @@ export type ChainStatus =
 
 export type TimestampStatus = 'parsed-not-verified' | 'not-present' | 'parse-error';
 
+/** SignatureVerification.signingTime 的来源。 */
+export type SigningTimeSource = 'time-info' | 'timestamp' | 'signature-xml';
+
 export type VerificationIssueSeverity = 'error' | 'warning';
 
 export interface VerificationIssue {
@@ -402,8 +405,8 @@ export interface IntegrityVerification {
 - `OFDEntries.xml` 存在但不可解析、或 `SignedValueLoc` 路径非法时仍返回 `IntegrityVerification`，`status='invalid'` 并在 `issues` 说明原因；
 - `inspect().integrityPresent` 只看两个文件是否同时存在；`report.package.integrityPresent = integrity !== null`，存在报告对象不等于有效；
 - `missingFiles`：清单有、包内无；`extraFiles`：包内有、清单未登记（夹带）；`actualFileCount` 不含 `OFDEntries.xml` 与 `signedvalue.dat`；
-- `status=valid` 要求签名数学验证、证书链、清单/摘要全部通过；
-- 无根证书时链状态 `unknown`，整体不能为 `valid`；
+- `status=valid` 要求 SignedData 签名数学验证与文件清单/摘要比对全部通过；证书链状态独立展示，不影响 `status`；
+- 证书链 `expired`/`not-yet-valid`/`untrusted`/`incomplete`/`unknown`/`unsupported` 时，只要签名与清单通过，`integrity.status` 仍为 `valid`；无根证书时链为 `unknown`，但 `overall` 仍可为 `valid`；
 - 未受保护不等于有效：用 `report.integrity === null` 判断未受保护，用 `integrity.status` 判断有效性，不要只看 `package.integrityPresent`。
 
 ### 4.4 单签名 `SignatureVerification`
@@ -418,6 +421,8 @@ export interface SignatureVerification {
   readonly baseLoc: string;
   readonly signedValuePath?: string;
   readonly status: VerificationStatus;
+  readonly signingTime?: string;
+  readonly signingTimeSource?: SigningTimeSource;
   readonly signature: SignatureMathResult;
   readonly dataHash: DataHashVerification;
   readonly references: ReferenceCheckResult;
@@ -434,10 +439,13 @@ export interface SignatureVerification {
 | `signature` | 对 `TBS_Sign` 原始 DER 的 SM3withSM2 结果；`sm2UserId` 记录实际值 |
 | `dataHash` | `SM3(Signature.xml 原始字节)` 与 `TBS_Sign.dataHash` 比对 |
 | `references` | `Reference@FileRef` 的 SM3 CheckValue：`missing`/`mismatch`/`unsupported` |
-| `certificate` | 签名者证书链；状态见 4.5 |
+| `signingTime` / `signingTimeSource` | 签发时间展示值及来源；优先级 `timeInfo` > `timestamp.genTime` > `SignatureDateTime`，无值时省略 |
+| `certificate` | 签名者证书链；状态见 4.5；参与展示但不参与 `status`/`overall` |
 | `seal` | 有 Seal 节点时的印章验证；无则省略 |
 | `timestamp` | 只解析，不参与 `overall` |
 | `issues` | 该签名的 error/warning 列表 |
+
+`signingTimeSource` 取值：`time-info`（`TBS_Sign.timeInfo`，v4/v5 为 ISO 8601，v1 原样文本）、`timestamp`（时间戳 `TSTInfo.genTime`，ISO 8601）、`signature-xml`（`SignatureDateTime` 原文）。`signingTime` 只是展示值，不代表可信时间；时间戳仍只解析、不验证。当前支持的 SES v1/v4/v5 中，v4/v5 的 `timeInfo` 为必需字段，v1 不含时间戳，因此实际只会产生 `time-info` 或 `signature-xml`；`timestamp` 分支保留给未来允许缺省 `timeInfo` 的结构变体，当前版本不可达。
 
 子结果结构：
 
@@ -489,13 +497,14 @@ export interface CertificateChainVerification {
 | `valid` | 追到配置根，签名/有效期/KeyUsage 均满足 |
 | `expired` / `not-yet-valid` | 链中任一证书超过 `now` |
 | `untrusted` | 链可建但终点不在 roots |
-| `incomplete` | 缺 issuer/中间证书；未配置 roots 时聚合为 `unknown` |
+| `incomplete` | 缺 issuer/中间证书；未配置 roots 时缺 issuer 不记 `incomplete`，链状态为 `unknown` |
 | `invalid` | 证书签名/KeyUsage/结构失败 |
 | `not-present` | 无签名者证书 |
 | `unsupported` | 不支持的证书签名算法/结构 |
 | `unknown` | 未配置 roots，且未发现明确错误 |
 
-- 未配置 roots 时，`incomplete` 按 `unknown` 聚合，不会误判为 `invalid`；`expired`/`not-yet-valid`/`invalid`/`unsupported` 仍按对应状态聚合；
+- 未配置 roots 时链状态通常为 `unknown`；`expired`/`not-yet-valid`/`invalid`/`unsupported` 等明细仍按实际报告；
+- 证书链状态**不参与**签名、印章、完整性与 `overall` 的通过/失败判定；`untrusted`/`expired`/`not-yet-valid`/`incomplete`/`unknown`/`unsupported` 只作为独立明细展示。缺少签名者证书会直接导致签名数学验签失败，因此仍为 `invalid`；
 - 不检查 CRL/OCSP，`revocation` 固定 `'not-checked'`；
 - 信任锚按证书 SHA-256 指纹匹配（等价于 DER 内容一致）；中间证书按 subject/issuer DN 定位后仍须通过签名验证；
 - 中间 CA 必须有 `BasicConstraints.cA=true`，KeyUsage 存在时含 `keyCertSign`；pathLenConstraint 不满足时链失败；
@@ -519,7 +528,7 @@ export interface SealVerification {
 }
 ```
 
-`matchesSignedValue` 只表示 `Seal.esl` 与 `TBS_Sign.eseal` DER 逐字节一致；印章有效性还取决于 `math` 与 `certificate`。印章解析 warning（图片缺失/损坏等）同时写入 `issues` 并产生 `W_CRYPTO_SEAL_PICTURE_INVALID`。
+`matchesSignedValue` 只表示 `Seal.esl` 与 `TBS_Sign.eseal` DER 逐字节一致；印章状态只由 `matchesSignedValue` 与印章签名数学 `math` 决定，制章者证书链 `certificate` 仅作为独立明细展示。印章解析 warning（图片缺失/损坏等）同时写入 `issues` 并产生 `W_CRYPTO_SEAL_PICTURE_INVALID`。
 
 ### 4.7 状态聚合
 
@@ -530,9 +539,9 @@ export interface SealVerification {
 - 否则任一项 `unsupported` → `unsupported`；
 - 否则 `valid`。
 
-参与聚合的子项包括签名数学验证、`dataHash`、References、签名属性（`propertyInfo`）、证书链与（若存在）印章。References 为 `unsupported` 时按 `invalid` 聚合（无法证明未篡改）。
+参与聚合的子项包括签名数学验证、`dataHash`、References、签名属性（`propertyInfo`）与（若存在）印章。References 为 `unsupported` 时按 `invalid` 聚合（无法证明未篡改）。证书链状态不参与聚合，只作为 `certificate` 明细展示；缺少签名者证书会让签名数学验签失败，仍按 `invalid` 处理。
 
-链状态到验证状态：`valid→valid`，`unknown→unknown`，`unsupported→unsupported`，其余（`expired`/`not-yet-valid`/`untrusted`/`incomplete`/`invalid`/`not-present`）→ `invalid`；未配置 roots 时 `incomplete` 保持 `unknown`。
+印章状态由 `matchesSignedValue` 与印章签名数学决定，制章者证书链同样不参与。
 
 整体 `overall`：
 
@@ -541,6 +550,8 @@ export interface SealVerification {
 - 否则任一项 `unknown` → `unknown`；
 - 否则任一项 `unsupported` → `unsupported`；
 - 否则 `valid`。
+
+证书链状态不参与 `overall`：未配置 roots、链过期、未生效、`untrusted`、`incomplete`、`unknown` 或 `unsupported` 时，只要签名数学、dataHash、References、防夹带完整性与印章结构/数学通过，`overall` 仍可为 `valid`；相关 warning 会保留。
 
 时间戳状态**不参与** `overall`。验证失败不抛异常，写入 `issues`/`status`；`verifyOfd` 只在入口参数、根证书、凭据、包结构、限额、取消等错误时抛 `CryptoError`。
 
@@ -606,6 +617,8 @@ export function parseSignedValue(
 export interface ParsedSignedValue {
   readonly version: SesVersion;
   readonly certificate?: CertificateSummary;
+  /** 签章者证书 DER；调用方拥有，可用于下载/展示。 */
+  readonly certificateDer?: Uint8Array;
   readonly signatureAlgorithm?: string;
   readonly signedAt?: string;
   readonly dataHash: string; // 小写十六进制
@@ -616,6 +629,7 @@ export interface ParsedSignedValue {
 ```
 
 - 支持 SES v1/v4/v5；v1 的 `signedAt` 是 `timeInfo` 自由文本，v4/v5 为 ISO 8601；
+- `certificateDer` 是签章者证书的完整 X.509 DER：v1 取 `TBS_Sign.cert`，v4/v5 取顶层 `SES_Signature.cert`；不含 PEM、私钥或口令；返回独立副本，调用方拥有；
 - `seal` 是内嵌 SESeal 的公开解析；
 - 不验签、不查链；`dataHash` 非空，仅解析不比对；
 - 错误：`CRYPTO_ASN1_INVALID`、`CRYPTO_UNSUPPORTED_SES_VERSION`、`CRYPTO_CERTIFICATE_INVALID`、`CRYPTO_LIMIT_EXCEEDED`。

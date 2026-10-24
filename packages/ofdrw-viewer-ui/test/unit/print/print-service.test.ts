@@ -7,6 +7,7 @@ import { PrintService } from '../../../src/print/print-service';
 import {
   buildPrintCss,
   preparePrintDocument,
+  supportsNamedPages,
 } from '../../../src/print/print-document';
 import { isOFDViewerError } from '../../../src/errors';
 import { FakeHost } from '../export/fake-host';
@@ -349,6 +350,53 @@ describe('打印样式工具', () => {
       'body > :not(.ofd-print-root) { display: none !important; }',
     );
     expect(css).toContain('@page ofd-size-1 { size: 105mm 148mm; margin: 0; }');
+    mixed.cleanup();
+  });
+
+  it('Chrome 67 无命名页能力时降级为最大页尺寸的统一纸型且不裁切', async () => {
+    const mixedHost = new FakeHost({
+      pageSizes: [
+        { widthMm: 210, heightMm: 297 },
+        { widthMm: 105, heightMm: 148 },
+      ],
+    });
+    const mixed = await preparePrintDocument(
+      mixedHost,
+      prepareOptions({ pages: [1, 2] }),
+    );
+    const css = buildPrintCss(mixed.pages, false);
+    expect(css).toContain('@page { size: 210mm 297mm; margin: 0; }');
+    expect(css).not.toContain('@page ofd-size-');
+    expect(css).not.toContain('page: ofd-size-');
+    expect(css).toContain(
+      '.ofd-print-page { width: 100% !important; height: 100% !important; }',
+    );
+    expect(css).toContain('object-fit: contain');
+    mixed.cleanup();
+  });
+
+  it('supportsNamedPages 通过 CSS.supports 探测 page 属性', () => {
+    const supports = vi.spyOn(window.CSS, 'supports').mockReturnValue(false);
+    expect(supportsNamedPages(window)).toBe(false);
+    expect(supports).toHaveBeenCalledWith('page', 'ofd-size-0');
+    expect(supportsNamedPages(null)).toBe(false);
+  });
+
+  it('preparePrintDocument 在无命名页能力时写入降级样式', async () => {
+    vi.spyOn(window.CSS, 'supports').mockReturnValue(false);
+    const mixedHost = new FakeHost({
+      pageSizes: [
+        { widthMm: 210, heightMm: 297 },
+        { widthMm: 105, heightMm: 148 },
+      ],
+    });
+    const mixed = await preparePrintDocument(
+      mixedHost,
+      prepareOptions({ pages: [1, 2] }),
+    );
+    const css = mixed.style.textContent ?? '';
+    expect(css).toContain('@page { size: 210mm 297mm; margin: 0; }');
+    expect(css).not.toContain('ofd-size-');
     mixed.cleanup();
   });
 });

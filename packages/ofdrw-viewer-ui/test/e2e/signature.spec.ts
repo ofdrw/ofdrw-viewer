@@ -154,8 +154,8 @@ test('showcase 第 9 页签章浮层：portal 定位不被第 10 页覆盖或 ma
         hitLabel: hit ? `${hit.tagName.toLowerCase()}.${hit.className}` : null,
       };
     });
-    const full = node.querySelector<HTMLElement>('[data-ofd-control="signature-popover-full"]');
-    if (!full) throw new Error('missing signature-popover-full');
+    const full = node.querySelector<HTMLElement>('[data-ofd-control="signature-popover-details"]');
+    if (!full) throw new Error('missing signature-popover-details');
     const fullRect = full.getBoundingClientRect();
     const fullHit = document.elementFromPoint(
       fullRect.left + fullRect.width / 2,
@@ -233,7 +233,7 @@ test('showcase 第 9 页签章浮层：portal 定位不被第 10 页覆盖或 ma
     const mainRect = main.getBoundingClientRect();
     const box = node.getBoundingClientRect();
     const body = node.querySelector<HTMLElement>('.ofd-signature-popover__pairs')!;
-    const full = node.querySelector<HTMLElement>('[data-ofd-control="signature-popover-full"]')!;
+    const full = node.querySelector<HTMLElement>('[data-ofd-control="signature-popover-details"]')!;
     const fullRect = full.getBoundingClientRect();
     const hit = document.elementFromPoint(
       fullRect.left + fullRect.width / 2,
@@ -265,7 +265,7 @@ test('showcase 第 9 页签章浮层：portal 定位不被第 10 页覆盖或 ma
     const mainRect = main.getBoundingClientRect();
     const box = node.getBoundingClientRect();
     const body = node.querySelector<HTMLElement>('.ofd-signature-popover__pairs')!;
-    const full = node.querySelector<HTMLElement>('[data-ofd-control="signature-popover-full"]')!;
+    const full = node.querySelector<HTMLElement>('[data-ofd-control="signature-popover-details"]')!;
     const fullRect = full.getBoundingClientRect();
     const hit = document.elementFromPoint(
       fullRect.left + fullRect.width / 2,
@@ -299,10 +299,14 @@ test('showcase 第 9 页签章浮层：portal 定位不被第 10 页覆盖或 ma
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.waitForTimeout(150);
 
-  await popover.locator('[data-ofd-control="signature-popover-full"]').click();
-  await expect(page.locator('.ofd-verification-panel')).toBeVisible();
+  await popover.locator('[data-ofd-control="signature-popover-details"]').click();
+  const detail = page.locator('.ofd-dialog');
+  await expect(detail).toBeVisible();
+  await expect(detail).toContainText('签章信息');
+  await expect(detail.locator('[data-ofd-control="signature-chain-section"]')).toBeVisible();
+  await expect(detail.locator('[data-ofd-control="signature-trust-tag"]')).toBeVisible();
   await page.keyboard.press('Escape');
-  await expect(page.locator('.ofd-verification-panel')).toBeHidden();
+  await expect(detail).toBeHidden();
   await expectNoPageErrors(page, issues);
 });
 
@@ -455,6 +459,57 @@ test('缺失 SignedValue.dat：保留签章列表并降级提示', async ({ page
   expect(state.pageCount).toBe(1);
   const warnings = await page.evaluate(() => window.__viewer!.getState().ui.warnings);
   expect(warnings.map((warning) => warning.code)).toContain('W_SIGNATURE_RESOURCE');
+  await expectNoPageErrors(page, issues);
+});
+
+test('侧栏签章列表卡片化：无图标、可选中且窄屏不溢出', async ({ page, issues }) => {
+  await openViewer(page, SHOWCASE, { sidebar: 'signatures', waitForRender: false });
+  const panel = page.locator('.ofd-sidebar__panel:not([hidden])');
+  const items = panel.locator('.ofd-signature-summary-item');
+  await expect(items.first()).toBeVisible();
+  await expect(panel).not.toContainText('▣');
+  await expect(panel).not.toContainText('✎');
+
+  const style = await items.first().evaluate((element) => {
+    const computed = getComputedStyle(element);
+    const title = element.querySelector<HTMLElement>('.ofd-signature-summary-item__name');
+    return {
+      display: computed.display,
+      radius: computed.borderTopLeftRadius,
+      borderWidth: computed.borderTopWidth,
+      background: computed.backgroundColor,
+      hasTitle: title !== null,
+    };
+  });
+  expect(style.display).toBe('grid');
+  expect(Number.parseFloat(style.radius)).toBeGreaterThan(0);
+  expect(Number.parseFloat(style.borderWidth)).toBeGreaterThan(0);
+  expect(style.background).not.toBe('rgba(0, 0, 0, 0)');
+  expect(style.hasTitle).toBe(true);
+
+  await items.first().focus();
+  await page.keyboard.press('Enter');
+  await expect(items.first()).toHaveAttribute('data-selected', 'true');
+  await expect(items.first()).toHaveAttribute('aria-current', 'true');
+  await expect(page.locator('.ofd-dialog')).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  await page.setViewportSize({ width: 360, height: 720 });
+  const overflow = await panel.evaluate((element) => ({
+    scrollWidth: element.scrollWidth,
+    clientWidth: element.clientWidth,
+  }));
+  expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 1);
+  const bounds = await panel.evaluate((element) => {
+    const panelRect = element.getBoundingClientRect();
+    return [...element.querySelectorAll<HTMLElement>('.ofd-signature-summary-item')]
+      .slice(0, 3)
+      .map((item) => {
+        const rect = item.getBoundingClientRect();
+        return rect.right <= panelRect.right + 1 && rect.left >= panelRect.left - 1;
+      });
+  });
+  expect(bounds.every(Boolean)).toBe(true);
   await expectNoPageErrors(page, issues);
 });
 

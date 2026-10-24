@@ -4,6 +4,8 @@
  * 外壳只维护输入、计数、上下一个匹配与三个选项的 DOM；匹配、高亮、滚动由核心
  * FindController 负责。查找栏是浮层，不占据主区域布局高度。
  */
+
+import { replaceChildren } from '../compat';
 import { setDisabled } from '../a11y';
 import type { FeatureState, ViewerFeatureStates } from '../features';
 import type { MessageKey, Translator } from '../i18n';
@@ -208,7 +210,7 @@ export class Findbar {
 
   /** 释放事件与 DOM。 */
   destroy(): void {
-    this.element.replaceChildren();
+    replaceChildren(this.element);
     this.element.hidden = true;
   }
 
@@ -218,7 +220,7 @@ export class Findbar {
     this.element.classList.add('ofd-viewer__findbar');
     this.element.setAttribute('role', 'search');
     this.element.setAttribute('aria-label', this.translator.t('findbar.label'));
-    this.element.replaceChildren();
+    replaceChildren(this.element);
 
     this.input = doc.createElement('input');
     this.input.className = 'ofd-input ofd-findbar__input';

@@ -4,6 +4,8 @@
  * 通过公共入口导入 `OFDViewer`，确保使用方只引入 React 子路径时也会触发
  * 公共入口的模块注册（内置 UI / 文本 / 导航 / 签章 / 打印 / 导出）。
  */
+
+import '../compat';
 export { OFDViewer } from './OFDViewer';
 export type { OFDViewerHandle, OFDViewerProps } from './OFDViewer';
 export type {

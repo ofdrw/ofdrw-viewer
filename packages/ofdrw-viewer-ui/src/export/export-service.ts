@@ -21,11 +21,14 @@ import type {
   ExportImageOptions,
   ExportImageResult,
   ExportImagesOptions,
+  ExportOfdOptions,
+  ExportOfdResult,
   ImageFormat,
   PageRange,
 } from '../types';
 import {
   buildImageFilename,
+  buildOfdFilename,
   buildZipFilename,
   downloadBlob,
   resolveDocumentName,
@@ -150,6 +153,47 @@ export class ExportService {
       };
     } catch (error) {
       throw this.toExportError(error, pageNumber);
+    } finally {
+      scope.dispose();
+    }
+  }
+
+  /**
+   * 导出当前 OFD 原文件并下载。
+   *
+   * 原样输出打开时的字节（加密文档保持原始加密包），不重新渲染；受 `export`
+   * 功能与文档导出权限约束。
+   *
+   * @param options 文件名与取消信号。
+   * @returns 原文件 Blob、文件名与字节数。
+   */
+  async exportOfd(options: ExportOfdOptions = {}): Promise<ExportOfdResult> {
+    const scope = createAbortScope(options.signal);
+    try {
+      this.assertFeature('export');
+      this.requireDocument();
+      await this.assertPermission('export');
+      throwIfAborted(scope);
+      if (!this.host.readSourceBytes) {
+        throw new OFDViewerError('OFD_EXPORT_FAILED', '当前宿主不支持导出 OFD 原文件');
+      }
+      const source = await this.host.readSourceBytes(scope.signal);
+      throwIfAborted(scope);
+      const bytes = new Uint8Array(source);
+      if (bytes.byteLength === 0) {
+        throw new OFDViewerError('OFD_EXPORT_FAILED', 'OFD 原文件为空');
+      }
+      const blob = new Blob([bytes as unknown as BlobPart], { type: 'application/ofd' });
+      const filename = buildOfdFilename({
+        documentName: resolveDocumentName(this.host),
+        customName: options.filename,
+      });
+      downloadBlob(this.ownerDocument(), blob, filename);
+      this.hooks.onProgress?.({ current: 1, total: 1 });
+      emitOutputEvent(this.host, 'exportprogress', { current: 1, total: 1 });
+      return { blob, filename, size: bytes.byteLength };
+    } catch (error) {
+      throw this.toExportError(error, this.host.getPageNumber());
     } finally {
       scope.dispose();
     }

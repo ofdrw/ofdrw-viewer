@@ -1,3 +1,4 @@
+import { replaceChildren } from '../../../src/compat';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TextContent } from '@ofdrw/ofdrw-viewer-engine';
 import { createTextSpan } from '../../../src/text/text-layer';
@@ -24,7 +25,7 @@ function renderPage(
   for (const spec of specs.spans) {
     fragment.appendChild(createTextSpan(document, spec, pageNumber, true));
   }
-  view.textLayer.replaceChildren(fragment);
+  replaceChildren(view.textLayer, fragment);
 }
 
 /** 建立选区。 */

@@ -1,7 +1,7 @@
 /**
  * V-CERT 独立验证（CLI）：`verify --root` 支持 PEM/CER/DER/Base64/多证书/CRLF/BOM，
  * 每个文件先读取原始字节并交给 crypto 的 `certificatesToDer`，最终只把 DER 传给
- * `verifyOfd`；错误码、退出码（0/1/5）与“无根 unknown”语义保持不回归。
+ * `verifyOfd`；错误码、退出码（0/1/5）与“无根链 unknown 不改变 overall”语义保持不回归。
  *
  * 只通过 CLI 源码入口 `main` 观察行为，crypto 公共 API 仅用作 oracle。
  */
@@ -207,23 +207,26 @@ describe('CLI --root：各格式都经 certificatesToDer 转 DER', () => {
   });
 });
 
-describe('CLI --root：错误码/退出码/unknown 语义不回归', () => {
-  it('未配置根：overall=unknown、退出 5、warning 仍为 W_CRYPTO_TRUST_UNKNOWN', async () => {
+describe('CLI --root：错误码/退出码/链状态语义不回归', () => {
+  it('未配置根：链 unknown 但 overall=valid、退出 0，warning 仍为 W_CRYPTO_TRUST_UNKNOWN', async () => {
     const cwd = await createTempDir();
     const result = await verifyJson(undefined, cwd);
-    expect(result.code).toBe(5);
-    expect(result.payload?.report.overall).toBe('unknown');
+    expect(result.code).toBe(0);
+    expect(result.payload?.report.overall).toBe('valid');
     expect(result.payload?.report.rootsConfigured).toBe(false);
+    expect(result.payload?.report.signatures[0]?.status).toBe('valid');
+    expect(result.payload?.report.signatures[0]?.references.status).toBe('valid');
     expect(result.payload?.report.signatures[0]?.certificate.status).toBe('unknown');
     expect(result.stderr).toContain('W_CRYPTO_TRUST_UNKNOWN');
   });
 
-  it('错误根证书（非签发者）：incomplete、退出 5，不误报证书格式错误', async () => {
+  it('错误根证书（非签发者）：链 incomplete 但 overall=valid、退出 0，不误报证书格式错误', async () => {
     const cwd = await createTempDir();
     const wrongRoot = join(fixture('certs/encrypt.crt.pem'));
     const result = await verifyJson(wrongRoot, cwd);
-    expect(result.code).toBe(5);
-    expect(result.payload?.report.overall).toBe('invalid');
+    expect(result.code).toBe(0);
+    expect(result.payload?.report.overall).toBe('valid');
+    expect(result.payload?.report.signatures[0]?.status).toBe('valid');
     expect(result.payload?.report.signatures[0]?.certificate.status).toBe('incomplete');
     expect(result.stderr).not.toContain('CRYPTO_CERTIFICATE_INVALID');
   });

@@ -3,6 +3,8 @@
  *
  * 通过公共入口导入 `OFDViewer`，确保单独引入 Vue 子路径时也执行公共入口注册。
  */
+
+import '../compat';
 export { OFDViewer } from './OFDViewer';
 export type {
   FeatureDisplay,

@@ -42,6 +42,7 @@ import type {
   PackageVerificationInfo,
   SealVerification,
   SignatureVerification,
+  SigningTimeSource,
   VerificationReport,
   VerifyOfdOptions,
 } from './types';
@@ -566,10 +567,13 @@ async function verifyOneSignature(
       dataHash: hashMatches ? 'valid' : 'invalid',
       references: references.status,
       propertyInfo: propertyInfoMatches ? 'valid' : 'invalid',
-      chain: chain.status,
-      rootsConfigured: options.rootsConfigured,
       seal: seal?.status,
     });
+    const signing = resolveSigningTime(
+      ses.signedAt,
+      timestamp.genTime,
+      signatureXml.signatureDateTime,
+    );
     return {
       id: record.id ?? '',
       type: record.type ?? '',
@@ -577,6 +581,8 @@ async function verifyOneSignature(
       baseLoc,
       signedValuePath,
       status,
+      // 签发时间只用于展示；来源优先级 timeInfo > timestamp.genTime > SignatureDateTime。
+      ...(signing ?? {}),
       signature: math.math,
       dataHash: {
         expected: expectedHash,
@@ -800,12 +806,7 @@ async function verifySeal(
   issues.push(...chain.issues);
   emitChainWarnings(chain.status, chain.issues, options.collector, options.rootsConfigured);
 
-  const status = aggregateSealStatus(
-    matches,
-    mathStatus,
-    chain.status,
-    options.rootsConfigured,
-  );
+  const status = aggregateSealStatus(matches, mathStatus);
   return {
     status,
     version: sealDetail.version,
@@ -848,6 +849,9 @@ async function openSourceContainer(
 /**
  * 聚合单个签名状态（设计 §5.7）。
  *
+ * 证书链只作为独立明细展示，不参与签名通过/失败判定；缺少签名者证书会直接让
+ * 签名数学验签失败，因此仍由 `math` 判为 invalid。
+ *
  * @param statuses 子状态。
  * @returns 汇总状态。
  */
@@ -856,11 +860,8 @@ function aggregateSignatureStatus(statuses: {
   readonly dataHash: VerificationStatus;
   readonly references: VerificationStatus;
   readonly propertyInfo: VerificationStatus;
-  readonly chain: string;
-  readonly rootsConfigured: boolean;
   readonly seal?: VerificationStatus;
 }): VerificationStatus {
-  const chain = mapChainStatus(statuses.chain, statuses.rootsConfigured);
   // References 无法校验时签名仍按 invalid（无法证明未篡改），沿用设计 §5.7。
   const reference = statuses.references === 'unsupported' ? 'invalid' : statuses.references;
   const all: VerificationStatus[] = [
@@ -868,7 +869,6 @@ function aggregateSignatureStatus(statuses: {
     statuses.dataHash,
     reference,
     statuses.propertyInfo,
-    chain,
     ...(statuses.seal ? [statuses.seal] : []),
   ];
   return aggregateStatuses(all);
@@ -877,22 +877,14 @@ function aggregateSignatureStatus(statuses: {
 /**
  * 聚合印章状态。
  *
+ * 制章者证书链不参与判定；印章结构、Seal.esl 一致性与印章签名数学决定结果。
+ *
  * @param matches Seal.esl 与内嵌印章是否一致。
  * @param math 印章签名数学验签。
- * @param chain 印章证书链状态。
  * @returns 汇总状态。
  */
-function aggregateSealStatus(
-  matches: boolean,
-  math: VerificationStatus,
-  chain: string,
-  rootsConfigured: boolean,
-): VerificationStatus {
-  return aggregateStatuses([
-    matches ? 'valid' : 'invalid',
-    math,
-    mapChainStatus(chain, rootsConfigured),
-  ]);
+function aggregateSealStatus(matches: boolean, math: VerificationStatus): VerificationStatus {
+  return aggregateStatuses([matches ? 'valid' : 'invalid', math]);
 }
 
 /**
@@ -910,7 +902,7 @@ function aggregateStatuses(statuses: readonly VerificationStatus[]): Verificatio
 }
 
 /**
- * 聚合 overall（时间戳不参与）。
+ * 聚合 overall（时间戳与证书链均不参与）。
  *
  * @param integrity 完整性结果。
  * @param signatures 签名结果。
@@ -932,18 +924,36 @@ function aggregateOverall(
 }
 
 /**
- * 把证书链状态映射为验证状态（设计 §5.7）。
+ * 计算签章时间展示值与来源。
  *
- * @param status 链状态。
- * @returns 验证状态。
+ * 优先级：`timeInfo` > `timestamp.genTime` > `SignatureDateTime`；均无值时返回
+ * undefined，调用方应省略对应字段。该结果只用于展示，不参与状态聚合。
+ *
+ * 当前 v1/v4/v5 中 v4/v5 的 `timeInfo` 为必需字段、v1 不含时间戳，因此实际只
+ * 会产出 `time-info` 或 `signature-xml`；`timestamp` 分支保留给未来允许缺省
+ * `timeInfo` 的结构变体。
+ *
+ * @param timeInfo TBS_Sign.timeInfo（v1 可能是自由文本）。
+ * @param timestampGenTime 时间戳 TSTInfo.genTime（ISO 8601）。
+ * @param signatureDateTime Signature.xml 中的签名时间原文。
+ * @returns 展示值与来源；无可用值时 undefined。
  */
-function mapChainStatus(status: string, rootsConfigured: boolean): VerificationStatus {
-  if (status === 'valid') return 'valid';
-  if (status === 'unknown') return 'unknown';
-  if (status === 'unsupported') return 'unsupported';
-  // 未配置信任根时“缺中间证书”仍不可判定，整体保持 unknown；配置后才是失败。
-  if (status === 'incomplete' && !rootsConfigured) return 'unknown';
-  return 'invalid';
+function resolveSigningTime(
+  timeInfo: string | undefined,
+  timestampGenTime: string | undefined,
+  signatureDateTime: string | undefined,
+): { readonly signingTime: string; readonly signingTimeSource: SigningTimeSource } | undefined {
+  if (timeInfo !== undefined && timeInfo.trim().length > 0) {
+    return { signingTime: timeInfo, signingTimeSource: 'time-info' };
+  }
+  // 当前 v1/v4/v5 不可达；保留给 timeInfo 可缺省的未来结构变体。
+  if (timestampGenTime !== undefined && timestampGenTime.length > 0) {
+    return { signingTime: timestampGenTime, signingTimeSource: 'timestamp' };
+  }
+  if (signatureDateTime !== undefined && signatureDateTime.trim().length > 0) {
+    return { signingTime: signatureDateTime.trim(), signingTimeSource: 'signature-xml' };
+  }
+  return undefined;
 }
 
 /**

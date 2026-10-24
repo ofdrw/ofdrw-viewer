@@ -9,7 +9,13 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
 import { expect, expectNoPageErrors, test } from './fixtures';
-import { eventCount, FIXTURES, openViewer, viewerUrl } from './support';
+import {
+  eventCount,
+  expectOpeningMotion,
+  FIXTURES,
+  openViewer,
+  viewerUrl,
+} from './support';
 
 const PASSWORD = 'FixturePass123';
 const CERT_USER = 'fixture-cert-user';
@@ -138,6 +144,8 @@ test('口令凭据弹窗：错误重试后成功打开并渲染，凭据不落�
   const dialog = page.locator('.ofd-dialog');
   const passwordInput = page.locator('[data-ofd-control="crypto-credential-password"]');
   await expect(dialog).toBeVisible();
+  await expectOpeningMotion(dialog, 'ofd-dialog-in');
+  await expectOpeningMotion(page.locator('.ofd-dialog__backdrop'), 'ofd-fade-in');
   await expect(dialog).toHaveAttribute('role', 'dialog');
   await expect(dialog).toHaveAttribute('aria-modal', 'true');
   await expect(dialog).toHaveAttribute('aria-labelledby', /.+/);
@@ -280,18 +288,23 @@ test('取消加密打开：保留原文档并恢复可用，Esc 可取消', asyn
   await expectNoPageErrors(page, issues);
 });
 
-test('验证面板：无根 unknown，PEM/DER/CER 根均可配置，错误证书只 warning 不崩溃', async ({
+test('验证面板：无根时签名/完整性仍通过，链独立显示未知；PEM/DER/CER 根均可配置', async ({
   page,
   issues,
 }) => {
   await openViewer(page, FIXTURES.cryptoSigned, { waitForRender: false });
-  await expect.poll(() => overall(page)).toBe('unknown');
+  await expect.poll(() => overall(page)).toBe('valid');
   await page.locator('[data-ofd-control="verification"]').click();
   const panel = page.locator('.ofd-verification-panel');
   await expect(panel).toBeVisible();
-  await expect(panel).toContainText('总体状态：未知');
+  await expect(panel).toContainText('总体状态：有效');
   await expect(panel).toContainText('未配置根证书');
-  await expect(panel).toContainText('证书链状态 unknown');
+  const signatureCard = panel.locator('.ofd-verification-signature').first();
+  await expect(signatureCard).toContainText('证书链（不影响总体状态）');
+  await expect(signatureCard).toContainText('未知');
+  await expect(panel).not.toContainText('验证时间');
+  await expect(panel).not.toContainText('耗时');
+  await expect(signatureCard).toContainText('签发时间');
   const rootInput = page.locator('[data-ofd-control="verification-root-input"]');
   await expect(rootInput).toHaveAttribute('aria-label', '配置根证书');
 
@@ -311,7 +324,7 @@ test('验证面板：无根 unknown，PEM/DER/CER 根均可配置，错误证书
     )
     .toBe(true);
   await expect(panel).toBeVisible();
-  await expect.poll(() => overall(page)).toBe('unknown');
+  await expect.poll(() => overall(page)).toBe('valid');
   await expect(panel.locator('.ofd-verification-root')).toHaveCount(0);
 
   // PEM（文件名与内容均为 PEM）。
@@ -324,7 +337,7 @@ test('验证面板：无根 unknown，PEM/DER/CER 根均可配置，错误证书
   await expect(panel.locator('.ofd-verification-root')).toHaveCount(1);
   await expect(panel).toContainText(ROOT_SUBJECT);
   await panel.locator('[data-ofd-control="verification-root-remove"]').click();
-  await expect.poll(() => overall(page)).toBe('unknown');
+  await expect.poll(() => overall(page)).toBe('valid');
   await expect(panel.locator('.ofd-verification-root')).toHaveCount(0);
 
   // DER（PKIX DER 字节）。
@@ -336,7 +349,7 @@ test('验证面板：无根 unknown，PEM/DER/CER 根均可配置，错误证书
   await expect.poll(() => overall(page)).toBe('valid');
   await expect(panel.locator('.ofd-verification-root')).toHaveCount(1);
   await panel.locator('[data-ofd-control="verification-root-remove"]').click();
-  await expect.poll(() => overall(page)).toBe('unknown');
+  await expect.poll(() => overall(page)).toBe('valid');
 
   // CER（DER 编码，文件名为 .cer；UI 只处理字节，不依赖扩展名）。
   await rootInput.setInputFiles({
@@ -373,10 +386,53 @@ test('验证面板与印章浮层：完整性/签名/链/时间戳信息完整�
   await expect(overlay).toBeVisible();
   await expect(overlay).toHaveAttribute('aria-label', /验证有效/);
 
+  // 统计浮层 animationstart，验证内部字段更新不会重播入场动画。
+  await page.evaluate(() => {
+    (window as unknown as { __popoverAnimStarts: number }).__popoverAnimStarts = 0;
+    document.addEventListener(
+      'animationstart',
+      (event) => {
+        if (
+          event.target instanceof Element &&
+          event.target.classList.contains('ofd-signature-popover')
+        ) {
+          (window as unknown as { __popoverAnimStarts: number }).__popoverAnimStarts += 1;
+        }
+      },
+      true,
+    );
+  });
   await overlay.focus();
   await page.keyboard.press('Enter');
   const popover = page.locator('.ofd-signature-popover');
   await expect(popover).toBeVisible();
+  const popoverOrigin = await expectOpeningMotion(popover, 'ofd-popover-in');
+  expect(popoverOrigin).toContain('0px');
+  expect(
+    await popover.evaluate((element) => element.contains(document.activeElement)),
+  ).toBe(true);
+  // 动画结束后位置仍与脚本写入的锚点坐标一致，transform 回到 none。
+  const settled = await popover.evaluate(async (element) => {
+    await Promise.all(element.getAnimations().map((animation) => animation.finished));
+    const rect = element.getBoundingClientRect();
+    return {
+      leftDelta: Math.abs(rect.left - Number.parseFloat(element.style.left)),
+      topDelta: Math.abs(rect.top - Number.parseFloat(element.style.top)),
+      transform: getComputedStyle(element).transform,
+    };
+  });
+  expect(settled.leftDelta).toBeLessThanOrEqual(1);
+  expect(settled.topDelta).toBeLessThanOrEqual(1);
+  expect(settled.transform).toBe('none');
+  await popover.locator('dt').first().evaluate((element) => {
+    element.textContent = `${element.textContent} `;
+  });
+  await page.waitForTimeout(60);
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __popoverAnimStarts: number }).__popoverAnimStarts,
+    ),
+  ).toBe(1);
   await expect(popover).toContainText('有效');
   await expect(popover).toContainText('已解析，未验证');
   await expect(popover).toContainText('生成时间（UTC+8）');
@@ -393,10 +449,38 @@ test('验证面板与印章浮层：完整性/签名/链/时间戳信息完整�
   await expect(popover).toBeHidden();
   await expect(overlay).toBeFocused();
 
-  // 空格键同样激活，随后进入完整面板。
+  // 空格键同样激活；浮层按钮打开与侧栏一致的签章详情。
   await page.keyboard.press(' ');
   await expect(popover).toBeVisible();
-  await popover.locator('[data-ofd-control="signature-popover-full"]').click();
+  await popover.locator('[data-ofd-control="signature-popover-details"]').click();
+  const detail = page.locator('.ofd-dialog');
+  await expect(detail).toBeVisible();
+  await expectOpeningMotion(detail, 'ofd-dialog-in');
+  await expect(detail).toContainText('签章信息');
+  await expect(detail).toContainText('签发时间');
+  await expect(detail).toContainText('2026-10-23 01:51:06');
+  const trustTag = detail.locator('[data-ofd-control="signature-trust-tag"]');
+  await expect(trustTag).toHaveText('可信');
+  await expect(trustTag).toHaveAttribute('data-trust', 'trusted');
+  const chainSection = detail.locator('[data-ofd-control="signature-chain-section"]');
+  await expect(chainSection).toContainText('根证书链验证');
+  await expect(chainSection).toContainText('链状态');
+  await expect(chainSection).toContainText('有效');
+  await expect(detail).not.toContainText('证书链通过');
+  await expect(detail.locator('[data-ofd-control="signature-signer-cert-download"]')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(detail).toBeHidden();
+
+  // 侧栏列表点击打开同一个详情面板，并标记当前项。
+  await summary.click();
+  await expect(summary).toHaveAttribute('data-selected', 'true');
+  await expect(detail).toBeVisible();
+  await expect(detail.locator('[data-ofd-control="signature-chain-section"]')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(detail).toBeHidden();
+
+  // 验证面板仍由工具栏入口打开，展示签名/完整性与时间戳细节。
+  await page.locator('[data-ofd-control="verification"]').click();
   const panel = page.locator('.ofd-verification-panel');
   await expect(panel).toBeVisible();
   for (const text of ['SES 版本', 'dataHash', 'Reference', '数学签名', '证书链', '印章']) {
@@ -507,6 +591,7 @@ test('关闭 verification：旧报告立即失效、浮层关闭、按钮禁用�
   await page.evaluate(() => window.__viewer!.openVerificationPanel());
   const panel = page.locator('.ofd-verification-panel');
   await expect(panel).toContainText('总体状态：有效');
+  await expectOpeningMotion(page.locator('.ofd-dialog'), 'ofd-dialog-in');
   const reverify = page.locator('[data-ofd-control="verification-reverify"]');
   await expect(reverify).toBeEnabled();
 
@@ -599,7 +684,7 @@ test('凭据弹窗：口令与私钥字段必须具有程序化可访问名称',
   expect([...passwordFields, ...certificateFields]).toEqual([]);
 });
 
-test('showcase：overall=unknown 可解释，印章图片/时间戳具体，隐藏无关区块', async ({
+test('showcase：签名/完整性通过为绿色，证书链独立显示未知且不改变总体状态', async ({
   page,
   issues,
 }) => {
@@ -610,11 +695,11 @@ test('showcase：overall=unknown 可解释，印章图片/时间戳具体，隐�
     timeout: 120_000,
   });
   const report = await page.evaluate(() => window.__viewer!.getVerificationReport()!);
-  expect(report.overall).toBe('unknown');
+  expect(report.overall).toBe('valid');
   expect(report.rootsConfigured).toBe(false);
   expect(report.package.encrypted).toBe(false);
   expect(report.integrity).not.toBeNull();
-  expect(report.integrity?.status).toBe('unknown');
+  expect(report.integrity?.status).toBe('valid');
   expect(report.integrity?.fileListCount).toBe(18);
   expect(report.signatures.length).toBeGreaterThan(0);
   expect(report.signatures.every((signature) => signature.certificate.status === 'unknown')).toBe(
@@ -626,19 +711,22 @@ test('showcase：overall=unknown 可解释，印章图片/时间戳具体，隐�
   await page.locator('[data-ofd-control="verification"]').click();
   const panel = page.locator('.ofd-verification-panel');
   await expect(panel).toBeVisible();
-  await expect(panel.locator('.ofd-verification-badge[data-status="unknown"]').first()).toContainText(
-    '未知',
+  await expect(panel).toContainText('总体状态：有效');
+  await expect(panel.locator('.ofd-verification-badge[data-status="valid"]').first()).toContainText(
+    '有效',
   );
   await expect(panel).toContainText('未配置与签章链匹配的信任根');
+  await expect(panel).toContainText('证书链无法建立信任');
+  await expect(panel).toContainText('不改变总体状态');
   await expect(panel).toContainText('数学签名有效');
   await expect(panel).toContainText('dataHash有效');
-  await expect(panel).toContainText('签名数学、数据哈希与引用完整性可能为有效');
+  await expect(panel).toContainText('签名数学、数据哈希、引用完整性与印章结构/数学可独立判定');
   // 明文：加解密行不渲染；完整性存在（report.integrity 非 null）时保留卡片。
   await expect(panel).not.toContainText('是否加密');
   await expect(panel).not.toContainText('是否已解密');
   const integrity = panel.locator('.ofd-verification-integrity');
   await expect(integrity).toBeVisible();
-  await expect(integrity).toHaveAttribute('data-status', 'unknown');
+  await expect(integrity).toHaveAttribute('data-status', 'valid');
   await expect(integrity).toContainText('清单文件数');
   await expect(integrity).toContainText('18');
 
@@ -707,27 +795,40 @@ test('验证结果配色：light/dark 的 valid/unknown/invalid 以颜色+文字
   expect(lightValid.foreground).not.toBe(darkValid.foreground);
   await page.screenshot({ path: resolve(ARTIFACTS, 'verification-colors-dark-valid.png') });
 
-  // unknown：明文签章、无信任根。
-  await openViewer(page, FIXTURES.cryptoSigned, { waitForRender: false });
-  await expect.poll(() => overall(page)).toBe('unknown');
+  // unknown：在真实报告上模拟“签名状态未知”，仅用于校验颜色/文字双编码。
+  await openViewer(page, FIXTURES.cryptoSigned, {
+    rootCertificate: FIXTURES.cryptoRoot,
+    waitForRender: false,
+  });
+  await expect.poll(() => overall(page)).toBe('valid');
   await page.locator('[data-ofd-control="verification"]').click();
+  await page.evaluate(() => {
+    const service = (
+      window.__viewer as unknown as {
+        cryptoService: { getReport(): Record<string, unknown>; openPanel(): void };
+      }
+    ).cryptoService;
+    const report = service.getReport();
+    report.overall = 'unknown';
+    for (const signature of report.signatures as Array<Record<string, unknown>>) {
+      signature.status = 'unknown';
+    }
+  });
+  await page.evaluate(() => window.__viewer!.openVerificationPanel());
   const unknownBadge = page.locator('.ofd-verification-badge[data-status="unknown"]').first();
   await expect(unknownBadge).toContainText('未知');
   const unknown = await badgeColors(page, 'unknown');
   expect(contrastRatio(unknown.foreground, unknown.background)).toBeGreaterThanOrEqual(4.5);
   expect(unknown.foreground).not.toBe(lightValid.foreground);
 
-  // invalid：showcase 配置仓库根（签发根不匹配）→ CHAIN_SIGNATURE_INVALID。
-  await openViewer(page, SHOWCASE, {
-    rootCertificate: FIXTURES.cryptoRoot,
-    waitForRender: false,
-  });
-  await expect.poll(() => overall(page), { timeout: 120_000 }).toBe('invalid');
+  // invalid：签名值被篡改 → 签名数学/摘要失败。
+  await openViewer(page, FIXTURES.cryptoTamperedSignature, { waitForRender: false });
+  await expect.poll(() => overall(page)).toBe('invalid');
   await page.locator('[data-ofd-control="verification"]').click();
   const invalidBadge = page.locator('.ofd-verification-badge[data-status="invalid"]').first();
   await expect(invalidBadge).toContainText('无效');
   await expect(page.locator('.ofd-verification-guidance')).toContainText(
-    '当前信任根与签章链不匹配',
+    '证书链无法建立信任',
   );
   const invalid = await badgeColors(page, 'invalid');
   expect(contrastRatio(invalid.foreground, invalid.background)).toBeGreaterThanOrEqual(4.5);
@@ -759,16 +860,30 @@ test('签章浮层状态徽标：valid/unknown/invalid 在 light/dark 有颜色+
     {
       status: 'unknown',
       label: '未知',
-      open: () => openViewer(page, FIXTURES.cryptoSigned, { waitForRender: false }),
+      open: async () => {
+        await openViewer(page, FIXTURES.cryptoSigned, {
+          rootCertificate: FIXTURES.cryptoRoot,
+          waitForRender: false,
+        });
+        await page.waitForFunction(() => window.__viewer!.getVerificationReport() !== undefined);
+        await page.evaluate(() => {
+          const service = (
+            window.__viewer as unknown as {
+              cryptoService: { getReport(): Record<string, unknown> };
+            }
+          ).cryptoService;
+          const report = service.getReport();
+          report.overall = 'unknown';
+          for (const signature of report.signatures as Array<Record<string, unknown>>) {
+            signature.status = 'unknown';
+          }
+        });
+      },
     },
     {
       status: 'invalid',
       label: '无效',
-      open: () =>
-        openViewer(page, SHOWCASE, {
-          rootCertificate: FIXTURES.cryptoRoot,
-          waitForRender: false,
-        }),
+      open: () => openViewer(page, FIXTURES.cryptoTamperedSignature, { waitForRender: false }),
     },
   ] as const;
   const lightForegrounds: string[] = [];

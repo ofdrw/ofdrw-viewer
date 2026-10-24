@@ -277,7 +277,7 @@ ofdrw-viewer-cli version [--json]
 
 - `overall` 取 `valid`/`invalid`/`unknown`/`unsupported`/`not-applicable`；时间戳只解析、不参与聚合；
 - 只有 `overall=valid` 退出 0；其余状态（含 `unknown`）退出 5；
-- 存在签名或完整性保护但未配置 `--root` 时，证书链状态为 `unknown`，签名/完整性状态随之不可判定，`overall` 不会为 `valid`；这是预期安全状态，不是验证通过。需要可信结论时必须配置正确根证书；
+- 存在签名或完整性保护但未配置 `--root` 时，证书链状态为 `unknown`；证书链不参与最终判定，签名数学、dataHash、References 与防夹带完整性通过时 `overall` 仍为 `valid`（退出 0）。链状态仍单独显示，需向用户说明“签名已通过、证书链未配置根”；
 - 签名与完整性都不存在时 `overall=not-applicable`，退出 5；
 - `--json` 即使结果为 `invalid`/`unknown` 也先输出完整报告，再返回 5；
 - 报告中的 `warnings` 逐条打印；`--root` 文件不存在/不可读退出 1，内容无法转换为证书时按 crypto 错误映射退出 5；
@@ -477,7 +477,7 @@ CLI 特有断言（完整矩阵见 [`测试方案.md`](./测试方案.md)）：
 - 文本：`text/x/y/w/h`、`items` 顺序、空文本过滤、空页 `[]`、`OFD_RENDERER_UNSUPPORTED` 映射 `CLI_TEXT_UNSUPPORTED`、其他文档级 `CliError` 均退出 2 且不按页级失败处理；其余文本读取失败不阻止图片（页失败退出 3）、文本写盘失败不阻止图片（页失败退出 3）、图片写盘失败保留文本（退出 3）、文本 API 缺失退出 2；
 - 原子写与取消：失败/取消无临时文件、已写文件保留、SIGINT 130；
 - `info`：加密包无凭据退出 0 且无文档块、明文元数据与页尺寸、文本前 5 页摘要、warning 不改变退出码；
-- `verify`：无根 `unknown` 退出 5、有效根 `valid` 退出 0、篡改/夹带 `invalid` 退出 5、缺失凭据 4、`not-applicable` 5、根行计数与链状态去重、时间戳只解析；
+- `verify`：无根时链显示 `unknown` 但 `overall` 可为 `valid` 退出 0、有效根 `valid` 退出 0、篡改/夹带 `invalid` 退出 5、缺失凭据 4、`not-applicable` 5、根行计数与链状态去重、时间戳只解析；证书链状态不改变退出码；
 - 终端安全：ANSI/C0/C1/U+2028/U+2029 清理、JSON 原值、crypto warning path 清理；
 - 性能：`dense-text-perf.ofd` 用例检查每页耗时在宽松超时内、文本顺序与 JSON 体积稳定，没有独立性能门禁；
 - SEA：缓存命名与权限、符号链接/属主/摘要负向校验、`CLI_SEA_EXTRACT_FAILED` 退出 2、PATH 不含 Node 时 `--version`/`--help`/图片/文本冒烟。

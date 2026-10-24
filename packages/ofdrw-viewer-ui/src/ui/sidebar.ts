@@ -7,6 +7,8 @@
  * 布局由 CSS 按根节点 `data-viewport` 切换（inline / overlay / drawer），这里只同步
  * 遮罩、焦点陷阱与 tab 状态，不重建 DOM、不改变页码/缩放/旋转。
  */
+
+import { replaceChildren } from '../compat';
 import { FocusTrap } from '../a11y';
 import type { ViewerFeatureStates } from '../features';
 import type { MessageKey, Translator } from '../i18n';
@@ -287,7 +289,7 @@ export class Sidebar {
     this.resizer.removeEventListener('keydown', this.handleResizerKeydown);
     this.tablist.removeEventListener('keydown', this.handleTablistKeydown);
     for (const entry of this.tabs.values()) entry.cleanup?.();
-    this.element.replaceChildren();
+    replaceChildren(this.element);
   }
 
   /** 构建侧栏 DOM。 */
@@ -295,7 +297,7 @@ export class Sidebar {
     const doc = this.element.ownerDocument;
     this.element.classList.add('ofd-viewer__sidebar');
     this.element.setAttribute('aria-label', this.translator.t('sidebar.label'));
-    this.element.replaceChildren();
+    replaceChildren(this.element);
 
     const header = doc.createElement('div');
     header.className = 'ofd-sidebar__header';

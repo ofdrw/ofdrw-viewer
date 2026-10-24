@@ -47,4 +47,12 @@ export interface OutputHost {
   getElements(): { readonly root: HTMLElement };
   /** 状态快照；只读取文档名称相关信息。 */
   getState(): { readonly document: OutputDocumentState };
+  /**
+   * 读取当前打开文档的原始字节；用于原 OFD 导出。
+   *
+   * 加密文档必须返回原始加密字节，不得解密或重新渲染。
+   *
+   * @param signal 取消信号。
+   */
+  readSourceBytes?(signal?: AbortSignal): Promise<ArrayBuffer | Uint8Array>;
 }

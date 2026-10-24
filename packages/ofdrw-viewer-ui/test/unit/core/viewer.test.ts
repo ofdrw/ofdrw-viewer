@@ -56,7 +56,7 @@ function makePage(index: number): FakePage {
   };
 }
 
-function makeDocument(count: number): unknown {
+function makeDocument(count: number, exportAllowed = true): unknown {
   return {
     pageCount: count,
     getPageInfos: async () => makeInfos(count),
@@ -67,7 +67,7 @@ function makeDocument(count: number): unknown {
     getPermissions: async () => ({
       edit: true,
       annot: true,
-      export: true,
+      export: exportAllowed,
       signature: true,
       watermark: true,
       printScreen: true,
@@ -205,6 +205,53 @@ describe('OFDViewer 核心', () => {
     viewer.destroy();
   });
 
+  it('无前缀 Fullscreen API 缺失时走 webkit 前缀且不进入 fallback', async () => {
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+    });
+    await viewer.ready;
+    const root = viewer.getElements().root;
+    let fullscreenElement: Element | null = null;
+    const requestFullscreen = vi.fn(() => {
+      fullscreenElement = root;
+      document.dispatchEvent(new Event('webkitfullscreenchange'));
+      return Promise.resolve();
+    });
+    const exitFullscreen = vi.fn(() => {
+      fullscreenElement = null;
+      document.dispatchEvent(new Event('webkitfullscreenchange'));
+      return Promise.resolve();
+    });
+    Object.defineProperty(root, 'webkitRequestFullscreen', {
+      configurable: true,
+      value: requestFullscreen,
+    });
+    Object.defineProperty(document, 'webkitFullscreenElement', {
+      configurable: true,
+      get: () => fullscreenElement,
+    });
+    Object.defineProperty(document, 'webkitExitFullscreen', {
+      configurable: true,
+      value: exitFullscreen,
+    });
+    try {
+      await viewer.setFullscreen(true);
+      expect(requestFullscreen).toHaveBeenCalledTimes(1);
+      expect(viewer.getState().view.fullscreen).toBe(true);
+      expect(root.classList.contains('ofd-viewer--fullscreen-fallback')).toBe(false);
+      await viewer.setFullscreen(false);
+      expect(exitFullscreen).toHaveBeenCalledTimes(1);
+      expect(viewer.getState().view.fullscreen).toBe(false);
+    } finally {
+      delete (root as { webkitRequestFullscreen?: unknown }).webkitRequestFullscreen;
+      delete (document as { webkitFullscreenElement?: unknown }).webkitFullscreenElement;
+      delete (document as { webkitExitFullscreen?: unknown }).webkitExitFullscreen;
+      viewer.destroy();
+    }
+  });
+
   it('沉浸式全屏 fallback 下 Escape 退出且不与侧栏 Escape 冲突', async () => {
     const viewer = new OFDViewer({
       crypto: { enabled: false },
@@ -310,6 +357,30 @@ describe('OFDViewer 核心', () => {
     viewer.setRotation(90);
     expect(viewer.getRotation()).toBe(90);
     expect(viewer.getPageView(1)?.element.dataset.rotation).toBe('90');
+    viewer.destroy();
+  });
+
+  it('页面各层用四边定位代替 Chrome 67 不支持的 inset', async () => {
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+    });
+    await viewer.ready;
+    const page = viewer.getPageView(1)!.element;
+    for (const selector of [
+      '.ofd-page__canvas-wrapper',
+      '.ofd-page__text-layer',
+      '.ofd-page__signature-layer',
+    ]) {
+      const layer = page.querySelector<HTMLElement>(selector)!;
+      expect(layer).not.toBeNull();
+      expect(layer.getAttribute('style')).not.toContain('inset');
+      expect(layer.style.top).toBe('0px');
+      expect(layer.style.right).toBe('0px');
+      expect(layer.style.bottom).toBe('0px');
+      expect(layer.style.left).toBe('0px');
+    }
     viewer.destroy();
   });
 
@@ -689,5 +760,35 @@ describe('OFDViewer 核心', () => {
     await vi.waitFor(() => expect(viewer.getState().view.zoomMode).toBe('page-actual'));
     expect(viewer.getScale()).toBeCloseTo(1, 5);
     viewer.destroy();
+  });
+
+  it('readSourceBytes 复用 export 功能与文档导出权限门控', async () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    const allowed = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: bytes,
+    });
+    await allowed.ready;
+    expect(await allowed.readSourceBytes()).toEqual(bytes);
+    allowed.setFeatures({ export: false });
+    await expect(allowed.readSourceBytes()).rejects.toMatchObject({
+      code: 'OFD_FEATURE_DISABLED',
+      feature: 'export',
+    });
+    allowed.destroy();
+
+    engineMocks.open.mockImplementation(async () => makeDocument(3, false));
+    const denied = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: bytes,
+    });
+    await denied.ready;
+    await expect(denied.readSourceBytes()).rejects.toMatchObject({
+      code: 'OFD_FEATURE_DISABLED',
+      feature: 'export',
+    });
+    denied.destroy();
   });
 });

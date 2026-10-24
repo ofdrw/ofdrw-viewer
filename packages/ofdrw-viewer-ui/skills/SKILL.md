@@ -1,6 +1,6 @@
 ---
 name: ofdrw-viewer-ui
-description: Embed the framework-agnostic OFD reader UI from @ofdrw/ofdrw-viewer-ui in web apps. Use this skill whenever a task involves a complete OFD reading interface, including continuous scrolling, zoom/rotation, thumbnails, outline/bookmarks, text selection and search, printing, PNG/JPEG/WebP export, encrypted-document credentials, signature overlays and verification panels, or the Web Component/React/Vue adapters. Covers installation, style import, container sizing, OFDViewer options/methods/events, feature gates, crypto configuration, framework wrappers, and known boundaries. Also covers URL loading in the UI layer: HttpByteSource, HTTP Range/CORS, request headers, cancellation, shared byte sources (engine does not fetch), host-controlled font bytes, and URI parameter preview: ?file= URLs, ?base64= values, base64 预览, encoding, priority and security. Use for OFD 阅读器、OFD 在线预览、URI 参数预览、?file=、?base64=、base64 预览、Vue/React OFD 组件、URL 跨域/Range 排障, or when embedding @ofdrw/ofdrw-viewer-ui.
+description: Embed the framework-agnostic OFD reader UI from @ofdrw/ofdrw-viewer-ui in web apps. Use this skill whenever a task involves a complete OFD reading interface, including continuous scrolling, zoom/rotation, thumbnails, outline/bookmarks, text selection and search, printing, PNG/JPEG/WebP and original OFD export, encrypted-document credentials, signature overlays and verification panels, or the Web Component/React/Vue adapters. Covers installation, style import, container sizing, OFDViewer options/methods/events, feature gates, crypto configuration, framework wrappers, and known boundaries. Also covers URL loading in the UI layer: HttpByteSource, HTTP Range/CORS, request headers, cancellation, shared byte sources (engine does not fetch), host-controlled font bytes, and URI parameter preview: ?file= URLs, ?base64= values, base64 预览, encoding, priority and security. Use for OFD 阅读器、OFD 在线预览、URI 参数预览、?file=、?base64=、base64 预览、Vue/React OFD 组件、URL 跨域/Range 排障, or when embedding @ofdrw/ofdrw-viewer-ui.
 ---
 
 # OFD 阅读器 UI（@ofdrw/ofdrw-viewer-ui）
@@ -55,6 +55,8 @@ import '@ofdrw/ofdrw-viewer-ui/style.css';
 ```
 
 挂载点必须自备确定高度，`OFDViewer` 不会修改宿主样式；它在挂载点内创建 `display: grid` 的 `.ofd-viewer` 根节点，并通过 `width/height: 100%` 撑满挂载点。`<ofd-viewer>` 自身是宿主：只有内联 `display`/`height`/`min-height` 未设置时，`connectedCallback` 才补 `display: block; height: 100%; min-height: 0`；父容器仍需提供高度，组件不会替父容器撑高。
+
+弹出层（对话框、印章浮层、更多菜单、查找栏、侧栏 overlay/drawer、Toast）默认使用 `180ms ease-out` 的淡入 + 轻位移打开动画，关闭即时。可通过 `--ofd-motion-duration` 调整，建议 `160–200ms`；`prefers-reduced-motion: reduce` 下自动关闭。动画不影响定位、焦点和键盘操作。
 
 ## 5 分钟跑通
 
@@ -300,7 +302,7 @@ export function Reader() {
 }
 ```
 
-`source`/`features` 等 prop 变化只调用核心方法，不会重建实例；卸载时销毁。`page` 为 1-based 受控页码，`scale` 可传数字或缩放模式，`sidebar` 传 `null` 关闭。ref 暴露 `getInstance`、`open`、`goToPage`、`setScale`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage`、`verify` 等薄方法。外层容器默认 `width/height: 100%`。
+`source`/`features` 等 prop 变化只调用核心方法，不会重建实例；卸载时销毁。`page` 为 1-based 受控页码，`scale` 可传数字或缩放模式，`sidebar` 传 `null` 关闭。ref 暴露 `getInstance`、`open`、`goToPage`、`setScale`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage`、`exportOfd`、`verify` 等薄方法。外层容器默认 `width/height: 100%`。
 
 完整 props、事件回调和句柄见 [API.md React](./API.md#react)。
 
@@ -325,7 +327,7 @@ const features = { print: false };
 </template>
 ```
 
-组件只创建一个外层 `div`，实例用 `shallowRef`/`markRaw` 持有，不进入响应式代理。公共 props 覆盖 `options` 里的同名项；事件使用 kebab-case。模板 ref 可调用 `getInstance`、`goToPage`、`setScale`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage`、`verify` 等 expose 方法。
+组件只创建一个外层 `div`，实例用 `shallowRef`/`markRaw` 持有，不进入响应式代理。公共 props 覆盖 `options` 里的同名项；事件使用 kebab-case。模板 ref 可调用 `getInstance`、`goToPage`、`setScale`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage`、`exportOfd`、`verify` 等 expose 方法。
 
 完整 props、emits 与 expose 见 [API.md Vue](./API.md#vue)。
 
@@ -383,7 +385,7 @@ await viewer.copySelection();
 
 查找默认从当前页开始、高亮全部匹配；空查询会清除查找。`find`/`findNext`/`findPrevious`/`clearFind` 需要 `find` 功能，选中与复制需要 `selection` 和 `textLayer`。完整选项与事件见 [API.md 查找、打印与导出](./API.md#查找打印与导出)。
 
-### 打印与图片导出
+### 打印、图片与原 OFD 导出
 
 ```ts
 await viewer.print({ pages: 'current', dpi: 'auto', includeBackground: false });
@@ -399,9 +401,11 @@ await viewer.exportImages({
   quality: 0.92,
   zipFilename: '发票',
 });
+const original = await viewer.exportOfd({ filename: '发票原件' });
+console.log(original.filename, original.size);
 ```
 
-默认打印当前页、`dpi: 'auto'`、沿用当前旋转；默认导出当前页、PNG、`quality: 0.92`。`auto` DPI 按本次页数分档：≤50 页 200、51–200 页 150、>200 页 96；显式 DPI 须为 `(0, 600]`，结果四舍五入。多页导出生成 ZIP；单页失败会降级为 warning，全部失败抛 `OFD_EXPORT_FAILED`。打印调用浏览器打印对话框，不生成 PDF；图片导出不合并为 PDF。
+默认打印当前页、`dpi: 'auto'`、沿用当前旋转；默认导出当前页、PNG、`quality: 0.92`。`auto` DPI 按本次页数分档：≤50 页 200、51–200 页 150、>200 页 96；显式 DPI 须为 `(0, 600]`，结果四舍五入。多页导出生成 ZIP；单页失败会降级为 warning，全部失败抛 `OFD_EXPORT_FAILED`。打印调用浏览器打印对话框，不生成 PDF；图片导出不合并为 PDF。`exportOfd()` 导出阅读器打开时的原始 OFD 字节，不重新渲染；加密文档导出原始加密包；与图片导出共用 `export` 功能开关和文档权限。
 
 ### 加密文档与签名验证
 
@@ -422,6 +426,7 @@ console.log(report.overall);
 
 - 预置 `credentials` 时不弹内置登录框；未预置时由 `autoPrompt`/`onCredentialRequired` 决定弹窗或拒绝。
 - `crypto.enabled=false` 时只保证明文文档阅读：加密文档以 `OFD_CRYPTO_UNSUPPORTED` 拒绝；`verification` 功能为 unsupported，`verify()`/`openVerificationPanel()` 以 `OFD_FEATURE_DISABLED`（`feature='verification'`）拒绝，不把密文当明文渲染。
+- `report.overall` 只汇总签名数学、dataHash、Reference、防夹带完整性和印章结构/数学；证书链在详情中独立成栏，不可信/过期/未知不改变总体结论。签章者旁按链状态显示“可信/可信状态未知”，签发时间与证书下载来自 crypto 报告/详情。页面印章浮层的“查看签章详情”与侧栏签章项打开同一个详情面板。
 - 完整 crypto 选项、凭据/根证书形态、自动验证、报告字段与取消语义见 [API.md 验证行为与错误](./API.md#验证行为与错误)。
 
 ## 已知边界
@@ -430,7 +435,7 @@ console.log(report.overall);
 - **网络在 UI 层**：URL 由 `HttpByteSource` 读取（Range + 整包回退），跨域需要 CORS 与 `Content-Range` 暴露头；鉴权头由宿主提供。
 - **字体在宿主机**：引擎不读取字体 URL/路径，UI 无字体配置项；需要补充字体时由宿主直接使用引擎。
 - **URI 参数预览只读查询串**：`?file=` 仅接受 `http(s)`；`?base64=` 默认上限 64 MiB，且会进入历史/日志/Referer，敏感文档不应使用。
-- **打印/导出范围**：打印调用浏览器对话框，不生成 PDF；图片导出不合并为 PDF。
+- **打印/导出范围**：打印调用浏览器对话框，不生成 PDF；图片导出不合并为 PDF；原 OFD 导出是字节拷贝，不重新打包或修正文档。
 - **加密边界**：`crypto.enabled=false` 时加密文档直接拒绝；吊销状态不检查，固定为未检查；时间戳只解析、不验证，不参与整体结论。
 - **跳转目标**：`goToDestination` 尚未暴露；可读 `getPageInfos()` 后用 `goToPage(pageIndex + 1)` 跳转，页内坐标由调用方处理。
 - **性能**：未对数千页大文档、超大文件或低端设备做硬性性能承诺；首屏与全篇查找耗时随页数增长，宿主应自行压测。

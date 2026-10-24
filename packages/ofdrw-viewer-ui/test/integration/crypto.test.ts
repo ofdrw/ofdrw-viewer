@@ -513,9 +513,12 @@ describe('验证面板与信任根', () => {
     );
 
     popover
-      .querySelector<HTMLButtonElement>('[data-ofd-control="signature-popover-full"]')!
+      .querySelector<HTMLButtonElement>('[data-ofd-control="signature-popover-details"]')!
       .click();
-    expect(document.querySelector('.ofd-verification-panel')).not.toBeNull();
+    await vi.waitFor(() => {
+      expect(document.querySelector('.ofd-dialog')).not.toBeNull();
+    });
+    expect(document.querySelector('.ofd-verification-panel')).toBeNull();
   });
 });
 describe('t45 修复回归', () => {
@@ -1150,6 +1153,10 @@ describe('t51 修复回归', () => {
     expect(cryptoMocks.verify).toHaveBeenCalledTimes(calls + 1);
     expect(popover.textContent).toContain('有效');
     expect(popover.textContent).toContain('已解析，未验证');
+    // 入场动画只在浮层首次挂载时启用；内部字段更新不重新加类/重播。
+    expect(popover.classList.contains('ofd-signature-popover--in')).toBe(true);
+    popover.querySelector('dd')!.textContent = '重渲染';
+    expect(popover.classList.contains('ofd-signature-popover--in')).toBe(true);
   });
 
   it('onVerification 内关闭 feature：印章点击回退未验证，重新启用后需重新验证', async () => {
@@ -1263,6 +1270,7 @@ describe('t5 签章/验证 UI 修复', () => {
       tsa: CertificateSummary;
     };
     timestamp.genTime = '2026-10-23T07:59:26.000Z';
+    (parsed.signatures[0] as { signingTime?: string }).signingTime = '2026-10-23T07:59:26.000Z';
     timestamp.serialNumber = '01a167c59e2f';
     timestamp.tsa = {
       ...ROOT_SUMMARY,
@@ -1283,6 +1291,12 @@ describe('t5 签章/验证 UI 修复', () => {
     expect(document.querySelector('.ofd-verification-integrity')).toBeNull();
     expect(panel.textContent).toContain('页数');
     expect(panel.textContent).toContain('签名数');
+    expect(panel.textContent).not.toContain('验证时间');
+    expect(panel.textContent).not.toContain('耗时');
+    const signatureCard = panel.querySelector<HTMLElement>('.ofd-verification-signature')!;
+    expect(signatureCard.textContent).toContain('签发时间');
+    expect(signatureCard.textContent).toContain('2026-10-23 15:59:26');
+    expect(signatureCard.textContent).toContain('证书链（不影响总体状态）');
 
     const timestampBox = panel.querySelector<HTMLElement>('.ofd-verification-timestamp')!;
     expect(timestampBox.textContent).toContain('已解析，未验证（不参与总体状态）');
@@ -1294,7 +1308,7 @@ describe('t5 签章/验证 UI 修复', () => {
     const guidance = document.querySelector<HTMLElement>('.ofd-verification-guidance')!;
     expect(guidance.dataset.status).toBe('unknown');
     expect(guidance.textContent).toContain('未配置与签章链匹配的信任根');
-    expect(guidance.textContent).toContain('总体状态仍为“未知/无效”');
+    expect(guidance.textContent).toContain('不改变总体状态');
     expect(viewer.getVerificationReport()?.overall).toBe('unknown');
   });
 
@@ -1382,6 +1396,42 @@ describe('t5 签章/验证 UI 修复', () => {
 
       document.querySelector<HTMLButtonElement>('.ofd-dialog__close')!.click();
       await vi.waitFor(() => expect(capture.revoked.length).toBeGreaterThan(0));
+    } finally {
+      capture.restore();
+    }
+  });
+
+  it('验证面板根证书可下载为 .der，且不把链失败写进总体状态', async () => {
+    cryptoMocks.inspect.mockResolvedValue(signedInspection());
+    engineMocks.open.mockResolvedValue(createMockDocument({ pageCount: 1 }));
+    cryptoMocks.verify.mockResolvedValue(report('valid'));
+    const viewer = new OFDViewer({
+      container: document.body,
+      source: new ArrayBuffer(8),
+      crypto: {
+        autoVerify: false,
+        rootCertificates: [{ data: new Uint8Array([1, 2, 3]) }],
+      },
+    });
+    await viewer.ready;
+    await viewer.verify();
+    viewer.openVerificationPanel();
+    const button = await vi.waitFor(() => {
+      const element = document.querySelector<HTMLButtonElement>(
+        '[data-ofd-control="verification-root-download"]',
+      );
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    const capture = captureDownloads();
+    try {
+      button.click();
+      await vi.waitFor(() => expect(capture.downloads).toHaveLength(1));
+      expect(capture.downloads[0]!.filename).toMatch(/\.der$/);
+      expect(capture.downloads[0]!.blob?.type).toBe('application/pkix-cert');
+      expect(new Uint8Array(await capture.downloads[0]!.blob!.arrayBuffer())).toEqual(
+        new Uint8Array([1, 2, 3]),
+      );
     } finally {
       capture.restore();
     }

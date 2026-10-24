@@ -62,6 +62,9 @@ describe('parseSignedValue', () => {
       expect(parsed.certificate?.subject).toContain('Signer');
       expect(parsed.signatureAlgorithm).toBe('SM3withSM2');
       expect(parsed.signedAt).toBe('2026-10-22T17:51:06.000Z');
+      // 签章者证书 DER 供 UI 下载；必须与包内证书逐字节一致，且不含 PEM/私钥。
+      expect(parsed.certificateDer).toEqual(fixtureBytes('certs', 'signer.crt.der'));
+      expect(new TextDecoder().decode(parsed.certificateDer)).not.toContain('PRIVATE KEY');
       expect(parsed.dataHash).toBe(sm3Hex(signatureXml));
       expect(parsed.byteLength).toBe(signedValue.length);
       expect(parsed.seal).toMatchObject({
@@ -86,6 +89,7 @@ describe('parseSignedValue', () => {
       expect(parsed.version).toBe('v1');
       expect(parsed.certificate?.subject).toContain('Signer');
       expect(parsed.signedAt).toBe('2026-10-23 10:00:00');
+      expect(parsed.certificateDer).toEqual(fixtureBytes('certs', 'signer.crt.der'));
       expect(parsed.dataHash).toMatch(/^[0-9a-f]{64}$/);
       expect(parsed.seal).toMatchObject({
         version: 'v1',

@@ -13,7 +13,7 @@
 - 连续滚动阅读，页码定位，缩放、旋转、全屏，侧栏和 URL hash 导航；
 - 缩略图、大纲、书签、签章列表；
 - 透明文本层、选区复制、全文查找与匹配高亮；
-- 打印为浏览器分页图片，导出 PNG/JPEG/WebP，多页打包 ZIP；
+- 打印为浏览器分页图片，导出 PNG/JPEG/WebP 或当前 OFD 原文件，多页图片打包 ZIP；
 - 加密 OFD 的凭据输入、解密打开、签章与完整性验证展示、根证书配置；
 - `?file=` / `?base64=` 查询参数预览。
 
@@ -22,7 +22,7 @@
 - 不解析 OFD、不绘制页面、不导出 PDF；这些由引擎或宿主完成。
 - 不实现 ASN.1、SM2/SM3/SM4、证书链、签名值或时间戳验证；UI 只调用 `@ofdrw/ofdrw-viewer-crypto` 并展示结果。
 - 不做 OCR、批注写入、表单填写、OFD 编辑、服务端登录或文档上传。
-- 当前不提供附件面板、图层/可选内容、演示模式、原文件下载；打印和导出只输出页面图片。
+- 当前不提供附件面板、图层/可选内容、演示模式；打印和图片导出输出页面图片，另提供原 OFD 文件下载。
 - 不把“文档声明了权限”当成 DRM：UI 按权限禁用打印/导出入口，但无法阻止宿主直接调用引擎。
 
 ### 设计参考
@@ -104,7 +104,7 @@ URL 字符串和 `{ url, headers }` 由 UI 的 `HttpByteSource` 读取：先探�
 
 - 文本和选区：`getSelectedText()`、`copySelection()`、`clearSelection()`。
 - 查找：`find(query, options?)`、`findNext()`、`findPrevious()`、`clearFind()`、`getFindState()`；默认不区分大小写、非全词、高亮全部、从当前页开始。
-- 打印：`print(options?)`；导出：`exportImage(options?)`、`exportImages(options?)`。
+- 打印：`print(options?)`；导出：`exportImage(options?)`、`exportImages(options?)`、`exportOfd(options?)`。
 - 签章：`getSignatures()`、`getSignatureDetail(id)`、`showSignature(id)`、`focusSignature(id)`、`verify(options?)`、`getVerificationReport()`、`openVerificationPanel()`、`setRootCertificates()`、`getRootCertificates()`。
 
 ### 事件
@@ -157,6 +157,17 @@ UI 对 `error` 事件与错误卡只展示 `code`/`message`，需要定位时读
 ### 视觉与主题
 
 宿主必须显式引入 `@ofdrw/ofdrw-viewer-ui/style.css`。样式以 `.ofd-viewer` 前缀隔离，颜色、字体、间距、圆角、阴影、层级和触摸目标由 CSS 变量控制；常见变量包括 `--ofd-bg`、`--ofd-text`、`--ofd-accent`、`--ofd-border`、`--ofd-page-gap`、`--ofd-page-margin`、`--ofd-toolbar-height`、`--ofd-sidebar-width` 和 `--ofd-radius`，宿主可在容器或根节点覆盖。主题值写入 `data-theme`：`light`/`dark` 显式生效，`auto` 通过 `prefers-color-scheme` 解析并跟随系统切换；同时提供高对比度和减少动效的媒体查询样式。
+
+### 动效
+
+弹出层统一使用克制的入场动画：时长 `180ms`、`ease-out`，只做打开，不做退出动画（关闭、替换和隐藏仍即时）。宿主可覆盖 `--ofd-motion-duration`，取值应保持在 `160–200ms`。
+
+- 模态对话框：`.ofd-dialog__backdrop` 淡入，`.ofd-dialog` 以 6px 上移 + 淡入出现；打印、导出、文档属性、验证面板、凭据弹窗和签章详情共用 `.ofd-dialog` 路径。
+- 印章浮层：首次挂载时淡入 + 4px 上移，`transform-origin: top left`；动画在定位测量完成后才启用，不改变锚点对齐与点击命中，浮层内部字段更新不会重播。
+- 更多菜单：`scale(0.96) → 1` + 淡入，向下展开时原点在右上、向上展开时在右下；脚本仍用布局尺寸（而非动画后的视觉矩形）计算夹紧位置，键盘导航和关闭行为不变。
+- 查找栏：透明度 + 4px 轻移，同时保留水平居中；侧栏 overlay/drawer 保留抽屉滑入并淡入，遮罩同步淡入。
+- Toast：入场淡入 + 6px 上滑；自动关闭计时从创建时开始，动画不延长展示时间。
+- `prefers-reduced-motion: reduce` 下显式关闭上述动画并保留最终静态位置；浮层 portal 到 `.ofd-viewer` 之外时同样生效。
 
 内置文案默认简体中文，`zh-CN` 和 `en-US` 可用；`setLocale()` 更新根节点 `lang`、状态和翻译器，未注册语言回落到 `zh-CN`，状态中仍保留传入的 locale。面板空态、加载/错误提示、页码和可访问性文案都走同一翻译层，不在组件内硬编码第二套文案。
 
@@ -224,6 +235,8 @@ UI 对 `error` 事件与错误卡只展示 `code`/`message`，需要定位时读
 
 导出支持当前页、全部页、闭区间和页码数组；PNG/JPEG/WebP，质量默认 0.92，PNG 可透明，JPEG/WebP 强制白底。单页直接下载；多页逐页生成后以 store 模式打包 ZIP。支持自定义单页 `filename` 和 ZIP `zipFilename`。DPI 可显式指定在 `(0, 600]` 内并取整，`auto` 按任务页数分档：不超过 50 页 200 DPI，51–200 页 150 DPI，超过 200 页 96 DPI。文件名优先使用来源 basename，其次文档标题，最后 `document`；单页默认 `{docName}-p{page}`，多页 ZIP 内保留页码，ZIP 名为 `{docName}-images.zip`。
 
+另有“导出 OFD 原文件”：复用 `export` 功能开关与文档导出权限，读取打开时的原始来源字节（URL 按原请求头重新读取，ArrayBuffer/Blob/随机读源直接读取），不渲染、不解密、不重新打包；加密文档导出原始加密包。公开的 `readSourceBytes()` 使用同一门控，便于宿主自行保存原文件。默认文件名为 `{docName}.ofd`，自定义名自动补 `.ofd`；读取失败、随机读源实际长度与声明 `size` 不一致（短读）、空文件或宿主不支持均映射为 `OFD_EXPORT_FAILED`，取消保留 `AbortError`。
+
 打印/导出开始前检查 `print`/`export` 功能和文档权限；多页导出中单页失败会记录页号并继续其余页，全部失败抛 `OFD_EXPORT_FAILED`，打印失败则整体映射为 `OFD_PRINT_FAILED`；取消统一转为 `AbortError`。大任务按顺序渲染，避免同时持有大量 canvas；图片仍会占用内存，内置进度对话框提供取消入口。
 
 ## 签章与密码能力
@@ -244,9 +257,13 @@ UI 对 `error` 事件与错误卡只展示 `code`/`message`，需要定位时读
 
 UI 直接消费 crypto 的 `VerificationReport`：
 
-- `overall` 为 `valid`、`invalid`、`unknown`、`not-applicable` 或 `unsupported`，同时用颜色、文字和图标表达，不能只靠颜色。
+- `overall` 为 `valid`、`invalid`、`unknown`、`not-applicable` 或 `unsupported`，同时用颜色、文字和图标表达，不能只靠颜色；它只汇总签名数学、dataHash、Reference、防夹带完整性和印章结构/数学。
 - 完整性、Reference、证书链、签名数学和印章分别展示；`unknown`、`not-applicable` 不得显示成 `valid`。
-- 未配置信任根时证书链状态为 `unknown`，提示“未配置信任根，链状态未知”；配置根后重新验证才可能变为 `valid`。
+- 证书链独立成“根证书链验证”栏，展示链状态、是否配置信任根、签名者证书/信任锚/链成员摘要与问题；链 `untrusted`/`expired`/`incomplete`/`unknown` 不得改写 `overall`。签章者旁只按链 `valid` 显示“可信”，其余为“可信状态未知”，并使用文字+颜色双编码。
+- 验证面板不显示验证时间/耗时；签名卡片显示 crypto 的 `signingTime`（缺失为“未提供”），带时区 ISO 时间换算 UTC+8，无时区字面量保留原值。
+- 签章者证书与信任根证书可下载为 `.der`，文件名按 CN/序列号清洗，Blob URL 下载后释放；不输出 PEM 或私钥。
+- 侧栏签章列表为卡片式按钮，无 ▣/✎ 图标装饰，保留名称/类型/时间/签章者/页码/状态，支持键盘、焦点与 `aria-current`；页面印章浮层的“查看签章详情”与侧栏项复用同一 `showSignature()` 详情面板。
+- 未配置信任根时证书链状态为 `unknown`，提示“未配置与签章链匹配的信任根，证书链无法建立信任”，配置根后重新验证才可能变为 `valid`。
 - 时间戳只解析，状态为 `parsed-not-verified`、`not-present` 或 `parse-error`，文案明确“已解析，未验证”/“无”/“不可解析”，不显示“时间戳有效”或“可信时间”。
 - 不检查 CRL/OCSP，报告中的吊销状态为 `not-checked`；不得声称吊销状态有效。
 - 报告和详情中的证书、印章图片和诊断信息不包含凭据、私钥或 PEM；印章图片只以 Blob URL 临时渲染。

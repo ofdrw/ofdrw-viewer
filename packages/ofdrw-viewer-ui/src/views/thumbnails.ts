@@ -10,6 +10,8 @@
  * - 当前页高亮并与主视图页码同步，点击跳转、侧栏关闭时暂停队列。
  */
 
+import { replaceChildren } from '../compat';
+
 import type { Translator } from '../i18n';
 import type { Rotation, ViewerState } from '../state';
 import {
@@ -142,7 +144,7 @@ export class ThumbnailView {
     this.root.className = 'ofd-thumbnails';
     this.root.setAttribute('role', 'listbox');
     this.root.setAttribute('aria-label', this.getTranslator().t('sidebar.thumbnails'));
-    this.host.replaceChildren(this.root);
+    replaceChildren(this.host, this.root);
 
     const state = this.viewer.getState();
     this.lastPageNumber = state.view.pageNumber;
@@ -188,7 +190,7 @@ export class ThumbnailView {
     const translator = this.getTranslator();
     const pageCount = this.viewer.getState().document.pageCount;
     this.abortActive();
-    this.root.replaceChildren();
+    replaceChildren(this.root);
     this.entries.clear();
     this.cache.clear();
     this.visible.clear();

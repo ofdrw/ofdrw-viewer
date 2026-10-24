@@ -62,7 +62,7 @@ test('验证面板：配置根证书后有效，时间戳固定为已解析未�
   await expectNoPageErrors(page, issues);
 });
 
-test('印章点击：先验证再展示浮层，可进入完整面板', async ({ page, issues }) => {
+test('印章点击：先验证再展示浮层，可进入签章详情', async ({ page, issues }) => {
   await openViewer(page, FIXTURES.cryptoSigned, {
     rootCertificate: FIXTURES.cryptoRoot,
     waitForRender: false,
@@ -80,7 +80,9 @@ test('印章点击：先验证再展示浮层，可进入完整面板', async ({
   await expect(popover).toContainText('有效');
   await expect(popover).toContainText('已解析，未验证');
 
-  await popover.locator('[data-ofd-control="signature-popover-full"]').click();
-  await expect(page.locator('.ofd-verification-panel')).toBeVisible();
+  await popover.locator('[data-ofd-control="signature-popover-details"]').click();
+  const detail = page.locator('.ofd-dialog');
+  await expect(detail).toBeVisible();
+  await expect(detail.locator('.ofd-dialog__title')).toContainText('签章信息');
   await expectNoPageErrors(page, issues);
 });

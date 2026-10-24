@@ -5,6 +5,7 @@
  * 不改变被测代码分支，也不访问真实网络。
  */
 
+import { replaceChildren } from '../../src/compat';
 import { vi } from 'vitest';
 
 /** 单次下载记录。 */
@@ -117,6 +118,6 @@ export function captureDownloads(): DownloadCapture {
 
 /** 清空 DOM 与自定义元素注册之外的状态。 */
 export function resetDom(): void {
-  document.body.replaceChildren();
+  replaceChildren(document.body);
   document.head.querySelectorAll('style[data-ofd-print-style]').forEach((node) => node.remove());
 }

@@ -109,7 +109,7 @@ export async function dumpFailureLog(
   ].join('\n');
   const dir = join('test', 'acceptance', 'artifacts', 'logs');
   mkdirSync(dir, { recursive: true });
-  const filename = join(dir, `${testInfo.title.replaceAll(/[^\w\u4e00-\u9fa5-]+/g, '_')}.log`);
+  const filename = join(dir, `${testInfo.title.replace(/[^\w\u4e00-\u9fa5-]+/g, '_')}.log`);
   writeFileSync(filename, log, 'utf8');
   await testInfo.attach('console.log', { body: log, contentType: 'text/plain' });
 }

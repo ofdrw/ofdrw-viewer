@@ -676,6 +676,50 @@ for (const pdfCase of [
   });
 }
 
+test('导出选项：OFD 原文件隐藏图片字段，下载保持原始字节', async ({ page, issues }) => {
+  await openViewer(page, FIXTURES.multi);
+  await dismissFindbar(page);
+  await page.locator('[data-ofd-control="export"]').click();
+  const dialog = page.locator('.ofd-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('导出选项');
+  const format = dialog.locator('[data-ofd-control="output-format"]');
+  await expect(format.locator('option')).toHaveCount(4);
+  await format.selectOption('ofd');
+  await expect(dialog.locator('[data-ofd-control="output-ofd-note"]')).toBeVisible();
+  await expect(dialog.locator('[data-ofd-control="output-ofd-note"]')).toContainText('OFD 原文件');
+  await expect(dialog.locator('input[type="range"]')).toBeHidden();
+  await expect(dialog.locator('.ofd-output-field').nth(2)).toBeHidden();
+  const [download] = await Promise.all([
+    page.waitForEvent('download', { timeout: 20_000 }),
+    dialog.locator('.ofd-dialog__action--primary').click(),
+  ]);
+  expect(download.suggestedFilename()).toMatch(/\.ofd$/);
+  const path = await download.path();
+  expect(path).not.toBeNull();
+  const bytes = readFileSync(path!);
+  expect([...bytes.subarray(0, 4)]).toEqual([0x50, 0x4b, 0x03, 0x04]);
+  await expectNoPageErrors(page, issues);
+});
+
+test('加密文档导出 OFD 原文件：导出原始加密包而非解密内容', async ({ page, issues }) => {
+  const fixture = fileURLToPath(
+    new URL('../../../ofdrw-viewer-crypto/test/fixtures/crypto/password-encrypted.ofd', import.meta.url),
+  );
+  const original = readFileSync(fixture);
+  await openViewer(page, FIXTURES.cryptoPassword, { password: 'FixturePass123' });
+  await dismissFindbar(page);
+  const [download] = await Promise.all([
+    page.waitForEvent('download', { timeout: 30_000 }),
+    page.evaluate(() => window.__viewer!.exportOfd({ filename: 'encrypted-original' })),
+  ]);
+  expect(download.suggestedFilename()).toBe('encrypted-original.ofd');
+  const path = await download.path();
+  expect(path).not.toBeNull();
+  expect(readFileSync(path!)).toEqual(original);
+  await expectNoPageErrors(page, issues);
+});
+
 test('单页 JPEG 与多页 ZIP 导出下载', async ({ page, issues }) => {
   await openViewer(page, FIXTURES.multi);
   await dismissFindbar(page);

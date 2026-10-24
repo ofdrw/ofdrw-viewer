@@ -9,7 +9,10 @@ import {
 } from '@ofdrw/ofdrw-viewer-engine';
 import {
   CryptoError,
+  derBitString,
+  derContext,
   derInteger,
+  derOctetString,
   derSequence,
   parseDer,
   verifyOfd,
@@ -129,6 +132,9 @@ describe('verifyOfd 签名验证', () => {
         revocation: 'not-checked',
       });
       expect(signature.certificate.trustAnchor?.subject).toContain('Root CA');
+      // 签发时间优先取 TBS_Sign.timeInfo（v4/v5 为 ISO 8601）。
+      expect(signature.signingTime).toBe('2026-10-22T17:51:06.000Z');
+      expect(signature.signingTimeSource).toBe('time-info');
       expect(signature.seal).toMatchObject({
         status: 'valid',
         version,
@@ -149,32 +155,41 @@ describe('verifyOfd 签名验证', () => {
     });
   }
 
-  it('未配置信任根时链与整体均为 unknown，并给出 warning', async () => {
+  it('未配置信任根时链为 unknown，但签名与整体仍可 valid', async () => {
     const report = await verifyFile('signed-sesv4.ofd');
-    expect(report.overall).toBe('unknown');
+    expect(report.overall).toBe('valid');
     expect(report.rootsConfigured).toBe(false);
     const signature = report.signatures[0]!;
-    expect(signature.status).toBe('unknown');
+    expect(signature.status).toBe('valid');
+    expect(signature.signature.status).toBe('valid');
+    expect(signature.dataHash.status).toBe('valid');
+    expect(signature.references.status).toBe('valid');
     expect(signature.certificate).toMatchObject({
       status: 'unknown',
       trustRootConfigured: false,
       trustAnchor: undefined,
     });
+    expect(signature.seal?.status).toBe('valid');
     expect(signature.seal?.certificate.status).toBe('unknown');
+    // warning 保留，但不改变 overall。
     expect(report.warnings.map((warning) => warning.code)).toContain('W_CRYPTO_TRUST_UNKNOWN');
   });
 
-  it('证书过期时链与签名 invalid（注入 now）', async () => {
+  it('证书过期时链为 expired，但签名与整体仍 valid（注入 now）', async () => {
     const report = await verifyFile('signed-sesv4.ofd', {
       roots: ROOTS,
       now: new Date('2041-01-01T00:00:00Z'),
     });
-    expect(report.overall).toBe('invalid');
+    expect(report.overall).toBe('valid');
     const signature = report.signatures[0]!;
     expect(signature.certificate.status).toBe('expired');
     expect(signature.certificate.currentTime).toBe('2041-01-01T00:00:00.000Z');
-    expect(signature.status).toBe('invalid');
-    expect(signature.seal?.status).toBe('invalid');
+    expect(signature.status).toBe('valid');
+    expect(signature.signature.status).toBe('valid');
+    expect(signature.dataHash.status).toBe('valid');
+    expect(signature.references.status).toBe('valid');
+    expect(signature.seal?.status).toBe('valid');
+    expect(signature.seal?.certificate.status).toBe('expired');
     expect(signature.issues.some((issue) => issue.code === 'CHAIN_EXPIRED')).toBe(true);
   });
 
@@ -220,6 +235,207 @@ describe('verifyOfd 签名验证', () => {
       });
       expect(signature.certificate.status).toBe('valid');
       expect(signature.timestamp.status).toBe('not-present');
+      // v1 的 timeInfo 是自由文本，作为签发时间原样展示。
+      expect(signature.signingTime).toBe('2026-10-23 10:00:00');
+      expect(signature.signingTimeSource).toBe('time-info');
+    } finally {
+      await container.close();
+    }
+  });
+
+  it('timeInfo 为空时回退到 Signature.xml SignatureDateTime', async () => {
+    const container = await buildV1SignedContainer({ timeInfo: derOctetString(new Uint8Array()) });
+    try {
+      const report = await verifyOfd({ container, roots: ROOTS });
+      expect(report.overall).toBe('valid');
+      const signature = report.signatures[0]!;
+      expect(signature.signingTime).toBe('2026-10-23 10:00:00');
+      expect(signature.signingTimeSource).toBe('signature-xml');
+    } finally {
+      await container.close();
+    }
+  });
+
+  it('timeInfo 与 SignatureDateTime 都缺失时省略签发时间字段', async () => {
+    const container = await buildV1SignedContainer({
+      timeInfo: derOctetString(new Uint8Array()),
+      omitSignatureDateTime: true,
+    });
+    try {
+      const report = await verifyOfd({ container, roots: ROOTS });
+      expect(report.overall).toBe('valid');
+      const signature = report.signatures[0]!;
+      expect(signature.signingTime).toBeUndefined();
+      expect(signature.signingTimeSource).toBeUndefined();
+      expect('signingTime' in signature).toBe(false);
+      expect('signingTimeSource' in signature).toBe(false);
+    } finally {
+      await container.close();
+    }
+  });
+});
+
+describe('证书链独立于最终判定', () => {
+  /** 与 ROOTS 无关的自签名签章者证书。 */
+  const untrustedKey = testKeyPair('encrypt');
+  const untrustedCert = makeCertificate(
+    {
+      serial: 301n,
+      cn: 'Untrusted Signer',
+      isCA: false,
+      keyUsage: ['digitalSignature'],
+    },
+    untrustedKey,
+  ).der;
+
+  it('链不受信但签名数学与引用通过 → overall=valid，链明细保留 untrusted', async () => {
+    const container = await buildV1SignedContainer({
+      signerCert: untrustedCert,
+      signerKey: untrustedKey.privateKey,
+    });
+    try {
+      const report = await verifyOfd({ container, roots: ROOTS });
+      expect(report.overall).toBe('valid');
+      const signature = report.signatures[0]!;
+      expect(signature.status).toBe('valid');
+      expect(signature.signature.status).toBe('valid');
+      expect(signature.dataHash.status).toBe('valid');
+      expect(signature.references.status).toBe('valid');
+      expect(signature.seal?.status).toBe('valid');
+      expect(signature.certificate.status).toBe('untrusted');
+      expect(signature.certificate.trustRootConfigured).toBe(true);
+      expect(signature.certificate.issues.map((item) => item.code)).toContain('CHAIN_UNTRUSTED');
+    } finally {
+      await container.close();
+    }
+  });
+
+  it('链不完整（缺中间证书）但签名通过 → overall=valid', async () => {
+    const leafKey = testKeyPair('encrypt');
+    const leaf = makeCertificate(
+      {
+        serial: 302n,
+        cn: 'Incomplete Chain Leaf',
+        issuerCn: 'OFDRW Viewer Crypto Fixtures Intermediate CA',
+        isCA: false,
+        keyUsage: ['digitalSignature'],
+      },
+      leafKey,
+      testKeyPair('signer'),
+    ).der;
+    const container = await buildV1SignedContainer({
+      signerCert: leaf,
+      signerKey: leafKey.privateKey,
+    });
+    try {
+      const report = await verifyOfd({ container, roots: ROOTS });
+      expect(report.overall).toBe('valid');
+      const signature = report.signatures[0]!;
+      expect(signature.status).toBe('valid');
+      expect(signature.certificate.status).toBe('incomplete');
+      expect(signature.certificate.issues.map((item) => item.code)).toContain('CHAIN_INCOMPLETE');
+    } finally {
+      await container.close();
+    }
+  });
+
+  it('链 invalid（叶证书 KeyUsage 不含 digitalSignature）但签名通过 → overall=valid', async () => {
+    // certificate.status=unsupported 需要非 SM3withSM2 的证书签名算法，构造可验签夹具成本高；
+    // 链状态与 overall 解耦已由本组 untrusted/incomplete/invalid 用例与 chain.test 覆盖。
+    const leafKey = testKeyPair('encrypt');
+    const leaf = makeCertificate(
+      {
+        serial: 303n,
+        cn: 'No DigitalSignature Leaf',
+        issuerCn: 'OFDRW Viewer Crypto Fixtures Root CA',
+        isCA: false,
+        keyUsage: ['keyEncipherment'],
+      },
+      leafKey,
+      testKeyPair('root-ca'),
+    ).der;
+    const container = await buildV1SignedContainer({
+      signerCert: leaf,
+      signerKey: leafKey.privateKey,
+    });
+    try {
+      const report = await verifyOfd({ container, roots: ROOTS });
+      expect(report.overall).toBe('valid');
+      const signature = report.signatures[0]!;
+      expect(signature.status).toBe('valid');
+      expect(signature.signature.status).toBe('valid');
+      expect(signature.dataHash.status).toBe('valid');
+      expect(signature.references.status).toBe('valid');
+      expect(signature.certificate.status).toBe('invalid');
+      expect(signature.certificate.issues.map((item) => item.code)).toContain(
+        'CHAIN_KEY_USAGE_INVALID',
+      );
+    } finally {
+      await container.close();
+    }
+  });
+
+  it('缺少签章者证书导致数学无法验证 → invalid，不得判 valid', async () => {
+    const container = await buildV1SignedContainer({
+      signerCert: new Uint8Array(),
+      signerKey: testKeyPair('signer').privateKey,
+    });
+    try {
+      const report = await verifyOfd({ container, roots: ROOTS });
+      expect(report.overall).toBe('invalid');
+      const signature = report.signatures[0]!;
+      expect(signature.status).toBe('invalid');
+      expect(signature.signature.status).toBe('invalid');
+      expect(signature.certificate.status).toBe('not-present');
+      expect(signature.issues.map((item) => item.code)).toContain('CRYPTO_CERTIFICATE_INVALID');
+    } finally {
+      await container.close();
+    }
+  });
+
+  it('完整性链失败但完整性签名通过 → integrity/overall=valid，链明细保留', async () => {
+    const wrongRoot = makeCertificate(
+      {
+        serial: 401n,
+        cn: 'Other Root CA',
+        isCA: true,
+        keyUsage: ['keyCertSign'],
+      },
+      testKeyPair('tsa'),
+    ).der;
+    const report = await verifyFile('integrity.ofd', { roots: [wrongRoot] });
+    expect(report.overall).toBe('valid');
+    expect(report.integrity?.status).toBe('valid');
+    expect(report.integrity?.signature.status).toBe('valid');
+    expect(report.integrity?.certificate.status).toBe('incomplete');
+    expect(report.integrity?.missingFiles).toEqual([]);
+    expect(report.integrity?.extraFiles).toEqual([]);
+  });
+
+  it('时间戳解析失败不参与 overall', async () => {
+    const entries = await readFixtureEntries('signed-sesv4.ofd');
+    const path = 'Doc_0/Signs/Sign_0/SignedValue.dat';
+    const signedValue = entries.get(path)!.bytes;
+    const root = parseDer(signedValue).requireSequence('SES_Signature');
+    // 只替换 [0] 时间戳内容，TBS 与签名值保持不变。
+    const rebuilt = derSequence(
+      root.children[0]!.raw,
+      root.children[1]!.raw,
+      root.children[2]!.raw,
+      root.children[3]!.raw,
+      derContext(0, derBitString(new Uint8Array([0x30, 0x00]))),
+    );
+    entries.set(path, { bytes: rebuilt });
+    const container = wrapEntries(entries);
+    try {
+      const report = await verifyOfd({ container, roots: ROOTS });
+      expect(report.overall).toBe('valid');
+      const signature = report.signatures[0]!;
+      expect(signature.status).toBe('valid');
+      expect(signature.signature.status).toBe('valid');
+      expect(signature.timestamp.status).toBe('parse-error');
+      expect(signature.signingTimeSource).toBe('time-info');
+      expect(report.warnings.map((warning) => warning.code)).toContain('W_CRYPTO_TIMESTAMP_PARSE');
     } finally {
       await container.close();
     }
@@ -859,7 +1075,22 @@ describe('t19 修复回归', () => {
     }
   });
 
-  it('integrity unsupported + 签名 valid → overall unsupported', async () => {
+  it('integrity 签名算法不支持且无夹带 → overall unsupported', async () => {
+    const container = await buildAuthAttrsIntegrityContainer({
+      digestAlgorithmsOid: '2.16.840.1.101.3.4.2.1',
+    });
+    try {
+      const report = await verifyOfd({ container, roots: ROOTS });
+      expect(report.integrity?.status).toBe('unsupported');
+      expect(report.integrity?.extraFiles).toEqual([]);
+      expect(report.integrity?.missingFiles).toEqual([]);
+      expect(report.overall).toBe('unsupported');
+    } finally {
+      await container.close();
+    }
+  });
+
+  it('integrity unsupported 且合并出未登记文件 → 夹带优先判 invalid', async () => {
     const integrity = await buildAuthAttrsIntegrityContainer({
       digestAlgorithmsOid: '2.16.840.1.101.3.4.2.1',
     });
@@ -869,9 +1100,10 @@ describe('t19 修复回归', () => {
     );
     try {
       const report = await verifyOfd({ container, roots: ROOTS });
-      expect(report.integrity?.status).toBe('unsupported');
+      expect(report.integrity?.status).toBe('invalid');
+      expect(report.integrity?.extraFiles.length).toBeGreaterThan(0);
       expect(report.signatures[0]?.status).toBe('valid');
-      expect(report.overall).toBe('unsupported');
+      expect(report.overall).toBe('invalid');
     } finally {
       await container.close();
       await integrity.close();

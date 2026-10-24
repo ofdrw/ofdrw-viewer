@@ -175,12 +175,13 @@ describe('防夹带完整性负例', () => {
     }
   });
 
-  it('错误根证书 → 完整性证书链 incomplete/invalid', async () => {
+  it('错误根证书 → 完整性签名仍 valid、链明细 incomplete，overall 仍 valid', async () => {
     const report = await verifyFixture('integrity.ofd', {
       roots: [wrongRootDer],
     });
-    expect(report.overall).toBe('invalid');
-    expect(report.integrity?.status).toBe('invalid');
+    expect(report.overall).toBe('valid');
+    expect(report.integrity?.status).toBe('valid');
+    expect(report.integrity?.signature.status).toBe('valid');
     expect(report.integrity?.certificate.status).toBe('incomplete');
     expect(
       report.integrity?.certificate.issues.some((issue) => issue.code === 'CHAIN_INCOMPLETE'),
