@@ -83,3 +83,11 @@ jobs:
         env:
           BASE_PATH: /
         run: pnpm -C site build
+
+      # Chrome 67 兼容卡口：先自检脚本（内置违规样例必须失败、合规样例必须通过），
+      # 再扫描 engine/crypto/ui 的 dist 与 site-dist 产物；产物缺失时 --require-dist 直接失败。
+      # 只追加在全部构建之后，不改变原有构建/测试顺序与 Node/pnpm 版本固定。
+      - name: Chrome 67 兼容卡口
+        run: |
+          pnpm check-compat:self-test
+          pnpm check-compat:dist

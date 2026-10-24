@@ -157,6 +157,17 @@ async function assertGlobalExports(filePath, label) {
   createContext(sandbox);
   runInContext(source, sandbox, { filename: label });
 
+  // Chrome 67 兼容层必须已执行，且补齐/保留 engine 依赖的缺失 API。
+  const compatOk =
+    sandbox[Symbol.for('ofdrw.viewer.compat.engine.v1')] === true &&
+    runInContext(
+      "typeof Promise.allSettled === 'function' && typeof Blob.prototype.arrayBuffer === 'function' && typeof [].flatMap === 'function' && globalThis.globalThis === globalThis",
+      sandbox,
+    );
+  if (!compatOk) {
+    throw new Error(`${label} 未正确安装 Chrome 67 兼容补丁`);
+  }
+
   const api = sandbox[GLOBAL_NAME];
   if (api === null || typeof api !== 'object') {
     throw new Error(`${label} 未挂载 globalThis.${GLOBAL_NAME}`);

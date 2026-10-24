@@ -12,12 +12,23 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./compat": {
+      "types": "./dist/compat.d.ts",
+      "import": "./dist/compat.js",
+      "require": "./dist/compat.cjs"
     }
   },
   "files": [
     "dist"
   ],
-  "sideEffects": false,
+  "sideEffects": [
+    "./src/compat.ts",
+    "./dist/compat.js",
+    "./dist/compat.cjs",
+    "./dist/chunk-*.js",
+    "./dist/chunk-*.cjs"
+  ],
   "engines": {
     "node": ">=22"
   },

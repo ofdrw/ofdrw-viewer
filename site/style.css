@@ -56,7 +56,11 @@ body {
 /* 阅读器全屏：不设固定宽高，始终跟随视口。 */
 ofd-viewer {
   position: fixed;
-  inset: 0;
+  /* chrome67: inset 简写需 Chrome 87+，展开四边。 */
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   display: block;
   width: 100%;
   height: 100%;
@@ -67,6 +71,8 @@ ofd-viewer {
 .dock {
   position: fixed;
   left: 50%;
+  /* chrome67: max()/env() 需 Chrome 79+/69+，回退固定 14px。 */
+  bottom: 14px;
   bottom: max(14px, env(safe-area-inset-bottom));
   z-index: 20;
   display: flex;
@@ -81,6 +87,7 @@ ofd-viewer {
   border: 1px solid var(--border);
   border-radius: 999px;
   box-shadow: 0 6px 24px rgb(15 23 42 / 12%);
+  -webkit-backdrop-filter: blur(12px); /* chrome67: 尝试 -webkit 前缀，不支持时忽略 */
   backdrop-filter: blur(12px);
   transform: translateX(-50%);
 }
@@ -107,7 +114,11 @@ ofd-viewer {
 
 .file-button input[type='file'] {
   position: absolute;
-  inset: 0;
+  /* chrome67: inset 简写需 Chrome 87+，展开四边。 */
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   width: 100%;
   height: 100%;
   opacity: 0;
@@ -131,6 +142,21 @@ ofd-viewer {
   border: 1px solid var(--border);
   border-radius: 999px;
   cursor: pointer;
+}
+
+/* chrome67: focus fallback（67 无 :focus-visible；.file-button 已有 :focus-within） */
+.field select:focus,
+.repo-link:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 现代浏览器仅在键盘聚焦时显示轮廓，避免鼠标点击也出现焦点环。 */
+@supports selector(:focus-visible) {
+  .field select:focus:not(:focus-visible),
+  .repo-link:focus:not(:focus-visible) {
+    outline: none;
+  }
 }
 
 .field select:focus-visible,
@@ -169,6 +195,8 @@ ofd-viewer {
   left: 50%;
   bottom: 82px;
   z-index: 19;
+  /* chrome67: min() 回退；窄视口切换见文末。 */
+  max-width: 560px;
   max-width: min(560px, calc(100vw - 32px));
   padding: 8px 14px;
   font-size: 13px;
@@ -201,6 +229,8 @@ ofd-viewer {
     gap: 6px;
     padding: 8px;
     border-radius: 16px;
+    /* chrome67: max()/env() 回退。 */
+    bottom: 10px;
     bottom: max(10px, env(safe-area-inset-bottom));
   }
 
@@ -219,3 +249,45 @@ ofd-viewer {
     transition: none !important;
   }
 }
+
+/* ========================================================================= */
+/* chrome67: 兼容回退（仅旧内核生效；现代 Chrome 继续走上方的现代声明）        */
+/* ========================================================================= */
+
+/* chrome67: flex-gap fallback
+ * Chrome 67 的 flex 布局忽略 gap；compat 在 <html> 上设置 data-ofd-flex-gap="none"
+ * 后才启用方向性 margin（现代内核不命中，视觉零变化）。
+ */
+[data-ofd-flex-gap='none'] .dock {
+  margin: -3px -5px;
+}
+
+[data-ofd-flex-gap='none'] .dock > * {
+  margin: 3px 5px;
+}
+
+[data-ofd-flex-gap='none'] .field > *:not(:last-child) {
+  margin-right: 5px;
+}
+
+/* chrome67: min() 窄视口分段回退；与 min(560px, calc(100vw - 32px)) 等价 */
+@media (max-width: 591px) {
+  .toast {
+    max-width: calc(100vw - 32px);
+  }
+}
+
+@media (max-width: 720px) {
+  /* 窄屏 .dock 的 gap: 6px 覆盖，回退同步改为半间距 3px；
+   * 宽度补一个间距（6px），使换行位置与 gap 版本一致。 */
+  [data-ofd-flex-gap='none'] .dock {
+    width: calc(100% - 18px);
+    max-width: calc(100vw - 18px);
+    margin: -3px;
+  }
+
+  [data-ofd-flex-gap='none'] .dock > * {
+    margin: 3px;
+  }
+}
+
