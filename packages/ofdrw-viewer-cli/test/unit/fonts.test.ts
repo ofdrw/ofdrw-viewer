@@ -30,6 +30,7 @@ import {
   systemFontDirectories,
 } from '../../src/fonts.js';
 import { createStreamCapture } from './helpers.js';
+import { isPathInside } from './paths.js';
 
 /** 仓库自带的最小合法 TTF。 */
 const FIXTURE_FONT = fileURLToPath(new URL('../fixtures/minimal.ttf', import.meta.url));
@@ -138,7 +139,9 @@ describe('scanFontDirectory', () => {
       'C.TTC',
       'D.otc',
     ]);
-    expect(result.every((item) => item.path.startsWith(root))).toBe(true);
+    // 扫描结果取 realpath：macOS 上 /var 会解析为 /private/var，Windows 上盘符与大小写
+    // 也会被改写，因此只断言“仍位于扫描根目录之下”，不做前缀字符串比较。
+    expect(result.every((item) => isPathInside(item.path, root))).toBe(true);
   });
 
   it('按路径字典序返回', async () => {
@@ -299,7 +302,7 @@ describe('discoverSystemFonts', () => {
       'c.ttc',
       'd.otc',
     ]);
-    expect(result.fonts.every((font) => font.path.startsWith(realRoot))).toBe(true);
+    expect(result.fonts.every((font) => isPathInside(font.path, realRoot))).toBe(true);
     expect(result.scannedFiles).toBe(4);
     const expectedBytes = (
       await Promise.all(result.fonts.map(async (font) => (await stat(font.path)).size))

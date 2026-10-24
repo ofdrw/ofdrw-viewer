@@ -1,6 +1,6 @@
 import { chmod, mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, posix } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   CACHE_MARKER,
@@ -11,6 +11,10 @@ import {
   isCacheComplete,
 } from '../../src/sea.js';
 import type { CanvasAssetManifest } from '../../src/sea.js';
+import { samePath } from './paths.js';
+
+/** 按 POSIX 语义拼接期望路径，避免 Windows 上 `join` 改写盘符与分隔符。 */
+const posixJoin = (...segments: string[]): string => posix.join(...segments);
 
 const tempDirs: string[] = [];
 const UID = process.getuid?.();
@@ -204,11 +208,15 @@ describe('SEA 缓存路径命名', () => {
       platform: 'linux',
       uid: 1234,
     });
-    expect(paths.root).toBe(join('/tmp/test', 'ofdrw-viewer-cli-u1234'));
-    expect(paths.root).not.toBe(join('/tmp/test', 'ofdrw-viewer-cli'));
-    expect(paths.dir).toBe(
-      join(paths.root, 'u1234-0.1.0-linux-x64-0123456789abcdef'),
-    );
+    // 路径比较走归一化：/tmp/test 在 Windows 上会被解析为当前盘的绝对路径。
+    expect(samePath(paths.root, posixJoin('/tmp/test', 'ofdrw-viewer-cli-u1234'))).toBe(true);
+    expect(samePath(paths.root, posixJoin('/tmp/test', 'ofdrw-viewer-cli'))).toBe(false);
+    expect(
+      samePath(
+        paths.dir,
+        posixJoin('/tmp/test', 'ofdrw-viewer-cli-u1234', 'u1234-0.1.0-linux-x64-0123456789abcdef'),
+      ),
+    ).toBe(true);
   });
 
   it('不同 uid 得到不同的根与缓存目录', () => {
@@ -254,9 +262,12 @@ describe('SEA 缓存路径命名', () => {
       tmpDir: '/tmp/test',
       platform: 'win32',
     });
-    expect(paths.root).toBe(join('/tmp/test', 'ofdrw-viewer-cli'));
-    expect(paths.dir).toBe(
-      join(paths.root, 'win-0.1.0-linux-x64-0123456789abcdef'),
-    );
+    expect(samePath(paths.root, posixJoin('/tmp/test', 'ofdrw-viewer-cli'))).toBe(true);
+    expect(
+      samePath(
+        paths.dir,
+        posixJoin('/tmp/test', 'ofdrw-viewer-cli', 'win-0.1.0-linux-x64-0123456789abcdef'),
+      ),
+    ).toBe(true);
   });
 });

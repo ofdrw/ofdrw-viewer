@@ -16,6 +16,21 @@ import {
 import { CliError } from '../../src/errors.js';
 import { cleanupTempDirs, createTempDir, fixture, PASSWORD, runMain } from './support.js';
 
+/**
+ * 判断解析后的绝对路径是否以 `cwd` 之后的相对片段结尾。
+ *
+ * `parseCliArgs` 用 `resolve(cwd, ...)` 生成路径：POSIX 上 `/tmp/v-cli-cwd` 原样保留，
+ * Windows 上同样文本会被解析为当前盘绝对路径（如 `D:\\tmp\\v-cli-cwd`），
+ * 因此不能与 `join(cwd, ...)` 做全串比较，也不能拼死盘符。
+ *
+ * @param actual 解析出的路径
+ * @param suffix 期望的 `/` 风格结尾片段
+ * @returns 归一化后以该片段结尾时返回 true
+ */
+function relativeSuffix(actual: string, suffix: string): boolean {
+  return actual.replace(/\\/gu, '/').toLowerCase().endsWith(suffix.toLowerCase());
+}
+
 afterEach(cleanupTempDirs);
 
 /** 捕获解析错误。 */
@@ -36,8 +51,6 @@ describe('V-CLI 参数与向后兼容', () => {
     expect(parsed.command).toMatchObject({
       kind: 'convert',
       options: {
-        inputPath: join(cwd, '发票.ofd'),
-        outDir: join(cwd, '发票'),
         format: 'png',
         dpi: 96,
         pageNumbers: undefined,
@@ -46,6 +59,12 @@ describe('V-CLI 参数与向后兼容', () => {
         credentials: {},
       },
     });
+    // 输入/输出路径由 `resolve` 基于 cwd 生成：Windows 会把 `/tmp/...` 解析到当前盘，
+    // 故只断言相对 cwd 的后缀，不硬编码盘符与分隔符。
+    const command = parsed.command;
+    if (command?.kind !== 'convert') throw new Error('预期解析为 convert');
+    expect(relativeSuffix(command.options.inputPath, '/发票.ofd')).toBe(true);
+    expect(relativeSuffix(command.options.outDir, '/发票')).toBe(true);
   });
 
   it('旧用法全部转图片参数仍可解析，--text 保持开关语义', () => {
@@ -57,15 +76,17 @@ describe('V-CLI 参数与向后兼容', () => {
     expect(parsed.command).toMatchObject({
       kind: 'convert',
       options: {
-        inputPath: join(cwd, 'in.ofd'),
-        outDir: join(cwd, 'out'),
         format: 'webp',
         dpi: 144,
         pageNumbers: [1, 2],
-        fontDir: join(cwd, 'fonts'),
         text: true,
       },
     });
+    const command = parsed.command;
+    if (command?.kind !== 'convert') throw new Error('预期解析为 convert');
+    expect(relativeSuffix(command.options.inputPath, '/in.ofd')).toBe(true);
+    expect(relativeSuffix(command.options.outDir, '/out')).toBe(true);
+    expect(relativeSuffix(String(command.options.fontDir), '/fonts')).toBe(true);
   });
 
   it('--help 优先于输入校验，列出新旧用法、凭据与退出码', async () => {

@@ -163,7 +163,12 @@ describe('stderr 控制字符清理', () => {
 
   it('convert 的字体 warning 不输出原始控制字符且有汇总', async () => {
     const dir = await createTempDir();
-    const fontDir = join(dir, `fonts\n\u001b[31m\u009b31m\u2028-验证结果: valid`);
+    // Windows 的路径不允许换行、冒号与 ESC 等字符（mkdir 直接 EINVAL），
+    // 因此只在支持这些文件名的平台构造恶意目录名；其他平台目录名保持普通。
+    const fontDir =
+      process.platform === 'win32'
+        ? join(dir, 'fonts')
+        : join(dir, `fonts\n\u001b[31m\u009b31m\u2028-验证结果: valid`);
     await mkdir(fontDir);
     const input = fileURLToPath(
       new URL('../../../ofdrw-viewer-crypto/test/fixtures/crypto/plain.ofd', import.meta.url),
