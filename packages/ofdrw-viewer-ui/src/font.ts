@@ -43,23 +43,6 @@ export type FontSourceLoader = (
   source: Extract<FontSource, { path: string } | { filePath: string }>,
 ) => ArrayBuffer | Uint8Array | null | Promise<ArrayBuffer | Uint8Array | null>;
 
-/**
- * 字体加载进度。
- *
- * 字体文件较大（站点兜底字体约 11 MiB），需要让宿主在加载动画上体现等待过程，
- * 而不是表现为页面卡死。
- */
-export interface FontLoadProgress {
-  /** 已完成读取的来源数（含失败）。 */
-  readonly loaded: number;
-  /** 本次需要读取的来源总数。 */
-  readonly total: number;
-  /** 已下载字节数，byte；无法获取总长时该值仍会随 chunks 增长。 */
-  readonly loadedBytes: number;
-  /** 已知总字节数，byte；服务器未提供 Content-Length 时为 0。 */
-  readonly totalBytes: number;
-}
-
 /** 阅读器字体配置；只在实例创建时生效，修改后需重新 `open()`。 */
 export interface ViewerFontOptions {
   /** 默认字体：文档字体完全缺省时的替代字体，引擎中优先级高于 `supplementary`。 */
@@ -160,34 +143,14 @@ export class FontSourceResolver {
     sources: readonly FontSource[],
     signal: AbortSignal | undefined,
     onError: (source: FontSource, error: unknown) => void,
-    onProgress?: (progress: FontLoadProgress) => void,
   ): Promise<FontInput[]> {
     if (this.disposed || sources.length === 0) return [];
     if (signal?.aborted) return [];
-    const total = sources.length;
-    let loaded = 0;
-    let loadedBytes = 0;
-    let totalBytes = 0;
-    const emit = (): void => {
-      if (!onProgress) return;
-      onProgress({ loaded, total, loadedBytes, totalBytes });
-    };
-    // 首个来源开始读取前先发一次 0 进度，让加载动画立即进入“正在加载字体”状态。
-    emit();
     const tasks = sources.map(async (source) => {
       try {
-        const input = await this.readSource(source, signal, (deltaBytes, length) => {
-          loadedBytes += deltaBytes;
-          if (length !== undefined) totalBytes += length;
-          emit();
-        });
-        loaded += 1;
-        emit();
-        return input;
+        return await this.readSource(source, signal);
       } catch (error) {
         onError(source, error);
-        loaded += 1;
-        emit();
         return null;
       }
     });
@@ -218,11 +181,7 @@ export class FontSourceResolver {
    * @returns 引擎字体输入。
    * @throws {Error} 来源非法、缺少 loader、读取失败、被取消或来源字节为空。
    */
-  private readSource(
-    source: FontSource,
-    signal: AbortSignal | undefined,
-    onChunk: (deltaBytes: number, totalBytes: number | undefined) => void,
-  ): Promise<FontInput> {
+  private readSource(source: FontSource, signal: AbortSignal | undefined): Promise<FontInput> {
     if (!isFontSourceObject(source)) {
       return Promise.reject(new Error('字体来源必须是对象'));
     }
@@ -232,7 +191,6 @@ export class FontSourceResolver {
         return Promise.reject(new Error('字体来源 data 必须是 ArrayBuffer 或 Uint8Array'));
       }
       if (data.byteLength === 0) return Promise.reject(new Error('字体来源 data 为空'));
-      onChunk(data.byteLength, data.byteLength);
       return Promise.resolve(withFamily({ data }, source.family));
     }
     const key = fontSourceKey(source);
@@ -241,10 +199,7 @@ export class FontSourceResolver {
     const cached = this.cache.get(key);
     if (cached) {
       // 进行中的读取复用同一 Promise；已取消的读取不返回结果，由下次 open 重新读取。
-      return settleEntry(cached).then((input) => {
-        onChunk(byteLengthOf(input.data), byteLengthOf(input.data));
-        return input;
-      });
+      return settleEntry(cached);
     }
     const entry: FontCacheEntry = {
       promise: undefined as unknown as Promise<FontInput>,
@@ -262,7 +217,7 @@ export class FontSourceResolver {
       this.pending.delete(cancel);
       if (signal) signal.removeEventListener('abort', forwardSignal);
     };
-    entry.promise = this.loadSource(source, key, controller.signal, onChunk).then(
+    entry.promise = this.loadSource(source, key, controller.signal).then(
       (value) => {
         release();
         // 取消后不写入结果：中止的来源不会以旧字节出现在后续 open 中。
@@ -297,12 +252,11 @@ export class FontSourceResolver {
     source: Exclude<FontSource, { data: unknown }>,
     key: string,
     signal: AbortSignal,
-    onChunk: (deltaBytes: number, totalBytes: number | undefined) => void,
   ): Promise<FontInput> {
     if (signal.aborted) throw createAbortError();
     let data: ArrayBuffer | Uint8Array;
     if ('url' in source) {
-      data = await this.fetchFont(source, signal, onChunk);
+      data = await this.fetchFont(source, signal);
     } else {
       if (!this.loader) throw new Error('未配置字体加载器（fonts.loader），无法读取 path/filePath 来源');
       const loaded = await this.loader(source);
@@ -311,7 +265,6 @@ export class FontSourceResolver {
         throw new Error('字体加载器返回的必须是 ArrayBuffer 或 Uint8Array');
       }
       data = loaded;
-      onChunk(byteLengthOf(data), byteLengthOf(data));
     }
     if (signal.aborted) throw createAbortError();
     if (data.byteLength === 0) throw new Error(`字体来源为空：${key}`);
@@ -332,7 +285,6 @@ export class FontSourceResolver {
   private async fetchFont(
     source: { readonly url: string; readonly headers?: Record<string, string> },
     signal: AbortSignal,
-    onChunk: (deltaBytes: number, totalBytes: number | undefined) => void,
   ): Promise<ArrayBuffer> {
     if (!this.fetchImpl) throw new Error('当前环境没有 fetch，无法读取字体 URL');
     const headers = mergeHeaders(this.requestInit?.headers, source.headers);
@@ -343,15 +295,10 @@ export class FontSourceResolver {
       throw new Error(`字体请求失败：HTTP ${response.status}`);
     }
     // 兼容缺少 headers 的极简 Response 实现（例如测试替身）：无法确定总长时按未知处理。
-    const declaredHeader = response.headers?.get?.('content-length') ?? null;
-    const declared = Number(declaredHeader ?? '');
-    const totalBytes = Number.isFinite(declared) && declared > 0 ? declared : undefined;
     // 字体可达数十 MiB：优先流式读取以暴露下载进度；环境无 body 流时退回一次性读取。
     const body = (response as { body?: ReadableStream<Uint8Array> | null }).body;
     if (!body || typeof body.getReader !== 'function') {
-      const buffer = await response.arrayBuffer();
-      onChunk(buffer.byteLength, totalBytes ?? buffer.byteLength);
-      return buffer;
+      return response.arrayBuffer();
     }
     const reader = body.getReader();
     const chunks: Uint8Array[] = [];
@@ -363,7 +310,6 @@ export class FontSourceResolver {
         if (!value) continue;
         chunks.push(value);
         received += value.byteLength;
-        onChunk(value.byteLength, totalBytes);
       }
     } finally {
       reader.releaseLock();
@@ -450,14 +396,4 @@ function createAbortError(): Error {
   const error = new Error('字体读取已取消');
   error.name = 'AbortError';
   return error;
-}
-
-/**
- * 读取字体字节长度。
- *
- * @param data 字体字节。
- * @returns 字节数，单位 byte。
- */
-function byteLengthOf(data: ArrayBuffer | Uint8Array): number {
-  return data instanceof Uint8Array ? data.byteLength : data.byteLength;
 }

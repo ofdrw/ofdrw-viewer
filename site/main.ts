@@ -304,6 +304,7 @@ function applyShellTheme(theme: string): void {
 function openSample(name: string): void {
   const sample = SAMPLES.find((item) => item.name === name);
   if (!sample) return;
+  currentFile = null;
   sampleSelect.value = sample.name;
   updateQuery(`samples/${sample.name}`);
   setStatus(`正在打开：${sample.label}`, 0);
@@ -328,10 +329,19 @@ viewer.addEventListener('ofd-error', (event) => {
 // `applyFontPreset()` 中按新元素重新挂载。
 viewer.addEventListener('ofd-warning', reportFontWarning);
 
+/**
+ * 当前打开的本地文件。
+ *
+ * 字体档位切换会重建 `<ofd-viewer>` 元素，重开后需据此恢复用户选择的本地文档；
+ * 演示页不持久化文件内容，仅在同一次页面会话内保留引用。
+ */
+let currentFile: File | null = null;
+
 // 本地文件：浏览器端读取，不上传；清空 input 便于重复选择同一文件。
 fileInput.addEventListener('change', () => {
   const file = fileInput.files?.[0];
   if (!file) return;
+  currentFile = file;
   sampleSelect.value = '';
   updateQuery(null);
   setStatus(`正在打开：${file.name}`, 0);
@@ -376,6 +386,11 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () 
 function openCurrent(): void {
   if (sampleSelect.value) {
     openSample(sampleSelect.value);
+    return;
+  }
+  // 本地文件优先：字体档位切换重建元素后由此恢复，否则文档会丢失。
+  if (currentFile) {
+    viewer.source = currentFile;
     return;
   }
   const params = new URLSearchParams(window.location.search);

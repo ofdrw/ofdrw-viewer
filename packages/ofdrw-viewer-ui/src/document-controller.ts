@@ -110,10 +110,10 @@ export interface OpenedDocumentInfo {
   readonly pageCount: number;
 }
 
-/** 文档控制器选项。 */
 /** 字体加载状态：`loading` 正在读取，`ready` 已结束（成功或失败）。 */
 export type FontLoadState = 'loading' | 'ready';
 
+/** 文档控制器选项。 */
 export interface DocumentControllerOptions {
   /** 引擎打开工厂；默认 `OFDDocument.open`。 */
   readonly openDocument?: (options: OFDOpenOptions) => Promise<EngineDocument>;
@@ -438,17 +438,6 @@ export class DocumentController {
   }
 
   /**
-   * 统一打开流程：关闭旧文档、代次校验与结果组装。
-   *
-   * 内部不再创建独立 AbortController：外部 signal 直接传给引擎，`close()` 通过
-   * 递增代次使迟到的打开结果失效并关闭。
-   *
-   * @param normalized 规范化来源。
-   * @param extra 引擎打开参数补丁（`source` 或 `container`）。
-   * @param signal 外部取消信号。
-   * @returns 打开结果。
-   */
-  /**
    * 判断是否声明了任何字体来源。
    *
    * 只读取已配置的选项，不触发 I/O；为 false 时打开流程保持零字体等待开销。
@@ -461,6 +450,17 @@ export class DocumentController {
     return (font.default?.length ?? 0) > 0 || (font.supplementary?.length ?? 0) > 0;
   }
 
+  /**
+   * 统一打开流程：关闭旧文档、代次校验与结果组装。
+   *
+   * 内部不再创建独立 AbortController：外部 signal 直接传给引擎，`close()` 通过
+   * 递增代次使迟到的打开结果失效并关闭。
+   *
+   * @param normalized 规范化来源。
+   * @param extra 引擎打开参数补丁（`source` 或 `container`）。
+   * @param signal 外部取消信号。
+   * @returns 打开结果。
+   */
   private async openWithOptions(
     normalized: OFDSource,
     extra: { readonly source: OFDSource; readonly container?: VirtualContainer },
@@ -474,9 +474,9 @@ export class DocumentController {
       this.options.openDocument ??
       ((options: OFDOpenOptions) =>
         OFDDocument.open(options) as unknown as Promise<EngineDocument>);
-    // 字体与文档打开并行准备，二者都就绪后才真正打开：首次渲染即带完整字体，
-    // 不出现「先渲染缺字页面、字体到达后再跳变」的中间态。字体读取本身不阻塞文档
-    // 解析，节省的是等待时间而非正确性。
+    // 字体读取与文档打开串行协作，但先于 openDocument 完成：首次渲染即带完整字体，
+    // 不出现「先渲染缺字页面、字体到达后再跳变」的中间态。字体就绪后才打开文档，等待
+    // 换取的是一次成型的正确画面。
     const hasFonts = this.hasFontSources();
     if (hasFonts) this.options.onFontState?.('loading');
     let fonts: Awaited<ReturnType<DocumentController['resolveFonts']>> = {};
