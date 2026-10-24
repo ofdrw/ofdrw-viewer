@@ -105,17 +105,25 @@ CLI="${OFDRW_VIEWER_CLI:-ofdrw-viewer-cli}"
 文件: /abs/input.ofd
 大小: 17210 B
 OFD 版本: 1.0
+文档类型: OFD
 加密: 否
 用户: 无
 签名: 0
 完整性: 无
+文档用途: 无
 标题: 无
+作者: 无
+主题: 无
+创建时间: 无
+修改时间: 无
 创建工具: 无
+文档根: Doc_0/Document.xml
 页数: 2
 页面尺寸: 第 1 页 210×297 mm；第 2 页 210×297 mm
+附件: 0 个
 ```
 
-前 7 行是包摘要（加密包的 `加密:` 行显示 `是（N 层）`，`用户:` 行显示 `用户名 (方法)`）；明文包继续输出 `标题:`、`作者:`、`主题:`、`创建时间:`、`修改时间:`、`创建工具:`、`页数:`、`页面尺寸:`，缺失值显示 `无`（示例省略了其中四项）。加密包不输出元数据行，改为 `元数据不可用（加密文档，需凭据）`。`页面尺寸` 最多展示前 5 页，超出时追加 `…（共 N 页，完整尺寸见 --json）`。
+`文件:`–`完整性:` 是包摘要（加密包的 `加密:` 行显示 `是（N 层）`，`用户:` 行显示 `用户名 (方法)`；`文档类型:` 仅在明文包声明 `OFD@DocType` 时出现）；明文包继续输出 `文档用途:`、`标题:`、`作者:`、`主题:`、`创建时间:`、`修改时间:`、`创建工具:`、`文档根:`、`页数:`、`页面尺寸:`、`附件:`，缺失值显示 `无`。加密包不输出元数据行，改为 `元数据不可用（加密文档，需凭据）`。`页面尺寸` 最多展示前 5 页，超出时追加 `…（共 N 页，完整尺寸见 --json）`。
 
 `info --json` 固定字段：
 
@@ -123,7 +131,8 @@ OFD 版本: 1.0
 - `layers[]`：每层 `layer/id/encryptDate?/encryptScope?/decryptSeedPath/entriesMapPath/users[]`；
 - `users[]`：跨层去重后的 `userName/method`（`password`/`certificate`/`unknown`）；
 - `signatureCount`、`integrityPresent`、`warnings[]`；
-- `document?`：仅明文包，含 `version`、`pageCount`、`pageSizes[].widthMm/heightMm`、`title`、`author`、`subject`、`abstract`、`creationDate`、`modDate`、`creator`、`creatorVersion`、`keywords`、`docId`、`customData`；缺失字段省略，加密包整体不输出。
+- `document?`：仅明文包，含 `version`、`pageCount`、`pageSizes[].widthMm/heightMm`、`title`、`author`、`subject`、`abstract`、`creationDate`、`modDate`、`creator`、`creatorVersion`、`keywords`、`docId`、`customData`、`docUsage`、`docType`、`documentHeader`、`packageInfo`、`commonData`、`attachments[]`；缺失字段省略（`attachments` 恒为数组，无附件时为空），加密包整体不输出；
+- `document.documentHeader`/`packageInfo`/`commonData` 与 engine `DocumentMetadata` 同名子对象整体平铺，不展开到顶层；`attachments[]` 只有 `id`、`name`、`format?`、`size?`（byte）、`modDate?`，不含附件内容。
 
 `info` 对加密包也退出 0，不需要口令：它不解密、不验签、不读私钥。包损坏或无法读取时才退出 2。
 

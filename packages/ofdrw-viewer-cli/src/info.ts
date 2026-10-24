@@ -14,7 +14,15 @@ import type {
   OfdInspection,
 } from '@ofdrw/ofdrw-viewer-crypto';
 import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
-import type { DocumentMetadata, OFDWarning, PageInfo } from '@ofdrw/ofdrw-viewer-engine';
+import type {
+  AttachmentInfo,
+  CommonDataSummary,
+  DocumentHeader,
+  DocumentMetadata,
+  OFDWarning,
+  OfdPackageInfo,
+  PageInfo,
+} from '@ofdrw/ofdrw-viewer-engine';
 import { closeCryptoByteSource, openCryptoSource } from './credentials.js';
 import { EXIT_CODES, errorMessage } from './errors.js';
 import type { Logger } from './log.js';
@@ -63,6 +71,32 @@ export interface CliDocumentInfo {
   readonly docId?: string;
   /** 自定义元数据；键值均为字符串。 */
   readonly customData?: Readonly<Record<string, string>>;
+  /** DocInfo/DocUsage，文档用途声明。 */
+  readonly docUsage?: string;
+  /** OFD@DocType，例如 `OFD`/`Render`/`None`。 */
+  readonly docType?: string;
+  /** Document.xml 头部声明；整体平铺为一个子对象，不展开到顶层。 */
+  readonly documentHeader?: DocumentHeader;
+  /** OFD 包级结构信息；整体平铺为一个子对象，不展开到顶层。 */
+  readonly packageInfo?: OfdPackageInfo;
+  /** CommonData 摘要；整体平铺为一个子对象，不展开到顶层。 */
+  readonly commonData?: CommonDataSummary;
+  /** 附件元信息列表；无 Attachments.xml 时为空数组。 */
+  readonly attachments: readonly CliAttachment[];
+}
+
+/** 附件元信息摘要；只描述索引，不包含附件内容。 */
+export interface CliAttachment {
+  /** Attachment@ID，已规范化。 */
+  readonly id: string;
+  /** Attachment@Name。 */
+  readonly name: string;
+  /** Attachment@Format；未声明时省略。 */
+  readonly format?: string;
+  /** 附件大小，单位 byte；未声明时省略。 */
+  readonly size?: number;
+  /** Attachment@ModDate 原文；未声明时省略。 */
+  readonly modDate?: string;
 }
 
 /** `info --json` 的固定输出结构（设计 §14.2）。 */
@@ -158,14 +192,14 @@ export async function runInfo(
 }
 
 /**
- * 用 engine 只读打开明文文档，读取元数据与页尺寸。
+ * 用 engine 只读打开明文文档，读取元数据、页尺寸与附件索引。
  *
  * 不渲染页面；文档在使用结束后关闭（关闭失败只给 warning），文件句柄
  * 由 `runInfo` 的外层 finally 统一释放。
  *
  * @param byteSource 已打开的输入源
  * @param runtime 日志器与取消信号
- * @returns 文档元数据、页数与每页尺寸（mm）
+ * @returns 文档元数据、页数、每页尺寸（mm）与附件元信息
  * @throws {OFDError} 包损坏、加密或取消时
  */
 async function readDocumentInfo(
@@ -186,7 +220,8 @@ async function readDocumentInfo(
     });
     const metadata = await document.getMetadata(signalOptions);
     const pageInfos = await document.getPageInfos(signalOptions);
-    return toDocumentInfo(metadata, pageInfos);
+    const attachments = await document.getAttachments(signalOptions);
+    return toDocumentInfo(metadata, pageInfos, attachments);
   } finally {
     if (document !== undefined) {
       try {
@@ -199,15 +234,17 @@ async function readDocumentInfo(
 }
 
 /**
- * 将 engine 元数据与页信息收敛为 info 的稳定 JSON 结构。
+ * 将 engine 元数据、页信息与附件索引收敛为 info 的稳定 JSON 结构。
  *
  * @param metadata engine 文档元数据
  * @param pageInfos engine 页尺寸列表，单位 mm
+ * @param attachments engine 附件元信息列表，保持 XML 顺序
  * @returns 缺失字段省略的文档信息
  */
 function toDocumentInfo(
   metadata: DocumentMetadata,
   pageInfos: readonly PageInfo[],
+  attachments: readonly AttachmentInfo[],
 ): CliDocumentInfo {
   return {
     version: metadata.version,
@@ -231,6 +268,30 @@ function toDocumentInfo(
     ...(metadata.keywords === undefined ? {} : { keywords: metadata.keywords }),
     ...(metadata.docId === undefined ? {} : { docId: metadata.docId }),
     ...(metadata.customData === undefined ? {} : { customData: metadata.customData }),
+    ...(metadata.docUsage === undefined ? {} : { docUsage: metadata.docUsage }),
+    ...(metadata.docType === undefined ? {} : { docType: metadata.docType }),
+    ...(metadata.documentHeader === undefined
+      ? {}
+      : { documentHeader: metadata.documentHeader }),
+    ...(metadata.packageInfo === undefined ? {} : { packageInfo: metadata.packageInfo }),
+    ...(metadata.commonData === undefined ? {} : { commonData: metadata.commonData }),
+    attachments: attachments.map(toCliAttachment),
+  };
+}
+
+/**
+ * 将 engine 附件元信息收敛为 info 的输出结构。
+ *
+ * @param attachment engine 附件元信息
+ * @returns 缺失字段省略的附件摘要
+ */
+function toCliAttachment(attachment: AttachmentInfo): CliAttachment {
+  return {
+    id: attachment.id,
+    name: attachment.name,
+    ...(attachment.format === undefined ? {} : { format: attachment.format }),
+    ...(attachment.size === undefined ? {} : { size: attachment.size }),
+    ...(attachment.modDate === undefined ? {} : { modDate: attachment.modDate }),
   };
 }
 
@@ -245,11 +306,16 @@ export function formatInfoText(info: CliInfoJson): string {
     `文件: ${sanitizeDisplayText(info.input)}`,
     `大小: ${info.packageSize} B`,
     `OFD 版本: ${sanitizeDisplayText(info.ofdVersion ?? '未知')}`,
+  ];
+  if (info.document?.docType !== undefined) {
+    lines.push(`文档类型: ${sanitizeDisplayText(info.document.docType)}`);
+  }
+  lines.push(
     `加密: ${info.encrypted ? `是（${info.layers.length} 层）` : '否'}`,
     `用户: ${formatUsers(info.users)}`,
     `签名: ${info.signatureCount}`,
     `完整性: ${info.integrityPresent ? '有' : '无'}`,
-  ];
+  );
   if (info.document === undefined) {
     // 明文路径总会带 document；只有加密包无凭据时明确提示不可用。
     if (info.encrypted) lines.push('元数据不可用（加密文档，需凭据）');
@@ -257,14 +323,17 @@ export function formatInfoText(info: CliInfoJson): string {
   }
   const document = info.document;
   lines.push(
+    `文档用途: ${sanitizeDisplayText(document.docUsage ?? '无')}`,
     `标题: ${sanitizeDisplayText(document.title ?? '无')}`,
     `作者: ${sanitizeDisplayText(document.author ?? '无')}`,
     `主题: ${sanitizeDisplayText(document.subject ?? '无')}`,
     `创建时间: ${sanitizeDisplayText(document.creationDate ?? '无')}`,
     `修改时间: ${sanitizeDisplayText(document.modDate ?? '无')}`,
     `创建工具: ${formatCreator(document)}`,
+    `文档根: ${sanitizeDisplayText(document.packageInfo?.docRoot ?? '无')}`,
     `页数: ${document.pageCount}`,
     `页面尺寸: ${formatPageSizes(document.pageSizes)}`,
+    `附件: ${document.attachments.length} 个`,
   );
   return lines.join('\n');
 }

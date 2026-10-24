@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
-import type { DocumentMetadata, PageInfo } from '@ofdrw/ofdrw-viewer-engine';
+import type { AttachmentInfo, DocumentMetadata, PageInfo } from '@ofdrw/ofdrw-viewer-engine';
 import { inspect } from '@ofdrw/ofdrw-viewer-crypto';
 import type { CliInfoJson } from '../../src/info.js';
 import { main } from '../../src/cli.js';
@@ -47,31 +47,38 @@ function localFixture(name: string): string {
  * 用 engine 打开明文包并读取独立 oracle。
  *
  * @param path OFD 路径
- * @returns 元数据与页尺寸
+ * @returns 元数据、页尺寸与附件元信息
  */
 async function engineInfo(path: string): Promise<{
   metadata: DocumentMetadata;
   pages: readonly PageInfo[];
+  attachments: readonly AttachmentInfo[];
 }> {
   const data = new Uint8Array(await readFile(path));
   const document = await OFDDocument.open({ source: { kind: 'arraybuffer', data } });
   try {
-    return { metadata: await document.getMetadata(), pages: await document.getPageInfos() };
+    return {
+      metadata: await document.getMetadata(),
+      pages: await document.getPageInfos(),
+      attachments: await document.getAttachments(),
+    };
   } finally {
     await document.close();
   }
 }
 
 /**
- * 把 engine 元数据收敛为 CLI document 的期望结构。
+ * 把 engine 元数据与附件索引收敛为 CLI document 的期望结构。
  *
  * @param metadata engine 元数据
  * @param pages engine 页信息
+ * @param attachments engine 附件元信息
  * @returns 仅包含存在字段的 JSON 对象
  */
 function expectedDocument(
   metadata: DocumentMetadata,
   pages: readonly PageInfo[],
+  attachments: readonly AttachmentInfo[],
 ): Record<string, unknown> {
   return {
     version: metadata.version,
@@ -90,6 +97,20 @@ function expectedDocument(
     ...(metadata.keywords === undefined ? {} : { keywords: metadata.keywords }),
     ...(metadata.docId === undefined ? {} : { docId: metadata.docId }),
     ...(metadata.customData === undefined ? {} : { customData: metadata.customData }),
+    ...(metadata.docUsage === undefined ? {} : { docUsage: metadata.docUsage }),
+    ...(metadata.docType === undefined ? {} : { docType: metadata.docType }),
+    ...(metadata.documentHeader === undefined
+      ? {}
+      : { documentHeader: metadata.documentHeader }),
+    ...(metadata.packageInfo === undefined ? {} : { packageInfo: metadata.packageInfo }),
+    ...(metadata.commonData === undefined ? {} : { commonData: metadata.commonData }),
+    attachments: attachments.map((attachment) => ({
+      id: attachment.id,
+      name: attachment.name,
+      ...(attachment.format === undefined ? {} : { format: attachment.format }),
+      ...(attachment.size === undefined ? {} : { size: attachment.size }),
+      ...(attachment.modDate === undefined ? {} : { modDate: attachment.modDate }),
+    })),
   };
 }
 
@@ -144,7 +165,9 @@ describe('V-INFO 明文文档元数据：CLI JSON 与 engine 一致', () => {
       signatureCount: inspection.signatures.length,
       integrityPresent: inspection.integrityPresent,
     });
-    expect(payload.document).toEqual(expectedDocument(oracle.metadata, oracle.pages));
+    expect(payload.document).toEqual(
+      expectedDocument(oracle.metadata, oracle.pages, oracle.attachments),
+    );
     expect(payload.document?.pageCount).toBe(oracle.metadata.pageCount);
     expect(payload.document?.pageSizes).toHaveLength(oracle.pages.length);
     for (const [index, page] of oracle.pages.entries()) {
@@ -174,7 +197,9 @@ describe('V-INFO 明文文档元数据：CLI JSON 与 engine 一致', () => {
     const payload = parseJson<CliInfoJson>(result.stdout);
     const oracle = await engineInfo(path);
 
-    expect(payload.document).toEqual(expectedDocument(oracle.metadata, oracle.pages));
+    expect(payload.document).toEqual(
+      expectedDocument(oracle.metadata, oracle.pages, oracle.attachments),
+    );
     expect(payload.document).toMatchObject({
       title: '富元数据标题',
       author: '作者甲',
@@ -190,6 +215,12 @@ describe('V-INFO 明文文档元数据：CLI JSON 与 engine 一致', () => {
     });
     expect(payload.document?.pageCount).toBe(2);
     expect(payload.document?.pageSizes).toHaveLength(2);
+    expect(payload.document?.attachments).toEqual([]);
+    expect(payload.document?.docType).toBe(oracle.metadata.docType);
+    expect(payload.document?.packageInfo).toEqual(oracle.metadata.packageInfo);
+    for (const key of ['docRoot', 'docBodyCount', 'physicalBox', 'documentVersion'] as const) {
+      expect(payload.document).not.toHaveProperty(key);
+    }
   });
 });
 
@@ -209,6 +240,10 @@ describe('V-INFO 文本输出：元数据、页尺寸、控制字符净化', () 
     expect(result.stdout).toContain('创建工具: 测试工具（2.0）');
     expect(result.stdout).toContain('页数: 2');
     expect(result.stdout).toContain(`页面尺寸: ${expectedPageSizes(oracle.pages)}`);
+    expect(result.stdout).toContain(`文档类型: ${oracle.metadata.docType ?? '无'}`);
+    expect(result.stdout).toContain(`文档用途: ${oracle.metadata.docUsage ?? '无'}`);
+    expect(result.stdout).toContain(`文档根: ${oracle.metadata.packageInfo?.docRoot ?? '无'}`);
+    expect(result.stdout).toContain(`附件: ${oracle.attachments.length} 个`);
     expect(result.stdout).not.toContain('元数据不可用');
   });
 

@@ -650,6 +650,7 @@ describe('文本安全与根证书聚合', () => {
       warnings: [],
     };
     const text = formatInfoText(info);
+    // 无 document 时只输出 7 行包摘要。
     expect(text.split('\n')).toHaveLength(7);
     expect(text).not.toContain('\u001b');
     expect(text).not.toContain('[31m');
