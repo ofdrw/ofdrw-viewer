@@ -283,6 +283,63 @@ describe('签章掩码章渲染（BUG-V2-04）', () => {
     expect(numberRow).toBeGreaterThan(30);
   });
 
+  it('掩码章必须用 source-over：章面平均绿通道不得被 multiply 抬高', async () => {
+    const page = await renderPage(sampleBytes('保函.ofd'), 2);
+
+    /**
+     * 统计印章区域章面像素的平均绿通道。
+     *
+     * 二值 alpha 掩码章的非透明像素是纯红 (255,0,0)：source-over 叠在白底上得到
+     * 饱和度高的实红，平均绿通道低；multiply 会把白底与半透明边缘相乘，章面整体
+     * 变浅、平均绿通道升高。因此用 avgG 而非像素计数作为判据（计数差异仅约 1~5%）。
+     *
+     * @param box 区域（mm，与 StampAnnot Boundary 一致）。
+     * @returns 章面像素数与平均绿通道；无章面像素时 avgGreen 为 NaN。
+     */
+    const faceStats = (box: { x: number; y: number; w: number; h: number }) => {
+      let count = 0;
+      let sumGreen = 0;
+      for (let y = mmToPx(box.y) - 1; y < mmToPx(box.y + box.h) + 1; y += 1) {
+        for (let x = mmToPx(box.x) - 1; x < mmToPx(box.x + box.w) + 1; x += 1) {
+          const offset = (y * page.width + x) * 4;
+          const red = page.data[offset]!;
+          const green = page.data[offset + 1]!;
+          const blue = page.data[offset + 2]!;
+          if (red > 200 && green < red - 10 && blue < red - 10) {
+            count += 1;
+            sumGreen += green;
+          }
+        }
+      }
+      return { count, avgGreen: count > 0 ? sumGreen / count : Number.NaN };
+    };
+
+    const circle = faceStats(SEALS.circle);
+    const square = faceStats(SEALS.square);
+    const all = faceStats({ x: SEALS.circle.x, y: SEALS.circle.y, w: 40, h: 40 });
+
+    // 实测（96dpi）：
+    //   source-over：合并 avgG 93.95、圆章 90.74、方章 101.64
+    //   强制 multiply：合并 avgG 95.61、圆章 91.68、方章 105.44
+    // 三组数值均不重叠，阈值取中间值：合并 94.5、圆章 91.2。
+    let combinedCount = 0;
+    let combinedSum = 0;
+    for (const stat of [circle, square]) {
+      if (Number.isNaN(stat.avgGreen)) continue;
+      combinedCount += stat.count;
+      combinedSum += stat.avgGreen * stat.count;
+    }
+    const combinedAvgGreen = combinedSum / Math.max(1, combinedCount);
+
+    // 章面必须被画出来（排除整章丢失）。
+    expect(combinedCount).toBeGreaterThan(3000);
+    // multiply 会把章面整体抬浅：合并平均绿通道必须低于阈值。
+    expect(combinedAvgGreen).toBeLessThan(94.5);
+    // 圆章单独再卡一道：它是最大的样本，最稳定（两岸 90.74 / 91.68）。
+    expect(circle.avgGreen).toBeLessThan(91.2);
+    expect(all.count).toBeGreaterThan(2000);
+  });
+
   it('保函 p1 不含签章：版面内容不受签章逻辑影响', async () => {
     const page = await renderPage(sampleBytes('保函.ofd'), 1);
     // 正文行区域应有大量近黑文字像素；红色判定不应命中任何正文。
@@ -292,21 +349,43 @@ describe('签章掩码章渲染（BUG-V2-04）', () => {
     expect(red.covered).toBe(0);
   });
 
-  it('dzbh 不透明白底章：正文在章面区域仍可读（零漂移）', async () => {
+  it('dzbh 不透明白底章：章确实画出且白底不遮文字', async () => {
     const page = await renderPage(sampleBytes('dzbh.ofd'), 1);
-    // 不透明白底章走 multiply，白底与页面底色融合而不盖住文字：
-    // 整页近黑像素必须保持在可观数量级；若误用 source-over，白底会把大段文字盖成纯白。
-    const text = darkPixels(page, 0, 0, page.width, page.height);
-    expect(text).toBeGreaterThan(3000);
+    // Sign_2 的 StampAnnot 在 PageRef=1（第 1 页），Boundary 150,250,40×29 mm。
+    const seal = { x: 150, y: 250, w: 40, h: 29 };
+    const x0 = mmToPx(seal.x);
+    const y0 = mmToPx(seal.y);
+    const x1 = Math.min(page.width, mmToPx(seal.x + seal.w));
+    const y1 = Math.min(page.height, mmToPx(seal.y + seal.h));
 
-    // 同时整页不应被“纯白块”填满，白像素占比须低于 95%。
-    let white = 0;
-    for (let index = 0; index < page.data.length; index += 4) {
-      if (page.data[index]! > 250 && page.data[index + 1]! > 250 && page.data[index + 2]! > 250) {
-        white += 1;
+    // 先断言“章确实画了”：该区域不能是纯白，必须有大量非白像素。
+    let nonWhite = 0;
+    let dark = 0;
+    let mid = 0;
+    let total = 0;
+    for (let y = y0; y < y1; y += 1) {
+      for (let x = x0; x < x1; x += 1) {
+        const offset = (y * page.width + x) * 4;
+        const red = page.data[offset]!;
+        const green = page.data[offset + 1]!;
+        const blue = page.data[offset + 2]!;
+        total += 1;
+        if (!(red > 250 && green > 250 && blue > 250)) nonWhite += 1;
+        const luminance = (red + green + blue) / 3;
+        if (luminance < 100) dark += 1;
+        else if (luminance < 200) mid += 1;
       }
     }
-    const ratio = white / (page.width * page.height);
-    expect(ratio).toBeLessThan(0.95);
+    // 实测章区约 16459 像素、非白 13535；若印章未被绘制（image 丢失或合成被跳过），
+    // 该区域几乎全白，此断言即失败。
+    expect(total).toBeGreaterThan(10000);
+    expect(nonWhite).toBeGreaterThan(total * 0.3);
+
+    // 再断言“白底不遮字”：不透明白底章走 multiply，白底与页面底色融合，
+    // 章区内的正文墨迹仍应可见。若误用 source-over，白底会把章区文字整片盖成纯白。
+    // 章区亮度分布实测：dark(<100) 534、mid(<200) 3047、light 6871、white 6007。
+    // 取“深色 + 中间调”合计为墨迹证据，阈值 1500 留出足够余量，
+    // 但一旦白底被 source-over 铺成纯白，该计数会大幅跌落。
+    expect(dark + mid).toBeGreaterThan(1500);
   });
 });
