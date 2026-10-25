@@ -1017,6 +1017,48 @@
 }
 
 /* ------------------------------------------------------------------------- */
+/* 首屏加载占位：文档已打开、首个可见页尚未画完                               */
+/* ------------------------------------------------------------------------- */
+
+.ofd-viewer__loading-area {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: var(--ofd-text-secondary);
+  background: var(--ofd-bg);
+  cursor: progress;
+}
+
+/* 骨架只做视觉占位：点击穿透到正文区，不会挡住滚动与手势。 */
+.ofd-viewer__loading-area-skeleton {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  overflow: hidden;
+  background: var(--ofd-loading-skeleton);
+  animation: ofd-loading-skeleton-pulse 1600ms ease-in-out infinite;
+  pointer-events: none;
+}
+
+.ofd-viewer__loading-area-text {
+  position: relative;
+  margin: 0;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------------- */
 /* 文档全屏 loading / 错误卡（设计方案 §6.9.2）                                */
 /* ------------------------------------------------------------------------- */
 

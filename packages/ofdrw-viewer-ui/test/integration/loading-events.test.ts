@@ -466,30 +466,34 @@ afterEach(() => {
 });
 
 describe('文档全屏 loading 与引擎打开事件', () => {
-  it('小文件在 150ms 内打开时不显示全屏 loading', async () => {
-    const { viewer } = createHarness({ pageCount: 1, openMode: 'auto' });
+  it('小文件打开完成后立即显示全屏 loading，首屏渲染完成才淡出', async () => {
+    const { viewer } = createHarness({ pageCount: 1, openMode: 'auto', renderMode: 'manual' });
     const root = viewer.getRoot();
-    const shown: boolean[] = [];
+    let shown = false;
     const observer = new MutationObserver(() => {
       const status = root.querySelector<HTMLElement>('.ofd-viewer__loading');
-      if (status && !status.hidden) shown.push(true);
+      if (status && !status.hidden) shown = true;
     });
     observer.observe(root, { subtree: true, attributes: true, attributeFilter: ['hidden'] });
     await viewer.ready;
-    await wait(350);
+    await until(() => renderCalls.length > 0);
+    // 打开耗时低于 150ms 也不跳过加载反馈：页壳就绪、首屏尚未画完时遮罩已显示。
+    expect(shown).toBe(true);
+    expect(overlayState(viewer).visible).toBe(true);
+    expect(viewer.getPageView(1)?.state).not.toBe('rendered');
+
+    renderCalls[0]!.complete();
+    await until(() => overlayState(viewer).visible === false, 1000);
     observer.disconnect();
-    expect(shown).toEqual([]);
-    expect(overlayState(viewer).visible).toBe(false);
+    expect(viewer.getPageView(1)?.state).toBe('rendered');
   });
 
-  it('慢文件超过 150ms 显示全屏 loading，完成后满足最短展示并淡出', async () => {
-    const { viewer, bus } = createHarness({ openMode: 'manual' });
+  it('慢文件打开期间显示全屏 loading，完成后满足最短展示并淡出', async () => {
+    const { viewer, bus } = createHarness({ openMode: 'manual', renderMode: 'manual' });
     await until(() => openCalls.length > 0);
     const call = openCalls[0]!;
-    expect(overlayState(viewer).visible).toBe(false);
-    const beforeDelay = Math.max(0, 140 - (performance.now() - call.startedAt));
-    if (beforeDelay > 0) await wait(beforeDelay);
-    expect(overlayState(viewer).visible).toBe(false);
+    // 首次打开没有旧画面可看：遮罩从 open() 入口立即显示，不等 150ms 延迟。
+    expect(overlayState(viewer).visible).toBe(true);
     const afterDelay = Math.max(0, 160 - (performance.now() - call.startedAt));
     if (afterDelay > 0) await wait(afterDelay);
     // 全量并发时 jsdom 事件循环可能延迟定时器；等待实际展示，避免固定 sleep 抖动。
@@ -505,6 +509,11 @@ describe('文档全屏 loading 与引擎打开事件', () => {
     const overlay = (viewer as unknown as { documentLoading: { shownAt: number } }).documentLoading;
     call.settleSuccess();
     await viewer.ready;
+    // 打开完成不结束遮罩：首屏仍在渲染，继续由全屏 loading 覆盖。
+    await wait(50);
+    expect(overlayState(viewer).visible).toBe(true);
+    await until(() => renderCalls.length > 0);
+    renderCalls[0]!.complete();
     // finish() 按“展示时刻 + 300ms 最短展示”安排淡出；打开耗时本身已占去一部分，
     // 因此按剩余时长计算等待，避免固定 sleep 在慢机上越过淡出窗口而漏掉“仍在展示”的断言。
     const remainingVisible = Math.max(
@@ -517,6 +526,74 @@ describe('文档全屏 loading 与引擎打开事件', () => {
     // 最短展示满后再等 150ms 淡出结束，遮罩隐藏。
     await until(() => overlayState(viewer).visible === false, 1000);
     expect(bus.listenerCount('document:open:start')).toBe(1);
+  });
+
+  it('已有文档时切换文档保留 150ms 延迟，快速切换不闪遮罩', async () => {
+    const { viewer } = createHarness({ pageCount: 1, openMode: 'manual', renderMode: 'auto' });
+    await until(() => openCalls.length > 0);
+    openCalls[0]!.settleSuccess();
+    await viewer.ready;
+    await until(() => overlayState(viewer).visible === false, 1000);
+    expect(viewer.getState().document.status).toBe('ready');
+
+    // 第二次打开：此时已有可见画面，延迟窗口内不应出现遮罩。
+    void viewer.open('samples/other.ofd');
+    await until(() => openCalls.length > 1);
+    const second = openCalls[1]!;
+    expect(overlayState(viewer).visible).toBe(false);
+    const beforeDelay = Math.max(0, 100 - (performance.now() - second.startedAt));
+    if (beforeDelay > 0) await wait(beforeDelay);
+    expect(overlayState(viewer).visible).toBe(false);
+  });
+
+  it('新打开进行中收到旧打开的 abort，不收起新遮罩', async () => {
+    const { viewer, bus } = createHarness({ pageCount: 1, openMode: 'manual', renderMode: 'auto' });
+    await until(() => openCalls.length > 0);
+    const first = openCalls[0]!;
+    expect(overlayState(viewer).visible).toBe(true);
+
+    // 新的 open() 会 abort 上一次打开；随后旧的 abort 事件才异步到达。
+    void viewer.open('samples/second.ofd');
+    await until(() => openCalls.length > 1);
+    expect(overlayState(viewer).visible).toBe(true);
+    emit(bus, 'document:open:abort', {
+      operationId: first.operationId,
+      cause: 'caller',
+      reason: abortError(),
+      durationMs: 1,
+    });
+    await wait(20);
+    // 旧操作已归属到上一轮，不得影响本次打开的全屏遮罩。
+    expect(overlayState(viewer).visible).toBe(true);
+  });
+
+  it('首屏渲染完成前正文区显示加载占位，完成后与全屏 loading 一起撤掉', async () => {
+    const { viewer } = createHarness({ pageCount: 2, openMode: 'auto', renderMode: 'manual' });
+    const area = viewer.getRoot().querySelector<HTMLElement>('.ofd-viewer__loading-area');
+    expect(area).not.toBeNull();
+    expect(area!.hidden).toBe(true);
+    await viewer.ready;
+    await until(() => renderCalls.length > 0);
+    // 页壳已就绪、首屏仍在渲染：正文区由占位覆盖，不是空白。
+    expect(area!.hidden).toBe(false);
+    expect(area!.querySelector('.ofd-viewer__loading-area-skeleton')).not.toBeNull();
+    expect(area!.querySelector('.ofd-page__loading-spinner')).not.toBeNull();
+    expect(area!.querySelector('.ofd-viewer__loading-area-text')?.textContent).toBe(
+      '正在渲染页面…',
+    );
+
+    renderCalls.find((call) => call.pageIndex === 0)!.complete();
+    await until(() => area!.hidden);
+    expect(area!.hidden).toBe(true);
+  });
+
+  it('打开失败时不显示首屏加载占位', async () => {
+    const { viewer } = createHarness({ openMode: 'manual' });
+    await until(() => openCalls.length > 0);
+    openCalls[0]!.settleFailure(new OFDError('OFD_ENTRY_NOT_FOUND', '模拟包损坏'));
+    await expect(viewer.ready).rejects.toMatchObject({ code: 'OFD_ENTRY_NOT_FOUND' });
+    const area = viewer.getRoot().querySelector<HTMLElement>('.ofd-viewer__loading-area');
+    expect(area!.hidden).toBe(true);
   });
 
   it('取消打开立即隐藏 loading、回到空态且不显示错误卡', async () => {
@@ -575,14 +652,15 @@ describe('文档全屏 loading 与引擎打开事件', () => {
       '模拟包损坏',
     );
 
-    // 重试走最近一次来源；下一次打开成功后错误卡隐藏。
+    // 重试走最近一次来源；下一次打开成功后错误卡隐藏，遮罩随首屏渲染收尾。
     openMode = 'auto';
+    renderMode = 'auto';
     failed.error
       .querySelector<HTMLButtonElement>('.ofd-viewer__loading-button--primary')!
       .click();
     await until(() => viewer.getPageCount() === document.pageCount && viewer.getState().document.status === 'ready');
+    await until(() => overlayState(viewer).visible === false, 1000);
     expect(overlayState(viewer).errorVisible).toBe(false);
-    expect(overlayState(viewer).visible).toBe(false);
   });
 
   it('关闭文档立即清理全屏 loading 与页面 loading', async () => {

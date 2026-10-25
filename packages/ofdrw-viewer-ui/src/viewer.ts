@@ -317,8 +317,13 @@ interface PendingPageRenderStart {
 
 /** `trackPageRenderStart` 返回的登记句柄。 */
 export interface PageRenderStartHandle {
-  /** 移除尚未消费的登记；重复调用无副作用。 */
-  drop(): void;
+  /**
+   * 移除尚未消费的登记；重复调用无副作用。
+   *
+   * @returns 调用前登记是否仍未被引擎 `page:render:start` 消费；true 表示引擎
+   *   没有派发 start（测试替身或旧引擎），调用方需要自行启动加载计时。
+   */
+  drop(): boolean;
 }
 
 /**
@@ -365,6 +370,12 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private closing = false;
   /** 文档全屏 loading / 错误卡控制器。 */
   private readonly documentLoading: DocumentLoadingOverlay;
+  /** 首屏加载占位：覆盖正文区，直到首个可见页渲染完成。 */
+  private readonly loadingArea: HTMLElement;
+  /** 首屏加载占位的文案节点；占位按需建出，未显示时为 null。 */
+  private loadingAreaText: HTMLElement | null = null;
+  /** 首屏加载占位是否处于显示状态。 */
+  private loadingAreaVisible = false;
   /** 当前语言的翻译器；加载文案与页面文案共用。 */
   private translator: Translator;
   private resizeObserver: ResizeObserver | null = null;
@@ -470,6 +481,9 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       onRetry: () => this.retryOpen(),
       onClose: () => void this.close(),
     });
+    this.loadingArea = this.elements.loadingArea ?? this.createLoadingArea();
+    this.loadingArea.hidden = true;
+    this.loadingAreaText = null;
 
     this.eventBus = new EventBus<ViewerEventMap>({
       onListenerError: (error, event) => {
@@ -505,7 +519,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       ...(this.options.fonts ? { font: this.options.fonts } : {}),
       onWarning: (warning) => this.reportWarning(warning),
       // 字体下载期间把全屏 loading 的主文案切换为「正在加载字体…」：
-      // 打开流程会等字体就绪后才渲染，因此加载动画与字体加载同始同终。
+      // 字体读取发生在引擎打开之前，遮罩已由 `open()` 入口显示，这里只切换文案。
       onFontState: (state) =>
         this.documentLoading.setStatusText(state === 'loading' ? 'loading.fonts' : 'loading.document'),
     });
@@ -797,16 +811,21 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     const previousOrigin = this.state.document.origin;
     this.openToken += 1;
     const token = this.openToken;
+    // 先作废上一轮打开的操作归属：旧打开的 abort/error 可能在新遮罩显示后才到达，
+    // 若不在这里清空，`documentOpenOperationId` 仍匹配旧值，旧事件会收起新遮罩。
+    this.documentOpenOperationId = 0;
     this.openAbort?.abort();
     const abort = new AbortController();
     this.openAbort = abort;
     // 新文档会话：控制台诊断的去重集合按文档重置。
     this.diagnostics.reset();
     this.queue.cancelAll();
+    const hasPreviousDocument = this.state.document.status === 'ready';
     this.patchDocument({ status: 'opening', source: null, origin: undefined });
     this.commit();
-    // 正常由 `document:open:start` 启动 150ms 计时；引擎事件不可用时在此降级。
-    if (!this.engineEvents) this.documentLoading.begin(resolved);
+    // 遮罩从 open() 入口起算，而不是等引擎 `document:open:start`：字体下载与容器
+    // 获取都发生在引擎打开之前，若只在引擎事件里计时，这段等待完全没有加载反馈。
+    this.documentLoading.begin(resolved, hasPreviousDocument);
     /** 尚未移交给阅读器的解密容器；取消/失败时必须关闭。 */
     let pendingContainer: VirtualContainer | null = null;
     /** 本次创建的 HTTP 字节源；明文路径移交给 engine，加密路径由 UI 关闭。 */
@@ -895,8 +914,10 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       await this.applyAvailability(token);
       this.commit();
       this.emit('documentopen', { pageCount: opened.pageCount });
-      // 全屏 loading 的结束点是 UI `documentopen`（页壳与初始滚动已就绪）。
-      this.documentLoading.finish();
+      // 打开完成即接管正文：全屏遮罩继续展示，遮罩下方同时铺好首屏占位，
+      // 首个可见页画完后两者一起撤掉，见 `finishDocumentLoading`。
+      this.documentLoading.markOpenComplete();
+      this.showLoadingArea();
       this.emit('pagesloaded', { pageCount: opened.pageCount });
       this.renderVisible(true);
       void this.loadSideData(token);
@@ -922,6 +943,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         httpSource = null;
         // 用户取消：立即隐藏全屏 loading，回到空态并清理可能已打开的引擎文档。
         this.documentLoading.cancel();
+        this.hideLoadingArea();
         this.queue.cancelAll();
         this.destroyPages();
         await this.controller.close();
@@ -943,6 +965,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         await closeHttpSource(httpSource);
         httpSource = null;
         this.documentLoading.cancel();
+        this.hideLoadingArea();
         this.patchDocument({
           status: this.controller.isOpen ? 'ready' : 'closed',
           source: previousSource,
@@ -956,6 +979,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       const mapped = this.mapOpenFailure(error);
       const info = this.toErrorInfo(mapped, 'OFD_OPEN_FAILED', '打开文档失败');
       this.documentLoading.fail(info);
+      this.hideLoadingArea();
       this.patchDocument({ status: 'error', origin: undefined });
       this.reportError(info);
       this.commit();
@@ -999,8 +1023,9 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       this.openToken += 1;
       this.openAbort?.abort();
       this.openAbort = null;
-      // 关闭后不能残留全屏 loading / 错误卡。
+      // 关闭后不能残留全屏 loading / 错误卡 / 首屏占位。
       this.documentLoading.close();
+      this.hideLoadingArea();
       this.clearRenderTracking();
       this.queue.cancelAll();
       this.destroyPages();
@@ -1074,7 +1099,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
    * @internal
    */
   trackPageRenderStart(pageIndex: number, purpose: PageRenderPurpose): PageRenderStartHandle {
-    if (!this.engineEvents || pageIndex < 0) return { drop: () => undefined };
+    // 总线缺失时页面视图本就按代次号计时，这里只需返回“未消费”。
+    if (!this.engineEvents || pageIndex < 0) return { drop: () => true };
     const pending: PendingPageRenderStart = { pageIndex, purpose };
     const queue = this.pendingStarts.get(pageIndex);
     if (queue) queue.push(pending);
@@ -1082,13 +1108,21 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     return { drop: () => this.dropPendingStart(pageIndex, pending) };
   }
 
-  /** 移除一条尚未消费的用途登记。 */
-  private dropPendingStart(pageIndex: number, pending: PendingPageRenderStart): void {
+  /**
+   * 移除一条尚未消费的用途登记。
+   *
+   * @returns 移除前该登记是否仍在队列中；true 表示引擎没有派发对应的
+   *   `page:render:start`。
+   */
+  private dropPendingStart(pageIndex: number, pending: PendingPageRenderStart): boolean {
     const queue = this.pendingStarts.get(pageIndex);
-    if (!queue) return;
+    // 队列整体被清理（关闭/销毁）时该登记同样未被消费。
+    if (!queue) return true;
     const index = queue.indexOf(pending);
-    if (index >= 0) queue.splice(index, 1);
+    if (index < 0) return false;
+    queue.splice(index, 1);
     if (queue.length === 0) this.pendingStarts.delete(pageIndex);
+    return true;
   }
 
   /** 消费指定 `operationId` 的页面操作映射；未登记时返回 null。 */
@@ -1101,10 +1135,14 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     return operation;
   }
 
-  /** `document:open:start`：启动全屏 loading 计时。 */
+  /**
+   * `document:open:start`：记录打开操作标识。
+   *
+   * 遮罩计时已在 `open()` 入口启动；这里只登记 operationId 供后续终止事件比对，
+   * 不再重置计时，避免字体下载结束后倒计时重新开始。
+   */
   private handleDocumentOpenStart(event: DocumentOpenStartEvent): void {
     this.documentOpenOperationId = event.operationId;
-    this.documentLoading.begin(this.lastOpenSource ?? this.options.source ?? '');
   }
 
   /** `document:open:error`：立即切换全屏错误卡（不等 150ms）。 */
@@ -1113,12 +1151,14 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.documentLoading.fail(
       this.toErrorInfo(event.error, 'OFD_OPEN_FAILED', '打开文档失败'),
     );
+    this.hideLoadingArea();
   }
 
   /** `document:open:abort`：回空态；若文档已打开但 UI 未完成布局则清理。 */
   private handleDocumentOpenAbort(event: DocumentOpenAbortEvent): void {
     if (event.operationId !== this.documentOpenOperationId) return;
     this.documentLoading.cancel();
+    this.hideLoadingArea();
     if (this.controller.isOpen && this.state.document.status === 'opening') {
       void this.close();
     }
@@ -1127,6 +1167,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /** `document:close:start`：清理全屏覆盖层、页面计时器与 operation 映射。 */
   private handleDocumentCloseStart(): void {
     this.documentLoading.close();
+    this.hideLoadingArea();
     this.clearRenderTracking();
   }
 
@@ -1187,6 +1228,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.openAbort?.abort();
     this.openAbort = null;
     this.documentLoading.destroy();
+    this.loadingArea.remove();
     this.clearRenderTracking();
     this.queue.dispose();
     this.destroyPages();
@@ -1530,6 +1572,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.patchUI({ locale });
     this.translator = createTranslator(locale);
     this.documentLoading.setLocale(this.translator.locale);
+    if (this.loadingAreaText) this.loadingAreaText.textContent = this.translator.t('loading.page');
     for (const pageView of this.pageViews) pageView.setTranslator(this.translator);
     this.commit();
   }
@@ -1938,6 +1981,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /** 全屏 loading 的“取消”：中止本次打开并立即隐藏遮罩。 */
   private cancelDocumentOpen(): void {
     this.documentLoading.cancel();
+    this.hideLoadingArea();
     this.openAbort?.abort();
   }
 
@@ -2080,6 +2124,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       const priority = index >= visible.start && index <= visible.end ? 0 : 1;
       this.renderPage(index, force, priority);
     }
+    // 视口内没有任何可渲染页时，页内骨架不会出现，全屏 loading 直接收尾。
+    if (range.start > range.end) this.finishDocumentLoading();
     this.trimCache();
   }
 
@@ -2119,12 +2165,14 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
           pending.drop();
           throw error;
         }
-        // 引擎未派发 start（测试替身或旧引擎）时保留 beginRender 的代次号计时。
-        pending.drop();
+        // 引擎未派发 start（测试替身或旧引擎）时退回 beginRender 的代次号计时，
+        // 否则该页 spinner 永远没有启动源。
+        if (pending.drop()) pageView.beginLoading(String(generation));
         await task.promise;
         if (signal.aborted) throw createAbortError();
         pageView.completeRender(generation, key);
         this.markRendered(index);
+        this.finishDocumentLoading();
         this.emit('pagerendered', {
           pageNumber: index + 1,
           scale: this.state.view.scale,
@@ -2139,6 +2187,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         const info = this.toErrorInfo(error, 'OFD_RENDER_FAILED', '页面渲染失败', index);
         pageView.failRender(generation, info);
         this.reportError(info);
+        // 可见页渲染失败时错误卡已覆盖该页，全屏 loading 不能再压在上面。
+        if (this.isVisiblePage(index)) this.finishDocumentLoading();
       },
       onCancel: () => pageView.cancelRender(generation),
     });
@@ -2190,6 +2240,103 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     if (position >= 0) this.renderOrder.splice(position, 1);
     this.renderOrder.push(index);
     this.trimCache();
+  }
+
+  /**
+   * 结束全屏 loading 与正文首屏占位。
+   *
+   * 结束点是「首个可见页渲染完成」而非文档打开完成：两者之间通常还包含字体下载与
+   * 首屏绘制，这段时间必须继续由加载态覆盖，否则页面表现为空白。
+   */
+  private finishDocumentLoading(): void {
+    this.documentLoading.finish();
+    this.hideLoadingArea();
+  }
+
+  /**
+   * 补建首屏加载占位。
+   *
+   * 外壳允许传入自定义 `elements`（含缺失元素），此时按需创建并挂到正文区末尾。
+   *
+   * @returns 新建的占位元素。
+   */
+  private createLoadingArea(): HTMLElement {
+    const area = this.ownerDocument.createElement('div');
+    area.className = 'ofd-viewer__loading-area';
+    // 外层已由全屏 loading 的 aria-live 播报状态，占位只做视觉呈现，不再重复播报。
+    this.elements.main.appendChild(area);
+    return area;
+  }
+
+  /**
+   * 显示首屏加载占位：文档已打开但首个可见页还没画完。
+   *
+   * 占位在全屏遮罩之下，遮罩淡出的同时即可见，用户看到的是「全屏遮罩 → 正文区骨架」，
+   * 不会先看到空白正文。
+   */
+  private showLoadingArea(): void {
+    if (this.loadingAreaVisible) return;
+    this.loadingAreaVisible = true;
+    if (this.loadingArea.childElementCount === 0) {
+      this.loadingAreaText = this.createLoadingAreaText();
+      this.loadingArea.append(
+        this.createLoadingAreaSkeleton(),
+        this.createLoadingAreaSpinner(),
+        this.loadingAreaText,
+      );
+    }
+    this.loadingArea.hidden = false;
+  }
+
+  /**
+   * 创建占位骨架块。
+   *
+   * @returns 骨架元素。
+   */
+  private createLoadingAreaSkeleton(): HTMLElement {
+    const skeleton = this.ownerDocument.createElement('div');
+    skeleton.className = 'ofd-viewer__loading-area-skeleton';
+    return skeleton;
+  }
+
+  /**
+   * 创建占位 spinner。
+   *
+   * @returns 复用页内 loading 的 spinner 样式。
+   */
+  private createLoadingAreaSpinner(): HTMLElement {
+    const spinner = this.ownerDocument.createElement('div');
+    spinner.className = 'ofd-page__loading-spinner';
+    return spinner;
+  }
+
+  /**
+   * 创建占位文案。
+   *
+   * @returns 文案元素。
+   */
+  private createLoadingAreaText(): HTMLElement {
+    const text = this.ownerDocument.createElement('p');
+    text.className = 'ofd-viewer__loading-area-text';
+    text.textContent = this.translator.t('loading.page');
+    return text;
+  }
+
+  /** 立即隐藏首屏加载占位。 */
+  private hideLoadingArea(): void {
+    if (!this.loadingAreaVisible) return;
+    this.loadingAreaVisible = false;
+    this.loadingArea.hidden = true;
+  }
+
+  /**
+   * 页索引是否落在当前可见页范围内。
+   *
+   * @param index 页索引，0-based。
+   * @returns 可见时 true。
+   */
+  private isVisiblePage(index: number): boolean {
+    return index >= this.lastVisibleRange.start && index <= this.lastVisibleRange.end;
   }
 
   /** 释放超出缓存且不可见的 canvas。 */
@@ -3093,7 +3240,7 @@ interface DocumentLoadingOverlayOptions {
  *
  * 只负责视觉、ARIA 与计时：150 ms 延迟显示、最短 300 ms、150 ms 淡出；
  * 取消/错误/关闭立即隐藏。何时开始/结束由 `OFDViewer` 的打开流程
- * （后续为引擎 `document:open:*` 事件）调用。
+ * （引擎 `document:open:*` 事件 + 首个可见页渲染完成）调用。
  */
 class DocumentLoadingOverlay {
   private readonly status: HTMLElement;
@@ -3118,6 +3265,8 @@ class DocumentLoadingOverlay {
   private fadeTimer: ReturnType<typeof setTimeout> | null = null;
   private visible = false;
   private shownAt = 0;
+  /** 本次打开是否已进入「打开完成」阶段；未完成时 `finish()` 不结束遮罩。 */
+  private started = false;
   private cancelling = false;
   private currentSource: ViewerSource | null = null;
   /** 遮罩是否已启用焦点约束；避免重复添加监听器。 */
@@ -3190,12 +3339,14 @@ class DocumentLoadingOverlay {
   }
 
   /**
-   * 开始一次打开：记录文档名并启动 150 ms 显示计时。
+   * 开始一次打开：记录文档名并启动显示计时。
    *
    * @param source 本次打开来源；用于展示文件名。
+   * @param delay 是否延迟显示；false 时立刻显示。
    */
-  begin(source: ViewerSource): void {
+  begin(source: ViewerSource, delay = true): void {
     this.currentSource = source;
+    this.started = false;
     this.cancelling = false;
     this.cancelButton.disabled = false;
     this.cancelButton.textContent = this.translator.t('loading.cancel');
@@ -3204,14 +3355,37 @@ class DocumentLoadingOverlay {
     this.clearTimers();
     this.status.removeAttribute('data-fading');
     if (this.visible) return;
+    if (!delay) {
+      this.show();
+      return;
+    }
     this.delayTimer = setTimeout(() => {
       this.delayTimer = null;
       this.show();
     }, DOCUMENT_LOADING_DELAY_MS);
   }
 
-  /** 打开完成（UI `documentopen`）：满足最短展示后淡出。 */
+  /**
+   * 文档打开完成、开始首屏渲染。
+   *
+   * 打开耗时低于延迟阈值时遮罩还没有出现；由于首屏绘制还要等字体下载，这段空白
+   * 不应没有任何加载反馈，因此立即显示并跳过延迟计时。
+   */
+  markOpenComplete(): void {
+    if (this.started) return;
+    this.started = true;
+    if (!this.visible) this.show();
+  }
+
+  /**
+   * 首屏渲染完成：满足最短展示后淡出。
+   *
+   * 文档打开完成前的调用一律忽略：此时页壳已就绪但首屏仍在排队，提前收尾会让
+   * 用户看到空白页壳。重复调用无副作用。
+   */
   finish(): void {
+    if (!this.started) return;
+    this.started = false;
     this.clearTimers();
     if (!this.visible) return;
     const elapsed = Date.now() - this.shownAt;
@@ -3229,6 +3403,7 @@ class DocumentLoadingOverlay {
    */
   fail(info: ViewerErrorInfo): void {
     this.clearTimers();
+    this.started = false;
     this.visible = false;
     this.status.hidden = true;
     this.status.removeAttribute('data-fading');
@@ -3269,6 +3444,10 @@ class DocumentLoadingOverlay {
   /** 显示全屏 loading。 */
   private show(): void {
     if (this.visible) return;
+    if (this.delayTimer !== null) {
+      clearTimeout(this.delayTimer);
+      this.delayTimer = null;
+    }
     this.visible = true;
     this.shownAt = Date.now();
     this.status.hidden = false;
@@ -3293,6 +3472,7 @@ class DocumentLoadingOverlay {
   /** 立即隐藏 loading 与错误卡并清理计时器。 */
   private hideAll(): void {
     this.clearTimers();
+    this.started = false;
     this.visible = false;
     this.status.hidden = true;
     this.status.removeAttribute('data-fading');
@@ -3511,7 +3691,10 @@ function createStructure(root: HTMLElement, doc: Document): UIShellElements {
   sidebar.hidden = true;
   sidebarMask.hidden = true;
   findbar.hidden = true;
-  return { root, toolbar, body, sidebar, sidebarMask, main, findbar, dialogLayer, toastLayer };
+  const loadingArea = create('ofd-viewer__loading-area');
+  loadingArea.hidden = true;
+  main.appendChild(loadingArea);
+  return { root, toolbar, body, sidebar, sidebarMask, main, findbar, dialogLayer, toastLayer, loadingArea };
 }
 
 export type { PageRange, ViewerSource };

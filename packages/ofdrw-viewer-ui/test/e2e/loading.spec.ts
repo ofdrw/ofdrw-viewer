@@ -101,7 +101,7 @@ async function scanAxe(
   return serious(result.violations);
 }
 
-test('小文件打开 <150ms 不出现全屏 loading', async ({ page, issues }) => {
+test('小文件打开完成后立即出现全屏 loading，把首屏空白期盖住', async ({ page, issues }) => {
   await page.addInitScript(() => {
     window.__overlayShown = false;
     const observe = (): void => {
@@ -130,10 +130,30 @@ test('小文件打开 <150ms 不出现全屏 loading', async ({ page, issues }) 
     await window.__viewer!.open('/ofd_pdf_match/helloworld.ofd');
     return performance.now() - started;
   });
-  await wait(300);
   expect(duration, `warm open ${duration.toFixed(1)}ms`).toBeLessThan(150);
-  expect(await page.evaluate(() => window.__overlayShown)).toBe(false);
-  await expect(page.locator('.ofd-viewer__loading')).toBeHidden();
+
+  // 这次重开后把网络打慢，让「打开完成 → 首屏画完」之间出现可观测的空窗：
+  // 遮罩必须在这段空窗里可见，页壳渲染完成后才收起。
+  await page.evaluate(() => {
+    const target = /\/ofd_pdf_match\/helloworld\.ofd/;
+    const original = window.fetch;
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (!target.test(url)) return original(input, init);
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      return original(input, init);
+    };
+  });
+  await page.evaluate(() => {
+    window.__overlayShown = false;
+  });
+  await page.evaluate(async () => {
+    await window.__viewer!.open('/ofd_pdf_match/helloworld.ofd');
+  });
+  await expect(page.locator('.ofd-viewer__loading')).toBeVisible({ timeout: 2_000 });
+  await expect(page.locator('.ofd-viewer__loading')).toBeHidden({ timeout: 10_000 });
+  await expect(page.locator('.ofd-viewer__loading-area')).toBeHidden();
+  await expect(page.locator('.ofd-page[data-page-state="rendered"]').first()).toBeVisible();
   await expectNoPageErrors(page, issues);
 });
 
@@ -282,28 +302,16 @@ test('错误卡后公开 open 快速打开新文档：退出模态并恢复工�
   await expect(toolbar).toHaveAttribute('inert', '');
   await expect(body).toHaveAttribute('inert', '');
 
-  // 通过公开 API 在 150 ms 内打开合法小文件；loading 不应出现，模态应立即退出。
-  const result = await page.evaluate(async () => {
-    window.__overlayShown = false;
-    const overlay = document.querySelector<HTMLElement>('.ofd-viewer__loading');
-    if (!overlay) throw new Error('全屏 loading 元素缺失');
-    const observer = new MutationObserver(() => {
-      if (!overlay.hidden) window.__overlayShown = true;
-    });
-    observer.observe(overlay, { attributes: true, attributeFilter: ['hidden'] });
+  // 通过公开 API 在错误卡之后打开合法小文件：错误卡模态立即退出，页面不残留阻塞。
+  await page.evaluate(async () => {
     const response = await fetch('/ofd_pdf_match/helloworld.ofd');
     const bytes = new Uint8Array(await response.arrayBuffer());
-    const started = performance.now();
     await window.__viewer!.open(bytes);
-    const elapsed = performance.now() - started;
-    observer.disconnect();
-    return { elapsed, shown: window.__overlayShown };
   });
-  expect(result.elapsed).toBeLessThan(150);
-  expect(result.shown).toBe(false);
   expect(await page.evaluate(() => window.__viewer?.getState().document.status)).toBe('ready');
+  // 错误卡与背景 inert 在新文档接管后必须立即退出。
   await expect(error).toBeHidden();
-  await expect(page.locator('.ofd-viewer__loading')).toBeHidden();
+  await expect(page.locator('.ofd-viewer__loading')).toBeHidden({ timeout: 5_000 });
   await expect(toolbar).not.toHaveAttribute('inert', '');
   await expect(body).not.toHaveAttribute('inert', '');
 

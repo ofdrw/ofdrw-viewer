@@ -105,6 +105,12 @@ export interface UIShellElements {
   readonly findbar: HTMLElement;
   readonly dialogLayer: HTMLElement;
   readonly toastLayer: HTMLElement;
+  /**
+   * 首屏加载占位；可选，缺失时由核心按需补建。
+   *
+   * 文档已打开但首个可见页尚未画完时覆盖正文区，避免关闭全屏 loading 后留下空白正文。
+   */
+  readonly loadingArea?: HTMLElement;
 }
 
 /** 对话框按钮。 */
