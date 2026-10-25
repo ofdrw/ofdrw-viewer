@@ -99,6 +99,35 @@ describe('真实 OFD 样例解码（T3 + T2 集成）', () => {
     expect(warnings.every((code) => typeof code === 'string')).toBe(true);
   });
 
+  it('BUG-V2-02：addimage 注释 225（Appearance 直挂 ImageObject、无 @Boundary）边界由子图元兜底', async () => {
+    const zip = await openSample('addimage.ofd');
+    const document = decodeDocument(
+      parseXml(await zip.readEntry('xDoc_1/Document.xml')),
+      'xDoc_1/Document.xml',
+    );
+    expect(document.annotationsFile).toBeTruthy();
+    const index = decodeAnnotationsIndex(
+      await readXml(zip, document.annotationsFile!),
+      document.annotationsFile!.replace(/[^/]+$/, ''),
+    );
+    const annotFile = Object.values(index.pageAnnotIndex)[0]!;
+    const warnings: string[] = [];
+    const annotations = decodeAnnotations(await readXml(zip, annotFile), ['165'], {
+      onWarning: (warning: { code: string }) => warnings.push(warning.code),
+    });
+    const annot = annotations.find((item) => item.id === '225');
+    expect(annot).toBeDefined();
+    expect(annot?.appearance?.children[0]?.kind).toBe('image');
+    // 外观本身未写 @Boundary，必须由 ImageObject 的 CTM 单位正方形兜底出正尺寸边界。
+    expect(annot?.boundary).toBeDefined();
+    expect(annot!.boundary!.w).toBeGreaterThan(0);
+    expect(annot!.boundary!.h).toBeGreaterThan(0);
+    // CTM 单位长度为 √2×28.284 ≈ 40，另加 Boundary 原点 1.716 的尺寸换算。
+    expect(annot!.boundary!.w).toBeCloseTo(40 * Math.SQRT2, 2);
+    expect(annot!.boundary!.h).toBeCloseTo(40 * Math.SQRT2, 2);
+    expect(warnings).not.toContain('W_ANNOT_EMPTY');
+  });
+
   it('发票样例：注释索引/外观与图片资源可解码', async () => {
     const zip = await openSample('发票监制章-数科.ofd');
     const document = decodeDocument(

@@ -5,8 +5,8 @@
  * 坐标与长度单位通常为 mm；图片/复合对象内部的 0.3528 mm 单位由资源层换算。
  */
 
-import type { Box, FillRule } from '../common/types';
-import { IDENTITY_MATRIX, multiplyMatrix, transformPoint } from '../common/matrix';
+import type { Box, FillRule, Point } from '../common/types';
+import { IDENTITY_MATRIX, multiplyMatrix, normalizeBox, transformPoint, unionBox } from '../common/matrix';
 import type { XmlNode } from '../xml/types';
 import type {
   Annotation,
@@ -635,6 +635,51 @@ function decodePageRes(root: XmlNode, context: ContentDecodeContext): string[] {
 }
 
 /**
+ * 计算一组页面对象边界的并集。
+ *
+ * 嵌套块递归处理；图元先归一化各自 Boundary，再应用局部 CTM 求轴对齐包围盒。
+ * 用作注释外观缺少 `@Boundary` 时的兜底定位。
+ *
+ * @param objects 页面对象列表。
+ * @returns 覆盖全部对象的边界，单位 mm；列表为空时返回 undefined。
+ */
+function unionObjectBounds(objects: readonly PageObject[]): Box | undefined {
+  let result: Box | undefined;
+  const merge = (box: Box | undefined): void => {
+    if (!box) return;
+    result = result ? unionBox(result, box) : box;
+  };
+  for (const object of objects) {
+    if (object.kind === 'block') {
+      merge(unionObjectBounds(object.children));
+      continue;
+    }
+    if (!object.ctm) {
+      merge(normalizeBox(object.boundary));
+      continue;
+    }
+    // 图片/复合对象在渲染器中绘制单位正方形，CTM 的单位长度为 Boundary 宽/高；
+    // 其余图元的 Boundary 本身即对象空间坐标，直接套 CTM 求轴对齐包围盒。
+    const local: Box =
+      object.kind === 'image' || object.kind === 'composite'
+        ? { x: 0, y: 0, w: 1, h: 1 }
+        : normalizeBox(object.boundary);
+    const corners: Point[] = [
+      transformPoint(object.ctm, { x: local.x, y: local.y }),
+      transformPoint(object.ctm, { x: local.x + local.w, y: local.y }),
+      transformPoint(object.ctm, { x: local.x, y: local.y + local.h }),
+      transformPoint(object.ctm, { x: local.x + local.w, y: local.y + local.h }),
+    ];
+    const xs = corners.map((point) => point.x);
+    const ys = corners.map((point) => point.y);
+    const minX = Math.min(...xs);
+    const minY = Math.min(...ys);
+    merge({ x: minX, y: minY, w: Math.max(...xs) - minX, h: Math.max(...ys) - minY });
+  }
+  return result;
+}
+
+/**
  * 解码注释文件中的单个 PageAnnot。
  *
  * @param root `PageAnnot` 根节点（或包含 `Annot` 子节点的容器）。
@@ -657,15 +702,18 @@ export function decodeAnnotationsNode(
     const appearanceNode = child(annotNode, 'Appearance');
     const annotation: Annotation = { id, type, visible };
     if (appearanceNode) {
+      // 部分生成器不给 Appearance 写 `@Boundary`，只在子图元上给出边界；
+      // 规范要求外观以 Boundary 定位，缺省时用子图元边界的并集兜底。
       const boundaryRaw = attr(appearanceNode, 'Boundary');
-      if (boundaryRaw !== undefined) {
-        annotation.boundary = decodeBoundary(boundaryRaw, annotContext, false);
-      }
       const appearance = decodePageBlockNode(appearanceNode, annotContext);
       if (appearance.children.length === 0) {
         emitWarning(annotContext, 'W_ANNOT_EMPTY', `注释 ${id || '(无 ID)'} 的 Appearance 为空`);
       } else {
         annotation.appearance = appearance;
+        annotation.boundary =
+          boundaryRaw !== undefined
+            ? decodeBoundary(boundaryRaw, annotContext, false)
+            : unionObjectBounds(appearance.children);
       }
     } else {
       emitWarning(annotContext, 'W_ANNOT_EMPTY', `注释 ${id || '(无 ID)'} 缺少 Appearance`);
