@@ -81,6 +81,7 @@ export type {
   FontSource,
   FontSourceLoader,
   FontSourceResolverOptions,
+  LocalFontDeclaration,
   LocalFontsOptions,
   ViewerFontOptions,
 } from './font';
