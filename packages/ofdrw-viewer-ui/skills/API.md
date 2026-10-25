@@ -269,6 +269,20 @@ fonts: {
 | `readonly string[]` | 候选名列表，按顺序尝试，命中即停止 |
 | `LocalFontDeclaration` | 文档声明形态 `{ fontName, familyName?, bold?, italic?, family? }`，由 UI 展开为候选 PostScript 名（中文名 → 真实 PS 名 + 变体回退链） |
 
+`LocalFontDeclaration` 是 `local` 的「文档声明形态」，字段与引擎 `DocumentFontResource` 的对应字段同名，便于直接把文档声明交给 UI：
+
+```ts
+interface LocalFontDeclaration {
+  readonly fontName: string;      // 文档 FontName，如 '宋体'；必填
+  readonly familyName?: string;   // 文档 FamilyName；参与匹配，不单独产生候选
+  readonly bold?: boolean;        // 文档声明为粗体时传 true，参与变体回退链
+  readonly italic?: boolean;      // 文档声明为斜体时传 true
+  readonly family?: string;       // 覆盖读到的字体面 family；缺省用 fontName
+}
+```
+
+`family` 缺省时，展开命中后的 `FontInput.family` 取 `fontName`，使引擎按文档声明的名字精确匹配。
+
 要点：
 
 - **注入位置固定为「宿主配置在前、本机字体在后」**：`defaultFonts = [...宿主 default, ...本机字体]`，宿主显式指定的字体永远优先，本机字体只补位（宿主没配 `default` 时结果就是本机字体）。本机字体**只注入 `defaultFonts`，不注入 `supplementaryFonts`**：引擎按 `default:N` 与 `supplementary:M` 分别建字体面且不跨列表去重，同时注入会让同一份 10–20 MB 字体被解析两次、内存翻倍；本机字体是「替代/优先」语义，不是「补字」语义。即使 `{ local }` 来源写在 `fonts.supplementary` 里，读到的字节也进入 `defaultFonts`。
@@ -402,7 +416,7 @@ viewer.setFeatureDisplay({ export: 'disable' });
 | `error` | `ErrorEvent` | `ofd-error` | `onError` | `error` |
 | `featureschange` | `FeaturesChangeEvent` | `ofd-features-change` | `onFeaturesChange` | `features-change` |
 | `statechange` | `StateChangeEvent` | `ofd-state-change` | `onStateChange` | `state-change` |
-| `local-fonts:change` | `LocalFontsChangeEvent`（等同 `LocalFontsStatus`） | 暂无桥接 | 暂无桥接 | 暂无桥接 |
+| `local-fonts:change` | `LocalFontsChangeEvent`（等同 `LocalFontsStatus`） | 当前版本未桥接 | 当前版本未桥接 | 当前版本未桥接 |
 
 `signatureclick` 在类型和适配器桥接表中存在，但当前版本没有实际触发点；需要处理签章交互时，使用 `getSignatures()`/`showSignature()` 或内置侧栏的现有入口。
 
@@ -1386,7 +1400,7 @@ interface ViewerErrorOptions {
 
 **功能**：`ViewerFeature`、`ViewerFeatures`、`ViewerFeatureStates`、`FeatureState`、`FeatureReason`、`FeatureDisplay`、`FeatureDisplayMode`、`FeatureAvailability`。
 
-**字体**：`FontSource`、`ViewerFontOptions`、`FontSourceLoader`、`FontSourceResolver`、`FontSourceResolverOptions`、`LocalFontsOptions`、`composeFontAliases`；再导出引擎的 `FontAliasTable`、`FontInput`、`FontMatchRequest`、`FontProvider`。
+**字体**：`FontSource`、`ViewerFontOptions`、`FontSourceLoader`、`FontSourceResolver`、`FontSourceResolverOptions`、`LocalFontsOptions`、`LocalFontDeclaration`、`composeFontAliases`；再导出引擎的 `FontAliasTable`、`FontInput`、`FontMatchRequest`、`FontProvider`。
 
 **本机字体**：`LocalFontStatus`、`LocalFontsStatus`、`LocalFontsChangeEvent`。
 
