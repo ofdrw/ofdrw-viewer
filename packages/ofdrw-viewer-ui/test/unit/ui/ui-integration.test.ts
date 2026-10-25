@@ -445,7 +445,9 @@ describe('内置 UI 接线', () => {
     expect(shell.dialogs.currentName).toBe('about');
     const text = shell.elements.dialogLayer.textContent ?? '';
     const versions = getVersions();
-    expect(text).toContain('关于 OFD 阅读器');
+    expect(text).toContain('关于');
+    expect(text).toContain('软件名称');
+    expect(text).toContain('ofdrw-viewer-ui');
     expect(text).toContain(versions.ui);
     expect(text).toContain(versions.engine);
     expect(text).toContain(versions.crypto);

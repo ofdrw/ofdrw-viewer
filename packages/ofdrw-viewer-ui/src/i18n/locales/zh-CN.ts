@@ -130,7 +130,8 @@ export const zhCN = {
   'dialog.closeAction': '关闭',
   'dialog.defaultTitle': '提示',
 
-  'about.title': '关于 OFD 阅读器',
+  'about.title': '关于',
+  'about.appName': '软件名称',
   'about.uiVersion': '阅读器版本',
   'about.engineVersion': '渲染引擎版本',
   'about.cryptoVersion': '密码工具库版本',

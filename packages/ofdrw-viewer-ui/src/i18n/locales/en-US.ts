@@ -132,7 +132,8 @@ export const enUS: MessageDictionary = {
   'dialog.closeAction': 'Close',
   'dialog.defaultTitle': 'Notice',
 
-  'about.title': 'About OFD Viewer',
+  'about.title': 'About',
+  'about.appName': 'Software name',
   'about.uiVersion': 'Viewer version',
   'about.engineVersion': 'Engine version',
   'about.cryptoVersion': 'Crypto version',

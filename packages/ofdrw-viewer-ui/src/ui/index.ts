@@ -439,6 +439,7 @@ function showAboutDialog(shell: UIShell, viewer: UIShellHost): void {
   const list = doc.createElement('dl');
   list.className = 'ofd-properties';
   const rows: readonly (readonly [string, string | undefined])[] = [
+    [translator.t('about.appName'), 'ofdrw-viewer-ui'],
     [translator.t('about.uiVersion'), versions.ui],
     [translator.t('about.engineVersion'), versions.engine],
     [translator.t('about.cryptoVersion'), versions.crypto],
