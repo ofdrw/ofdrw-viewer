@@ -306,7 +306,7 @@ describe('main 帮助/版本与退出码', () => {
     });
     expect(code).toBe(0);
     expect(capture.stdoutText()).toBe(`${formatVersion('testos', 'testarch')}\n`);
-    expect(capture.stdoutText()).toContain('0.1.1');
+    expect(capture.stdoutText()).toContain('0.1.2');
     expect(capture.stdoutText()).toContain('testos-testarch');
   });
 

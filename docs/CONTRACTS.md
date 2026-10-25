@@ -24,7 +24,7 @@
 | `test/smoke` | 跨包架构与公共 API 文档同步检查 | 根级测试目录 |
 | `docs` | 跨包契约、设计方案、测试方案 | 文档 |
 
-机器要求：Node.js `>=22`，仓库固定 `pnpm@11.24.0`。四个发布包版本同为 `0.1.1`；engine、crypto、UI 的 `VERSION` 常量与 CLI 的 `CLI_VERSION` 必须与各自 `package.json` 的 `version` 一致。UI 的 `getVersions()` 返回实际加载的 UI、engine、crypto 三个版本。
+机器要求：Node.js `>=22`，仓库固定 `pnpm@11.24.0`。四个发布包版本同为 `0.1.2`；engine、crypto、UI 的 `VERSION` 常量与 CLI 的 `CLI_VERSION` 必须与各自 `package.json` 的 `version` 一致。UI 的 `getVersions()` 返回实际加载的 UI、engine、crypto 三个版本。
 
 ### 2.2 常用命令
 
