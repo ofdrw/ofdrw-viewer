@@ -963,6 +963,13 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       this.maybeAutoVerify();
       // 首次打开时声明未知，读到这里才知道是否要用本机字体。需要时在本轮收尾处补一次
       // 重开：重开会重建字节源（两次打开不能共享同一个已关闭的源），并恢复阅读位置。
+      //
+      // 为什么一次「打开」可能发生 3 次 `openDocument`（这是设计选择，不是缺陷）：
+      //   ① 首屏打开：声明未知，此时若未授权则无法注入，必须存在这一次；
+      //   ② 授权成功后重开：以 granted 状态重新打开，让本机字体参与；
+      //   ③ 首屏补注入重开：若首次打开时已授权、或 ② 的重开才读到声明，则在此补一次。
+      // 三者语义不同（首屏 / 授权 / 补注入），合并会让时序互相纠缠；重开使用的是已缓存
+      // 的本机字体字节，没有网络开销，因此接受这个代价。
       const needsReopen = !this.localFontsReopening && this.controller.needsLocalFontsReopen();
       if (needsReopen) {
         this.localFontsReopening = true;
