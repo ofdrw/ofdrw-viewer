@@ -82,7 +82,7 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 | `onWarning` | `(warning: ViewerWarning) => void` | 无 | 非阻断诊断回调 |
 | `onError` | `(error: ViewerErrorInfo) => void` | 无 | 打开/渲染/交互失败回调 |
 | `crypto` | `CryptoViewerOptions` | 默认启用 | 加密文档与验签配置 |
-| `fonts` | `ViewerFontOptions` | 无 | 字体配置（`default`/`supplementary`/`loader`/`aliases`），见下 |
+| `fonts` | `ViewerFontOptions` | 无 | 字体配置（`default`/`supplementary`/`loader`/`aliases`/`localFonts`），见下 |
 
 `container` 是唯一必填项。字符串选择器在构造时解析；找不到元素抛 `OFD_INVALID_OPTION`。
 
@@ -180,6 +180,8 @@ new OFDViewer({
 | `attachments.*` | 附件侧栏与附件操作 | `attachments.title`（侧栏标签）、`name`、`format`、`size`、`date`、`download`、`downloadNamed`、`exportAll`、`exportSummary`、`empty`（空状态）、`missing`、`sizeKb`、`sizeMb`、`cancel`、`downloadOfd`、`confirmLargeTitle`、`confirmLarge`（含 `{name}`/`{size}`/`{threshold}`）、`error`（含 `{name}`/`{message}`）、`unsupported`、`ofdUnavailable` |
 | `properties.*` | 文档属性对话框六个分组 | 分组标题、新元数据字段、权限项、单位与数值模板 |
 | `feature.attachments` | 功能开关文案 | — |
+| `localFonts.*` | 设置侧栏的本机字体分组与授权确认框 | `group`、`toggle`、`toggleHint`、`status.prompt`、`status.enabled`、`status.unsupported`、`status.denied`、`dialog.title`、`dialog.description`、`dialog.allow`、`dialog.deny` |
+| `sidebar.settings` | 侧栏「设置」标签 | — |
 
 ### 容器与来源
 
@@ -197,8 +199,9 @@ new OFDViewer({
 | `supplementary` | `readonly FontSource[]` | 补充字体：主字体存在但缺字时逐字形补齐 |
 | `loader` | `FontSourceLoader` | `path`/`filePath` 来源的读取器；未提供时这两类来源被跳过 |
 | `aliases` | `FontAliasTable` | 追加到引擎内置别名组的字体别名组 |
+| `localFonts` | `LocalFontsOptions` | 浏览器本机字体（`queryLocalFonts`）能力配置；省略等价于「关闭 + 不展示开关」，见[本机字体](#本机字体) |
 
-`FontSource` 与 `CertificateSource` 同为四态：`{ data }`（已读好的字节）、`{ url, headers? }`（UI 用 `fetch` 读取，`headers` 与 `requestInit.headers` 合并，来源优先）、`{ path }`/`{ filePath }`（由 `loader` 读取）。只接受**完整字体文件**（单文件覆盖目标字符集，如 `.ttf`/`.otf`/`.woff2`），不接受 CSS 的 unicode-range 子集切片；同一 URL 在一次实例生命周期内只读取一次。
+`FontSource` 与 `CertificateSource` 同为四态：`{ data }`（已读好的字节）、`{ url, headers? }`（UI 用 `fetch` 读取，`headers` 与 `requestInit.headers` 合并，来源优先）、`{ path }`/`{ filePath }`（由 `loader` 读取）。`FontSource` 另有第五态 `{ local }`（浏览器本机字体），只在宿主启用 `fonts.localFonts` 且用户授权后才读取，见[本机字体](#本机字体)。只接受**完整字体文件**（单文件覆盖目标字符集，如 `.ttf`/`.otf`/`.woff2`），不接受 CSS 的 unicode-range 子集切片；同一 URL 在一次实例生命周期内只读取一次。
 
 读取失败（非 2xx、网络错误、缺少 `loader`、`loader` 返回 `null`、字节为空）只跳过该来源并通过 `onWarning`/`ofd-warning` 上报 `W_FONT_MISSING`，**只 warning、不上报 `error`、不阻断文档打开**；因 `open()` 被取消（AbortError）导致的读取中断**不产生任何 warning**，由取消流程本身负责收尾。Web Component 另有 `fonts` property 与 `font-default`/`font-supplementary` 简写属性，见 [Web Component](#web-component)。
 
@@ -213,7 +216,71 @@ new OFDViewer({
 });
 ```
 
-完整设计（格式兼容性、CDN 选型、安全边界）见 [`字体配置方案设计.md`](../../../docs/字体配置方案设计.md)。
+完整设计（格式兼容性、CDN 选型、安全边界）见 [`字体配置方案设计.md`](../../../docs/字体配置方案设计.md)，本机字体的完整方案见 [`本地字体加载方案设计.md`](../../../docs/本地字体加载方案设计.md)。
+
+#### 本机字体
+
+浏览器可通过 [Local Font Access API](https://developer.mozilla.org/en-US/docs/Web/API/Local_Font_Access_API)（`queryLocalFonts`，Chrome 103+ 桌面端）在用户授权后读取本机已安装的字体字节，用来补上宿主没有提供、而用户机器上恰好有的同名字体（典型场景：Windows 自带 `宋体`/`黑体`/`微软雅黑`）。
+
+设计原则是**默认不生效、失败全回退**：浏览器不支持、宿主未配置、用户未授权、被站点策略禁止、本机未安装时，该来源被静默跳过，其余来源与「未引入本功能」时完全一致。
+
+启用需要宿主与用户双方同意，缺一不可：
+
+1. **宿主配置**：`fonts.localFonts.enabled: true`，否则能力对用户完全不可见（侧栏不出现开关，`{ local }` 来源按不支持跳过）；
+2. **用户授权**：用户在侧栏「设置 → 字体」里打开「使用本机字体」，并在确认框点「允许」——浏览器只接受**用户手势**内的权限申请，因此阅读器不会在 `open()` 里静默申请，也不会自动弹浏览器授权框。
+
+`LocalFontsOptions` 字段：
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `enabled` | `boolean` | `false` | 是否允许展示「使用本机字体」开关；`false` 或省略时整个能力不可见 |
+| `defaultEnabled` | `boolean` | `false` | 宿主默认值：用户从未做过选择时生效 |
+| `remember` | `boolean` | `true` | 是否把用户选择记在 `localStorage`；`false` 时不读不写 |
+| `maxFonts` | `number` | `8` | 单个文档最多查询多少个**文档声明字体**；非有限数或 `< 1` 按 8，上限钳到 32 |
+| `consentText` | `string` | 内置文案 | 授权确认框说明文案覆盖（例如内网统一口径） |
+
+生效值遵循「**宿主配置决定默认值，用户选择优先**」：
+
+| 条件 | 生效的 `enabled` | 展示开关 |
+| --- | --- | --- |
+| `fonts.localFonts` 未配置，或 `enabled !== true` | `false` | 否 |
+| 浏览器没有 `queryLocalFonts` | `false` | 否（只展示「浏览器不支持」原因） |
+| `remember !== false` 且 `localStorage` 有用户选择 | 用户选择 | 是 |
+| 以上都不成立 | `defaultEnabled === true` | 是 |
+
+`FontSource` 的 `{ local }` 来源：
+
+```ts
+fonts: {
+  default: [
+    // 宿主显式配置的字体始终在前（优先）。
+    { url: '/fonts/NotoSerifSC-Regular.woff2', family: '宋体' },
+    // 本机字体：字符串 / 字符串数组 / 文档声明形态
+    { local: 'SimSun' },
+    { local: ['SimSun', 'NSimSun'], family: '宋体' },
+    { local: { fontName: '宋体' } }, // 由 UI 展开候选名（含变体回退链）
+  ],
+}
+```
+
+| `local` 取值 | 语义 |
+| --- | --- |
+| `string` | 单个本机字体名：PostScript 名（`SimSun`）、英文名或中文名 |
+| `readonly string[]` | 候选名列表，按顺序尝试，命中即停止 |
+| `LocalFontDeclaration` | 文档声明形态 `{ fontName, familyName?, bold?, italic?, family? }`，由 UI 展开为候选 PostScript 名（中文名 → 真实 PS 名 + 变体回退链） |
+
+要点：
+
+- **注入顺序固定为「宿主配置在前、本机字体在后」**：`defaultFonts = [...宿主 default, ...本机字体]`，`supplementaryFonts = [...宿主 supplementary, ...本机字体]`；只有宿主**完全没有**配置 `default` 时，本机字体才作为默认字体候选排在最前（否则文档缺字时无从回退）。宿主显式指定的字体永远优先，本机字体只补位。
+- 本机字体的 `FontInput.family` 取**文档声明的 `FontName`**（如 `宋体`），而不是本机字体自身的 family，这样引擎按「归一化名精确相等」评分时能命中并压过兜底字体。
+- 只查询**文档声明过且没有内嵌 `fontFile`** 的字体（内嵌字体本来就优先，查询是浪费），按 `maxFonts` 截断。
+- 读到的字体字节只经 `blob()`/`readBlobBytes()` 进入内存交给引擎渲染，**不上传、不落盘、不写日志、不写存储**；`localStorage` 只存一个布尔选择与「已告知」标记，不存字体清单。
+- 只做**定向查询**（`queryLocalFonts({ postscriptNames })`），不做全量枚举；候选名匹配**区分大小写**（`SimSun` 命中，`SIMSun`/`simsun` 不命中），中文名不能用于查询，因此中文声明必须先经内置表/别名表展开。
+- 变体后缀不凭空推断：请求粗体时按 `<base>-Bold` → `<base>Bold` → `<base>` 回退，`SimHei-Bold` 这类不存在的变体会落到 `SimHei` 常规字形，**不做合成加粗**。
+- 开关变化（开启授权 / 关闭）会**重开当前文档并恢复页码、缩放、旋转**（不做字体热替换）；已授权后再开不再弹确认框，关闭开关只清空本机字体缓存，浏览器授权保持「已授权」。
+- 浏览器不支持（Firefox / Safari / 移动端 / Chrome 103 之前 / 站点 `Permissions-Policy: local-fonts` 被禁用）时整个能力不可见，行为与不引入本功能一致；不提供 polyfill。
+
+状态通过 [`getLocalFontsStatus()` / `setLocalFontsEnabled()` / `onLocalFontsStatusChange()`](#本机字体方法) 读取与控制，事件为 [`local-fonts:change`](#事件名与载荷)。失败口径：本机字体不可用只产生 `W_FONT_MISSING` warning（`message` 只含字体名，不含字节与本机字体清单），不产生 `error`、不阻断打开。
 
 ### URL hash 同步
 
@@ -332,6 +399,7 @@ viewer.setFeatureDisplay({ export: 'disable' });
 | `error` | `ErrorEvent` | `ofd-error` | `onError` | `error` |
 | `featureschange` | `FeaturesChangeEvent` | `ofd-features-change` | `onFeaturesChange` | `features-change` |
 | `statechange` | `StateChangeEvent` | `ofd-state-change` | `onStateChange` | `state-change` |
+| `local-fonts:change` | `LocalFontsChangeEvent`（等同 `LocalFontsStatus`） | 暂无桥接 | 暂无桥接 | 暂无桥接 |
 
 `signatureclick` 在类型和适配器桥接表中存在，但当前版本没有实际触发点；需要处理签章交互时，使用 `getSignatures()`/`showSignature()` 或内置侧栏的现有入口。
 
@@ -355,6 +423,7 @@ viewer.setFeatureDisplay({ export: 'disable' });
 - `ErrorEvent`：等同于 `ViewerErrorInfo`，在 warning 字段之外可带 `cause`。
 - `FeaturesChangeEvent`：等同于 `ViewerFeatureStates`。
 - `StateChangeEvent`：等同于完整的 `ViewerState` 快照。
+- `LocalFontsChangeEvent`：等同于 `LocalFontsStatus`；本机字体开关/权限/加载状态变化时触发。目前只有核心事件通道（`viewer.on('local-fonts:change', …)` 与 `onLocalFontsStatusChange()`），Web Component / React / Vue 适配层尚未桥接该事件。
 
 ### 订阅
 
@@ -415,6 +484,7 @@ viewer.off('pagechanging', handler);
 | `getRoot()` | 阅读器根 `HTMLElement` |
 | `getElements()` | 内置 UI 结构元素 `{ root, toolbar, body, sidebar, sidebarMask, main, findbar, dialogLayer, toastLayer }` |
 | `warnCrypto(code, message)` | 供密码服务/扩展上报 warning，宿主一般不用 |
+| `getLocalFontsStatus()` | 本机字体状态快照 `LocalFontsStatus`，见[本机字体方法](#本机字体方法) |
 
 `getPageView()`/`getPageViews()` 返回的是内部页视图对象，主要供扩展使用；普通宿主优先用 `getPageInfo()` 与引擎页面 API。
 
@@ -439,6 +509,44 @@ interface ViewerDocumentInfo {
 - **严格接口**：未打开文档时抛 `OFD_NOT_OPENED`，不返回空壳；销毁后抛 `OFD_DESTROYED`。这与 `getPermissions()` 不同——后者未打开时仍返回宽松默认值。
 - **旧引擎兼容**：底层引擎没有 `getAttachments()` 时 `attachments` 返回 `[]`，不报错。
 
+#### 本机字体方法
+
+```ts
+/** 本地字体权限状态。 */
+type LocalFontStatus = 'prompt' | 'granted' | 'denied' | 'unsupported';
+
+/** 本地字体当前状态。 */
+interface LocalFontsStatus {
+  readonly supported: boolean;      // 本机字体能力对本次阅读器是否生效（宿主已启用且浏览器支持）
+  readonly enabled: boolean;        // 开关是否开启（用户选择或宿主默认值）
+  readonly permission: LocalFontStatus; // 未申请 / 已授权 / 已拒绝 / 不支持
+  readonly visible: boolean;        // 是否应展示「使用本机字体」开关
+  readonly loading: boolean;        // 最近一次读取是否正在进行
+}
+
+class OFDViewer {
+  /** 读取本地字体状态；只做查询，不触发授权。 */
+  getLocalFontsStatus(): LocalFontsStatus;
+  /** 设置开关并（在需要时）申请授权。 */
+  setLocalFontsEnabled(enabled: boolean): Promise<void>;
+  /** 订阅状态变化；返回退订函数。 */
+  onLocalFontsStatusChange(handler: (status: LocalFontsStatus) => void): () => void;
+}
+```
+
+| 成员 | 行为 |
+| --- | --- |
+| `getLocalFontsStatus()` | 返回状态快照；**不触发**权限申请，页面加载阶段调用不会弹授权框、不产生 `SecurityError` |
+| `setLocalFontsEnabled(enabled)` | `enabled=true` 时应在**用户点击事件中直接调用**（浏览器只接受用户手势内的权限申请）；生效值变化时内部重开当前文档并恢复页码/缩放/旋转。销毁后调用抛 `OFD_DESTROYED` |
+| `onLocalFontsStatusChange(handler)` | 与核心事件 `local-fonts:change` 同源：一次状态变化各触发一次；返回退订函数，重复订阅互不影响 |
+
+字段语义注意：
+
+- `supported: false` 表示「该能力对本次阅读器不生效」——宿主未启用 `fonts.localFonts`、或浏览器不提供 `queryLocalFonts`、或站点策略禁用；此时 `permission` 恒为 `unsupported`，侧栏不展示开关。
+- `permission: 'denied'` 与「本机未安装」在 `queryLocalFonts()` 层面返回值相同（都是空数组），阅读器用 `navigator.permissions.query({ name: 'local-fonts' })` 区分，因此不要用查询结果自行判断「用户拒绝」。
+- 用户拒绝后：开关置为关闭并写入用户选择，**本会话不再弹确认框**；侧栏开关仍可手动打开再次尝试。拒绝反馈只在侧栏面板内展示文案，不发 toast。
+- 确认框「允许」为 Sync 回调内发起权限申请；Esc / 遮罩关闭视同「不允许」但**不**写入用户选择（下次仍会询问）。
+
 ### 导航与缩放
 
 | 方法 | 说明 |
@@ -459,7 +567,7 @@ interface ViewerDocumentInfo {
 
 | 方法 | 说明 |
 | --- | --- |
-| `openSidebar(view)` | 打开 `thumbnails`/`outline`/`bookmarks`/`signatures`/`attachments`；需要 `sidebar` 及对应功能 |
+| `openSidebar(view)` | 打开 `thumbnails`/`outline`/`bookmarks`/`signatures`/`attachments`/`settings`；需要 `sidebar` 及对应功能 |
 | `closeSidebar()` | 关闭侧栏；已关闭时无操作 |
 | `toggleSidebar()` | 已打开则关闭，否则打开第一个可用侧栏 |
 | `setFullscreen(value): Promise<void>` | 进入/退出全屏；原生不支持或失败时回退为沉浸式样式并产生 `W_FULLSCREEN_FALLBACK` |
@@ -489,6 +597,21 @@ interface UIDialogOptions {
 ```
 
 `DialogName` 允许宿主扩展字符串，内置名称仅为约定。
+
+`SidebarView` 为 `'thumbnails' | 'outline' | 'bookmarks' | 'signatures' | 'attachments' | 'settings'`。`settings` 是设置面板，只有「字体」一组（本机字体开关），行为见下节；它不参与 `toggleSidebar()` 的「第一个可用侧栏」自动选择，也不新增功能键——访问控制只来自 `sidebar` 功能门控与 `fonts.localFonts.enabled`。
+
+#### 设置侧栏（本机字体开关）
+
+`settings` 侧栏展示本机字体开关，是启用 `queryLocalFonts` 的用户入口（见[本机字体](#本机字体)）：
+
+| 项 | 内容 |
+| --- | --- |
+| 分组 | 「字体」 |
+| 开关 | 「使用本机字体」+ 说明「用本机已安装的字体替换缺失字体」，`role="switch"` + `aria-checked`，键盘可操作 |
+| 状态文案 | `未授权`（首次）/ `已启用` / `未获得授权`（`denied`）/ `浏览器不支持` |
+| 隐藏条件 | 浏览器不支持，或 `fonts.localFonts.enabled !== true`（整个字体分组不出现） |
+
+约束：**不新增工具栏按钮、不加 toast 引导、不在缺字时主动打扰**，用户从侧栏设置进入。点击开关在用户手势内同步发起授权申请。
 
 #### 附件侧栏
 
@@ -1093,6 +1216,8 @@ type CertificateInputLoader = (
 | `exportOfd(options?)` | 导出当前 OFD 原文件；无实例时返回 `null` |
 | `destroy()` | 销毁实例；可重复调用 |
 
+Web Component 尚未转发本机字体方法（`getLocalFontsStatus`/`setLocalFontsEnabled`/`onLocalFontsStatusChange`），需要程序化控制时通过 `el.viewer` 访问底层实例。`fonts` property 支持 `localFonts`，但与本机字体其余配置一样只在实例创建时读取。
+
 ### 组件事件
 
 事件名为 `ofd-*`，`event.detail` 为对应载荷，`bubbles: true`、`composed: true`。完整映射见[事件名与载荷](#事件名与载荷)。
@@ -1141,6 +1266,8 @@ type CertificateInputLoader = (
 
 `getInstance` 在挂载前返回 `null`；`exportImage`/`exportOfd` 在无实例时返回 `null`；`verify` 在无实例时抛 `Error('阅读器尚未挂载')`。
 
+本机字体方法未进入命令句柄：需要 `getLocalFontsStatus()`/`setLocalFontsEnabled()` 时用 `getInstance()`（或 `getViewer()`）拿到实例后调用。`fonts.localFonts` 仍是构造期选项，通过继承的 `fonts` prop 传入。
+
 ### React 受控同步
 
 - `page`、`scale`、`rotation`、`theme`、`locale`、`sidebar`、`features`、`featureDisplay` 变化分别调用对应实例方法；受控同步中的抛错/拒绝被静默忽略，不会触发核心 `error` 事件；需要错误反馈时直接调用命令句柄并自行处理 Promise。
@@ -1176,6 +1303,8 @@ type CertificateInputLoader = (
 ### Expose
 
 模板 ref 暴露 `getInstance`、`getViewer`、`open`、`close`、`goToPage`、`nextPage`、`previousPage`、`setScale`、`setZoomMode`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage`、`exportOfd`、`getState`、`getFeatureState`、`isFeatureEnabled`、`verify`、`getVerificationReport`、`setRootCertificates`、`getRootCertificates`、`openVerificationPanel`。
+
+本机字体方法未进入 expose：需要 `getLocalFontsStatus()`/`setLocalFontsEnabled()` 时用 `getInstance()` 调用；`fonts.localFonts` 通过 `options`（`AdvancedOptions`）传入。
 
 ### Vue 受控同步
 
@@ -1254,9 +1383,13 @@ interface ViewerErrorOptions {
 
 **功能**：`ViewerFeature`、`ViewerFeatures`、`ViewerFeatureStates`、`FeatureState`、`FeatureReason`、`FeatureDisplay`、`FeatureDisplayMode`、`FeatureAvailability`。
 
+**字体**：`FontSource`、`ViewerFontOptions`、`FontSourceLoader`、`FontSourceResolver`、`FontSourceResolverOptions`、`LocalFontsOptions`、`composeFontAliases`；再导出引擎的 `FontAliasTable`、`FontInput`、`FontMatchRequest`、`FontProvider`。
+
+**本机字体**：`LocalFontStatus`、`LocalFontsStatus`、`LocalFontsChangeEvent`。
+
 **状态**：`ViewerState`、`DocumentState`、`ViewState`、`UIState`、`InitialViewerStateOptions`、`ViewerWarning`、`ViewerErrorInfo`、`ViewerToast`、`ToastLevel`、`DialogName`、`VisiblePageRange`、`FindState`、`ZoomMode`、`ScaleValue`、`Rotation`、`SidebarView`、`Theme`。
 
-**事件**：`ViewerEventMap`、`ViewerEventName`、`ViewerEventPayload`、`ViewerEventHandler`、`DocumentOpenEvent`、`DocumentCloseEvent`、`PageChangingEvent`、`PageRenderedEvent`、`PagesLoadedEvent`、`ScaleChangingEvent`、`RotationChangingEvent`、`SidebarViewChangedEvent`、`FindStartEvent`、`FindMatchesEvent`、`FindCurrentEvent`、`SelectionChangeEvent`、`SignatureClickEvent`、`VerificationCompletedEvent`、`PrintStartEvent`、`PrintProgressEvent`、`PrintEndEvent`、`ExportProgressEvent`、`WarningEvent`、`ErrorEvent`、`FeaturesChangeEvent`、`StateChangeEvent`。
+**事件**：`ViewerEventMap`、`ViewerEventName`、`ViewerEventPayload`、`ViewerEventHandler`、`DocumentOpenEvent`、`DocumentCloseEvent`、`PageChangingEvent`、`PageRenderedEvent`、`PagesLoadedEvent`、`ScaleChangingEvent`、`RotationChangingEvent`、`SidebarViewChangedEvent`、`FindStartEvent`、`FindMatchesEvent`、`FindCurrentEvent`、`SelectionChangeEvent`、`SignatureClickEvent`、`VerificationCompletedEvent`、`PrintStartEvent`、`PrintProgressEvent`、`PrintEndEvent`、`ExportProgressEvent`、`WarningEvent`、`ErrorEvent`、`FeaturesChangeEvent`、`StateChangeEvent`、`LocalFontsChangeEvent`。
 
 **来源与预览**：`ViewerSource`、`PreviewLocation`、`PreviewSourceOptions`、`DEFAULT_MAX_BASE64_BYTES`、`readPreviewSourceFromLocation`、`HttpByteSource`、`HttpByteSourceOptions`。
 
