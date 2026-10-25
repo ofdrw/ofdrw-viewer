@@ -134,7 +134,6 @@ export const zhCN = {
   'about.appName': '软件名称',
   'about.uiVersion': '阅读器版本',
   'about.engineVersion': '渲染引擎版本',
-  'about.cryptoVersion': '密码工具库版本',
   'about.userAgent': '浏览器',
   'about.license': '开源软件许可',
   'about.licenseOpen': '查看',

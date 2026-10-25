@@ -426,7 +426,7 @@ function showDocumentProperties(viewer: UIShellHost, shell: UIShell): void {
 }
 
 /**
- * 打开“关于”对话框，展示阅读器各组成包版本与浏览器标识，供故障排查。
+ * 打开“关于”对话框，展示软件名称、阅读器 UI 与渲染引擎版本及浏览器标识，供故障排查。
  *
  * @param shell 当前外壳。
  */
@@ -442,7 +442,6 @@ function showAboutDialog(shell: UIShell, viewer: UIShellHost): void {
     [translator.t('about.appName'), 'ofdrw-viewer-ui'],
     [translator.t('about.uiVersion'), versions.ui],
     [translator.t('about.engineVersion'), versions.engine],
-    [translator.t('about.cryptoVersion'), versions.crypto],
     [translator.t('about.userAgent'), userAgent],
   ];
   for (const [label, value] of rows) {
