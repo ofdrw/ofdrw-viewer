@@ -155,7 +155,7 @@ M_page = S(dpi / 25.4) × T(-PhysicalBox.x, -PhysicalBox.y)
 | `LineWidth=0` | 设备空间 1 px hairline；无法计算设备缩放时回退 1 用户单位 |
 | `Boundary` 零/负尺寸 | 零宽/零高跳过并 `W_ZERO_BOUNDARY`；负尺寸归一化到左上角并 `W_NEGATIVE_BOUNDARY`，归一化后仍为零则跳过 |
 | 图片缺 `CTM` | 默认严格 identity（1×1 mm）并 `W_IMAGE_NO_CTM`；`strictImageCtm=false` 时铺满 `Boundary` |
-| `DeltaX/DeltaY` | 支持数组、空白/逗号分隔、`g <count> <value>` 压缩组；显式 0 保留；缺失值按阅读方向轴回退字体 advance；无法解析的 token 跳过并 `W_BAD_NUMBER`；数量多于字符时忽略多余值并 warning |
+| `DeltaX/DeltaY` | 支持数组、空白/逗号分隔、`g <count> <value>` 压缩组；显式 0 保留；缺失值按阅读方向轴回退字体 advance；无法解析的 token 跳过并 `W_BAD_NUMBER`；数量多于字符时静默忽略多余值 |
 | `CGTransform` 位置 | 允许位于 `TextCode` 前或 `TextCode` 内；`CodePosition` 是当前 `TextCode` 的字符偏移；`CodecPosition`/`CodecCount` 作为拼写兼容 |
 | `CGTransform` 多对多 | 字形列表作为整串按字体 advance 连续绘制，字符格只决定整串的总步进；不把字形按字符格比例拆开 |
 | XML 命名空间 | 解析时忽略命名空间，按 local name 匹配；OFD 1.0/1.1 的两种命名空间均可读 |

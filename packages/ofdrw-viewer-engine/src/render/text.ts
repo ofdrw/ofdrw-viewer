@@ -216,7 +216,6 @@ export interface PendingUnit {
 export interface WarningState {
   warnedGlyph: boolean;
   warnedBadNumber: boolean;
-  warnedDeltaExtra: boolean;
 }
 
 /**
@@ -323,7 +322,7 @@ export function buildUnits(
   cgTransforms: TextCode['cgTransforms'],
   faces: FontFaceSet,
   cache: GlyphOutlineCache = DEFAULT_OUTLINE_CACHE,
-  state: WarningState = { warnedGlyph: false, warnedBadNumber: false, warnedDeltaExtra: false },
+  state: WarningState = { warnedGlyph: false, warnedBadNumber: false },
   options: TextLayoutOptions = {},
 ): PendingUnit[] {
   // 高频小对象（无 CGTransform，通常 1 个字符）走无 Map/排序的快路径。
@@ -652,7 +651,6 @@ export function layoutText(
   const state: WarningState = {
     warnedGlyph: false,
     warnedBadNumber: false,
-    warnedDeltaExtra: false,
   };
   const units: TextLayoutUnit[] = [];
   const size = Number.isFinite(object.size) ? object.size : 0;
@@ -676,21 +674,7 @@ export function layoutText(
     penY = startY;
 
     const { deltaX, deltaY } = parseCodeDeltas(code, state, options);
-    if (
-      (deltaX.length > codePoints.length || deltaY.length > codePoints.length) &&
-      !state.warnedDeltaExtra
-    ) {
-      state.warnedDeltaExtra = true;
-      const fields = [
-        deltaX.length > codePoints.length ? `DeltaX=${deltaX.length}` : undefined,
-        deltaY.length > codePoints.length ? `DeltaY=${deltaY.length}` : undefined,
-      ].filter((field): field is string => Boolean(field));
-      options.onWarning?.(
-        'W_BAD_NUMBER',
-        `${fields.join('、')} 数量多于字符数 ${codePoints.length}，多余值已忽略`,
-        options.objectId,
-      );
-    }
+    // DeltaX/DeltaY 数量多于字符数时，超出部分不会被任何单元消费，直接忽略，不 warning。
     const pending = buildUnits(codePoints, code.cgTransforms, faces, cache, state, options);
     // 部分 OFD 生成器（如 z.ofd 的连字示例）在 CGTransform 压缩字符后，
     // 也把 DeltaX 压缩成“每个输出字形一项”；此时数组长度等于输出单元数减 1。

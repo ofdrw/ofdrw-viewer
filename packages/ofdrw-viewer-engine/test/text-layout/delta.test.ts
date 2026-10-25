@@ -98,7 +98,7 @@ describe('layoutText DeltaX', () => {
     expect(layout.endX).toBe(25);
   });
 
-  it('DeltaX 数量过多时忽略多余值并 warning', () => {
+  it('DeltaX 数量过多时忽略多余值且不 warning', () => {
     const warnings = collectWarnings();
     const layout = layoutText(
       makeTextObject({ codes: [makeTextCode({ text: 'ABC', deltaX: [5, 5, 5, 100] })] }),
@@ -106,7 +106,7 @@ describe('layoutText DeltaX', () => {
       { onWarning: (code, message) => warnings.push(`${code}:${message}`) },
     );
     expect(layout.endX).toBe(15);
-    expect(warnings.some((warning) => warning.includes('DeltaX=4'))).toBe(true);
+    expect(warnings).toHaveLength(0);
   });
 
   it('显式 0 被尊重，字符重叠', () => {
@@ -160,14 +160,14 @@ describe('layoutText DeltaX', () => {
     expect(warnings.some((warning) => warning.includes('非法 token'))).toBe(true);
   });
 
-  it('DeltaY 数量过多时同样 warning', () => {
+  it('DeltaY 数量过多时同样静默忽略多余值', () => {
     const warnings = collectWarnings();
     layoutText(
       makeTextObject({ codes: [makeTextCode({ text: 'A', deltaY: [1, 2, 3] })] }),
       faces,
       { onWarning: (code, message) => warnings.push(`${code}:${message}`) },
     );
-    expect(warnings.some((warning) => warning.includes('DeltaY=3'))).toBe(true);
+    expect(warnings).toHaveLength(0);
   });
 
   it('横向文字的 DeltaY 作为软换行偏移消费', () => {
