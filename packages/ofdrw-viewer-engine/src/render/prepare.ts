@@ -6,7 +6,7 @@
  */
 
 import type { DisplayList } from '../common/display-list';
-import type { Box, DecodedImage, ImageDataLike, Matrix, PaintSpec } from '../common/types';
+import type { Box, DecodedImage, ImageDataLike, PaintSpec } from '../common/types';
 import type { CanvasRenderingContext2DLike, Renderer } from '../renderer/types';
 import type { DeferredImagePlan } from './object';
 import type { FontFaceSet } from '../font/types';
@@ -198,16 +198,6 @@ export interface PreparedPageBundle {
   blocks: ReadonlyMap<string, IndependentBlock>;
   /** 按 StampAnnot 顺序构建的签章块；在所有页面图层与注释之后绘制。 */
   signatureBlocks: readonly SignatureBlock[];
-}
-
-/** 签章块渲染目标：块空间像素尺寸与输出精度。 */
-export interface SignatureRenderTarget {
-  /** 目标宽（块空间），单位像素。 */
-  width: number;
-  /** 目标高（块空间），单位像素。 */
-  height: number;
-  /** 输出精度，单位 DPI。 */
-  dpi: number;
 }
 
 /**
@@ -801,18 +791,17 @@ function isRgbaData(data: DecodedImage['data']): data is ImageDataLike {
 }
 
 /**
- * 把签章块中的印章图片准备成输出精度下的像素尺寸。
+ * 把签章块中的印章图片按输出精度重采样一次。
  *
- * 签章块把印章画到完整 StampAnnot Boundary，页面绘制时按 Boundary 尺寸缩放。对只有
- * 0/255 两档 alpha 的掩码印章，这一步如果用画布过滤（本机 Node 画布默认是最近邻、
- * 高质量档也只是按面积选点），细笔画会被整段丢掉、粗笔画会碎成点状虚线。因此掩码章
- * 改为**纯像素运算的面积加权下采样**：每个目标像素的 alpha = 覆盖区域内不透明源的
- * 面积占比，颜色取印章主色；结果直接作为 imagedata，页面阶段 1:1 贴图，全程不经过
- * 任何有损画布缩放。其余图片（带半透明通道的彩色章、不透明白底章、矢量章）仍走临时
- * 画布高精度缩放一次。
+ * 签章块把印章画到完整 StampAnnot Boundary，由画布在页面绘制时双线性缩放；对只有
+ * 0/255 两档 alpha 的掩码印章，方章框线、文字这类 1px 细笔画落到亚像素后被压成
+ * 稀疏的低 alpha 点，远比参考 PDF（面积加权缩放）浅。这里先在独立画布上把印章缩放
+ * 到目标像素尺寸，页面绘制阶段再 1:1 贴图，等价于先做一次面积加权下采样。目标尺寸
+ * 只由 Boundary 与输出精度决定，与印章原始尺寸无关，因此所有签章统一处理；临时画布
+ * 中的混合与页面一致（含透明像素用 source-over，全不透明白底章用 multiply）。
  *
  * @param input 准备阶段输入（取输出精度与 warning 回调）。
- * @param blocks 待处理的签章块。
+ * @param blocks 待重采样的签章块。
  * @param loader 准备阶段加载器（取临时渲染器与画布工厂）。
  * @returns 印章图片已换成目标像素尺寸的新签章块。
  */
@@ -825,29 +814,18 @@ async function materializeSignatureImages(
   if (blocks.length === 0 || !createResampleRenderer) return [...blocks];
   const dpi = input.dpi ?? 96;
   const result: SignatureBlock[] = [];
-  let failed = false;
   for (const block of blocks) {
-    const plan = findDeferredImagePlan(block.displayList);
-    if (!plan) {
+    if (!findDeferredImagePlan(block.displayList)) {
       result.push(block);
       continue;
     }
-    const target: SignatureRenderTarget = {
-      width: Math.max(1, Math.ceil((block.space.width * dpi) / 25.4)),
-      height: Math.max(1, Math.ceil((block.space.height * dpi) / 25.4)),
-      dpi,
-    };
-    const resampled = resampleSignatureImage(block, plan, target, createResampleRenderer);
-    if (!resampled) {
-      failed = true;
-      result.push(block);
-      continue;
-    }
-    // 块自身的 displayList 保持不变（裁剪、变换、合成模式都按原样保留），只把延迟图片
-    // 换成同尺寸的重采样结果，因此页面阶段重放它得到的就是目标网格上的像素。
-    result.push({ ...block, image: resampled });
+    const width = Math.max(1, Math.ceil((block.space.width * dpi) / 25.4));
+    const height = Math.max(1, Math.ceil((block.space.height * dpi) / 25.4));
+    const resampled = await resampleSignatureImage(block, width, height, dpi, loader);
+    if (resampled) result.push({ ...block, image: resampled });
+    else result.push(block);
   }
-  if (failed) {
+  if (result.some((block, index) => block.image === blocks[index]!.image)) {
     input.onWarning?.({
       code: 'W_UNSUPPORTED_PAINT',
       message: '签章印章按输出精度重采样失败，已按原始尺寸绘制',
@@ -857,195 +835,30 @@ async function materializeSignatureImages(
 }
 
 /**
- * 准备单个签章块的印章图片。
+ * 把单个签章块的印章图片准备成输出像素尺寸。
  *
- * 掩码章走 {@link downsampleMaskByArea}（纯像素面积平均，结果 1:1 贴图）；其余图片交给
- * 临时画布在签章块空间（Boundary × DPI）绘制一次。带 StampAnnot.Clip 的骑缝章切片保留
- * 原图，由页面阶段按块空间裁剪，避免把裁剪窗口误当成印章边界。
+ * 签章块把印章画到完整 StampAnnot Boundary；页面绘制前先在临时画布上按输出精度
+ * 绘制一次（保留 StampAnnot.Clip 裁剪），页面阶段再 1:1 贴图。这样印章的高精度
+ * 缩放不依赖页面画布的缩放实现，二值 alpha 掩码章的细笔画也不会在页面阶段被压淡。
  *
  * @param block 待准备的签章块。
- * @param plan 签章块内的印章图片计划。
- * @param target 输出网格（块空间像素尺寸与 DPI）。
- * @param createRenderer 创建自持画布的渲染器工厂。
+ * @param width 目标宽，像素。
+ * @param height 目标高，像素。
+ * @param dpi 输出精度，单位 DPI。
+ * @param loader 准备阶段加载器（取重采样渲染器工厂）。
  * @returns 输出尺寸的印章图片；宿主不支持创建画布/读像素时返回 undefined。
  */
 function resampleSignatureImage(
   block: SignatureBlock,
-  plan: DeferredImagePlan,
-  target: SignatureRenderTarget,
-  createRenderer: NonNullable<PreparePageLoader['createResampleRenderer']>,
+  width: number,
+  height: number,
+  dpi: number,
+  loader: PreparePageLoader,
 ): DecodedImage | undefined {
-  if (block.stamp.clip) return undefined;
-  const mask = maskAlpha(plan.image);
-  const placement = findDrawImageTransform(block.displayList);
-  if (mask && placement) {
-    // 图片像素铺满 drawImage 的块空间落位；该落位换算到输出像素即目标网格。
-    const boxWidth = Math.hypot(placement[0], placement[1]);
-    const boxHeight = Math.hypot(placement[2], placement[3]);
-    if (boxWidth > 0 && boxHeight > 0) {
-      const placementBox = {
-        x: (placement[4] * target.dpi) / 25.4,
-        y: (placement[5] * target.dpi) / 25.4,
-        width: (boxWidth * target.dpi) / 25.4,
-        height: (boxHeight * target.dpi) / 25.4,
-      };
-      const downsampled = downsampleMaskByArea(
-        target.width,
-        target.height,
-        placementBox,
-        mask,
-        plan.image,
-      );
-      if (downsampled) return downsampled;
-    }
+  if (!findDeferredImagePlan(block.displayList) || !loader.createResampleRenderer) {
+    return undefined;
   }
-  return renderSealFrame(block.displayList, target.width, target.height, target.dpi, createRenderer);
-}
-
-/**
- * 取印章的二值 alpha 掩码。
- *
- * 只有 `kind='imagedata'` 且 alpha 仅 0/255 的图片才视为掩码章；其他图片返回 undefined。
- *
- * @param image 已解码印章图片。
- * @returns 宽、高、0/255 掩码与非透明像素数；不是二值掩码时返回 undefined。
- */
-function maskAlpha(
-  image: DecodedImage,
-): { width: number; height: number; bits: Uint8Array; opaque: number } | undefined {
-  if (!isRgbaData(image.data)) return undefined;
-  const { width, height } = image.data;
-  const pixels = image.data.data;
-  const count = width * height;
-  if (pixels.length < count * 4) return undefined;
-  const bits = new Uint8Array(count);
-  let opaque = 0;
-  for (let index = 0; index < count; index += 1) {
-    const alpha = pixels[index * 4 + 3]!;
-    if (alpha === 0) continue;
-    if (alpha !== 255) return undefined;
-    bits[index] = 1;
-    opaque += 1;
-  }
-  if (opaque === 0) return undefined;
-  return { width, height, bits, opaque };
-}
-
-/**
- * 掩码章面积覆盖率的对比度指数（无量纲）。
- *
- * alpha = coverage ^ γ。覆盖率直接当 alpha 时笔画边缘会铺出一圈浅红；参考渲染器
- * （pdftoppm）在 96dpi 下的红像素占比与 γ=2.5 的映射一致（方章 35.2% vs 34.3%、
- * 圆章 22.6% vs 22.1%），因此用同一条对比度曲线：笔画内部保持实心、淡边收得更紧。
- */
-const MASK_GAMMA = 2.5;
-
-/**
- * 二值掩码的面积加权下采样（纯像素运算，不经过画布）。
- *
- * 每个目标像素的 alpha = 覆盖区域内不透明源像素所占面积比例的 γ 次幂（见
- * {@link MASK_GAMMA}），颜色取非透明像素的平均色（二值章即单一印章色）。源像素与目标
- * 像素通过“图片铺满目标网格”一一对应，因而不依赖任何宿主画布的过滤实现。
- *
- * @param targetWidth 目标宽，像素。
- * @param targetHeight 目标高，像素。
- * @param mask 源掩码与尺寸。
- * @param image 源图片（取主色）。
- * @returns 目标尺寸的 RGBA 图片；掩码为空时返回 undefined。
- */
-export function downsampleMaskByArea(
-  targetWidth: number,
-  targetHeight: number,
-  placement: { x: number; y: number; width: number; height: number },
-  mask: { width: number; height: number; bits: Uint8Array; opaque: number },
-  image: DecodedImage,
-): DecodedImage | undefined {
-  const { width, height, bits, opaque } = mask;
-  if (opaque === 0) return undefined;
-  const pixels = isRgbaData(image.data) ? image.data.data : undefined;
-  const out = new Uint8ClampedArray(targetWidth * targetHeight * 4);
-  // 印章主色：非透明源像素的平均色（二值章即单一颜色）。
-  let red = 0;
-  let green = 0;
-  let blue = 0;
-  if (pixels) {
-    let redSum = 0;
-    let greenSum = 0;
-    let blueSum = 0;
-    for (let index = 0; index < bits.length; index += 1) {
-      if (!bits[index]) continue;
-      redSum += pixels[index * 4]!;
-      greenSum += pixels[index * 4 + 1]!;
-      blueSum += pixels[index * 4 + 2]!;
-    }
-    red = Math.round(redSum / opaque);
-    green = Math.round(greenSum / opaque);
-    blue = Math.round(blueSum / opaque);
-  }
-  // 目标网格是签章块空间（像素）；印章图片铺满 placement 指定的子矩形，按块空间采样。
-  const sourcePerMmX = width / placement.width;
-  const sourcePerMmY = height / placement.height;
-  const startX = Math.max(0, Math.floor(placement.x));
-  const endX = Math.min(targetWidth, Math.ceil(placement.x + placement.width));
-  const startY = Math.max(0, Math.floor(placement.y));
-  const endY = Math.min(targetHeight, Math.ceil(placement.y + placement.height));
-  for (let y = startY; y < endY; y += 1) {
-    const top = Math.max(0, (y - placement.y) * sourcePerMmY);
-    const bottom = Math.min(height, (y + 1 - placement.y) * sourcePerMmY);
-    if (bottom <= top) continue;
-    const rowStart = Math.floor(top);
-    const rowEnd = Math.min(height, Math.ceil(bottom));
-    for (let x = startX; x < endX; x += 1) {
-      const left = Math.max(0, (x - placement.x) * sourcePerMmX);
-      const right = Math.min(width, (x + 1 - placement.x) * sourcePerMmX);
-      if (right <= left) continue;
-      const columnStart = Math.floor(left);
-      const columnEnd = Math.min(width, Math.ceil(right));
-      let covered = 0;
-      let area = 0;
-      for (let sy = rowStart; sy < rowEnd; sy += 1) {
-        const overlapY = Math.min(bottom, sy + 1) - Math.max(top, sy);
-        if (overlapY <= 0) continue;
-        const rowOffset = sy * width;
-        for (let sx = columnStart; sx < columnEnd; sx += 1) {
-          const overlapX = Math.min(right, sx + 1) - Math.max(left, sx);
-          if (overlapX <= 0) continue;
-          const weight = overlapX * overlapY;
-          area += weight;
-          if (bits[rowOffset + sx]) covered += weight;
-        }
-      }
-      if (area <= 0) continue;
-      const coverage = covered / area;
-      const alpha = Math.round(Math.pow(coverage, MASK_GAMMA) * 255);
-      if (alpha === 0) continue;
-      const offset = (y * targetWidth + x) * 4;
-      out[offset] = red;
-      out[offset + 1] = green;
-      out[offset + 2] = blue;
-      out[offset + 3] = alpha;
-    }
-  }
-  return {
-    width: targetWidth,
-    height: targetHeight,
-    kind: 'imagedata',
-    data: { width: targetWidth, height: targetHeight, data: out },
-  };
-}
-
-/**
- * 取签章显示列表里图片绘制的块空间变换。
- *
- * @param list 签章块显示列表。
- * @returns 图片单位空间 → 块空间的矩阵；没有图片绘制时返回 undefined。
- */
-function findDrawImageTransform(list: DisplayList): Matrix | undefined {
-  for (const command of list.commands) {
-    if (command.op !== 'drawImage') continue;
-    if (getDeferredImagePlan(command.image)) return command.transform;
-  }
-  return undefined;
+  return renderSealFrame(block.displayList, width, height, dpi, loader.createResampleRenderer);
 }
 
 /**
