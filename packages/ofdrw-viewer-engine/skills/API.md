@@ -270,6 +270,60 @@ saveAttachment(
   - 取消抛 `OFD_ABORTED`，关闭后抛 `OFD_CLOSED`。
 - 辅助类型：`AttachmentSink = (chunk: Uint8Array) => void | Promise<void>`；`AttachmentOperationOptions = { signal?; chunkSize? }`。
 
+### 3.12.2 `document.getFontResources(options?: DocumentFontResourcesOptions): Promise<readonly DocumentFontResource[]>`
+
+读取文档声明的字体资源清单。宿主据此了解「文档声明了哪些字体、哪些没有内嵌字体文件」，从而决定要准备哪些替代字体（例如按需加载本机字体）。
+
+```ts
+export interface DocumentFontResourcesOptions {
+  signal?: AbortSignal;
+}
+
+export interface DocumentFontResource {
+  readonly id: string;             // 归一化后的十进制资源 ID（OFD Font@ID）
+  readonly fontName: string;       // OFD FontName，文档声明的主字体名
+  readonly familyName?: string;    // OFD FamilyName；未声明时省略该字段
+  readonly charset: string;        // unicode / prc / big5 / symbol
+  readonly serif: boolean;
+  readonly bold: boolean;
+  readonly italic: boolean;
+  readonly fixedSize: boolean;
+  readonly fontFile?: string;      // 包内字体文件路径；省略表示无内嵌字体
+  readonly documentLevel: boolean; // 来自 PublicRes/DocumentRes 时为 true
+}
+```
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `string` | 归一化后的十进制资源 ID |
+| `fontName` | `string` | OFD `FontName` |
+| `familyName` | `string?` | OFD `FamilyName`；缺省时**字段不存在**（不是 `undefined`） |
+| `charset` | `string` | `unicode` / `prc` / `big5` / `symbol`，保留 XML 原值 |
+| `serif` / `bold` / `italic` / `fixedSize` | `boolean` | 文档声明的字体属性 |
+| `fontFile` | `string?` | 有内嵌字体时的包内路径；缺省时**字段不存在** |
+| `documentLevel` | `boolean` | 当前实现恒为 `true`（清单只含文档级资源） |
+
+行为约定：
+
+- **零额外 IO**：数据来自打开阶段已解析的 `DocumentResourceIndex.fonts`，不加载页面、不解析字体、不触发任何包内读取。
+- **结果按 `id` 字符串升序**排序（`a.id < b.id` 的字符串比较，不是数字排序），不依赖 `PublicRes`/`DocumentRes` 的 XML 书写顺序，跨文档稳定可复现。
+- **可重复调用**，每次返回新数组，调用方修改返回值不影响后续调用。
+- 文档没有任何字体声明时返回 `[]`，不抛错、不 warning。
+- 只反映「文档声明了什么」，**不反映运行时的字体解析/回退结果**；实际用了哪个替代字体请结合 `W_FONT_MISSING` warning 与 [`page.getTextContent()`](#47-pagegettextcontentoptions-textcontentoptions-promisetextcontent) 的 `font` 判断。
+- **不含页级声明**：只返回 `PublicRes`/`DocumentRes` 中的文档级字体资源，`PageRes.xml` 页级声明的字体不进入清单。
+- 取消：`signal` 已中止时以 `OFD_ABORTED` 拒绝；文档已关闭后以 `OFD_CLOSED` 拒绝。
+
+```ts
+import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
+
+const doc = await OFDDocument.open({ source: { kind: 'arraybuffer', data: bytes } });
+const fonts = await doc.getFontResources();
+// [{ id: '3', fontName: '宋体', charset: 'unicode', bold: false, ..., documentLevel: true }]
+const needed = fonts.filter((font) => font.fontFile === undefined).map((font) => font.fontName);
+```
+
+典型用途：宿主先读清单找出没有内嵌字体（`fontFile` 缺省）的声明，再只按这些 `fontName` 准备替代字体，避免为已内嵌的字体做无用 IO。这一能力与「引擎不发现字体」的分层一致——引擎只回答「文档声明了什么」，读取字体仍由宿主完成（见 §8.1）。
+
 ### 3.13 `document.getAttachmentData(attachmentId: string, options?: { signal?: AbortSignal }): Promise<Uint8Array | undefined>`
 
 - 返回附件原始字节，不解析内容；`attachmentId` 按资源 ID 规则规范化后匹配。
@@ -602,6 +656,7 @@ interface FontProvider {
 ```
 
 - engine 不内置任何 CJK 字体，也不读取字体 URL/路径；字体字节必须由宿主提供。
+- 想知道文档声明了哪些字体、哪些没有内嵌字体文件时，调用 [`document.getFontResources()`](#3122-documentgetfontresourcesoptions-documentfontresourcesoptions-promisereadonly-documentfontresource) 拿到声明清单；它只读打开阶段已解析的资源索引，零额外 IO，也不反映最终用了哪个替代字体。
 - 来源优先级：内嵌 `FontFile` → `fontProvider` → `defaultFonts` → `supplementaryFonts`；主字体按字体名/别名评分选择，其余候选按顺序作为字形回退。
 - `FontProvider.match()` 是按需读取字体的唯一入口：需要网络/文件时在 `match()` 内读取并返回 `{ data }`，返回 `null` 表示无匹配。
 - `defaultFonts`/`supplementaryFonts` 只接受已读好的 `data`；按字体名/别名评分选择，TTC/OTC 会展开为多个字体面。
@@ -799,7 +854,7 @@ interface OFDWarning {
 
 | 名称 | 说明 |
 | --- | --- |
-| `OFDDocument` | 文档入口；`open/getPage/getPageInfos/getOutline/getBookmarks/getMetadata/getSignatureEntries/getSignedValue/getPermissions/getAttachments/getAttachmentByName/getAttachmentsByFormat/getAttachmentSize/saveAttachment/getAttachmentData/close` |
+| `OFDDocument` | 文档入口；`open/getPage/getPageInfos/getOutline/getBookmarks/getMetadata/getSignatureEntries/getSignedValue/getPermissions/getAttachments/getAttachmentByName/getAttachmentsByFormat/getAttachmentSize/saveAttachment/getAttachmentData/getFontResources/close` |
 | `OFDPage` | 页面入口；`getSize/getViewport/prepare/getTextContent/render/exportImage` |
 | `RenderTask` | 渲染句柄；`id/promise/cancel` |
 | `OFDEventBus` | 事件总线实现 |
