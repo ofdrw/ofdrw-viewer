@@ -128,6 +128,23 @@ export interface OpenOptions {
     readonly supplementary?: readonly HarnessFontSource[];
     /** 宿主追加的字体别名组；以 `aliases=<组分号分隔的逗号分隔名>` 形式传递。 */
     readonly aliases?: readonly (readonly string[])[];
+    /**
+     * 本机字体能力配置（`localFonts=1&localDefault=1&...`）。
+     *
+     * 省略等价于「不配置 `fonts.localFonts`」：开关不可见、能力整体关闭。
+     */
+    readonly localFonts?: {
+      /** 是否展示并启用开关；必填 true 才会真正打开能力。 */
+      readonly enabled: true;
+      /** 用户从未选择时的默认值；缺省 false。 */
+      readonly defaultEnabled?: boolean;
+      /** 是否记忆用户选择；缺省 true。 */
+      readonly remember?: boolean;
+      /** 单文档最多查询的声明数；缺省 8。 */
+      readonly maxFonts?: number;
+      /** 确认框说明文案覆盖。 */
+      readonly consentText?: string;
+    };
   };
 }
 
@@ -163,6 +180,14 @@ export function viewerUrl(fixture: string, options: OpenOptions = {}): string {
       params.set('aliases', groups.join(';'));
     }
     if (items.length > 0) params.set('fonts', items.join(','));
+    const local = options.fonts.localFonts;
+    if (local) {
+      params.set('localFonts', '1');
+      if (local.defaultEnabled) params.set('localDefault', '1');
+      if (local.remember === false) params.set('localRemember', '0');
+      if (local.maxFonts !== undefined) params.set('localMax', String(local.maxFonts));
+      if (local.consentText) params.set('localConsent', local.consentText);
+    }
   }
   return `/packages/ofdrw-viewer-ui/test/e2e/index.html?${params.toString()}`;
 }
