@@ -135,7 +135,6 @@ export const enUS: MessageDictionary = {
   'about.title': 'About',
   'about.appName': 'Software name',
   'about.uiVersion': 'Viewer version',
-  'about.engineVersion': 'Engine version',
   'about.userAgent': 'Browser',
   'about.license': 'Open source licenses',
   'about.licenseOpen': 'View',

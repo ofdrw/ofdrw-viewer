@@ -424,7 +424,7 @@ describe('内置 UI 接线', () => {
     expect(shell.elements.toolbar.childElementCount).toBe(0);
   });
 
-  it('关于菜单在未打开文档时也可用并展示 UI 与引擎版本', () => {
+  it('关于菜单在未打开文档时也可用并展示 UI 版本', () => {
     const host = createFakeHost(400);
     const dispose = attachUIShell(host);
     const shell = getUIShell(host)!;
@@ -449,9 +449,8 @@ describe('内置 UI 接线', () => {
     expect(text).toContain('软件名称');
     expect(text).toContain('ofdrw-viewer-ui');
     expect(text).toContain(versions.ui);
-    expect(text).toContain('渲染引擎版本');
-    expect(text).toContain(versions.engine);
-    // 密码工具库版本不再展示。
+    // 只展示 UI 版本，不再展示渲染引擎与密码工具库版本。
+    expect(text).not.toContain('渲染引擎版本');
     expect(text).not.toContain('密码工具库版本');
 
     const licenseLink = shell.elements.dialogLayer.querySelector<HTMLAnchorElement>(

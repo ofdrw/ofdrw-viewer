@@ -28,7 +28,7 @@ import type {
   ViewerEventHandler,
   ViewerEventName,
 } from '../types';
-import { getVersions } from '../version';
+import { VERSION } from '../version';
 import { THIRD_PARTY_NOTICES } from '../licenses';
 import { UIShell } from './ui-shell';
 import type { UIShellElements, UIShellCommand, UIShellViewState } from './types';
@@ -426,22 +426,20 @@ function showDocumentProperties(viewer: UIShellHost, shell: UIShell): void {
 }
 
 /**
- * 打开“关于”对话框，展示软件名称、阅读器 UI 与渲染引擎版本及浏览器标识，供故障排查。
+ * 打开“关于”对话框，展示软件名称、阅读器 UI 版本与浏览器标识，供故障排查。
  *
  * @param shell 当前外壳。
  */
 function showAboutDialog(shell: UIShell, viewer: UIShellHost): void {
   const translator = shell.translatorInstance;
   const doc = shell.elements.root.ownerDocument;
-  const versions = getVersions();
   const userAgent = doc.defaultView?.navigator.userAgent;
 
   const list = doc.createElement('dl');
   list.className = 'ofd-properties';
   const rows: readonly (readonly [string, string | undefined])[] = [
     [translator.t('about.appName'), 'ofdrw-viewer-ui'],
-    [translator.t('about.uiVersion'), versions.ui],
-    [translator.t('about.engineVersion'), versions.engine],
+    [translator.t('about.uiVersion'), VERSION],
     [translator.t('about.userAgent'), userAgent],
   ];
   for (const [label, value] of rows) {
