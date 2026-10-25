@@ -679,13 +679,14 @@ export class DocumentController {
         : Promise.resolve<FontInput[]>([]),
     ]);
     if (signal?.aborted) return {};
-    // 宿主配置的 default 非空时，defaultFonts 保持宿主顺序，本机字体追加在后（F3/C2）；
-    // 宿主没有配置 default 时，本机字体作为默认字体候选（否则文档缺字时无从回退）。
-    const hasHostDefault = (font.default?.length ?? 0) > 0;
-    const defaultFonts = hasHostDefault
-      ? [...hostDefaults, ...localInputs]
-      : [...localInputs, ...hostDefaults];
-    const supplementaryFonts = [...hostSupplementary, ...localInputs];
+    // 宿主配置在前、本机字体在后（F3/C2）；宿主 `default` 为空时结果即 `[...localInputs]`，
+    // 不需要额外分支。
+    const defaultFonts = [...hostDefaults, ...localInputs];
+    // 本机字体只进 defaultFonts：引擎按 `default:N` 与 `supplementary:M` 分别建 FontFace
+    // 且不跨列表去重（font/provider.ts loadDefaultFaces / loadSupplementaryFaces），
+    // 同时注入会让同一份 10–20 MB 字体被解析两次、内存翻倍。本机字体是「替代/优先」语义，
+    // 不是「补字」语义，因此固定放默认候选。
+    const supplementaryFonts = [...hostSupplementary];
     return {
       ...(defaultFonts.length > 0 ? { defaultFonts } : {}),
       ...(supplementaryFonts.length > 0 ? { supplementaryFonts } : {}),

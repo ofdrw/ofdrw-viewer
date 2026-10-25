@@ -210,4 +210,36 @@ describe('document-controller 注入顺序', () => {
     expect(last?.defaultFonts?.[0]?.family).toBe('HostFont');
     expect(hostFont.family).toBe('HostFont');
   });
+
+  it('本机字体只进 defaultFonts，不会同时出现在 supplementaryFonts', async () => {
+    stubLocalFonts({ SimSun: new Uint8Array([0, 1, 0, 0]) });
+    stubPermissions('granted');
+    const calls: OFDOpenOptions[] = [];
+    const controller = new DocumentController({
+      font: {
+        localFonts: { enabled: true },
+        // 同时配置 supplementary，验证本机字体不会被重复塞进补字列表。
+        supplementary: [{ data: new Uint8Array([0, 1, 0, 0]), family: 'HostSupp' }],
+      },
+      openDocument: async (options) => {
+        calls.push(options);
+        return makeDocument([declaration('1', '宋体')]);
+      },
+    });
+    // 生效值由阅读器在每次打开前同步（REQ-007 / REQ-0180）：先设置再打开。
+    controller.setLocalFonts({ enabled: true });
+    await controller.open(new ArrayBuffer(8));
+    await controller.open(new ArrayBuffer(8));
+    const last = calls.at(-1);
+    const defaults = last?.defaultFonts ?? [];
+    const supplementary = last?.supplementaryFonts ?? [];
+    // 本机字体（family 为文档声明名「宋体」）应只出现在 defaultFonts。
+    expect(defaults.some((input) => input.family === '宋体')).toBe(true);
+    expect(supplementary.some((input) => input.family === '宋体')).toBe(false);
+    // 两组之间不得共享同一个 FontInput 引用（引擎按 key 各建一次 FontFace）。
+    const duplicated = defaults.filter((input) => supplementary.includes(input));
+    expect(duplicated).toEqual([]);
+    // 宿主 supplementary 仍原样保留。
+    expect(supplementary.map((input) => input.family)).toEqual(['HostSupp']);
+  });
 });
