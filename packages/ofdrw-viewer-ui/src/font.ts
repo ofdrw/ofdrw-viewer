@@ -16,7 +16,7 @@ import type {
   FontAliasTable,
   FontInput,
 } from '@ofdrw/ofdrw-viewer-engine';
-import { DEFAULT_FONT_ALIASES } from '@ofdrw/ofdrw-viewer-engine';
+import * as engineApi from '@ofdrw/ofdrw-viewer-engine';
 import { getGlobalObject } from './compat';
 import { mergeHeaders } from './document-controller';
 import { expandLocalFontCandidates } from './local-font-names';
@@ -145,9 +145,10 @@ export interface FontSourceResolverOptions {
 export function composeFontAliases(
   aliases: FontAliasTable | undefined,
 ): FontAliasTable {
-  if (!aliases || aliases.length === 0) return DEFAULT_FONT_ALIASES;
+  const builtin = builtinFontAliases();
+  if (!aliases || aliases.length === 0) return builtin;
   return Object.freeze([
-    ...DEFAULT_FONT_ALIASES.map((group) => group),
+    ...builtin.map((group) => group),
     ...aliases.map((group) => group),
   ]);
 }
@@ -189,7 +190,7 @@ export class FontSourceResolver {
     this.loader = options.loader;
     this.requestInit = options.requestInit;
     this.localFontsEnabled = options.localFonts?.enabled === true;
-    this.aliasTable = options.localFonts?.aliases ?? DEFAULT_FONT_ALIASES;
+    this.aliasTable = options.localFonts?.aliases ?? builtinFontAliases();
     const globalObject = getGlobalObject();
     const globalFetch = (globalObject as { fetch?: typeof fetch }).fetch;
     // 浏览器原生 fetch 必须绑定全局对象，否则调用时丢失 this。
@@ -683,4 +684,23 @@ function isNotInstalledError(error: unknown): boolean {
     error !== null &&
     (error as { code?: unknown }).code === NOT_INSTALLED_CODE
   );
+}
+
+/**
+ * 读取引擎内置别名表。
+ *
+ * 在调用时求值而不是模块顶层解构：`viewer.ts` 只经 `composeFontAliases()` 间接依赖本源，
+ * 模块顶层直接解构引擎导出会让「只 mock 了部分引擎 API」的既有单测在被 import 后立即
+ * 因缺少导出而失败。
+ *
+ * @returns 引擎内置别名表；引擎未提供时为空表（不抛错，本地字体改名能力降级为原始名）。
+ */
+function builtinFontAliases(): FontAliasTable {
+  try {
+    const aliases = (engineApi as { DEFAULT_FONT_ALIASES?: FontAliasTable }).DEFAULT_FONT_ALIASES;
+    return Array.isArray(aliases) ? aliases : [];
+  } catch {
+    // 模块被部分 mock（缺少该导出）时降级为空表：本地字体退化为「仅用原始名查询」。
+    return [];
+  }
 }
