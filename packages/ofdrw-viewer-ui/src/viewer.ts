@@ -854,8 +854,10 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.openAbort?.abort();
     const abort = new AbortController();
     this.openAbort = abort;
-    // 新文档会话：控制台诊断的去重集合按文档重置。
+    // 新文档会话：控制台诊断的去重集合与状态里的 warning 列表都按文档重置，
+    // 使 `getState().ui.warnings` 只反映当前这次打开（含本机字体切换后的重开）。
     this.diagnostics.reset();
+    this.patchUI({ warnings: [] });
     this.queue.cancelAll();
     this.patchDocument({ status: 'opening', source: null, origin: undefined });
     this.commit();
