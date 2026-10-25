@@ -219,8 +219,8 @@ new OFDViewer({
 - **授权只需一次**：浏览器记住授权后，刷新页面、重开文档都静默生效；开启开关会重开当前文档并恢复页码/缩放/旋转。
 - **关闭即回退**：关闭开关清空本机字体缓存并重开文档，画面立即回到原有字体来源，其它功能不受影响。
 - **默认值**：`{ enabled, defaultEnabled, remember, maxFonts, consentText }` 五字段；`remember`（默认 `true`）决定是否把用户选择记在 `localStorage`（只存布尔值，不存字体清单），`consentText` 可覆盖确认框说明文案。
-- **注入顺序**：宿主配置的 `default`/`supplementary` 永远在前，本机字体追加在后；只有宿主完全没配 `default` 时本机字体才作为默认字体候选。
-- **失败静默回退**：浏览器不支持、用户拒绝、站点 `Permissions-Policy` 禁用、本机未安装、读字节失败时，本机字体被跳过，只产生 `W_FONT_MISSING` warning（`message` 只含字体名），不阻断打开。
+- **注入位置**：宿主配置的 `default` 在前、本机字体追加在后，宿主显式字体始终优先。本机字体**只进 `defaultFonts`，不进 `supplementaryFonts`**——同一份 10–20 MB 字体同时注入两个列表会被引擎解析两次、内存翻倍，而本机字体是「替代/优先」语义而非补字语义。
+- **失败静默回退**：浏览器不支持、用户拒绝、站点 `Permissions-Policy` 禁用、本机未安装、读字节失败时，本机字体被跳过，只产生 `W_FONT_MISSING` warning（`message` 只含字体名与错误摘要），不阻断打开。注意**不支持时也会产生该 warning**；需要完全静默时用 `debug: { codes: [...] }` 过滤或先查 `getLocalFontsStatus().supported`。
 - **隐私**：只按文档声明做定向查询，不做全量枚举；字体字节只在内存中交给引擎渲染，不上传、不落盘、不写日志。
 
 状态与控制：`viewer.getLocalFontsStatus()`、`viewer.setLocalFontsEnabled(enabled)`（须在用户点击事件内调用）、`viewer.onLocalFontsStatusChange(handler)`，以及核心事件 `local-fonts:change`。详见 [API.md 本机字体](./API.md#本机字体) 与 [本地字体加载方案设计](../../../docs/本地字体加载方案设计.md)。

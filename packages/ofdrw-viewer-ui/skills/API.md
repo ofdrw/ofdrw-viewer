@@ -271,16 +271,19 @@ fonts: {
 
 要点：
 
-- **注入顺序固定为「宿主配置在前、本机字体在后」**：`defaultFonts = [...宿主 default, ...本机字体]`，`supplementaryFonts = [...宿主 supplementary, ...本机字体]`；只有宿主**完全没有**配置 `default` 时，本机字体才作为默认字体候选排在最前（否则文档缺字时无从回退）。宿主显式指定的字体永远优先，本机字体只补位。
+- **注入位置固定为「宿主配置在前、本机字体在后」**：`defaultFonts = [...宿主 default, ...本机字体]`，宿主显式指定的字体永远优先，本机字体只补位（宿主没配 `default` 时结果就是本机字体）。本机字体**只注入 `defaultFonts`，不注入 `supplementaryFonts`**：引擎按 `default:N` 与 `supplementary:M` 分别建字体面且不跨列表去重，同时注入会让同一份 10–20 MB 字体被解析两次、内存翻倍；本机字体是「替代/优先」语义，不是「补字」语义。即使 `{ local }` 来源写在 `fonts.supplementary` 里，读到的字节也进入 `defaultFonts`。
 - 本机字体的 `FontInput.family` 取**文档声明的 `FontName`**（如 `宋体`），而不是本机字体自身的 family，这样引擎按「归一化名精确相等」评分时能命中并压过兜底字体。
 - 只查询**文档声明过且没有内嵌 `fontFile`** 的字体（内嵌字体本来就优先，查询是浪费），按 `maxFonts` 截断。
 - 读到的字体字节只经 `blob()`/`readBlobBytes()` 进入内存交给引擎渲染，**不上传、不落盘、不写日志、不写存储**；`localStorage` 只存一个布尔选择与「已告知」标记，不存字体清单。
-- 只做**定向查询**（`queryLocalFonts({ postscriptNames })`），不做全量枚举；候选名匹配**区分大小写**（`SimSun` 命中，`SIMSun`/`simsun` 不命中），中文名不能用于查询，因此中文声明必须先经内置表/别名表展开。
+- 只做**定向查询**（`queryLocalFonts({ postscriptNames })`），不做全量枚举；候选名匹配**区分大小写**（`SimSun` 命中，`SIMSun`/`simsun` 不命中），中文名不能用于查询，因此中文声明必须先经内置常见字体表/别名表展开为真实 PostScript 名（内置表未命中时**不推断大小写**，只保留文档原样的合法 PostScript 名）。
+- 单个声明的候选名顺序：**变体后缀 → 基础名 → 别名组成员 → 文档原始名**；候选总数上限 6，并为文档原始名至少预留一个位置，避免原样写的 PostScript 名被变体候选挤掉。一个声明只发起一次 `queryLocalFonts` 调用。
 - 变体后缀不凭空推断：请求粗体时按 `<base>-Bold` → `<base>Bold` → `<base>` 回退，`SimHei-Bold` 这类不存在的变体会落到 `SimHei` 常规字形，**不做合成加粗**。
 - 开关变化（开启授权 / 关闭）会**重开当前文档并恢复页码、缩放、旋转**（不做字体热替换）；已授权后再开不再弹确认框，关闭开关只清空本机字体缓存，浏览器授权保持「已授权」。
 - 浏览器不支持（Firefox / Safari / 移动端 / Chrome 103 之前 / 站点 `Permissions-Policy: local-fonts` 被禁用）时整个能力不可见，行为与不引入本功能一致；不提供 polyfill。
 
-状态通过 [`getLocalFontsStatus()` / `setLocalFontsEnabled()` / `onLocalFontsStatusChange()`](#本机字体方法) 读取与控制，事件为 [`local-fonts:change`](#事件名与载荷)。失败口径：本机字体不可用只产生 `W_FONT_MISSING` warning（`message` 只含字体名，不含字节与本机字体清单），不产生 `error`、不阻断打开。
+状态通过 [`getLocalFontsStatus()` / `setLocalFontsEnabled()` / `onLocalFontsStatusChange()`](#本机字体方法) 读取与控制，事件为 [`local-fonts:change`](#事件名与载荷)。
+
+失败口径：本机字体读不到时一律跳过该来源并上报 `W_FONT_MISSING`（**只 warning、不上报 `error`、不阻断打开**），`message` 只含字体名与错误摘要，不含字体字节、不含本机字体清单。`open()` 被取消（AbortError）导致的中断**不产生任何 warning**。注意：浏览器不支持时也会产生 `W_FONT_MISSING`，宿主若需要「静默忽略不支持」应先用 `getLocalFontsStatus().supported` 或 `debug.codes` 过滤。
 
 ### URL hash 同步
 
