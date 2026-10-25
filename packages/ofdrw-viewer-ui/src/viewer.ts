@@ -6,7 +6,7 @@
  * 核心不直接 import 这些模块，避免并行目录互相依赖。
  */
 
-import { replaceChildren } from './compat';
+import { getGlobalObject, replaceChildren } from './compat';
 
 import type {
   DocumentPermissions,
@@ -104,6 +104,11 @@ import type {
   ViewerEventHandler,
   ViewerSource,
 } from './types';
+import { composeFontAliases } from './font';
+import {
+  MAX_CANDIDATES_PER_DECLARATION,
+  expandLocalFontCandidates,
+} from './local-font-names';
 import { getUIShell } from './ui';
 import type { UIDialogOptions, UIShellElements } from './ui/types';
 import type { UIShellHost } from './ui';
@@ -119,6 +124,20 @@ import {
   type VerificationTarget,
 } from './crypto';
 import { UI_WARNING_CODES } from './diagnostics';
+import {
+  queryLocalFontFaces,
+  queryLocalFontsPermission,
+  supportsLocalFonts,
+} from './local-fonts';
+import {
+  readLocalFontsPreference,
+  resolveLocalFontsConfig,
+  writeLocalFontsPreference,
+  type LocalFontStatus,
+  type LocalFontsPreference,
+  type LocalFontsStatus,
+  type ResolvedLocalFontsConfig,
+} from './local-fonts-state';
 
 /** 手势缩放停止后提交重绘的延迟，单位毫秒；手指静止超过 180 ms 即按最终倍率重绘。 */
 const PREVIEW_COMMIT_DELAY_MS = 180;
@@ -253,6 +272,27 @@ function createAbortError(): Error {
   return error;
 }
 
+/** 构造「用户拒绝授权」错误；仅内部用于统一拒绝分支。 */
+function createPermissionDeniedError(): Error {
+  const error = new Error('本机字体授权被拒绝');
+  error.name = 'NotAllowedError';
+  return error;
+}
+
+/**
+ * 判断错误是否为「用户拒绝授权」。
+ *
+ * 浏览器在用户拒绝本机字体权限时抛 `NotAllowedError`；其它 `SecurityError`
+ * （非安全上下文、`Permissions-Policy` 禁用）不写入拒绝态，避免把不可用当成拒绝。
+ *
+ * @param error 捕获到的错误。
+ * @returns 用户拒绝时返回 true。
+ */
+function isPermissionDeniedError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  return (error as { name?: unknown }).name === 'NotAllowedError';
+}
+
 /** 关闭解密容器；重复关闭/关闭失败不影响调用方。 */
 async function closeContainer(container: VirtualContainer): Promise<void> {
   try {
@@ -383,6 +423,18 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private activeHttpSource: HttpByteSource | null = null;
   /** 最近一次打开准备结果；用于自动验证与错误映射。 */
   private cryptoPreparation: CryptoOpenPreparation | null = null;
+  /** 本地字体状态订阅者（`onLocalFontsStatusChange`）。 */
+  private readonly localFontsListeners = new Set<(status: LocalFontsStatus) => void>();
+  /** 当前权限态；`prompt` 表示尚未申请或已被浏览器重置（C12：不缓存否定结果）。 */
+  private localFontsPermission: LocalFontStatus = 'prompt';
+  /** 是否正在读取本机字体；只影响状态展示。 */
+  private localFontsLoading = false;
+  /** 本会话是否已向用户展示过授权说明（拒绝/不展示则不再自动打扰）。 */
+  private localFontsNotified = false;
+  /** 用户选择；`remember === false` 时只留在内存。 */
+  private localFontsPreference: LocalFontsPreference | undefined;
+  /** 最近一次广播的本地字体状态；用于去重，保证「一次变化只触发一次」。 */
+  private localFontsPublished: LocalFontsStatus | null = null;
   private scrollFrame: number | null = null;
   private reflowFrame: number | null = null;
   private lastVisibleRange = { start: 0, end: -1 };
@@ -902,6 +954,9 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       void this.loadSideData(token);
       this.syncHash();
       this.maybeAutoVerify();
+      // 设计 §4.1：先按原有方式打开文档，文档就绪后再询问是否使用本机字体。
+      // 权限态只做纯查询（不申请），据此决定是否弹确认框。
+      void this.refreshLocalFontsPermission().then(() => this.maybePromptLocalFontsConsent());
     } catch (error) {
       if (token !== this.openToken) {
         // 已有更新的 open 接管 loading，旧操作只做容器/字节源清理。
@@ -1507,6 +1562,414 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
    */
   closeDialog(restoreFocus = true): void {
     getUIShell(this)?.closeDialog(restoreFocus);
+  }
+
+  // -------------------------------------------------------------------------
+  // 本地字体（本地字体加载方案设计 §3.5 / §4，需求清单 REQ-0220 ~ REQ-0270）
+  // -------------------------------------------------------------------------
+
+  /**
+   * 读取本地字体状态。
+   *
+   * 只做纯查询（能力探测 + 权限状态），**不触发**任何权限申请：页面加载路径调用它
+   * 不应产生浏览器授权框或 `SecurityError` 噪音。
+   *
+   * @returns 当前状态快照。
+   */
+  getLocalFontsStatus(): LocalFontsStatus {
+    return this.computeLocalFontsStatus();
+  }
+
+  /**
+   * 设置「使用本机字体」开关。
+   *
+   * `enabled=true` 应在用户点击事件中直接调用：浏览器只接受用户手势内的权限申请。
+   * 生效值发生变化时会重开当前文档并恢复页码/缩放/旋转。
+   *
+   * @param enabled 目标开关值。
+   */
+  async setLocalFontsEnabled(enabled: boolean): Promise<void> {
+    this.assertNotDisposed();
+    await this.applyLocalFontsEnabled(enabled, { remember: true });
+  }
+
+  /**
+   * 订阅本地字体状态变化。
+   *
+   * @param handler 状态回调。
+   * @returns 退订函数；重复订阅互不影响。
+   */
+  onLocalFontsStatusChange(handler: (status: LocalFontsStatus) => void): () => void {
+    this.localFontsListeners.add(handler);
+    return () => {
+      this.localFontsListeners.delete(handler);
+    };
+  }
+
+  /**
+   * 计算当前状态；不申请权限、不发起查询。
+   *
+   * `supported` 表示「该能力对本次阅读器生效」：宿主未启用 `fonts.localFonts` 或浏览器
+   * 不提供 API 时为 false（与设计 §3.2 生效值解析表一致），设置面板据此决定是否展示
+   * 开关与原因文案。
+   */
+  private computeLocalFontsStatus(): LocalFontsStatus {
+    const config = this.resolveLocalFontsConfig();
+    const available = this.localFontsSupported() && this.hasLocalFontsConfig();
+    return {
+      supported: available,
+      enabled: config.enabled,
+      permission: available ? this.localFontsPermission : 'unsupported',
+      visible: config.visible,
+      loading: this.localFontsLoading,
+    };
+  }
+
+  /** 宿主是否显式启用了本地字体能力（`fonts.localFonts.enabled === true`）。 */
+  private hasLocalFontsConfig(): boolean {
+    return this.options.fonts?.localFonts?.enabled === true;
+  }
+
+  /** 解析宿主配置 + 用户选择后的生效值。 */
+  private resolveLocalFontsConfig(): ResolvedLocalFontsConfig {
+    const supported = this.localFontsSupported();
+    const preference = this.localFontsPreference ?? readLocalFontsPreference();
+    return resolveLocalFontsConfig({
+      ...(this.options.fonts?.localFonts
+        ? { localFonts: this.options.fonts.localFonts }
+        : {}),
+      supported,
+      preference,
+    });
+  }
+
+  /** 浏览器是否提供 `queryLocalFonts`；不依赖 UA 判断。 */
+  private localFontsSupported(): boolean {
+    return supportsLocalFonts();
+  }
+
+  /**
+   * 刷新权限态（纯查询，不申请权限）。
+   *
+   * 文档就绪后调用：已授权时直接生效，未决定时触发确认框；`denied` 每次打开都重新判定，
+   * 不做否定结果缓存（需求清单 C12）。
+   */
+  private async refreshLocalFontsPermission(): Promise<void> {
+    if (!this.localFontsSupported()) {
+      this.localFontsPermission = 'unsupported';
+      this.publishLocalFontsStatus();
+      return;
+    }
+    const permission = await queryLocalFontsPermission();
+    this.localFontsPermission = permission;
+    this.publishLocalFontsStatus();
+  }
+
+  /**
+   * 执行开关变更：写用户选择、按需申请权限、必要时重开并恢复视图。
+   *
+   * 权限申请必须发生在调用栈内（用户手势），因此这里在第一个 `await` 之前发起请求。
+   *
+   * @param enabled 目标开关值。
+   * @param options 是否记入用户选择（Esc/遮罩关闭确认框时不记）。
+   */
+  private async applyLocalFontsEnabled(
+    enabled: boolean,
+    options: { readonly remember: boolean },
+  ): Promise<void> {
+    const config = this.resolveLocalFontsConfig();
+    const previous = config.enabled;
+    if (options.remember) {
+      const preference: LocalFontsPreference = {
+        enabled,
+        notified: this.localFontsNotified || enabled,
+      };
+      this.localFontsPreference = preference;
+      if (config.remember) writeLocalFontsPreference(preference);
+    }
+    if (enabled && config.visible) {
+      // 手势内同步发起权限申请；后续 await 不影响浏览器对手势的判定。
+      void this.requestLocalFontsPermission();
+    }
+    this.publishLocalFontsStatus();
+    if (previous === enabled) return;
+    // 开关变化只影响字体来源；重开一次让画面立刻切换（设计 §4.3）。
+    await this.reopenForLocalFonts();
+  }
+
+  /**
+   * 申请本机字体授权（必须在用户手势内调用）。
+   *
+   * 授权成功后更新权限态并重开文档；被拒绝时关闭开关、本会话不再自动询问。
+   */
+  private async requestLocalFontsPermission(): Promise<void> {
+    if (!this.localFontsSupported()) return;
+    this.localFontsLoading = true;
+    this.publishLocalFontsStatus();
+    try {
+      // 同步调用浏览器 API 触发授权框：`queryLocalFontFaces()` 内部先 await 权限查询，
+      // 会把调用挪出用户手势栈，浏览器将拒绝（设计 §1.1）。因此这里直接调 `queryLocalFonts`。
+      const win = getGlobalObject() as {
+        queryLocalFonts?: (options?: {
+          readonly postscriptNames?: readonly string[];
+        }) => Promise<readonly unknown[]>;
+      };
+      const query = win.queryLocalFonts;
+      if (typeof query !== 'function') throw new Error('浏览器不再提供本机字体能力');
+      // 候选名必须是展开后的 PostScript 写法（中文名不能用于查询，设计 §1.3 / REQ-0130）。
+      // 展开是同步纯函数，不打断手势栈；空候选时不发起调用（避免全量枚举，§1.4）。
+      const declaration = this.controller.getLocalFontDeclarations(
+        this.resolveLocalFontsConfig().maxFonts,
+      )[0];
+      const names = declaration ? this.localFontCandidates(declaration) : [];
+      if (names.length === 0) throw new Error('文档声明无法映射为本机字体名');
+      await query.call(win, { postscriptNames: names });
+      this.localFontsPermission = 'granted';
+      this.localFontsPreference = { enabled: true, notified: true };
+      if (this.resolveLocalFontsConfig().remember) {
+        writeLocalFontsPreference(this.localFontsPreference);
+      }
+      this.localFontsLoading = false;
+      this.publishLocalFontsStatus();
+      await this.reopenForLocalFonts();
+    } catch (error) {
+      this.localFontsLoading = false;
+      const denied = isPermissionDeniedError(error);
+      // 非拒绝类错误（例如非安全上下文）同样按「不可用」处理，静默回退。
+      this.localFontsPermission = denied ? 'denied' : 'prompt';
+      this.localFontsPreference = { enabled: false, notified: this.localFontsNotified };
+      if (this.resolveLocalFontsConfig().remember) {
+        writeLocalFontsPreference(this.localFontsPreference);
+      }
+      this.publishLocalFontsStatus();
+    }
+  }
+
+  /**
+   * 文档就绪后按需弹出授权确认框（设计 §4.1）。
+   *
+   * 仅当「支持 && 开关开启 && 权限为 prompt && 本会话尚未打扰」时提示；不在此处申请权限。
+   */
+  private maybePromptLocalFontsConsent(): void {
+    const config = this.resolveLocalFontsConfig();
+    const status = this.computeLocalFontsStatus();
+    if (!status.supported || !config.enabled || this.localFontsPermission !== 'prompt') return;
+    if (this.localFontsNotified) return;
+    if (getUIShell(this)?.dialogs.isOpen) return;
+    const translator = this.translator;
+    /** 用户是否明确点了「不允许」；Esc/遮罩不会置位。 */
+    let denied = false;
+    this.localFontsNotified = true;
+    this.localFontsPreference = { enabled: config.enabled, notified: true };
+    if (config.remember) writeLocalFontsPreference(this.localFontsPreference);
+    const options: UIDialogOptions = {
+      name: 'localFonts',
+      title: translator.t('localFonts.dialog.title'),
+      description: config.consentText ?? translator.t('localFonts.dialog.description'),
+      actions: [
+        {
+          label: translator.t('localFonts.dialog.allow'),
+          primary: true,
+          onClick: () => {
+            // 同一 click 事件内同步发起权限申请：浏览器只接受用户手势。
+            void this.applyLocalFontsEnabled(true, { remember: true });
+          },
+        },
+        {
+          label: translator.t('localFonts.dialog.deny'),
+          onClick: () => {
+            denied = true;
+            void this.applyLocalFontsEnabled(false, { remember: true });
+          },
+        },
+      ],
+      onClose: () => {
+        // Esc/遮罩：视同「不允许」，但不写入用户选择（下次仍会询问）。
+        if (denied) return;
+        this.localFontsNotified = false;
+        this.localFontsPreference = readLocalFontsPreference();
+        this.publishLocalFontsStatus();
+      },
+    };
+    // 优先复用内置 UI 的对话框管理器；未挂载时退化为实例自有的轻对话框，
+    // 保证「文档就绪后询问」在任何集成方式下都成立。
+    const shell = getUIShell(this);
+    if (shell) {
+      try {
+        shell.openDialog(options);
+        return;
+      } catch {
+        // 落到下面的独立对话框。
+      }
+    }
+    this.openStandaloneLocalFontsDialog(options);
+  }
+
+  /**
+   * 创建实例自有的授权确认框（内置 UI 未挂载时的回退）。
+   *
+   * 结构与 `DialogManager` 产物保持一致（`.ofd-dialog` / `.ofd-dialog__action`），
+   * 支持 Esc 关闭与按钮点击；关闭时清理监听。
+   *
+   * @param options 对话框内容。
+   */
+  private openStandaloneLocalFontsDialog(options: UIDialogOptions): void {
+    const doc = this.ownerDocument;
+    const layer = this.elements.dialogLayer;
+    replaceChildren(layer);
+    const backdrop = doc.createElement('div');
+    backdrop.className = 'ofd-dialog__backdrop';
+    backdrop.setAttribute('aria-hidden', 'true');
+    const dialog = doc.createElement('div');
+    dialog.className = 'ofd-dialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.tabIndex = -1;
+    const header = doc.createElement('div');
+    header.className = 'ofd-dialog__header';
+    const title = doc.createElement('h2');
+    title.className = 'ofd-dialog__title';
+    title.textContent = options.title ?? this.translator.t('dialog.defaultTitle');
+    header.appendChild(title);
+    const body = doc.createElement('div');
+    body.className = 'ofd-dialog__body';
+    if (options.description) {
+      const description = doc.createElement('p');
+      description.className = 'ofd-dialog__description';
+      description.textContent = options.description;
+      body.appendChild(description);
+    }
+    const footer = doc.createElement('div');
+    footer.className = 'ofd-dialog__footer';
+    let closed = false;
+    const close = (): void => {
+      if (closed) return;
+      closed = true;
+      doc.removeEventListener('keydown', onKeydown, true);
+      backdrop.removeEventListener('click', onBackdrop);
+      replaceChildren(layer);
+      layer.hidden = true;
+      options.onClose?.();
+    };
+    const onKeydown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      close();
+    };
+    const onBackdrop = (): void => {
+      if (options.dismissible !== false) close();
+    };
+    for (const action of options.actions ?? []) {
+      const button = doc.createElement('button');
+      button.type = 'button';
+      button.className = action.primary
+        ? 'ofd-button ofd-dialog__action ofd-dialog__action--primary'
+        : 'ofd-button ofd-dialog__action';
+      button.textContent = action.label;
+      button.addEventListener('click', () => {
+        action.onClick?.();
+        if (action.closeOnClick !== false) close();
+      });
+      footer.appendChild(button);
+    }
+    dialog.append(header, body, footer);
+    layer.append(backdrop, dialog);
+    layer.hidden = false;
+    doc.addEventListener('keydown', onKeydown, true);
+    backdrop.addEventListener('click', onBackdrop);
+    const primary = footer.querySelector<HTMLButtonElement>('.ofd-dialog__action--primary');
+    (primary ?? dialog).focus();
+  }
+
+  /**
+   * 把一个文档声明展开为候选 PostScript 名。
+   *
+   * 别名组与 `fonts.aliases` 合并后交给 `expandLocalFontCandidates()`，与重开时
+   * resolver 使用的候选口径一致；截断到单声明上限（6）。
+   *
+   * @param declaration 文档字体声明。
+   * @returns 候选名列表；无法展开时为空数组。
+   */
+  private localFontCandidates(declaration: {
+    readonly fontName: string;
+    readonly familyName?: string;
+    readonly bold?: boolean;
+    readonly italic?: boolean;
+  }): readonly string[] {
+    const expanded = expandLocalFontCandidates(
+      declaration,
+      composeFontAliases(this.options.fonts?.aliases),
+    );
+    return expanded.names.slice(0, MAX_CANDIDATES_PER_DECLARATION);
+  }
+
+  /** 开关/授权变化后重开当前文档并恢复视图；失败只上报，不改开关。 */
+  private async reopenForLocalFonts(): Promise<void> {
+    const source = this.lastOpenSource;
+    if (!source) return;
+    const view = this.state.view;
+    const snapshot = {
+      pageNumber: view.pageNumber,
+      scale: view.scale,
+      zoomMode: view.zoomMode,
+      rotation: view.rotation,
+      sidebarView: view.sidebarView,
+    };
+    try {
+      await this.open(source);
+      // 重开后恢复阅读位置：页码按 1-based 钳到有效范围。
+      const pageCount = this.state.document.pageCount;
+      const pageNumber = Math.min(Math.max(1, snapshot.pageNumber), Math.max(1, pageCount));
+      if (pageNumber !== this.state.view.pageNumber) this.goToPage(pageNumber);
+      // 缩放恢复：以重开前的实测倍率为准。`setZoomMode()` 会按视口重新计算倍率，
+      // 先 setScale 再 setZoomMode 会把用户倍率冲掉；因此只有在倍率本来就一致时才
+      // 恢复模式，否则直接用 `page-actual` 固定回用户倍率（REQ-0250）。
+      if (Math.abs(this.state.view.scale - snapshot.scale) > 1e-6) {
+        this.setScale(snapshot.scale);
+        if (this.state.view.zoomMode !== 'page-actual') this.setZoomMode('page-actual');
+        this.setScale(snapshot.scale);
+      } else if (this.state.view.zoomMode !== snapshot.zoomMode) {
+        this.setZoomMode(snapshot.zoomMode);
+      }
+      if (this.state.view.rotation !== snapshot.rotation) this.setRotation(snapshot.rotation);
+      if (this.state.view.sidebarView !== snapshot.sidebarView) {
+        if (snapshot.sidebarView === null) this.closeSidebar();
+        else this.openSidebar(snapshot.sidebarView);
+      }
+    } catch (error) {
+      if (isAbort(error)) return;
+      this.reportError(
+        this.toErrorInfo(error, 'OFD_OPEN_FAILED', '切换本机字体后重开文档失败'),
+      );
+    }
+  }
+
+  /** 广播本地字体状态：一次变化只触发一次外部通知。 */
+  private publishLocalFontsStatus(): void {
+    const status = this.computeLocalFontsStatus();
+    const previous = this.localFontsPublished;
+    if (
+      previous &&
+      previous.supported === status.supported &&
+      previous.enabled === status.enabled &&
+      previous.permission === status.permission &&
+      previous.visible === status.visible &&
+      previous.loading === status.loading
+    ) {
+      return;
+    }
+    this.localFontsPublished = status;
+    this.emit('local-fonts:change', status);
+    for (const listener of [...this.localFontsListeners]) {
+      try {
+        listener(status);
+      } catch (error) {
+        this.warn(
+          UI_WARNING_CODES.W_UI_LISTENER,
+          `本地字体状态监听器抛出异常：${String(error)}`,
+        );
+      }
+    }
   }
 
   /**
