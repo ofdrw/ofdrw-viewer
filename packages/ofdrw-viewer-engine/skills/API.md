@@ -24,6 +24,7 @@
 | `document.pageCount` | `number` | 页数，打开后固定 |
 | `document.getPage(index)` | `Promise<OFDPage>` | 取页并解析页尺寸 |
 | `document.getPageInfos(options)` | `Promise<readonly PageInfo[]>` | 批量读页尺寸，不构建显示内容 |
+| `document.getFontResources(options?)` | `Promise<readonly DocumentFontResource[]>` | 文档声明的字体清单，零 IO、按 id 升序 |
 | `document.getOutline()` | `Promise<readonly OutlineNode[]>` | 大纲树 |
 | `document.getBookmarks()` | `Promise<readonly BookmarkItem[]>` | 书签 |
 | `document.getMetadata()` | `Promise<DocumentMetadata>` | 文档属性 |
@@ -927,6 +928,8 @@ interface OFDWarning {
 | `OFDPageApi` | 页面数据接口形状（与 `OFDPage` 声明合并） |
 | `PageInfoOptions` | `getPageInfos` 参数（`start/count/signal`） |
 | `PageInfo` | 页尺寸/页区域，mm |
+| `DocumentFontResource` | 文档声明的字体资源（`id/fontName/familyName/charset/serif/bold/italic/fixedSize/fontFile/documentLevel`） |
+| `DocumentFontResourcesOptions` | `getFontResources` 参数（`signal`） |
 | `DocumentPermissions` | 权限声明（只读，不做 DRM 强制） |
 | `AttachmentInfo` | 附件元信息（`size` 单位 byte，含 contentType/description/submissionDate/isEncrypted） |
 | `AttachmentSink` | 附件分块写出回调 |

@@ -510,12 +510,56 @@ export interface TextContentOptions {
 }
 
 /**
+ * 文档声明的字体资源（只读快照）。
+ *
+ * 数据来自打开阶段已解析的 `PublicRes.xml` / `DocumentRes.xml` 索引，读取时不访问容器、
+ * 不加载页面，也不反映后续渲染阶段的字体解析或回退结果。只包含文档级声明：页面级
+ * `PageRes.xml` 中的字体不进入本清单。
+ */
+export interface DocumentFontResource {
+  /** 资源 ID（OFD `Font@ID`，归一化后的十进制字符串）。 */
+  readonly id: string;
+  /** OFD `FontName`；文档声明的主字体名。 */
+  readonly fontName: string;
+  /** OFD `FamilyName`；文档未声明时省略该字段（不写 `undefined`）。 */
+  readonly familyName?: string;
+  /** 字符集声明：unicode / prc / big5 / symbol。 */
+  readonly charset: string;
+  /** 是否声明为衬线字体。 */
+  readonly serif: boolean;
+  /** 是否声明为粗体。 */
+  readonly bold: boolean;
+  /** 是否声明为斜体。 */
+  readonly italic: boolean;
+  /** 是否声明为等宽字体。 */
+  readonly fixedSize: boolean;
+  /** 包内字体文件路径；省略表示没有内嵌字体，需要宿主提供字体。 */
+  readonly fontFile?: string;
+  /** 是否属于文档级资源；来自 `PublicRes`/`DocumentRes` 时为 `true`。 */
+  readonly documentLevel: boolean;
+}
+
+/** 文档字体资源查询参数。 */
+export interface DocumentFontResourcesOptions {
+  /** 取消信号；已中止时以 `OFD_ABORTED` 拒绝。 */
+  signal?: AbortSignal;
+}
+
+/**
  * 文档级 UI API 形状。
  *
  * 仅声明签名；实现由 t67/t68/t70/t71 落到 `OFDDocument`。所有 IO 型方法
  * 在取消时以 `OFD_ABORTED` 拒绝，在文档关闭后以 `OFD_CLOSED` 拒绝。
  */
 export interface OFDDocumentApi {
+  /**
+   * 读取文档声明的字体资源清单；不加载页面、不解析字体。
+   *
+   * 用于宿主按文档实际字体声明准备替代字体（例如按需加载本机字体）。
+   */
+  getFontResources(
+    options?: DocumentFontResourcesOptions,
+  ): Promise<readonly DocumentFontResource[]>;
   /** 批量读取页面尺寸信息；不加载页面内容、字体或图片。 */
   getPageInfos(options?: PageInfoOptions): Promise<readonly PageInfo[]>;
   /** 读取大纲树；无大纲返回空数组。 */
