@@ -10,7 +10,6 @@
 [![macOS x86_64](https://img.shields.io/badge/macOS-x86__64-000000?logo=apple&logoColor=white)](https://github.com/ofdrw/ofdrw-viewer/releases)
 [![macOS ARM64](https://img.shields.io/badge/macOS-ARM64-000000?logo=apple&logoColor=white)](https://github.com/ofdrw/ofdrw-viewer/releases)
 [![Windows x86_64](https://img.shields.io/badge/Windows-x86__64-0078D4?logo=windows&logoColor=white)](https://github.com/ofdrw/ofdrw-viewer/releases)
-[![Windows ARM64](https://img.shields.io/badge/Windows-ARM64-0078D4?logo=windows&logoColor=white)](https://github.com/ofdrw/ofdrw-viewer/releases)
 
 ## ✨ 功能概述
 
