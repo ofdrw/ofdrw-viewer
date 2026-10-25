@@ -150,6 +150,7 @@
 - UI 数据：`PageInfo`、`TextContent`、`TextItem`、`TextChar`、`DocumentMetadata`、`OutlineNode`、`BookmarkItem`、`DocumentPermissions` 等。
 - 元数据扩展：`DocumentMetadata` 新增可选 `docUsage`、`docType`、`documentHeader`（`DocumentHeader`）、`packageInfo`（`OfdPackageInfo`）、`commonData`（`CommonDataSummary`）；子类型与 `DocumentPageArea` 一并导出。全部 optional，缺失即省略，均在 `open()` 阶段解析。
 - 附件扩展：`AttachmentInfo` 新增可选 `contentType`、`description`、`submissionDate`、`isEncrypted`；`OFDDocument` 新增 `getAttachmentByName`、`getAttachmentsByFormat`、`getAttachmentSize`、`saveAttachment`（签名与语义见 API.md §3.12.1），`AttachmentSink`/`AttachmentOperationOptions` 随之导出；`ResourceLimits` 新增可选 `maxAttachmentBytes`（byte，未配置回退 `maxEntryBytes`）。
+- 字体声明：`OFDDocument` 新增 `getFontResources(options?)`，返回 `readonly DocumentFontResource[]`，类型 `DocumentFontResourcesOptions` 一并导出；只读打开阶段已解析的资源索引（零额外 IO、按 `id` 升序、不含页级声明），不反映运行时字体回退结果。这是引擎唯一新增的字体相关公开 API，签名与语义见 API.md §3.12.2。
 - 渲染器与视口：`Canvas2DLike`、`CanvasRenderingContext2DLike`、`PageRenderParameters`、`Viewport`、`getPageViewport`、`getPageTransform`。
 - 页级内容过滤：`PageContentFilter`、`DrawLayerOptions`、`AnnotationType`、`KnownAnnotationType`、`KNOWN_ANNOTATION_TYPES`；由 `render`/`exportImage`/`getTextContent` 的 `contentFilter` 使用，白名单语义与不继承规则见 API.md §4.10。
 
@@ -176,6 +177,7 @@ crypto 可以重导出 engine 的 `ByteSource` 类型，但不得借此扩大 en
 - 功能键新增 `attachments`（依赖 `sidebar`，默认开启）：引擎无 `saveAttachment()` 时标记 `unsupported`，文档无附件时按 `document` 关闭。
 - `ViewerState.document` 字段不变（不承载权限/附件）；权限与附件通过 `getDocumentInfo()` 或既有 `getPermissions()` 读取。
 - 包根同时透出引擎的 `AttachmentInfo`、`DocumentPermissions`、`DocumentMetadata` 及其新增子类型。
+- 本机字体（`queryLocalFonts`）：`OFDViewer` 新增 `getLocalFontsStatus()`、`setLocalFontsEnabled(enabled)`、`onLocalFontsStatusChange(handler)`；构造选项 `fonts.localFonts`（五字段 `enabled`/`defaultEnabled`/`remember`/`maxFonts`/`consentText`，默认关闭）；`FontSource` 新增 `{ local }` 第五态；事件新增 `local-fonts:change`；侧栏新增 `settings` 视图（不新增功能键）。包根导出 `LocalFontsOptions`、`LocalFontStatus`、`LocalFontsStatus`、`LocalFontsChangeEvent`。默认关闭、需宿主配置 + 用户授权双重开启，失败静默回退，详见 [本地字体加载方案设计](本地字体加载方案设计.md) 与 UI API.md「本机字体」。
 
 UI 的包根导入会安装 UI shell，并加载文本、导航、签章、打印、导出等副作用模块；React/Vue/Web Component 入口复用同一 `OFDViewer` 内核，不建立第二套文档生命周期。
 
@@ -244,7 +246,7 @@ CLI 只提供可执行文件 `ofdrw-viewer-cli`，不导出库 API。命令、�
 - 需要按需读取字体时，宿主实现 `FontProvider.match()`，在 `match()` 内读取并返回 `FontInput`；这是 engine 唯一的字体 I/O 入口。
 - UI/CLI 负责把本地目录、系统字体或宿主资源读成字节后注入；engine 不扫描文件系统、不解析字体 URL。
 - 字体匹配、默认字体优先级、缺字回退和字重/字形策略以 [渲染字体缺省方案设计](渲染字体缺省方案设计.md) 为准；engine 不使用 Canvas `fillText` 作为生产文本路径。
-- UI 层的字体来源（`data`/`url`/`path`/`filePath`）由 UI 读取成字节后注入，URL 读取口径与失败降级以 [字体配置方案设计](字体配置方案设计.md) 为准。
+- UI 层的字体来源（`data`/`url`/`path`/`filePath`/`local`，共五态）由 UI 读取成字节后注入，URL 读取口径与失败降级以 [字体配置方案设计](字体配置方案设计.md) 为准；`local` 为浏览器本机字体来源，默认关闭、需宿主配置与用户授权，边界见 [本地字体加载方案设计](本地字体加载方案设计.md)。
 
 ### 7.5.1 手势缩放
 
