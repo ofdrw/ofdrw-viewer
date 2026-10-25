@@ -97,6 +97,18 @@ export interface CanvasRenderingContext2DLike {
    * @param dy 目标左上角 y，设备像素。
    */
   putImageData?(data: ImageDataLike, dx: number, dy: number): void;
+  /**
+   * 读取 RGBA8 像素（可选）；签章印章重采样需要把临时画布像素取回。
+   *
+   * 缺失时引擎跳过印章重采样并按原始尺寸绘制，最小 Canvas mock 不强制实现。
+   *
+   * @param sx 源左上角 x，设备像素。
+   * @param sy 源左上角 y，设备像素。
+   * @param sw 源宽，设备像素。
+   * @param sh 源高，设备像素。
+   * @returns RGBA8 像素缓冲。
+   */
+  getImageData?(sx: number, sy: number, sw: number, sh: number): ImageDataLike;
   drawImage(image: CanvasImageSourceLike, dx: number, dy: number, dw?: number, dh?: number): void;
   createLinearGradient(x0: number, y0: number, x1: number, y1: number): CanvasGradientLike;
   createRadialGradient(
@@ -119,6 +131,11 @@ export interface CanvasRenderingContext2DLike {
   lineJoin: string;
   miterLimit: number;
   imageSmoothingEnabled: boolean;
+  /**
+   * 平滑质量档位（可选）；`'high'` 让宿主使用面积采样/双三次，避免细笔画被压成
+   * 稀疏点阵。最小 Canvas mock 可不实现。
+   */
+  imageSmoothingQuality?: 'low' | 'medium' | 'high';
 }
 
 /** 合成模式；与 Canvas `globalCompositeOperation` 的可用集合保持一致。 */
@@ -167,6 +184,16 @@ export interface Renderer {
   beginPage(context: CanvasRenderingContext2DLike, viewport: Viewport): void;
   /** 结束一页渲染，恢复到进入前状态。 */
   endPage(): void;
+  /**
+   * 用渲染器自持的临时画布开始一页（可选）。
+   *
+   * 签章印章重采样需要把像素读回；画布必须由渲染器持有，不能在关闭时被释放。
+   * 未实现时该渲染器不做印章重采样，按原始尺寸绘制。
+   *
+   * @param viewport 目标像素尺寸与 DPI。
+   * @returns 该画布的 2D 上下文。
+   */
+  beginPageFresh?(viewport: Viewport): CanvasRenderingContext2DLike;
 
   save(): void;
   restore(): void;

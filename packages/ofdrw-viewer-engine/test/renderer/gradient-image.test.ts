@@ -280,8 +280,9 @@ describe('H5Canvas2DRenderer 图像', () => {
     const mask = renderer.createImage({ width: 2, height: 2, data: maskData });
 
     renderer.drawImage(image, [10, 0, 0, 10, 0, 0], 1, true, mask);
-    expect(readPixel(context, 2, 5)).toEqual([255, 0, 0, 255]);
-    expect(readPixel(context, 7, 5)[3]).toBe(0);
+    // 蒙版边缘按面积采样平滑过渡：左半区不透明区域 alpha 保持 255，右半区完全透明。
+    expect(readPixel(context, 0, 5)).toEqual([255, 0, 0, 255]);
+    expect(readPixel(context, 8, 5)[3]).toBe(0);
     // 蒙版合成产生的临时画布在绘制后销毁；图像句柄的 scratch 到 close 才释放。
     const compositeScratch = factory.created[factory.created.length - 1]!;
     expect(compositeScratch.width).toBe(0);

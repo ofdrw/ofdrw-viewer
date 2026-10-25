@@ -6,7 +6,9 @@
  */
 
 import type { DisplayList } from '../common/display-list';
-import type { Box, DecodedImage, PaintSpec } from '../common/types';
+import type { Box, DecodedImage, ImageDataLike, PaintSpec } from '../common/types';
+import type { CanvasRenderingContext2DLike, Renderer } from '../renderer/types';
+import type { DeferredImagePlan } from './object';
 import type { FontFaceSet } from '../font/types';
 import type {
   Annotation,
@@ -30,7 +32,7 @@ import type { ResolvedStyle } from '../style/types';
 import type { PaintBinder } from './paint';
 import type { WarningHandler } from '../warnings';
 import { OFDError } from '../errors';
-import { normalizeBox } from '../common/matrix';
+import { IDENTITY_MATRIX, normalizeBox } from '../common/matrix';
 import { createDefaultStyle } from '../style/defaults';
 import { DrawParamGraph } from '../style/draw-param';
 import { StyleResolver } from '../style/resolve';
@@ -39,10 +41,11 @@ import {
   buildBlockDisplayList,
   compositeBlockCacheKey,
   createDeferredImageHandle,
+  getDeferredImagePlan,
   markBlockDynamic,
   setBlockStyles,
 } from './object';
-import { DisplayListBuilder, materializeDisplayListImages } from './display-list';
+import { DisplayListBuilder, materializeDisplayListImages, replayDisplayList } from './display-list';
 import type { DisplayListImageResolver } from './display-list';
 import { createPaintBinder } from './paint';
 import { buildAnnotationBlocks } from './annotation';
@@ -101,6 +104,18 @@ export interface PreparePageLoader {
    */
   loadSignatureStamps?(page: PageModel): Promise<readonly SignatureStampSource[]>;
   /**
+   * 创建用于签章印章在**输出精度**下重采样的渲染器（自持同尺寸画布）。
+   *
+   * 可选：提供时启用重采样；渲染器需支持 `beginPageFresh`，否则按原始尺寸绘制。
+   * 宿主应保证同一输出精度内复用同一块临时画布：Node 侧 Skia 反复新建同尺寸画布
+   * 会让图片过滤退化为最近邻，二值掩码章的细笔画随之被压淡。
+   *
+   * @param width 画布宽，像素。
+   * @param height 画布高，像素。
+   * @returns 可自持临时画布的渲染器。
+   */
+  createResampleRenderer?(width: number, height: number): Renderer;
+  /**
    * 解码 Seal.esl 中的印章图片字节。
    *
    * 可选：只有存在 `loadSignatureStamps` 时使用。宿主图片解码器（PNG/GIF/JPG/BMP）
@@ -146,6 +161,8 @@ export interface SignatureBlock {
   space: { width: number; height: number };
   /** 块本地显示列表：可选裁剪 + 图片绘制。 */
   displayList: DisplayList;
+  /** 已解码印章图片；准备阶段按输出精度重采样后替换。 */
+  image: DecodedImage;
 }
 
 /** 准备阶段输入。 */
@@ -583,7 +600,11 @@ export async function preparePage(input: PreparePageInput): Promise<PreparedPage
     },
   });
   preparedPage.annotationBlocks = annotationBlocks;
-  bundle.signatureBlocks = decodedSignatures.map((signature) => buildSignatureBlock(signature));
+  let signatureBlocks = decodedSignatures.map((signature) => buildSignatureBlock(signature));
+  if (signatureBlocks.length > 0) {
+    signatureBlocks = await materializeSignatureImages(input, signatureBlocks, loader);
+  }
+  bundle.signatureBlocks = signatureBlocks;
 
   return bundle;
 }
@@ -701,17 +722,253 @@ function buildSignatureBlock(source: DecodedSignatureStamp): SignatureBlock {
     visible: true,
     resourceId: source.imageResourceId,
   };
+  // 印章合成模式按图片内容判定：含透明像素（二值 alpha 掩码章、带白底透明的印章）
+  // 用 source-over，只在非透明像素处叠加红色；全不透明白底章才用 multiply，
+  // 靠白色分量压住下方文字/表格，避免整块白底盖字。
+  const blendMode = usesMultiplyBlend(source.image) ? 'multiply' : undefined;
   const handle = createDeferredImageHandle(imageObject, source.image, 'main', 'never');
-  // 签章 Seal 多为全不透明白底 PNG；白底必须 multiply，避免盖住下方文字/表格。
-  builder.drawImage(handle, [space.width, 0, 0, space.height, 0, 0], 1, true, undefined, 'multiply');
+  builder.drawImage(handle, [space.width, 0, 0, space.height, 0, 0], 1, true, undefined, blendMode);
   return {
     id: source.blockId,
     signatureId: source.signatureId,
     stamp,
     boundary,
     space,
+    image: source.image,
     displayList: builder.build(),
   };
+}
+
+/**
+ * 判断印章图片是否使用 `multiply` 合成。
+ *
+ * 只有“全不透明白底章”才需要 multiply：靠白色分量压住下方文字/表格，避免整块白底
+ * 盖字。二值 alpha 掩码章（alpha 仅 0/255、非透明像素为单一颜色的常见电子章）与一般
+ * 带透明通道的印章应走 source-over，否则缩放产生的半透明边缘会被乘成浅粉、章面发白。
+ * 平台源图（ImageBitmap/Node Image）无法同步读取像素，按白底处理以保持既有行为。
+ *
+ * @param image 解码图片。
+ * @returns 需要 multiply 时返回 true。
+ */
+function usesMultiplyBlend(image: DecodedImage): boolean {
+  const data = image.data;
+  if (!isRgbaData(data)) return true;
+  const pixels = data.data;
+  let transparent = 0;
+  let total = 0;
+  const rgb = new Set<number>();
+  for (let index = 0; index < pixels.length; index += 4) {
+    total += 1;
+    const alpha = pixels[index + 3]!;
+    if (alpha === 0) {
+      transparent += 1;
+      continue;
+    }
+    if (alpha !== 255) return false;
+    if (rgb.size <= 1) rgb.add(((pixels[index]! << 16) | (pixels[index + 1]! << 8) | pixels[index + 2]!) >>> 0);
+  }
+  // 二值 alpha 掩码章：只有全透明与完全不透明两档，且非透明像素为单一颜色。
+  if (transparent > 0) return rgb.size > 1 || total === 0;
+  // 全不透明白底章（含大面积纯白的扫描章）继续用 multiply。
+  return true;
+}
+
+/**
+ * 判断解码图片是否携带同步可读的 RGBA 像素。
+ *
+ * @param data 解码图片的 data 字段。
+ * @returns 为 RGBA 像素缓冲时返回 true。
+ */
+function isRgbaData(data: DecodedImage['data']): data is ImageDataLike {
+  const candidate = data as Partial<ImageDataLike> | null;
+  return (
+    typeof candidate === 'object' &&
+    candidate !== null &&
+    typeof candidate.width === 'number' &&
+    typeof candidate.height === 'number' &&
+    candidate.data instanceof Uint8ClampedArray
+  );
+}
+
+/**
+ * 把签章块中的印章图片按输出精度重采样一次。
+ *
+ * 签章块把印章画到完整 StampAnnot Boundary，由画布在页面绘制时双线性缩放；对只有
+ * 0/255 两档 alpha 的掩码印章，方章框线、文字这类 1px 细笔画落到亚像素后被压成
+ * 稀疏的低 alpha 点，远比参考 PDF（面积加权缩放）浅。这里先在独立画布上把印章缩放
+ * 到目标像素尺寸，页面绘制阶段再 1:1 贴图，等价于先做一次面积加权下采样。目标尺寸
+ * 只由 Boundary 与输出精度决定，与印章原始尺寸无关，因此所有签章统一处理；临时画布
+ * 中的混合与页面一致（含透明像素用 source-over，全不透明白底章用 multiply）。
+ *
+ * @param input 准备阶段输入（取输出精度与 warning 回调）。
+ * @param blocks 待重采样的签章块。
+ * @param loader 准备阶段加载器（取临时渲染器与画布工厂）。
+ * @returns 印章图片已换成目标像素尺寸的新签章块。
+ */
+async function materializeSignatureImages(
+  input: PreparePageInput,
+  blocks: readonly SignatureBlock[],
+  loader: PreparePageLoader,
+): Promise<SignatureBlock[]> {
+  const { createResampleRenderer } = loader;
+  if (blocks.length === 0 || !createResampleRenderer) return [...blocks];
+  const dpi = input.dpi ?? 96;
+  const result: SignatureBlock[] = [];
+  for (const block of blocks) {
+    if (!findDeferredImagePlan(block.displayList)) {
+      result.push(block);
+      continue;
+    }
+    const width = Math.max(1, Math.ceil((block.space.width * dpi) / 25.4));
+    const height = Math.max(1, Math.ceil((block.space.height * dpi) / 25.4));
+    const resampled = await resampleSignatureImage(block, width, height, dpi, loader);
+    if (resampled) result.push({ ...block, image: resampled });
+    else result.push(block);
+  }
+  if (result.some((block, index) => block.image === blocks[index]!.image)) {
+    input.onWarning?.({
+      code: 'W_UNSUPPORTED_PAINT',
+      message: '签章印章按输出精度重采样失败，已按原始尺寸绘制',
+    });
+  }
+  return result;
+}
+
+/**
+ * 把单个签章块的印章图片准备成输出像素尺寸。
+ *
+ * 签章块把印章画到完整 StampAnnot Boundary；页面绘制前先在临时画布上按输出精度
+ * 绘制一次（保留 StampAnnot.Clip 裁剪），页面阶段再 1:1 贴图。这样印章的高精度
+ * 缩放不依赖页面画布的缩放实现，二值 alpha 掩码章的细笔画也不会在页面阶段被压淡。
+ *
+ * @param block 待准备的签章块。
+ * @param width 目标宽，像素。
+ * @param height 目标高，像素。
+ * @param dpi 输出精度，单位 DPI。
+ * @param loader 准备阶段加载器（取重采样渲染器工厂）。
+ * @returns 输出尺寸的印章图片；宿主不支持创建画布/读像素时返回 undefined。
+ */
+function resampleSignatureImage(
+  block: SignatureBlock,
+  width: number,
+  height: number,
+  dpi: number,
+  loader: PreparePageLoader,
+): DecodedImage | undefined {
+  if (!findDeferredImagePlan(block.displayList) || !loader.createResampleRenderer) {
+    return undefined;
+  }
+  return renderSealFrame(block.displayList, width, height, dpi, loader.createResampleRenderer);
+}
+
+/**
+ * 开一块临时画布执行绘制并读回 RGBA 像素。
+ *
+ * @param width 画布宽，像素。
+ * @param height 画布高，像素。
+ * @param dpi 输出精度，单位 DPI。
+ * @param createRenderer 创建自持画布的渲染器工厂。
+ * @param draw 在画布上绘制并返回结果（可选）。
+ * @returns 绘制结果；宿主缺少画布/读像素能力或绘制抛错时返回 undefined。
+ */
+function withTemporaryCanvas<T>(
+  width: number,
+  height: number,
+  dpi: number,
+  createRenderer: NonNullable<PreparePageLoader['createResampleRenderer']>,
+  draw: (renderer: Renderer, context: CanvasRenderingContext2DLike) => T | undefined,
+): T | undefined {
+  const renderer = createRenderer(width, height);
+  if (!renderer.beginPageFresh) {
+    renderer.close();
+    return undefined;
+  }
+  try {
+    const context = renderer.beginPageFresh({ width, height, dpi });
+    try {
+      return draw(renderer, context);
+    } finally {
+      renderer.endPage();
+    }
+  } catch {
+    return undefined;
+  } finally {
+    renderer.close();
+  }
+}
+
+/**
+ * 从画布读回 RGBA 像素。
+ *
+ * @param context 画布 2D 上下文。
+ * @param width 宽，像素。
+ * @param height 高，像素。
+ * @returns 解码图片；宿主不支持 `getImageData` 时返回 undefined。
+ */
+function readCanvasPixels(
+  context: CanvasRenderingContext2DLike,
+  width: number,
+  height: number,
+): DecodedImage | undefined {
+  const read = context.getImageData;
+  if (typeof read !== 'function') return undefined;
+  const pixels = read.call(context, 0, 0, width, height);
+  return {
+    width,
+    height,
+    kind: 'imagedata',
+    data: {
+      width,
+      height,
+      data:
+        pixels.data instanceof Uint8ClampedArray
+          ? pixels.data
+          : new Uint8ClampedArray(pixels.data),
+    },
+  };
+}
+
+/**
+ * 在临时画布上把签章显示列表（裁剪 + 图片）绘制到输出像素尺寸并读回像素。
+ *
+ * @param displayList 签章显示列表。
+ * @param width 目标宽，像素。
+ * @param height 目标高，像素。
+ * @param dpi 输出精度，单位 DPI。
+ * @param createRenderer 创建自持画布的渲染器工厂。
+ * @returns 重采样后的图片；宿主不支持创建画布/读像素时返回 undefined。
+ */
+function renderSealFrame(
+  displayList: DisplayList,
+  width: number,
+  height: number,
+  dpi: number,
+  createRenderer: NonNullable<PreparePageLoader['createResampleRenderer']>,
+): DecodedImage | undefined {
+  if (!findDeferredImagePlan(displayList)) return undefined;
+  return withTemporaryCanvas(width, height, dpi, createRenderer, (renderer, context) => {
+    renderer.setTransform(IDENTITY_MATRIX);
+    replayDisplayList(renderer, displayList, (item) => {
+      const plan = getDeferredImagePlan(item);
+      return plan ? renderer.createImage(plan.image) : item;
+    });
+    return readCanvasPixels(context, width, height);
+  });
+}
+
+/**
+ * 取签章显示列表中第一个可物化的印章图片。
+ *
+ * @param list 签章块显示列表。
+ * @returns 延迟图片计划；没有可重采样图片时返回 undefined。
+ */
+function findDeferredImagePlan(list: DisplayList): DeferredImagePlan | undefined {
+  for (const command of list.commands) {
+    if (command.op !== 'drawImage') continue;
+    const plan = getDeferredImagePlan(command.image);
+    if (plan) return plan;
+  }
+  return undefined;
 }
 
 /**
@@ -828,3 +1085,4 @@ export function getPreparedPatternTile(cell: PageBlock): DisplayList | undefined
 export function clearPreparedPatternTile(cell: PageBlock): void {
   PATTERN_TILES.delete(cell);
 }
+

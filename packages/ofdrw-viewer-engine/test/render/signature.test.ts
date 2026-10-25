@@ -53,14 +53,16 @@ function scope(input: { images?: ImageResource[] } = {}): PageResourceScope {
   };
 }
 
-/** 构造 2×2 的已解码图片。 */
-function decoded(): DecodedImage {
-  return {
-    width: 2,
-    height: 2,
-    kind: 'imagedata',
-    data: { width: 2, height: 2, data: new Uint8ClampedArray(16) },
-  };
+/**
+ * 构造 2×2 的已解码图片。
+ *
+ * `opaqueHidden` 生成“全不透明白底章”（用作签章 Seal）：全 0 的 RGBA 含透明像素，
+ * 会被判定为掩码章；这里填满不透明黑，模拟不带 alpha 的常见签章图。
+ */
+function decoded(opaqueHidden = false): DecodedImage {
+  const data = new Uint8ClampedArray(16);
+  if (opaqueHidden) data.fill(255);
+  return { width: 2, height: 2, kind: 'imagedata', data: { width: 2, height: 2, data } };
 }
 
 /** 构造 Seal 图片元数据。 */
@@ -103,7 +105,7 @@ function loader(input: {
     },
     async decodeSeal(sealImage) {
       if (input.decode) return input.decode(sealImage);
-      return decoded();
+      return decoded(true);
     },
   };
 }
@@ -137,6 +139,7 @@ describe('签章渲染', () => {
       expect(draw && draw.op === 'drawImage' ? draw.transform : null).toEqual([40, 0, 0, 40, 0, 0]);
       const imageCommand = draw as { image: { width: number; height: number }; blendMode?: string };
       expect(imageCommand.image).toMatchObject({ width: 2, height: 2 });
+      // 默认解码图全部不透明（全透明白底章）→ 仍用 multiply，避免白底盖住下方内容。
       expect(imageCommand.blendMode).toBe('multiply');
       expect(isDeferredImageHandle(imageCommand.image as never)).toBe(true);
     }
@@ -160,6 +163,52 @@ describe('签章渲染', () => {
       expect.objectContaining({ width: 2, height: 2 }),
       [40, 0, 0, 40, 0, 0],
     ]);
+  });
+
+  it('含透明像素的印章改用 source-over，白底章保持 multiply（BUG-V2-04）', async () => {
+    const transparent = await preparePage({
+      page: page(),
+      resources: scope(),
+      loader: loader({
+        stamps: [{ signatureId: 's1', stamp: stamp('s1a', { x: 0, y: 0, w: 10, h: 10 }), seal: seal('GIF') }],
+        decode: async () => ({
+          width: 2,
+          height: 2,
+          kind: 'imagedata',
+          // 二值 alpha 掩码章：一半透明、一半纯红。
+          data: {
+            width: 2,
+            height: 2,
+            data: new Uint8ClampedArray([
+              255, 0, 0, 255, 0, 0, 0, 0,
+              255, 0, 0, 255, 0, 0, 0, 0,
+            ]),
+          },
+        }),
+      }),
+    });
+    const transparentDraw = transparent.signatureBlocks[0]!.displayList.commands.find(
+      (command) => command.op === 'drawImage',
+    ) as { op: 'drawImage'; blendMode?: string } | undefined;
+    expect(transparentDraw?.blendMode).toBeUndefined();
+
+    const opaque = await preparePage({
+      page: page(),
+      resources: scope(),
+      loader: loader({
+        stamps: [{ signatureId: 's2', stamp: stamp('s2a', { x: 0, y: 0, w: 10, h: 10 }), seal: seal('PNG') }],
+        decode: async () => ({
+          width: 2,
+          height: 2,
+          kind: 'imagedata',
+          data: { width: 2, height: 2, data: new Uint8ClampedArray(16).fill(255) },
+        }),
+      }),
+    });
+    const opaqueDraw = opaque.signatureBlocks[0]!.displayList.commands.find(
+      (command) => command.op === 'drawImage',
+    ) as { op: 'drawImage'; blendMode?: string } | undefined;
+    expect(opaqueDraw?.blendMode).toBe('multiply');
   });
 
   it('RecordingRenderer：签章 drawImage 带 multiply，普通图片保持默认', async () => {
