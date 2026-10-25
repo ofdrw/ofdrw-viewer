@@ -961,18 +961,21 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       this.maybeAutoVerify();
       // 首次打开时声明未知，读到这里才知道是否要用本机字体。需要时在本轮收尾处补一次
       // 重开：重开会重建字节源（两次打开不能共享同一个已关闭的源），并恢复阅读位置。
-      if (!this.localFontsReopening && this.controller.needsLocalFontsReopen()) {
+      const needsReopen = !this.localFontsReopening && this.controller.needsLocalFontsReopen();
+      if (needsReopen) {
         this.localFontsReopening = true;
         try {
           await this.open(this.lastOpenSource ?? resolved);
         } finally {
           this.localFontsReopening = false;
         }
-        return;
+        // 补重开后由内层 `open()` 自己完成权限刷新与确认框；这里不再重复，也不能提前
+        // return——否则「首屏补重开」与「授权确认」两条路径会互斥。
+      } else {
+        // 设计 §4.1：先按原有方式打开文档，文档就绪后再询问是否使用本机字体。
+        // 权限态只做纯查询（不申请），据此决定是否弹确认框。
+        void this.refreshLocalFontsPermission().then(() => this.maybePromptLocalFontsConsent());
       }
-      // 设计 §4.1：先按原有方式打开文档，文档就绪后再询问是否使用本机字体。
-      // 权限态只做纯查询（不申请），据此决定是否弹确认框。
-      void this.refreshLocalFontsPermission().then(() => this.maybePromptLocalFontsConsent());
     } catch (error) {
       if (token !== this.openToken) {
         // 已有更新的 open 接管 loading，旧操作只做容器/字节源清理。

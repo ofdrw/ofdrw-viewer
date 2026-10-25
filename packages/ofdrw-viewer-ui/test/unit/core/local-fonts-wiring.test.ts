@@ -87,12 +87,20 @@ function stubLocalFonts(permission: 'granted' | 'prompt' = 'granted') {
     })),
   );
   vi.stubGlobal('queryLocalFonts', query);
+  // 与真实 Chrome 一致：`queryLocalFonts` 首次成功调用后权限变为 granted。
+  let current = permission;
+  const tracked = vi.fn(async (options?: { postscriptNames?: readonly string[] }) => {
+    const result = await query(options);
+    current = 'granted';
+    return result;
+  });
+  vi.stubGlobal('queryLocalFonts', tracked);
   Object.defineProperty(navigator, 'permissions', {
     configurable: true,
     writable: true,
-    value: { query: async () => ({ state: permission, onchange: null }) },
+    value: { query: async () => ({ state: current, onchange: null }) },
   });
-  return query;
+  return tracked;
 }
 
 /** 等待若干宏任务。 */
@@ -206,6 +214,37 @@ describe('本机字体接线（走 viewer 公开入口）', () => {
     expect(query, '关闭开关后不得查询').not.toHaveBeenCalled();
     const last = engineMocks.open.mock.calls.at(-1)?.[0] as OFDOpenOptions | undefined;
     expect(defaultFamilies(last)).not.toContain('宋体');
+    viewer.destroy();
+  });
+});
+
+describe('授权后补注入（prompt → 允许）', () => {
+  it('点「允许」后重开会带上本机字体（不再需要首屏就已授权）', async () => {
+    const query = stubLocalFonts('prompt');
+    const viewer = new OFDViewer({
+      container: document.body,
+      source: new ArrayBuffer(8),
+      crypto: { enabled: false },
+      fonts: { localFonts: { enabled: true, defaultEnabled: true } },
+    } as never);
+    await viewer.ready;
+    await flush();
+
+    // 首屏：权限 prompt，应有确认框且尚未注入本机字体。
+    const dialog = document.querySelector<HTMLElement>('.ofd-dialog');
+    expect(dialog, '首屏应弹确认框').not.toBeNull();
+    const families: string[] = engineMocks.open.mock.calls.map((call) =>
+      defaultFamilies(call[0] as OFDOpenOptions).join(','),
+    );
+    expect(families.some((value) => value.includes('宋体')), '授权前不注入').toBe(false);
+
+    // 点击「允许」：授权 + 重开，重开时应带上本机字体。
+    (dialog?.querySelector('.ofd-dialog__action--primary') as HTMLButtonElement).click();
+    await flush(20);
+
+    expect(query.mock.calls.length, '应有授权查询').toBeGreaterThan(0);
+    const afterAllow = engineMocks.open.mock.calls.at(-1)?.[0] as OFDOpenOptions | undefined;
+    expect(defaultFamilies(afterAllow), '授权后重开应注入本机字体').toContain('宋体');
     viewer.destroy();
   });
 });
