@@ -3,7 +3,7 @@ import { ZipReader } from '../../src/container/zip-reader';
 import { ArrayBufferSource } from '../../src/container/byte-source';
 import { OFDError } from '../../src/errors';
 import type { OFDWarning } from '../../src/warnings';
-import { buildZip, CountingSource } from './zip-fixture';
+import { buildZip, CountingSource, wrapMultipart } from './zip-fixture';
 
 /** 期望抛指定错误码。 */
 async function expectCode(promise: Promise<unknown>, code: string): Promise<void> {
@@ -277,6 +277,27 @@ describe('container/zip-reader', () => {
     const zip = buildZip([{ name: 'a.txt', data: 'payload', crcOverride: 1 }]);
     const reader = await ZipReader.open(new ArrayBufferSource(zip));
     await expect(reader.readEntry('a.txt')).resolves.toBeInstanceOf(Uint8Array);
+  });
+
+  it('BUG-V2-01：包体前带 MIME 包装、EOCD 后带结束边界时仍能打开并读取条目', async () => {
+    const zip = buildZip([
+      { name: 'OFD.xml', data: '<OFD/>', method: 8 },
+      { name: 'Doc_0/Document.xml', data: '<Document/>', method: 8 },
+      { name: 'Doc_0/Res/big.bin', data: new Uint8Array(2048).fill(9), method: 0 },
+    ]);
+    const wrapped = wrapMultipart(zip);
+    const reader = await ZipReader.open(new ArrayBufferSource(wrapped));
+    expect(reader.listEntries().map((entry) => entry.name)).toEqual([
+      'OFD.xml',
+      'Doc_0/Document.xml',
+      'Doc_0/Res/big.bin',
+    ]);
+    expect(new TextDecoder().decode(await reader.readEntry('OFD.xml'))).toBe('<OFD/>');
+    expect(new TextDecoder().decode(await reader.readEntry('Doc_0/Document.xml'))).toBe(
+      '<Document/>',
+    );
+    expect((await reader.readEntry('Doc_0/Res/big.bin')).byteLength).toBe(2048);
+    reader.close();
   });
 
   it('getEntry 对非法路径返回 undefined 而不抛错', async () => {

@@ -101,6 +101,13 @@ interface DirectoryInfo {
   entriesTotal: number;
   cdOffset: number;
   cdSize: number;
+  /**
+   * 中央目录实际偏移与归档声明偏移之差，byte。
+   *
+   * 正常 ZIP 中归档从文件偏移 0 开始，该值为 0；当包体前带 MIME 包装等前缀
+   * 数据时，归档内记录的全部偏移都相对包体起点，须加上该值才能定位真实字节。
+   */
+  base: number;
 }
 
 /**
@@ -289,15 +296,20 @@ export class ZipReader {
     const tail = await this.readExact(tailStart, tailLength, 'ZIP 尾部');
     const tailView = new DataView(tail.buffer, tail.byteOffset, tail.byteLength);
 
+    // 优先取“注释恰好到文件尾”的标准 EOCD；尾部残留数据（如 MIME 结束边界）时，
+    // 回退到能让声明长度落在文件内的最后一个候选。
     let eocdIndex = -1;
+    let fallbackIndex = -1;
     for (let index = tail.length - EOCD_SIZE; index >= 0; index -= 1) {
       if (tailView.getUint32(index, true) !== EOCD_SIGNATURE) continue;
-      const commentLength = tailView.getUint16(index + 20, true);
-      if (index + EOCD_SIZE + commentLength === tail.length) {
+      const end = index + EOCD_SIZE + tailView.getUint16(index + 20, true);
+      if (end === tail.length) {
         eocdIndex = index;
         break;
       }
+      if (fallbackIndex < 0 && end < tail.length) fallbackIndex = index;
     }
+    if (eocdIndex < 0) eocdIndex = fallbackIndex;
     if (eocdIndex < 0) {
       throw new OFDError('OFD_INVALID_PACKAGE', '未找到 ZIP EOCD');
     }
@@ -315,9 +327,16 @@ export class ZipReader {
       cdSize === UINT32_MAX ||
       cdOffset === UINT32_MAX;
 
-    let resolved: DirectoryInfo = { entriesTotal, cdOffset, cdSize };
+    const eocdAbsoluteOffset = tailStart + eocdIndex;
+    let resolved: DirectoryInfo = { entriesTotal, cdOffset, cdSize, base: 0 };
+    // ZIP64 EOCD record 紧邻 ZIP64 locator/EOCD 之前，其绝对偏移可直接反推；
+    // 不使用归档内自报的偏移，避免在带前缀的包体中失效。
     if (needsZip64) {
-      resolved = await this.readZip64DirectoryInfo(tailStart + eocdIndex);
+      // 分卷判定必须使用 32 位 EOCD 自身字段，ZIP64 路径下其值为哨兵。
+      if (diskNumber !== 0 || cdStartDisk !== 0) {
+        throw new OFDError('OFD_INVALID_PACKAGE', '不支持分卷 ZIP');
+      }
+      resolved = await this.readZip64DirectoryInfo(eocdAbsoluteOffset);
     }
 
     if (diskNumber !== 0 || cdStartDisk !== 0) {
@@ -329,11 +348,17 @@ export class ZipReader {
         `ZIP 条目数 ${resolved.entriesTotal} 超过限制 ${this.limits.maxEntries}`,
       );
     }
-    if (
-      resolved.cdOffset < 0 ||
-      resolved.cdSize < 0 ||
-      resolved.cdOffset + resolved.cdSize > this.source.size
-    ) {
+    if (resolved.cdOffset < 0 || resolved.cdSize < 0) {
+      throw new OFDError('OFD_INVALID_PACKAGE', 'ZIP 中央目录区间越界');
+    }
+
+    // 中央目录按“归档内声明偏移 + base”定位。标准 ZIP 中中央目录紧邻 EOCD，
+    // base 由该相邻关系反推；ZIP64 记录位于 EOCD 之前时，base 已在 ZIP64 解析中算出。
+    if (!needsZip64) {
+      resolved.base = eocdAbsoluteOffset - resolved.cdOffset - resolved.cdSize;
+    }
+    const { base } = resolved;
+    if (base < 0 || resolved.cdOffset + base + resolved.cdSize > this.source.size) {
       throw new OFDError('OFD_INVALID_PACKAGE', 'ZIP 中央目录区间越界');
     }
     return resolved;
@@ -342,8 +367,11 @@ export class ZipReader {
   /**
    * 解析 ZIP64 EOCD locator/record。
    *
+   * 归档声明偏移均以包体起点为原点，包体前带包装数据时不可直接使用；
+   * 此处按 locator/EOCD 与 ZIP64 record 的固定相邻关系定位 record。
+   *
    * @param eocdAbsoluteOffset EOCD 在文件中的绝对偏移，byte。
-   * @returns 中央目录信息。
+   * @returns 中央目录信息；cdOffset 仍为归档声明值，base 为包体起点偏移，byte。
    */
   private async readZip64DirectoryInfo(eocdAbsoluteOffset: number): Promise<DirectoryInfo> {
     if (eocdAbsoluteOffset < ZIP64_LOCATOR_SIZE) {
@@ -363,10 +391,8 @@ export class ZipReader {
     if (locatorDisk !== 0 || totalDisks > 1) {
       throw new OFDError('OFD_INVALID_PACKAGE', '不支持分卷 ZIP64');
     }
-    const recordOffset = readUint64(locatorView, 8, 'ZIP64 EOCD 偏移');
-    if (recordOffset + ZIP64_EOCD_SIZE > this.source.size) {
-      throw new OFDError('OFD_INVALID_PACKAGE', 'ZIP64 EOCD 区间越界');
-    }
+    const recordOffset = eocdAbsoluteOffset - ZIP64_LOCATOR_SIZE - ZIP64_EOCD_SIZE;
+    if (recordOffset < 0) throw new OFDError('OFD_INVALID_PACKAGE', 'ZIP64 EOCD 区间越界');
     const record = await this.readExact(recordOffset, ZIP64_EOCD_SIZE, 'ZIP64 EOCD');
     const view = new DataView(record.buffer, record.byteOffset, record.byteLength);
     if (view.getUint32(0, true) !== ZIP64_EOCD_SIGNATURE) {
@@ -384,7 +410,15 @@ export class ZipReader {
     const entriesTotal = readUint64(view, 32, 'ZIP64 条目数');
     const cdSize = readUint64(view, 40, 'ZIP64 中央目录大小');
     const cdOffset = readUint64(view, 48, 'ZIP64 中央目录偏移');
-    return { entriesTotal, cdOffset, cdSize };
+    const span = recordSize + 12;
+    const recordStart = eocdAbsoluteOffset - ZIP64_LOCATOR_SIZE - span;
+    if (recordStart !== recordOffset) {
+      throw new OFDError('OFD_INVALID_PACKAGE', 'ZIP64 EOCD 记录长度与相邻结构不一致');
+    }
+    // 中央目录实际起点 = record 实际起点 − 中央目录长度；与其声明偏移之差即包体起点。
+    const base = recordOffset - cdSize - cdOffset;
+    if (base < 0) throw new OFDError('OFD_INVALID_PACKAGE', 'ZIP 中央目录区间越界');
+    return { entriesTotal, cdOffset, cdSize, base };
   }
 
   /**
@@ -395,7 +429,7 @@ export class ZipReader {
   private async readCentralDirectory(directory: DirectoryInfo): Promise<void> {
     if (directory.cdSize === 0 || directory.entriesTotal === 0) return;
     const directoryBytes = await this.readExact(
-      directory.cdOffset,
+      directory.cdOffset + directory.base,
       directory.cdSize,
       '中央目录',
     );
@@ -497,6 +531,8 @@ export class ZipReader {
           `ZIP 总解压大小 ${totalUncompressed} 超过限制 ${this.limits.maxTotalUncompressedBytes}`,
         );
       }
+      // 归档内偏移统一加上 base，得到文件内真实偏移。
+      localHeaderOffset += directory.base;
       if (localHeaderOffset + LOCAL_HEADER_SIZE > this.source.size) {
         throw new OFDError('OFD_INVALID_PACKAGE', `条目 ${name} 局部头偏移越界`);
       }

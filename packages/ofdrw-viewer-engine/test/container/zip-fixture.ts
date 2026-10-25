@@ -199,11 +199,18 @@ export function buildZip(
     );
   });
   const cdBytes = concat(centralParts);
+  // 中央目录起始偏移必须在拼接本地文件头之后计算（与 localOffsets 累加口径一致）。
+  const cdStop = localParts.reduce((sum, part) => sum + part.byteLength, 0);
+  if (cdStop !== cdOffset) {
+    throw new Error(`测试 ZIP 构造异常：中央目录偏移 ${cdStop} 与预期 ${cdOffset} 不一致`);
+  }
   const commentBytes = encode(options.comment ?? '');
   const count = prepared.length;
 
   const zip64Parts: Uint8Array[] = [];
   if (zip64) {
+    // ZIP64 EOCD record 必须位于中央目录之后，其偏移为“中央目录起点 + 中央目录长度”。
+    const zip64RecordOffset = cdOffset + cdBytes.byteLength;
     zip64Parts.push(
       concat([
         u32(0x06064b50),
@@ -222,7 +229,7 @@ export function buildZip(
       concat([
         u32(0x07064b50),
         u32(0),
-        u64(cdOffset + cdBytes.byteLength),
+        u64(zip64RecordOffset),
         u32(1),
       ]),
     );
@@ -241,6 +248,27 @@ export function buildZip(
   ]);
 
   return concat([...localParts, cdBytes, ...zip64Parts, eocd]);
+}
+
+/**
+ * 用 MIME multipart 包装 ZIP，模拟“包体前后带包装数据”的 OFD。
+ *
+ * @param zip 完整 ZIP 字节。
+ * @param boundary 分隔字符串。
+ * @returns 带前导头与尾随结束边界的字节。
+ */
+export function wrapMultipart(zip: Uint8Array, boundary = 'boundary_.oOo._TEST'): Uint8Array {
+  const encoder = new TextEncoder();
+  const head = encoder.encode(
+    `--${boundary}\r\nContent-Disposition: form-data; name="source"; filename="a.ofd"\r\n` +
+      'Content-Type: application/ofd\r\n\r\n',
+  );
+  const tail = encoder.encode(`\r\n--${boundary}--\r\n`);
+  const output = new Uint8Array(head.byteLength + zip.byteLength + tail.byteLength);
+  output.set(head, 0);
+  output.set(zip, head.byteLength);
+  output.set(tail, head.byteLength + zip.byteLength);
+  return output;
 }
 
 /** 简单字节源包装，用于统计读取次数与区间。 */
