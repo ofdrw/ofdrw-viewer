@@ -2931,3 +2931,87 @@
     min-width: 72vw;
   }
 }
+
+/* 侧栏设置面板（本地字体加载方案设计 §5.1）。 */
+.ofd-settings__group[hidden],
+.ofd-settings__row[hidden] {
+  display: none;
+}
+
+.ofd-settings__heading {
+  margin: 0 0 8px;
+  color: var(--ofd-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ofd-settings__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ofd-settings__text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ofd-settings__label {
+  color: var(--ofd-text);
+}
+
+.ofd-settings__hint,
+.ofd-settings__status {
+  color: var(--ofd-text-secondary);
+  font-size: 12px;
+}
+
+.ofd-settings__status {
+  margin: 8px 0 0;
+}
+
+/* 开关控件：用 aria-checked 驱动滑块位置，不依赖 :has 等新选择器（chrome67）。 */
+.ofd-settings__switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 20px;
+  padding: 0;
+  background: var(--ofd-border);
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.ofd-settings__switch::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: var(--ofd-on-accent);
+  border-radius: 50%;
+  transition: transform 120ms ease-out;
+  content: '';
+}
+
+.ofd-settings__switch[aria-checked='true'] {
+  background: var(--ofd-accent);
+}
+
+.ofd-settings__switch[aria-checked='true']::after {
+  transform: translateX(16px);
+}
+
+.ofd-settings__switch:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.ofd-settings__switch:focus {
+  outline: var(--ofd-focus-width) solid var(--ofd-accent);
+  outline-offset: 2px;
+}

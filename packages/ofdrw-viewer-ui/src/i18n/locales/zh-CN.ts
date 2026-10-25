@@ -71,6 +71,20 @@ export const zhCN = {
   'sidebar.noOutline': '本文档没有大纲',
   'sidebar.noBookmarks': '本文档没有书签',
   'sidebar.noSignatures': '本文档没有签章',
+  'sidebar.settings': '设置',
+
+  // 本地字体（本地字体加载方案设计 §5.1 / §5.2）。
+  'localFonts.group': '字体',
+  'localFonts.toggle': '使用本机字体',
+  'localFonts.toggleHint': '用本机已安装的字体替换缺失字体',
+  'localFonts.status.prompt': '未授权',
+  'localFonts.status.enabled': '已启用',
+  'localFonts.status.unsupported': '浏览器不支持',
+  'localFonts.status.denied': '未获得授权',
+  'localFonts.dialog.title': '使用本机字体',
+  'localFonts.dialog.description': '允许阅读器使用本机已安装的字体，让文档显示更接近原稿。',
+  'localFonts.dialog.allow': '允许',
+  'localFonts.dialog.deny': '不允许',
 
   // 附件侧栏（设计方案 §6.2.6）。
   'attachments.title': '附件',

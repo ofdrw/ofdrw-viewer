@@ -9,10 +9,11 @@ import { parseViewerHash } from '../../../src/history';
 import { SIDEBAR_VIEWS } from '../../../src/state';
 
 describe('parseViewerHash 侧栏解析', () => {
-  it('识别全部合法侧栏取值（遍历单一清单）', () => {
+  it('识别全部合法侧栏取值（遍历单一清单，含 settings）', () => {
     for (const view of SIDEBAR_VIEWS) {
       expect(parseViewerHash(`#sidebar=${view}`).sidebar).toBe(view);
     }
+    expect(parseViewerHash('#sidebar=settings').sidebar).toBe('settings');
   });
 
   it('sidebar= 表示关闭侧栏', () => {

@@ -16,6 +16,7 @@
  * - 不接管核心的侧栏 hidden 与断点属性，避免双写。
  */
 import { createTranslator, type Translator } from '../i18n';
+import type { LocalFontsStatus } from '../local-fonts-state';
 import type { ViewerState, Rotation, SidebarView, ZoomMode } from '../state';
 import type {
   ExportImageOptions,
@@ -29,6 +30,7 @@ import type {
 } from '../types';
 import { getVersions } from '../version';
 import { THIRD_PARTY_NOTICES } from '../licenses';
+import { SettingsPanel } from './settings-panel';
 import { UIShell } from './ui-shell';
 import type { UIShellElements, UIShellCommand, UIShellViewState } from './types';
 
@@ -91,6 +93,12 @@ export interface UIShellHost {
   openVerificationPanel?(): unknown;
   /** 读取完整文档信息快照；核心未提供时属性对话框退回状态内字段。 */
   getDocumentInfo?(): Promise<ViewerDocumentInfo>;
+  /** 读取本地字体状态；未启用该能力时省略。 */
+  getLocalFontsStatus?(): LocalFontsStatus;
+  /** 设置本地字体开关；核心未提供时设置面板不注册。 */
+  setLocalFontsEnabled?(enabled: boolean): Promise<void>;
+  /** 订阅本地字体状态变化。 */
+  onLocalFontsStatusChange?(handler: (status: LocalFontsStatus) => void): () => void;
 }
 
 /** 扩展注册函数；`registerViewerExtension` 结构兼容。 */
@@ -102,7 +110,10 @@ export type UIShellExtensionRegistrar = (
 const uiShells = new WeakMap<UIShellHost, UIShell>();
 
 /** 把核心状态投影为外壳所需的最小视图状态。 */
-function toShellState(state: ViewerState): UIShellViewState {
+function toShellState(
+  state: ViewerState,
+  localFonts?: LocalFontsStatus,
+): UIShellViewState {
   return {
     pageNumber: state.view.pageNumber,
     pageCount: state.document.pageCount,
@@ -116,6 +127,7 @@ function toShellState(state: ViewerState): UIShellViewState {
     locale: state.ui.locale,
     documentStatus: state.document.status,
     documentTitle: state.document.metadata?.title,
+    ...(localFonts ? { localFonts } : {}),
   };
 }
 
@@ -947,6 +959,9 @@ function dispatchCommand(
     case 'fullscreen.set':
       settle(viewer.setFullscreen(command.value), shell);
       return;
+    case 'localFonts.set':
+      if (viewer.setLocalFontsEnabled) settle(viewer.setLocalFontsEnabled(command.value), shell);
+      return;
     case 'document.properties':
       showDocumentProperties(viewer, shell);
       return;
@@ -980,11 +995,33 @@ export function attachUIShell(viewer: UIShellHost): () => void {
   });
   uiShells.set(viewer, shell);
 
+  /** 本地字体状态：由核心同源提供，面板与外壳共用一份（设计 §5.3）。 */
+  let localFonts = viewer.getLocalFontsStatus?.();
   const sync = (): void => {
     const next = viewer.getState();
     shell.setFeatureStates(next.ui.features);
-    shell.update(toShellState(next));
+    shell.update(toShellState(next, localFonts));
   };
+
+  // 设置面板：内容只读外壳状态，开关经 `local-fonts.set` 命令交给核心。
+  let settings: SettingsPanel | null = null;
+  if (typeof viewer.getLocalFontsStatus === 'function') {
+    shell.registerSidebarPanel('settings', (host) => {
+      const panel = new SettingsPanel({
+        host,
+        getTranslator: () => shell.translatorInstance,
+        getState: () => shell.getState(),
+        onToggle: (enabled) => dispatchCommand(viewer, shell, { type: 'localFonts.set', value: enabled }),
+      });
+      settings = panel;
+      panel.update(localFonts);
+      return () => {
+        if (settings === panel) settings = null;
+        panel.destroy();
+      };
+    });
+  }
+
   const offs = [
     viewer.on('statechange', sync),
     viewer.on('featureschange', sync),
@@ -992,6 +1029,11 @@ export function attachUIShell(viewer: UIShellHost): () => void {
     viewer.on('findstart', sync),
     viewer.on('findmatches', sync),
     viewer.on('findcurrent', sync),
+    viewer.onLocalFontsStatusChange?.((status) => {
+      localFonts = status;
+      shell.update(toShellState(viewer.getState(), status));
+      settings?.update(status);
+    }) ?? (() => undefined),
   ];
 
   return () => {

@@ -51,6 +51,7 @@ export const SIDEBAR_VIEWS = [
   'bookmarks',
   'signatures',
   'attachments',
+  'settings',
 ] as const;
 
 /** 侧栏视图。 */
@@ -65,6 +66,7 @@ export type DialogName =
   | 'export'
   | 'documentProperties'
   | 'signatureDetail'
+  | 'localFonts'
   | (string & {});
 
 /** Toast 级别。 */

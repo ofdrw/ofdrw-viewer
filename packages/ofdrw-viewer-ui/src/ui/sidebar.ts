@@ -13,7 +13,7 @@ import { FocusTrap } from '../a11y';
 import type { ViewerFeatureStates } from '../features';
 import type { MessageKey, Translator } from '../i18n';
 import { SIDEBAR_VIEWS, type SidebarView } from '../state';
-import { applyFeatureGate, resolveFeatureGate } from './feature-control';
+import { applyFeatureGate, resolveFeatureGate, sidebarViewFeature } from './feature-control';
 import { createIcon } from './icons';
 import type { SidebarMode, SidebarPanelContext, SidebarPanelMount, UIShellViewState } from './types';
 
@@ -24,6 +24,7 @@ const TAB_LABEL_KEYS: Readonly<Record<SidebarView, MessageKey>> = Object.freeze(
   bookmarks: 'sidebar.bookmarks',
   signatures: 'sidebar.signatures',
   attachments: 'attachments.title',
+  settings: 'sidebar.settings',
 });
 
 /** 空态文案键。 */
@@ -33,6 +34,7 @@ const EMPTY_LABEL_KEYS: Readonly<Record<SidebarView, MessageKey>> = Object.freez
   bookmarks: 'sidebar.noBookmarks',
   signatures: 'sidebar.noSignatures',
   attachments: 'attachments.empty',
+  settings: 'localFonts.group',
 });
 
 /** 侧栏宽度范围，单位 px（设计方案 §5.1）。 */
@@ -367,7 +369,11 @@ export class Sidebar {
   /** 应用功能门控。 */
   private applyFeatureStates(): void {
     for (const [view, entry] of this.tabs) {
-      const gate = resolveFeatureGate(this.featureStates, view, this.translator);
+      const gate = resolveFeatureGate(
+        this.featureStates,
+        sidebarViewFeature(view),
+        this.translator,
+      );
       applyFeatureGate(entry.button, gate);
       entry.panel.setAttribute(
         'aria-hidden',

@@ -17,6 +17,7 @@ import { SIDEBAR_VIEWS, createFindState } from '../state';
 import type { SidebarView, Theme } from '../state';
 import { ThemeController, isTheme } from '../theme';
 import { DialogManager } from './dialog';
+import { sidebarViewFeature } from './feature-control';
 import { Findbar } from './findbar';
 import { Sidebar } from './sidebar';
 import { ToastManager } from './toast';
@@ -40,8 +41,15 @@ import {
   resolveViewport,
 } from './viewport';
 
-/** 侧栏标签回退顺序；直接复用 `state.ts` 的单一清单，避免多份名单不同步。 */
-const SIDEBAR_VIEW_ORDER: readonly SidebarView[] = SIDEBAR_VIEWS;
+/**
+ * 侧栏标签回退顺序。
+ *
+ * 直接复用 `state.ts` 的 `SIDEBAR_VIEWS`，避免多份清单不同步；`settings` 不参与
+ * 「自动挑选第一个可用侧栏」的默认回退（它不属于阅读内容视图）。
+ */
+const SIDEBAR_VIEW_ORDER: readonly SidebarView[] = SIDEBAR_VIEWS.filter(
+  (view) => view !== 'settings',
+);
 
 /** 对话框名称到功能的映射，用于功能关闭时收起弹窗。 */
 const DIALOG_FEATURES: Readonly<Record<string, ViewerFeature>> = Object.freeze({
@@ -457,7 +465,7 @@ export class UIShell {
   /** 选择要打开的侧栏视图。 */
   private pickSidebarView(): SidebarView | null {
     const usable = (view: SidebarView): boolean => {
-      const state = getFeatureState(this.featureStates, view);
+      const state = getFeatureState(this.featureStates, sidebarViewFeature(view));
       return state.enabled && state.visible;
     };
     if (usable(this.lastSidebarView)) return this.lastSidebarView;

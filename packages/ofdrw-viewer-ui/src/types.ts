@@ -19,6 +19,7 @@ import type {
   SignatureEntryInfo,
 } from '@ofdrw/ofdrw-viewer-engine';
 import type { ViewerFeatureStates } from './features';
+import type { LocalFontsStatus } from './local-fonts-state';
 import type {
   Rotation,
   SidebarView,
@@ -505,6 +506,9 @@ export type FeaturesChangeEvent = ViewerFeatureStates;
 /** 任意视图状态变化。 */
 export type StateChangeEvent = ViewerState;
 
+/** 本地字体状态变化（本地字体加载方案设计 §5.3）。 */
+export type LocalFontsChangeEvent = LocalFontsStatus;
+
 /** 全部事件名与载荷。 */
 export type ViewerEventMap = {
   documentopen: DocumentOpenEvent;
@@ -528,6 +532,7 @@ export type ViewerEventMap = {
   warning: WarningEvent;
   error: ErrorEvent;
   featureschange: FeaturesChangeEvent;
+  'local-fonts:change': LocalFontsChangeEvent;
   statechange: StateChangeEvent;
 };
 

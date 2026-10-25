@@ -9,6 +9,7 @@ import type {
   ViewerFeature,
   ViewerFeatureStates,
 } from '../features';
+import type { LocalFontsStatus } from '../local-fonts-state';
 import type {
   DialogName,
   FindState,
@@ -55,6 +56,7 @@ export type UIShellCommand =
   | { readonly type: 'signatures.open' }
   | { readonly type: 'verification.open' }
   | { readonly type: 'fullscreen.set'; readonly value: boolean }
+  | { readonly type: 'localFonts.set'; readonly value: boolean }
   | { readonly type: 'document.properties' }
   | { readonly type: 'about.open' };
 
@@ -92,6 +94,8 @@ export interface UIShellViewState {
   readonly documentStatus?: 'idle' | 'opening' | 'ready' | 'error' | 'closed';
   /** 文档标题。 */
   readonly documentTitle?: string;
+  /** 本地字体状态；省略表示宿主未启用该能力（设置面板不出现字体分组）。 */
+  readonly localFonts?: LocalFontsStatus;
 }
 
 /** 外壳结构元素；核心创建的必存在元素可原样传入。 */

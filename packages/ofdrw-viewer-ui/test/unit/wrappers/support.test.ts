@@ -66,6 +66,8 @@ describe('wrapper 公共桥接', () => {
     expect(isSidebarView('bookmarks')).toBe(true);
     // 本轮新增的附件侧栏必须与 SidebarView 联合类型保持一致。
     expect(isSidebarView('attachments')).toBe(true);
+    // settings 视图由 state.ts 的单一清单派生，适配层白名单必须同步识别。
+    expect(isSidebarView('settings')).toBe(true);
     expect(isSidebarView('print')).toBe(false);
     expect(isSidebarView(null)).toBe(false);
     expect(isTheme('auto')).toBe(true);
@@ -86,6 +88,12 @@ describe('wrapper 公共桥接', () => {
     expect(readSidebarAttribute(element)).toBe('attachments');
     element.setAttribute('sidebar', 'unknown-view');
     expect(readSidebarAttribute(element)).toBeUndefined();
+  });
+
+  it('读取 settings 侧栏属性', () => {
+    const element = document.createElement('ofd-viewer');
+    element.setAttribute('sidebar', 'settings');
+    expect(readSidebarAttribute(element)).toBe('settings');
   });
 
   it('mergeFeatures 不修改入参', () => {
