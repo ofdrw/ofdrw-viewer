@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-23T17:50:00.000Z",
+  "generatedAt": "2026-10-25T02:19:58.406Z",
   "sourceDir": "ofd_pdf_match",
-  "count": 58,
+  "count": 64,
   "samples": [
     {
       "name": "1",
@@ -1354,15 +1354,15 @@
       }
     },
     {
-      "name": "testImageOverridePage",
+      "name": "testImageOverridePage-v1",
       "groups": [
         "image"
       ],
       "priority": "P0",
       "optional": false,
       "available": true,
-      "ofd": "ofd_pdf_match/testImageOverridePage.ofd",
-      "pdf": "ofd_pdf_match/testImageOverridePage.pdf",
+      "ofd": "ofd_pdf_match/testImageOverridePage-v1.ofd",
+      "pdf": "ofd_pdf_match/testImageOverridePage-v1.pdf",
       "pdfPages": 1,
       "ofdDeclaredPages": 1,
       "pageSizePt": {
@@ -1379,7 +1379,9 @@
       "jb2Entries": 0,
       "sha256": "2ea354ac77289de7baf0170dd96dc8505577b00f6807898a50c1776cd44fd217",
       "goldenPages": [],
-      "notes": []
+      "notes": [
+        "旧版同名样本改名保留为 -v1（用户裁决）：OFD 与新版字节相同，本条目保留原 PDF 参考与原有基准。"
+      ]
     },
     {
       "name": "testPathClip",
@@ -1638,15 +1640,15 @@
       "notes": []
     },
     {
-      "name": "发票示例",
+      "name": "发票示例-v1",
       "groups": [
         "other"
       ],
       "priority": "P1",
       "optional": false,
       "available": true,
-      "ofd": "ofd_pdf_match/发票示例.ofd",
-      "pdf": "ofd_pdf_match/发票示例.pdf",
+      "ofd": "ofd_pdf_match/发票示例-v1.ofd",
+      "pdf": "ofd_pdf_match/发票示例-v1.pdf",
       "pdfPages": 1,
       "ofdDeclaredPages": 1,
       "pageSizePt": {
@@ -1664,7 +1666,8 @@
       "sha256": "757c576d18e5f2278b42a7a6c99c4e5ec2b4196e1f7ed129db4f614acfccdfdc",
       "goldenPages": [],
       "notes": [
-        "未列入 19.3 分组，作为补充回归（P1）。"
+        "未列入 19.3 分组，作为补充回归（P1）。",
+        "旧版同名样本改名保留为 -v1（用户裁决）：新版 ofd_pdf_match_v2/发票示例 以原名登记，本条目保留原 PDF 参考与原有基准。"
       ]
     },
     {
@@ -1791,6 +1794,186 @@
           "maxCoverageDelta": 0.26,
           "reason": "p9 细边框栅格化 + keyColor 小样本假阳性：colorP95DE=0、colorSampleCount=3577、coverageΔ=25.9%，非内容缺陷；仅该页 known tolerance，不改变全局阈值。"
         }
+      ]
+    },
+    {
+      "name": "96d93ac858b444c1b914707872dbd645",
+      "groups": [
+        "annotation-seal"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/96d93ac858b444c1b914707872dbd645.ofd",
+      "pdf": "ofd_pdf_match/96d93ac858b444c1b914707872dbd645.pdf",
+      "pdfPages": 2,
+      "ofdDeclaredPages": 2,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 841.89
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 297
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 0,
+      "jb2Entries": 0,
+      "sha256": "ad553684e4f9180a6552880dc4c7e30b01ea16c7fc08b96a7af4d773c544b8e9",
+      "goldenPages": [],
+      "notes": [
+        "由 ofd_pdf_match_v2 入库（用户裁决）：2 页签章 + 文字样本，原文件名为 OFD 内部 ID。"
+      ]
+    },
+    {
+      "name": "addimage",
+      "groups": [
+        "image"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/addimage.ofd",
+      "pdf": "ofd_pdf_match/addimage.pdf",
+      "pdfPages": 2,
+      "ofdDeclaredPages": 2,
+      "pageSizePt": {
+        "width": 592.441,
+        "height": 416.693
+      },
+      "sizeMm": {
+        "width": 209,
+        "height": 147
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 2,
+      "jb2Entries": 0,
+      "sha256": "baca5ae530b999617bc90a63f6b71fc2fb099decbcc281d319f332c5b342699d",
+      "goldenPages": [],
+      "notes": [
+        "由 ofd_pdf_match_v2 入库（用户裁决）：含图片与注释对象，Document.xml 声明 2 页。"
+      ]
+    },
+    {
+      "name": "保函",
+      "groups": [
+        "annotation-seal"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/保函.ofd",
+      "pdf": "ofd_pdf_match/保函.pdf",
+      "pdfPages": 2,
+      "ofdDeclaredPages": 2,
+      "pageSizePt": {
+        "width": 595,
+        "height": 842
+      },
+      "sizeMm": {
+        "width": 209.903,
+        "height": 297.039
+      },
+      "embeddedFonts": true,
+      "fontEntries": 1,
+      "imageEntries": 2,
+      "jb2Entries": 0,
+      "sha256": "b35fb67e8d15b54ced817c671dafa04e7caa692a10e5e033cd70639710097825",
+      "goldenPages": [],
+      "notes": [
+        "由 ofd_pdf_match_v2 入库（用户裁决）：保函样本，含附件/签章/内嵌字体/图片。"
+      ]
+    },
+    {
+      "name": "dzbh",
+      "groups": [
+        "annotation-seal"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/dzbh.ofd",
+      "pdf": "ofd_pdf_match/dzbh.pdf",
+      "pdfPages": 2,
+      "ofdDeclaredPages": 2,
+      "pageSizePt": {
+        "width": 595.144,
+        "height": 841.703
+      },
+      "sizeMm": {
+        "width": 209.954,
+        "height": 296.934
+      },
+      "embeddedFonts": true,
+      "fontEntries": 1,
+      "imageEntries": 3,
+      "jb2Entries": 0,
+      "sha256": "849eed56838b24670026691b0a64c5b7e8139d4cf65c9bc6b654c34684ab12ef",
+      "goldenPages": [],
+      "notes": [
+        "由 ofd_pdf_match_v2 入库（用户裁决）：含附件/签章/内嵌字体/图片。"
+      ]
+    },
+    {
+      "name": "发票示例",
+      "groups": [
+        "annotation-seal"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/发票示例.ofd",
+      "pdf": "ofd_pdf_match/发票示例.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 595.276,
+        "height": 396.85
+      },
+      "sizeMm": {
+        "width": 210,
+        "height": 140
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 1,
+      "jb2Entries": 0,
+      "sha256": "ce2682b8716859e1d7245141a839d103e98e29999f543a1056cc3d84bb1d9742",
+      "goldenPages": [],
+      "notes": [
+        "由 ofd_pdf_match_v2 入库（用户裁决）：发票 + 签章样本；旧版同名样本已改名保留为 发票示例-v1。"
+      ]
+    },
+    {
+      "name": "testImageOverridePage",
+      "groups": [
+        "image"
+      ],
+      "priority": "P0",
+      "optional": false,
+      "available": true,
+      "ofd": "ofd_pdf_match/testImageOverridePage.ofd",
+      "pdf": "ofd_pdf_match/testImageOverridePage.pdf",
+      "pdfPages": 1,
+      "ofdDeclaredPages": 1,
+      "pageSizePt": {
+        "width": 1047,
+        "height": 734
+      },
+      "sizeMm": {
+        "width": 369.358,
+        "height": 258.939
+      },
+      "embeddedFonts": false,
+      "fontEntries": 0,
+      "imageEntries": 2,
+      "jb2Entries": 0,
+      "sha256": "2ea354ac77289de7baf0170dd96dc8505577b00f6807898a50c1776cd44fd217",
+      "goldenPages": [],
+      "notes": [
+        "由 ofd_pdf_match_v2 入库（用户裁决）：OFD 与旧版同名文件字节完全相同，仅 PDF 参考不同（重新生成）；旧版改名保留为 testImageOverridePage-v1。"
       ]
     }
   ]

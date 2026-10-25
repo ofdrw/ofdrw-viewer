@@ -22,8 +22,8 @@ const PACKAGE_ROOT = resolve(SCRIPT_DIR, '..');
 const REPO_ROOT = resolve(PACKAGE_ROOT, '../..');
 const BASELINE_PATH = join(PACKAGE_ROOT, 'test', 'golden', 'baseline', 'strict-baseline.json');
 const DEFAULT_OUT = join(REPO_ROOT, 'test', '.artifacts', 'audit-strict', 'latest');
-const EXPECTED_SAMPLE_COUNT = 58;
-const EXPECTED_PAGE_COUNT = 169;
+const EXPECTED_SAMPLE_COUNT = 64;
+const EXPECTED_PAGE_COUNT = 179;
 
 /** 页面指标比较容差；只作为“与基线漂移”判据，不作为绝对质量阈值。 */
 const METRIC_TOLERANCE = Object.freeze({
