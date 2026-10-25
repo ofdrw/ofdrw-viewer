@@ -79,6 +79,14 @@ export function decodeSealImage(
     } else {
       emitWarning(options, 'W_IMAGE_DECODE', `${label} 图片类型 ${JSON.stringify(declared)} 不支持`);
     }
+  } else if (declared !== 'OFD' && detected !== undefined && declared !== detected) {
+    // 声明类型与实际字节不符时以魔术字节为准，否则会选错解码器导致整枚印章丢失。
+    emitWarning(
+      options,
+      'W_IMAGE_DECODE',
+      `${label} 图片类型声明为 ${declared}，实际字节为 ${detected}，按魔术字节解码`,
+    );
+    declared = detected;
   }
   if (declared === 'OFD' && !startsWith(imageBytes, [0x50, 0x4b])) {
     emitWarning(options, 'W_IMAGE_DECODE', `${label} picture.type=ofd 但数据不是 ZIP，保留原始字节`);
