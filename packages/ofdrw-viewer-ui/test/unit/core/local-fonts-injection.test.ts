@@ -242,4 +242,43 @@ describe('document-controller 注入顺序', () => {
     // 宿主 supplementary 仍原样保留。
     expect(supplementary.map((input) => input.family)).toEqual(['HostSupp']);
   });
+
+  it('首次打开：拿到声明后静默重开一次，第二次 openDocument 带本机字体', async () => {
+    stubLocalFonts({ SimSun: new Uint8Array([0, 1, 0, 0]) });
+    stubPermissions('granted');
+    const calls: OFDOpenOptions[] = [];
+    const controller = new DocumentController({
+      font: { localFonts: { enabled: true } },
+      openDocument: async (options) => {
+        calls.push(options);
+        return makeDocument([declaration('1', '宋体')]);
+      },
+    });
+    controller.setLocalFonts({ enabled: true });
+    await controller.open(new ArrayBuffer(8));
+    // 首次打开不带本机字体，拿到声明后重开一次并带上本机字体。
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    const first = calls[0];
+    const second = calls.at(-1);
+    const familyOf = (options: OFDOpenOptions | undefined): readonly string[] =>
+      (options?.defaultFonts ?? []).map((input) => String(input.family ?? ''));
+    expect(familyOf(first), '第一次打开不含本机字体').not.toContain('宋体');
+    expect(familyOf(second), '第二次打开含本机字体').toContain('宋体');
+  });
+
+  it('声明为空时不额外重开', async () => {
+    stubLocalFonts();
+    stubPermissions('granted');
+    const calls: OFDOpenOptions[] = [];
+    const controller = new DocumentController({
+      font: { localFonts: { enabled: true } },
+      openDocument: async (options) => {
+        calls.push(options);
+        return makeDocument([]);
+      },
+    });
+    controller.setLocalFonts({ enabled: true });
+    await controller.open(new ArrayBuffer(8));
+    expect(calls).toHaveLength(1);
+  });
 });

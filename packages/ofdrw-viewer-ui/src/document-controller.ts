@@ -304,6 +304,28 @@ export function mergeHeaders(
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
+/** 关闭文档并忽略失败；用于过期/被替换的文档实例。 */
+async function closeQuietly(document: EngineDocument): Promise<void> {
+  try {
+    await document.close();
+  } catch {
+    // 过期文档关闭失败不影响调用方。
+  }
+}
+
+/**
+ * 判断一次打开参数里是否包含本机字体来源。
+ *
+ * @param fonts `resolveFonts()` 的结果。
+ * @returns 含本机字体时返回 true。
+ */
+function hasLocalFonts(fonts: {
+  readonly defaultFonts?: readonly FontInput[];
+  readonly supplementaryFonts?: readonly FontInput[];
+}): boolean {
+  return (fonts.defaultFonts?.length ?? 0) > 0;
+}
+
 /** 判断错误是否为取消。 */
 export function isAbortError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -498,6 +520,8 @@ export class DocumentController {
     signal?: AbortSignal,
   ): Promise<OpenedDocumentInfo> {
     await this.closeInternal();
+    // 清空上一个文档的声明：本机字体查询必须基于当前文档（跨文档复用会查到错误字体）。
+    this.fontDeclarations = [];
     // closeInternal 会递增 openToken；打开代次必须在关闭之后捕获。
     const token = ++this.openToken;
     if (signal?.aborted) throw createOpenAbortError();
@@ -516,24 +540,48 @@ export class DocumentController {
     } finally {
       if (hasFonts) this.options.onFontState?.('ready');
     }
-    const document = await openDocument({
-      ...extra,
-      ...fonts,
-      ...(this.options.onWarning ? { onWarning: this.options.onWarning } : {}),
-      ...(signal ? { signal } : {}),
-    });
-    if (token !== this.openToken || signal?.aborted) {
-      try {
-        await document.close();
-      } catch {
-        // 过期文档关闭失败不影响调用方。
+    const openOnce = (openFonts: Awaited<ReturnType<DocumentController['resolveFonts']>>) =>
+      openDocument({
+        ...extra,
+        ...openFonts,
+        ...(this.options.onWarning ? { onWarning: this.options.onWarning } : {}),
+        ...(signal ? { signal } : {}),
+      });
+
+    let document = await openOnce(fonts);
+    // 声明只能从已打开的文档读取（设计 §3.6），而查询本机字体又必须先有声明。因此这里
+    // 每条打开路径都做「打开 → 读当前文档声明 → 有本机字体则静默重开一次」
+    // （需求清单 REQ-0190 方案 A）。不使用缓存做短路，避免切换文档时沿用上一个文档的
+    // 声明；未启用本机字体时完全跳过，不产生额外打开与查询。
+    if (this.localFontsState?.enabled) {
+      const declarations = await this.readFontDeclarations(document);
+      if (token !== this.openToken || signal?.aborted) {
+        await closeQuietly(document);
+        throw createOpenAbortError();
       }
+      this.fontDeclarations = declarations;
+      if (declarations.length > 0) {
+        const reopenFonts = await this.resolveFonts(signal);
+        // 只有真的产生了本机字体来源才值得多打开一次。
+        if (hasLocalFonts(reopenFonts)) {
+          const reopened = await openOnce(reopenFonts);
+          if (token !== this.openToken || signal?.aborted) {
+            await closeQuietly(document);
+            await closeQuietly(reopened);
+            throw createOpenAbortError();
+          }
+          await closeQuietly(document);
+          document = reopened;
+          fonts = reopenFonts;
+        }
+      }
+    }
+    if (token !== this.openToken || signal?.aborted) {
+      await closeQuietly(document);
       throw createOpenAbortError();
     }
     this.doc = document;
     this.docSource = normalized;
-    // 静默刷新声明缓存：失败（关闭/中止）按「无声明」处理，不影响打开结果。
-    void this.refreshFontDeclarations(document);
     return {
       document,
       source: normalized,
@@ -542,23 +590,20 @@ export class DocumentController {
   }
 
   /**
-   * 读取并缓存文档声明的字体资源。
-   *
-   * 引擎侧零额外 IO（读打开阶段已解析的资源索引）；文档关闭、信号中止或引擎未提供该
-   * API 时按「无声明」处理，不上报 error（需求清单 REQ-0190 第 3 条）。
+   * 读取文档声明的字体资源（不写缓存）。
    *
    * @param document 已打开的引擎文档。
+   * @returns 声明列表；引擎未提供该 API 或读取失败时为空数组。
    */
-  private async refreshFontDeclarations(document: EngineDocument): Promise<void> {
-    if (typeof document.getFontResources !== 'function') {
-      this.fontDeclarations = [];
-      return;
-    }
+  private async readFontDeclarations(
+    document: EngineDocument,
+  ): Promise<readonly DocumentFontResource[]> {
+    if (typeof document.getFontResources !== 'function') return [];
     try {
-      const resources = await document.getFontResources();
-      this.fontDeclarations = resources;
+      return await document.getFontResources();
     } catch {
-      // OFD_CLOSED / OFD_ABORTED / 旧引擎：保留上一次缓存，下一次打开仍可使用。
+      // OFD_CLOSED / OFD_ABORTED / 旧引擎：按「无声明」处理，不上报 error。
+      return [];
     }
   }
 
