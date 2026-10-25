@@ -24,7 +24,8 @@ export default defineConfig({
     sourcemap: false,
   },
   server: {
-    port: 5183,
+    // 默认 5183；端口被占用时可用 `PORT=<端口> pnpm dev` 临时改用其它端口。
+    port: Number(process.env.PORT) || 5183,
     strictPort: true,
     // 本地开发直接打开仓库内的真实 OFD 样本（如 ofd_pdf_match/拿来主义_page6.ofd）；
     // 只放宽到本机回环地址，构建产物不包含这些文件。

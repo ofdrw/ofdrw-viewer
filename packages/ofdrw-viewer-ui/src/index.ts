@@ -98,6 +98,7 @@ export type {
 export type {
   LocalFontStatus,
   LocalFontsStatus,
+  LocalFontsUserState,
 } from './local-fonts-state';
 export type { LocalFontsChangeEvent } from './types';
 

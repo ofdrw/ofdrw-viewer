@@ -30,7 +30,6 @@ import type {
 } from '../types';
 import { getVersions } from '../version';
 import { THIRD_PARTY_NOTICES } from '../licenses';
-import { SettingsPanel } from './settings-panel';
 import { UIShell } from './ui-shell';
 import type { UIShellElements, UIShellCommand, UIShellViewState } from './types';
 
@@ -95,7 +94,7 @@ export interface UIShellHost {
   getDocumentInfo?(): Promise<ViewerDocumentInfo>;
   /** 读取本地字体状态；未启用该能力时省略。 */
   getLocalFontsStatus?(): LocalFontsStatus;
-  /** 设置本地字体开关；核心未提供时设置面板不注册。 */
+  /** 设置本地字体开关；核心未提供时「关于」里的开关不注册。 */
   setLocalFontsEnabled?(enabled: boolean): Promise<void>;
   /** 订阅本地字体状态变化。 */
   onLocalFontsStatusChange?(handler: (status: LocalFontsStatus) => void): () => void;
@@ -431,7 +430,7 @@ function showDocumentProperties(viewer: UIShellHost, shell: UIShell): void {
  *
  * @param shell 当前外壳。
  */
-function showAboutDialog(shell: UIShell): void {
+function showAboutDialog(shell: UIShell, viewer: UIShellHost): void {
   const translator = shell.translatorInstance;
   const doc = shell.elements.root.ownerDocument;
   const versions = getVersions();
@@ -468,12 +467,97 @@ function showAboutDialog(shell: UIShell): void {
   licenseDescription.append(licenseLink);
   list.append(licenseTerm, licenseDescription);
 
+  // 本机字体开关放在「关于」里：它属于环境能力设置而非阅读操作，且只在浏览器支持
+  // 且宿主显式启用时才出现（`visible === false` 时整行不渲染）。
+  const localFontsRow = createAboutLocalFontsRow(shell, viewer);
+  if (localFontsRow) list.append(localFontsRow);
+
   shell.openDialog({
     name: 'about',
     title: translator.t('about.title'),
     content: list,
     actions: [{ label: translator.t('dialog.closeAction'), primary: true }],
   });
+}
+
+/**
+ * 构造「关于」对话框里的本机字体开关行。
+ *
+ * @param shell 当前外壳。
+ * @returns `dt`/`dd` 片段；能力不可见时返回 null。
+ */
+function createAboutLocalFontsRow(shell: UIShell, viewer: UIShellHost): DocumentFragment | null {
+  const status = shell.getState().localFonts;
+  if (!status || !status.visible) return null;
+  const translator = shell.translatorInstance;
+  const doc = shell.elements.root.ownerDocument;
+  const fragment = doc.createDocumentFragment();
+
+  const term = doc.createElement('dt');
+  term.textContent = translator.t('localFonts.toggle');
+  const description = doc.createElement('dd');
+  description.className = 'ofd-properties__local-fonts';
+
+  const toggle = doc.createElement('button');
+  toggle.type = 'button';
+  toggle.setAttribute('role', 'switch');
+  toggle.className = 'ofd-switch';
+  toggle.setAttribute('aria-checked', status.enabled ? 'true' : 'false');
+  toggle.setAttribute('aria-label', translator.t('localFonts.toggle'));
+  toggle.disabled = status.loading;
+  toggle.dataset.enabled = status.enabled ? 'true' : 'false';
+
+  const hint = doc.createElement('span');
+  hint.className = 'ofd-properties__hint';
+  hint.textContent = aboutLocalFontsText(shell, status);
+
+  // 只在浏览器不支持时禁用开关（其余状态都可操作）。
+  if (!status.supported) {
+    toggle.disabled = true;
+    toggle.hidden = true;
+  }
+  // 点击立即生效并刷新同一对话框里的文案；权限申请需用户手势，故直接调用核心方法。
+  // 注意取反的依据是「用户授权开关」而非 `enabled`：`enabled` 已按浏览器授权收敛
+  // （未授权时恒为 false），用它取反会让「关闭」永远算成「打开」。
+  toggle.addEventListener('click', () => {
+    const current = shell.getState().localFonts;
+    const next = !(current?.userState === 'on');
+    // 先乐观更新界面：开关状态反映「用户意向」，点下去就应立刻动，不必等授权往返。
+    // 授权失败时核心会回滚意向并广播状态，下面的 sync 会用真实状态覆盖本地的乐观值。
+    setToggleVisual(toggle, next);
+    hint.textContent = translator.t('localFonts.status.loading');
+    void viewer.setLocalFontsEnabled?.(next).then(() => {
+      const latest = shell.getState().localFonts;
+      if (!latest || !toggle.isConnected) return;
+      setToggleVisual(toggle, latest.userState === 'on');
+      hint.textContent = aboutLocalFontsText(shell, latest);
+    });
+  });
+
+  description.append(toggle, hint);
+  fragment.append(term, description);
+  return fragment;
+}
+
+/** 更新开关的可视状态（`aria-checked` 与 `data-enabled`）。 */
+function setToggleVisual(toggle: HTMLButtonElement, enabled: boolean): void {
+  toggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
+  toggle.dataset.enabled = enabled ? 'true' : 'false';
+}
+
+/**
+ * 计算「关于」里本机字体行的状态文案。
+ *
+ * @param shell 当前外壳。
+ * @param status 本地字体状态。
+ * @returns 面向用户的一句话。
+ */
+function aboutLocalFontsText(shell: UIShell, status: LocalFontsStatus): string {
+  const translator = shell.translatorInstance;
+  if (!status.supported) return translator.t('localFonts.status.unsupported');
+  if (status.enabled) return translator.t('localFonts.status.enabled');
+  if (status.permission === 'denied') return translator.t('localFonts.status.denied');
+  return translator.t('localFonts.status.prompt');
 }
 
 /**
@@ -966,7 +1050,7 @@ function dispatchCommand(
       showDocumentProperties(viewer, shell);
       return;
     case 'about.open':
-      showAboutDialog(shell);
+      showAboutDialog(shell, viewer);
       return;
   }
 }
@@ -1003,24 +1087,6 @@ export function attachUIShell(viewer: UIShellHost): () => void {
     shell.update(toShellState(next, localFonts));
   };
 
-  // 设置面板：内容只读外壳状态，开关经 `local-fonts.set` 命令交给核心。
-  let settings: SettingsPanel | null = null;
-  if (typeof viewer.getLocalFontsStatus === 'function') {
-    shell.registerSidebarPanel('settings', (host) => {
-      const panel = new SettingsPanel({
-        host,
-        getTranslator: () => shell.translatorInstance,
-        getState: () => shell.getState(),
-        onToggle: (enabled) => dispatchCommand(viewer, shell, { type: 'localFonts.set', value: enabled }),
-      });
-      settings = panel;
-      panel.update(localFonts);
-      return () => {
-        if (settings === panel) settings = null;
-        panel.destroy();
-      };
-    });
-  }
 
   const offs = [
     viewer.on('statechange', sync),
@@ -1032,7 +1098,6 @@ export function attachUIShell(viewer: UIShellHost): () => void {
     viewer.onLocalFontsStatusChange?.((status) => {
       localFonts = status;
       shell.update(toShellState(viewer.getState(), status));
-      settings?.update(status);
     }) ?? (() => undefined),
   ];
 

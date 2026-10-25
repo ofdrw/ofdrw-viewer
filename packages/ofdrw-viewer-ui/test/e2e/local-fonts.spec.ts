@@ -91,6 +91,11 @@ interface LocalFontsStubOptions {
   readonly unsupported?: boolean;
   /** 让 `queryLocalFonts` 以该名字的错误拒绝（模拟 NotAllowedError/SecurityError）。 */
   readonly rejectWith?: string;
+  /**
+   * 模拟用户在浏览器授权框里点「拒绝」：下一次 `queryLocalFonts` 抛 `NotAllowedError`
+   * 并把权限置为 `denied`，之后不会再触发授权框（与真实 Chrome 一致）。
+   */
+  readonly refuseGrant?: boolean;
 }
 
 /**
@@ -106,6 +111,7 @@ async function stubLocalFonts(page: Page, options: LocalFontsStubOptions): Promi
       permission: string;
       unsupported: boolean;
       rejectWith: string | null;
+      refuseGrant: boolean;
     }) => {
       /** 查询记录：供测试断言「定向查询」「调用次数」。 */
       const queries: Array<{ postscriptNames: string[] | null; at: number }> = [];
@@ -135,6 +141,8 @@ async function stubLocalFonts(page: Page, options: LocalFontsStubOptions): Promi
       // `permissions.query` 读取它（与真实 Chrome 行为一致）。必须声明在两者共同的
       // 作用域里，否则桩调用后权限不会变化。
       let granted = config.permission === 'granted';
+      /** 用户是否已在浏览器授权框里点过「拒绝」。 */
+      let refused = false;
 
       // 与 Chrome 一致：只接受定向查询；无参调用在真实实现里是全量枚举，测试直接拒绝。
       const queryLocalFonts = async (queryOptions?: {
@@ -145,6 +153,13 @@ async function stubLocalFonts(page: Page, options: LocalFontsStubOptions): Promi
         if (!names) {
           const error = new Error('桩不接受全量枚举');
           error.name = 'NotSupportedError';
+          throw error;
+        }
+        if (config.refuseGrant && !refused) {
+          // 首次请求即被用户拒绝：权限转为 denied，此后查询按「已拒绝」静默返回空数组。
+          refused = true;
+          const error = new Error('桩：用户拒绝授权');
+          error.name = 'NotAllowedError';
           throw error;
         }
         if (config.rejectWith) {
@@ -182,7 +197,7 @@ async function stubLocalFonts(page: Page, options: LocalFontsStubOptions): Promi
         const permissions = {
           query: async (descriptor: { name?: string }) => {
             if (descriptor?.name !== 'local-fonts') throw new TypeError('不支持的权限名');
-            const state = granted ? 'granted' : config.permission;
+            const state = granted ? 'granted' : refused ? 'denied' : config.permission;
             return { state, onchange: null };
           },
         };
@@ -197,6 +212,7 @@ async function stubLocalFonts(page: Page, options: LocalFontsStubOptions): Promi
       permission: options.permission,
       unsupported: options.unsupported ?? false,
       rejectWith: options.rejectWith ?? null,
+      refuseGrant: options.refuseGrant ?? false,
     },
   );
 }
@@ -319,24 +335,38 @@ async function expectMissingFontBaseline(page: Page, label: string): Promise<voi
   expect(coverage.perCanvas.at(-1), `${label}：第 2 页覆盖像素`).toBeLessThan(20000);
 }
 
-/** 打开侧栏「设置」面板。 */
-async function openSettings(page: Page): Promise<void> {
-  await page.evaluate(() => window.__viewer!.openSidebar('settings'));
-  await expect(page.locator('.ofd-viewer__sidebar')).toBeVisible();
-}
-
-/** 本机字体开关控件（设置面板内的 role=switch）。 */
+/** 本机字体开关控件（「关于」对话框内的 role=switch）。 */
 function localFontsSwitch(page: Page) {
-  return page.locator('.ofd-viewer__sidebar [role="switch"]').first();
+  return page.locator('.ofd-dialog [role="switch"]').first();
 }
 
-/** 本机字体确认框。 */
-function localFontsDialog(page: Page) {
-  return page.locator('.ofd-dialog[role="dialog"]').filter({ hasText: '使用本机字体' });
+/**
+ * 打开工具栏「更多」→「关于」，并返回其中的本机字体开关。
+ *
+ * @param page 页面。
+ * @returns 开关控件。
+ */
+async function openLocalFontsToggle(page: Page) {
+  await page.locator('[data-ofd-control="more"]').click();
+  await page.getByRole('menuitem', { name: '关于' }).click();
+  const toggle = localFontsSwitch(page);
+  await expect(toggle).toBeVisible();
+  return toggle;
+}
+
+/** 读取当前本机字体状态。 */
+async function localFontsStatus(page: Page) {
+  return page.evaluate(() => window.__viewer!.getLocalFontsStatus());
+}
+
+/** 读取持久化的用户授权开关记录。 */
+async function storedPreference(page: Page): Promise<{ enabled?: boolean } | null> {
+  const raw = await page.evaluate(() => localStorage.getItem('ofd-viewer:local-fonts'));
+  return raw ? (JSON.parse(raw) as { enabled?: boolean }) : null;
 }
 
 test.describe('本机字体加载（queryLocalFonts 桩化）', () => {
-  test('T-E2E1 开开关并授权后：本机宋体生效、文字可见且无 W_FONT_MISSING', async ({
+  test('T-E2E1 打开会话时授权成功：本机宋体生效、文字可见且无 W_FONT_MISSING', async ({
     page,
     issues,
   }) => {
@@ -357,39 +387,21 @@ test.describe('本机字体加载（queryLocalFonts 桩化）', () => {
       fonts: { localFonts: { enabled: true, defaultEnabled: true } },
     });
     await waitForSecondPage(page);
-    await page.waitForTimeout(500);
 
-    // 首次打开时声明尚未缓存，本机字体不参与，先确认基线确实缺字。
-    await expectMissingFontBaseline(page, '首次打开');
-    const baselineCoverage = (await countPaintedPixels(page)).perCanvas.at(-1) ?? 0;
-    // 首次打开不得在没有用户手势时自行申请权限。
-    expect(await localFontQueries(page), '首次打开不得静默查询本机字体').toEqual([]);
-
-    // 确认框出现：点「允许」，授权与查询都在该 click 内完成。
-    const dialog = localFontsDialog(page);
-    await expect(dialog).toBeVisible();
-    await dialog.locator('.ofd-dialog__action--primary').click();
-    await expect(dialog).toBeHidden();
-
-    // 授权成功后自动重开当前文档。语义判据三连：
+    // 语义判据三连：
     // ①W_FONT_MISSING 从 100 归零；②文本层真正建立（span 数 > 0）；
     // ③文本层使用的字体族命中文档声明名（宋体/楷体/Courier New 三者之一）。
     await expect
       .poll(async () => warningCount(page, 'W_FONT_MISSING'), { timeout: 60_000 })
       .toBe(0);
-    // 辅证：第 2 页覆盖像素相对授权前显著增加（文字以字形轮廓绘制，不生成文本层 DOM）。
-    // 重开瞬间 canvas 会被重建，`perCanvas` 可能为空：轮询等待数值稳定后再比较。
-    await expect
-      .poll(
-        async () => {
-          const stats = await countPaintedPixels(page);
-          return stats.perCanvas.length > 0 ? (stats.perCanvas.at(-1) ?? 0) : 0;
-        },
-        { timeout: 60_000 },
-      )
-      .toBeGreaterThan((baselineCoverage ?? 0) * 2);
     const codes = await warningCodes(page);
     expect(codes.filter((code) => code.startsWith('W_FONT')), '字体 warning').toEqual([]);
+    // 授权成功后开关开启、不弹内置确认框。
+    const status = await localFontsStatus(page);
+    expect(status.userState).toBe('on');
+    expect(status.enabled).toBe(true);
+    expect(status.permission).toBe('granted');
+    await expect(page.locator('.ofd-dialog')).toHaveCount(0);
 
     // 定向查询：每次调用都带 postscriptNames、不超过 6 个、全部为 ASCII。
     const queries = await localFontQueries(page);
@@ -408,7 +420,10 @@ test.describe('本机字体加载（queryLocalFonts 桩化）', () => {
     await expectNoPageErrors(page, issues);
   });
 
-  test('T-E2E1b 用户手动打开开关：授权后同样生效并恢复视图', async ({ page, issues }) => {
+  test('T-E2E1b 未授权时经「关于」打开开关：授权后同样生效并恢复视图', async ({
+    page,
+    issues,
+  }) => {
     requireSiteFonts();
     await stubLocalFonts(page, {
       installed: {
@@ -416,7 +431,7 @@ test.describe('本机字体加载（queryLocalFonts 桩化）', () => {
         KaiTi: readFontBase64(CJK_FONT_FILE),
         CourierNewPSMT: readFontBase64(LATIN_FONT_FILE),
       },
-      permission: 'granted',
+      permission: 'prompt',
     });
 
     await openViewer(page, FIXTURES.externalFont, {
@@ -428,13 +443,12 @@ test.describe('本机字体加载（queryLocalFonts 桩化）', () => {
     await waitForSecondPage(page);
     await page.waitForTimeout(500);
 
-    // 权限已经是 granted：不需要确认框，打开设置面板点开关即可。
-    await openSettings(page);
-    const toggle = localFontsSwitch(page);
-    await expect(toggle).toBeVisible();
+    // 用户尚未表态（宿主未预设开启）：打开会话不请求授权。
+    expect(await localFontQueries(page), '未表态时不请求授权').toEqual([]);
+    const toggle = await openLocalFontsToggle(page);
     await expect(toggle).toHaveAttribute('aria-checked', 'false');
     await toggle.click();
-    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await page.keyboard.press('Escape');
 
     await expect
       .poll(async () => (await countPaintedPixels(page)).painted, { timeout: 60_000 })
@@ -448,6 +462,9 @@ test.describe('本机字体加载（queryLocalFonts 桩化）', () => {
     expect(state.pageNumber).toBe(2);
     expect(state.scale).toBeCloseTo(1.5, 1);
     expect(state.rotation).toBe(90);
+    const status = await localFontsStatus(page);
+    expect(status.userState).toBe('on');
+    expect(status.enabled).toBe(true);
 
     await expectNoPageErrors(page, issues);
   });
@@ -493,18 +510,16 @@ test.describe('本机字体加载（queryLocalFonts 桩化）', () => {
     // 两种情形的画面与诊断完全一致：能力不可用时整个分支静默跳过。
     expect(unsupported.coverage.perCanvas, '逐 canvas 覆盖像素').toEqual(disabled.coverage.perCanvas);
     expect(unsupported.codes, 'warning 码').toEqual(disabled.codes);
-    // 不支持时不弹确认框、不留开关（能力整体不可见）。
-    await expect(page.locator('.ofd-dialog[role="dialog"]')).toHaveCount(0);
-    await page.evaluate(() => window.__viewer!.openSidebar('settings'));
-    const unsupportedSwitch = page.locator('.ofd-viewer__sidebar [role="switch"]');
-    await expect(unsupportedSwitch).toHaveCount(0);
-    // 不支持场景必须给出原因文案。
-    await expect(page.locator('.ofd-viewer__sidebar')).toContainText('浏览器不支持');
+    // 不支持时不请求授权、不留开关（能力整体不可见）。
+    expect(await localFontQueries(page), '不支持时不得查询').toEqual([]);
+    const status = await localFontsStatus(page);
+    expect(status.supported).toBe(false);
+    expect(status.visible).toBe(false);
 
     await expectNoPageErrors(page, issues);
   });
 
-  test('T-E2E3 确认框点「不允许」后：本会话不再弹出，且不查询本机字体', async ({
+  test('T-E2E3 打开会话时用户拒绝授权：开关置关并持久化，不再重复请求', async ({
     page,
     issues,
   }) => {
@@ -512,6 +527,7 @@ test.describe('本机字体加载（queryLocalFonts 桩化）', () => {
     await stubLocalFonts(page, {
       installed: { SimSun: readFontBase64(CJK_FONT_FILE) },
       permission: 'prompt',
+      refuseGrant: true,
     });
 
     await openViewer(page, FIXTURES.externalFont, {
@@ -520,19 +536,19 @@ test.describe('本机字体加载（queryLocalFonts 桩化）', () => {
       fonts: { localFonts: { enabled: true, defaultEnabled: true } },
     });
     await waitForSecondPage(page);
-    await page.waitForTimeout(500);
 
-    const dialog = localFontsDialog(page);
-    await expect(dialog).toBeVisible();
-    await dialog.locator('.ofd-dialog__action:not(.ofd-dialog__action--primary)').click();
-    await expect(dialog).toBeHidden();
-    await page.waitForTimeout(500);
-
-    // 拒绝后：画面保持首次打开的结果，不查询、不重开跳变。
+    // 拒绝后：画面保持首次打开的结果，不重开跳变。
+    await expect
+      .poll(async () => (await localFontsStatus(page)).userState, { timeout: 30_000 })
+      .toBe('off');
     await expectMissingFontBaseline(page, '拒绝后');
-    expect(await localFontQueries(page), '拒绝后不得查询').toEqual([]);
+    const status = await localFontsStatus(page);
+    expect(status.enabled, '拒绝后开关关闭').toBe(false);
+    expect(status.permission).toBe('denied');
+    expect(await storedPreference(page), '拒绝写入持久化').toEqual({ enabled: false, notified: true });
+    expect((await localFontQueries(page)).length, '发起过一次授权请求').toBe(1);
 
-    // 同一会话内再次打开文档：不再弹确认框。
+    // 再次打开会话（页面重新导航，桩记录随之清空）：开关已关闭，什么都不做。
     await openViewer(page, FIXTURES.externalFont, {
       page: 2,
       scale: 1,
@@ -540,21 +556,22 @@ test.describe('本机字体加载（queryLocalFonts 桩化）', () => {
     });
     await waitForSecondPage(page);
     await page.waitForTimeout(500);
-    await expect(page.locator('.ofd-dialog[role="dialog"]')).toHaveCount(0);
-    expect(await localFontQueries(page), '再次打开仍不得查询').toEqual([]);
+    expect(await localFontQueries(page), '开关关闭后不再请求授权').toEqual([]);
+    expect((await localFontsStatus(page)).userState).toBe('off');
     await expectMissingFontBaseline(page, '再次打开');
 
     await expectNoPageErrors(page, issues);
   });
 
-  test('T-E2E4 Esc 关闭确认框视同「不允许」但不写用户选择：下次打开仍询问', async ({
-    page,
-    issues,
-  }) => {
+  test('T-E2E4 打开会话时开关关闭：什么都不做', async ({ page, issues }) => {
     requireSiteFonts();
     await stubLocalFonts(page, {
       installed: { SimSun: readFontBase64(CJK_FONT_FILE) },
       permission: 'prompt',
+    });
+    // 用户此前已明确关闭开关：即使宿主 defaultEnabled 为 true 也不打扰。
+    await page.addInitScript(() => {
+      localStorage.setItem('ofd-viewer:local-fonts', JSON.stringify({ enabled: false, notified: true }));
     });
 
     await openViewer(page, FIXTURES.externalFont, {
@@ -565,31 +582,16 @@ test.describe('本机字体加载（queryLocalFonts 桩化）', () => {
     await waitForSecondPage(page);
     await page.waitForTimeout(500);
 
-    const dialog = localFontsDialog(page);
-    await expect(dialog).toBeVisible();
-    await page.keyboard.press('Escape');
-    await expect(dialog).toBeHidden();
-    // Esc 不写入「用户选择关闭」：持久化的 enabled 不得变成 false
-    // （notified 在弹框前即置位，不能作为判断依据；真正的判据是下次仍会询问）。
-    const stored = await page.evaluate(() => localStorage.getItem('ofd-viewer:local-fonts'));
-    if (stored) {
-      expect(JSON.parse(stored).enabled, 'Esc 不应写 enabled=false').not.toBe(false);
-    }
-    expect(await localFontQueries(page), 'Esc 后不得查询').toEqual([]);
-
-    // 再次打开同一文档（同一会话）：仍然询问。
-    await openViewer(page, FIXTURES.externalFont, {
-      page: 2,
-      scale: 1,
-      fonts: { localFonts: { enabled: true, defaultEnabled: true } },
-    });
-    await waitForSecondPage(page);
-    await expect(localFontsDialog(page)).toBeVisible();
+    expect(await localFontQueries(page), '开关关闭时不请求授权').toEqual([]);
+    const status = await localFontsStatus(page);
+    expect(status.userState).toBe('off');
+    expect(status.enabled).toBe(false);
+    await expectMissingFontBaseline(page, '开关关闭');
 
     await expectNoPageErrors(page, issues);
   });
 
-  test('权限被拒（NotAllowedError）：静默跳过，画面与关闭一致且只报字体 warning', async ({
+  test('权限已允许但查询被拒（NotAllowedError）：静默跳过，画面与关闭一致', async ({
     page,
     issues,
   }) => {
@@ -607,17 +609,13 @@ test.describe('本机字体加载（queryLocalFonts 桩化）', () => {
       fonts: { localFonts: { enabled: true, defaultEnabled: true } },
     });
     await waitForSecondPage(page);
-    await page.waitForTimeout(500);
-
-    const dialog = localFontsDialog(page);
-    await expect(dialog).toBeVisible();
-    await dialog.locator('.ofd-dialog__action--primary').click();
-    await page.waitForTimeout(800);
+    await page.waitForTimeout(1500);
 
     // 权限拒绝只影响本机字体：文档仍可用、只产生字体相关 warning。
     await expectMissingFontBaseline(page, '权限被拒');
     expect(await page.evaluate(() => window.__viewer!.getState().document.status)).toBe('ready');
     expect(await localFontQueries(page), '确实尝试过查询').not.toEqual([]);
+    expect((await localFontsStatus(page)).userState, '拒绝后开关关闭').toBe('off');
 
     await expectNoPageErrors(page, issues);
   });

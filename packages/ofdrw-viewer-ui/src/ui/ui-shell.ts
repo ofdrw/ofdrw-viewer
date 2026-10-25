@@ -44,12 +44,9 @@ import {
 /**
  * 侧栏标签回退顺序。
  *
- * 直接复用 `state.ts` 的 `SIDEBAR_VIEWS`，避免多份清单不同步；`settings` 不参与
- * 「自动挑选第一个可用侧栏」的默认回退（它不属于阅读内容视图）。
+ * 直接复用 `state.ts` 的 `SIDEBAR_VIEWS`，避免多份清单不同步。
  */
-const SIDEBAR_VIEW_ORDER: readonly SidebarView[] = SIDEBAR_VIEWS.filter(
-  (view) => view !== 'settings',
-);
+const SIDEBAR_VIEW_ORDER: readonly SidebarView[] = SIDEBAR_VIEWS;
 
 /** 对话框名称到功能的映射，用于功能关闭时收起弹窗。 */
 const DIALOG_FEATURES: Readonly<Record<string, ViewerFeature>> = Object.freeze({

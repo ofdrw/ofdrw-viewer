@@ -81,6 +81,7 @@ export const zhCN = {
   'localFonts.status.enabled': '已启用',
   'localFonts.status.unsupported': '浏览器不支持',
   'localFonts.status.denied': '未获得授权',
+  'localFonts.status.loading': '正在请求授权…',
   'localFonts.dialog.title': '使用本机字体',
   'localFonts.dialog.description': '允许阅读器使用本机已安装的字体，让文档显示更接近原稿。',
   'localFonts.dialog.allow': '允许',

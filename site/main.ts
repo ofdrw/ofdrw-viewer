@@ -79,8 +79,14 @@ const SITE_FONTS: ViewerFontOptions = {
   aliases: SITE_FONT_ALIASES,
 };
 
-/** 字体档位：auto 使用 SITE_FONTS，off 不配置字体（便于对比缺字现象）。 */
-type FontPreset = 'auto' | 'off';
+/**
+ * 字体档位。
+ *
+ * - `auto`：只用站点内置的思源宋体/文泉驿微米黑；
+ * - `local`：内置字体 + 启用本机字体（用户还需在侧栏「设置」里打开开关并授权）；
+ * - `off`：不配置任何字体，便于对比缺字现象。
+ */
+type FontPreset = 'auto' | 'local' | 'off';
 
 /** 页面首次加载时默认打开的示例。 */
 const DEFAULT_SAMPLE = SAMPLES[0].name;
@@ -263,13 +269,18 @@ function setupDock(mode: DockMode): void {
 /**
  * 读取字体档位。
  *
- * 地址参数 `?fonts=` 优先，其次为控件当前值；只有 `off` 关闭字体，其余按 auto。
+ * 地址参数 `?fonts=` 优先，其次为控件当前值；显式 `auto` 只用内置字体、显式 `off`
+ * 不配置字体，其余（含未指定）一律按 `local`（内置 + 本机字体）。
  *
  * @param raw 参数值或控件值
  * @returns 字体档位
  */
 function readFontPreset(raw: string | null): FontPreset {
-  return raw !== null && raw.trim().toLowerCase() === 'off' ? 'off' : 'auto';
+  const value = raw?.trim().toLowerCase() ?? '';
+  if (value === 'off') return 'off';
+  if (value === 'auto') return 'auto';
+  // 站点默认启用「内置 + 本机字体」：文档打开后即弹确认框询问用户（设计 §4.1）。
+  return 'local';
 }
 
 /**
@@ -309,7 +320,15 @@ function applyFontPreset(preset: FontPreset): OFDViewerElement {
   viewer.replaceWith(placeholder);
   const next = document.createElement('ofd-viewer') as OFDViewerElement;
   for (const { name, value } of Array.from(viewer.attributes)) next.setAttribute(name, value);
-  next.fonts = preset === 'off' ? undefined : SITE_FONTS;
+  // `defaultEnabled: true` 让站点默认就尝试使用本机字体：文档打开后立即弹确认框询问
+  // 用户（设计 §4.1），用户点「允许」才真正申请浏览器权限；拒绝后记住选择、不再打扰。
+  // 之所以不靠侧栏开关：站点希望用户一打开文档就能感知到这个能力。
+  next.fonts =
+    preset === 'off'
+      ? undefined
+      : preset === 'local'
+        ? { ...SITE_FONTS, localFonts: { enabled: true, defaultEnabled: true } }
+        : SITE_FONTS;
   placeholder.replaceWith(next);
   fontSelect.value = preset;
   bindViewerEvents(next);

@@ -219,7 +219,7 @@ describe('本机字体接线（走 viewer 公开入口）', () => {
 });
 
 describe('授权后补注入（prompt → 允许）', () => {
-  it('点「允许」后重开会带上本机字体（不再需要首屏就已授权）', async () => {
+  it('打开会话时请求授权成功后重开会带上本机字体（不再需要首屏就已授权）', async () => {
     const query = stubLocalFonts('prompt');
     const viewer = new OFDViewer({
       container: document.body,
@@ -228,23 +228,20 @@ describe('授权后补注入（prompt → 允许）', () => {
       fonts: { localFonts: { enabled: true, defaultEnabled: true } },
     } as never);
     await viewer.ready;
-    await flush();
-
-    // 首屏：权限 prompt，应有确认框且尚未注入本机字体。
-    const dialog = document.querySelector<HTMLElement>('.ofd-dialog');
-    expect(dialog, '首屏应弹确认框').not.toBeNull();
+    // 首屏打开时尚无本机字体注入。
     const families: string[] = engineMocks.open.mock.calls.map((call) =>
       defaultFamilies(call[0] as OFDOpenOptions).join(','),
     );
     expect(families.some((value) => value.includes('宋体')), '授权前不注入').toBe(false);
 
-    // 点击「允许」：授权 + 重开，重开时应带上本机字体。
-    (dialog?.querySelector('.ofd-dialog__action--primary') as HTMLButtonElement).click();
     await flush(20);
 
-    expect(query.mock.calls.length, '应有授权查询').toBeGreaterThan(0);
-    const afterAllow = engineMocks.open.mock.calls.at(-1)?.[0] as OFDOpenOptions | undefined;
-    expect(defaultFamilies(afterAllow), '授权后重开应注入本机字体').toContain('宋体');
+    // 会话打开后自动请求授权（无内置确认框），授权成功即重开并注入本机字体。
+    expect(query, '应有授权请求').toHaveBeenCalled();
+    expect(document.querySelector('.ofd-dialog'), '不弹内置确认框').toBeNull();
+    const afterGrant = engineMocks.open.mock.calls.at(-1)?.[0] as OFDOpenOptions | undefined;
+    expect(defaultFamilies(afterGrant), '授权后重开应注入本机字体').toContain('宋体');
+    expect(viewer.getLocalFontsStatus().enabled).toBe(true);
     viewer.destroy();
   });
 });

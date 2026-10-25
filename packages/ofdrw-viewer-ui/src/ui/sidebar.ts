@@ -24,7 +24,6 @@ const TAB_LABEL_KEYS: Readonly<Record<SidebarView, MessageKey>> = Object.freeze(
   bookmarks: 'sidebar.bookmarks',
   signatures: 'sidebar.signatures',
   attachments: 'attachments.title',
-  settings: 'sidebar.settings',
 });
 
 /** 空态文案键。 */
@@ -34,7 +33,6 @@ const EMPTY_LABEL_KEYS: Readonly<Record<SidebarView, MessageKey>> = Object.freez
   bookmarks: 'sidebar.noBookmarks',
   signatures: 'sidebar.noSignatures',
   attachments: 'attachments.empty',
-  settings: 'localFonts.group',
 });
 
 /** 侧栏宽度范围，单位 px（设计方案 §5.1）。 */

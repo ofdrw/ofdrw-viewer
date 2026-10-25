@@ -132,11 +132,17 @@ function makeDocument(
  * @param installed 已安装字体：PostScript 名 → 是否命中。
  * @returns 查询替身。
  */
-function stubQuery(installed: Readonly<Record<string, boolean>> = { SimSun: true }) {
+function stubQuery(installed: Readonly<Record<string, unknown>> = { SimSun: true }) {
   const query = vi.fn(async (options?: { postscriptNames?: readonly string[] }) => {
+    // `{ reject: true }`：模拟浏览器拒绝授权（`NotAllowedError`）。
+    if (installed.reject === true) {
+      const error = new Error('用户拒绝');
+      error.name = 'NotAllowedError';
+      throw error;
+    }
     const names = options?.postscriptNames ?? [];
     return names
-      .filter((name) => installed[name])
+      .filter((name) => installed[name] === true)
       .map((name) => ({
         postscriptName: name,
         fullName: name,
@@ -165,25 +171,26 @@ function stubPermissions(state: 'granted' | 'denied' | 'prompt') {
   return query;
 }
 
+/**
+ * 安装可变的权限查询替身（授权申请会改变下一次查询的结果）。
+ *
+ * @param read 返回当前权限状态。
+ * @returns 权限查询替身。
+ */
+function stubPermissionsGetter(read: () => 'granted' | 'denied' | 'prompt') {
+  const query = vi.fn(async () => ({ state: read(), onchange: null }));
+  Object.defineProperty(navigator, 'permissions', {
+    configurable: true,
+    writable: true,
+    value: { query },
+  });
+  return query;
+}
+
 /** 打开确认框（按文案定位，与实现细节解耦）。 */
 function localFontsDialog(): HTMLElement | null {
   const dialogs = Array.from(document.querySelectorAll<HTMLElement>('.ofd-dialog'));
   return dialogs.find((dialog) => dialog.textContent?.includes('使用本机字体')) ?? null;
-}
-
-/**
- * 点击确认框里的按钮。
- *
- * @param kind `allow` 主按钮；`deny` 次按钮。
- */
-function clickDialog(kind: 'allow' | 'deny'): void {
-  const dialog = localFontsDialog();
-  if (!dialog) throw new Error('确认框未打开');
-  const selector =
-    kind === 'allow'
-      ? '.ofd-dialog__action--primary'
-      : '.ofd-dialog__action:not(.ofd-dialog__action--primary)';
-  (dialog.querySelector(selector) as HTMLButtonElement).click();
 }
 
 /** 等待若干个宏任务（重开流程跨多个 await）。 */
@@ -295,73 +302,172 @@ describe('OFDViewer 本机字体开关生效值（T-V1）', () => {
 });
 
 describe('OFDViewer 授权流程（T-V2、T-V4）', () => {
-  it('T-V4 没有用户手势时不调用 queryLocalFonts', async () => {
+  it('用户授权开关未表态时不调用 queryLocalFonts，也不弹任何确认框', async () => {
     const query = stubQuery();
     stubPermissions('prompt');
-    const viewer = await createViewer({ localFonts: { enabled: true, defaultEnabled: true } });
+    const viewer = await createViewer({ localFonts: { enabled: true } });
     await flush();
-    expect(query, '未点击允许前不得查询').not.toHaveBeenCalled();
-    // 首次打开会弹确认框，但不会自行申请权限。
-    expect(localFontsDialog(), '确认框').not.toBeNull();
+    expect(query, '未表态时不得请求授权').not.toHaveBeenCalled();
+    expect(localFontsDialog(), '不再有内置确认框').toBeNull();
+    expect(viewer.getLocalFontsStatus().userState, '未表态').toBe('undecided');
     viewer.destroy();
   });
 
-  it('点「允许」后在同一手势内同步调用 queryLocalFonts', async () => {
+  it('打开会话时开关开启、浏览器权限为 prompt：文档就绪后立即请求授权', async () => {
     const query = stubQuery({ SimSun: true });
-    stubPermissions('prompt');
+    const permissions = stubPermissions('prompt');
     const viewer = await createViewer({ localFonts: { enabled: true, defaultEnabled: true } });
     await flush();
-    clickDialog('allow');
-    // 同步调用：点击后立刻（未等待任何宏任务）就应看到查询。
-    expect(query).toHaveBeenCalledTimes(1);
+    expect(query, '开关开启且未授权应直接请求').toHaveBeenCalledTimes(1);
     const options = query.mock.calls[0]?.[0] as { postscriptNames?: readonly string[] } | undefined;
     expect(Object.keys(options ?? {})).toEqual(['postscriptNames']);
     expect(options?.postscriptNames).toContain('SimSun');
-    await flush();
+    expect(permissions).toHaveBeenCalled();
+    expect(localFontsDialog(), '不弹内置确认框').toBeNull();
     viewer.destroy();
   });
 
-  it('T-V2 拒绝后本会话不再询问：再次 open() 不弹框且不查询', async () => {
+  it('授权成功按 granted 判定：重开页面并保持开关开启', async () => {
+    // 授权请求期间权限仍报 prompt，授权成功后复查为 granted。
+    let permission: 'granted' | 'prompt' = 'prompt';
+    stubPermissionsGetter(() => permission);
+    const query = vi.fn(async (options?: { postscriptNames?: readonly string[] }) => {
+      permission = 'granted';
+      const names = options?.postscriptNames ?? [];
+      return names
+        .filter((name) => name === 'SimSun')
+        .map((name) => ({
+          postscriptName: name,
+          fullName: name,
+          family: name,
+          style: 'Regular',
+          blob: async () => new Blob([new Uint8Array([0, 1, 0, 0])]),
+        }));
+    });
+    vi.stubGlobal('queryLocalFonts', query);
+
+    const viewer = await createViewer({ localFonts: { enabled: true, defaultEnabled: true } });
+    await flush();
+    // 首次打开（prompt，无手势授权请求失败）→ 文档就绪后请求授权成功 → 重开。
+    expect(query.mock.calls.length, '授权请求 + 重开后的字体解析查询').toBeGreaterThanOrEqual(2);
+    expect(engineMocks.open.mock.calls.length, '授权成功需要重开').toBeGreaterThan(1);
+    const status = viewer.getLocalFontsStatus();
+    expect(status.enabled, '授权成功开关保持开启').toBe(true);
+    expect(status.userState).toBe('on');
+    expect(status.permission).toBe('granted');
+    viewer.destroy();
+  });
+
+  it('授权被拒：仅把用户授权开关置关并持久化，不重开页面', async () => {
+    // 浏览器拒绝：`queryLocalFonts` 抛 NotAllowedError，权限复查为 denied。
+    const query = stubQuery({ reject: true });
+    stubPermissions('denied');
+    const viewer = await createViewer({ localFonts: { enabled: true, defaultEnabled: true } });
+    await flush();
+    const opens = engineMocks.open.mock.calls.length;
+    await flush(20);
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(engineMocks.open.mock.calls.length, '拒绝后不重开').toBe(opens);
+    const status = viewer.getLocalFontsStatus();
+    expect(status.enabled, '拒绝后开关关闭').toBe(false);
+    expect(status.userState, '用户授权开关关闭').toBe('off');
+    expect(status.permission).toBe('denied');
+    expect(localStorage.getItem(STORAGE_KEY), '拒绝写入持久化').toBe(
+      JSON.stringify({ enabled: false, notified: true }),
+    );
+
+    // 用户授权开关已关闭：再次打开会话什么都不做。
+    await viewer.open(new ArrayBuffer(8));
+    await flush(20);
+    expect(query, '开关关闭后不再请求授权').toHaveBeenCalledTimes(1);
+    viewer.destroy();
+  });
+
+  it('浏览器已拒绝且查询静默返回空数组：权限复查未授予即按拒绝处理', async () => {
+    // 实测 denied 时 `queryLocalFonts` resolve 为 []，不抛错。
+    const query = stubQuery({ SimSun: false });
+    stubPermissions('denied');
+    const viewer = await createViewer({ localFonts: { enabled: true, defaultEnabled: true } });
+    await flush();
+    const opens = engineMocks.open.mock.calls.length;
+    await flush(20);
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(engineMocks.open.mock.calls.length, '不重开').toBe(opens);
+    const status = viewer.getLocalFontsStatus();
+    expect(status.userState).toBe('off');
+    expect(status.permission).toBe('denied');
+    expect(localStorage.getItem(STORAGE_KEY)).toBe(
+      JSON.stringify({ enabled: false, notified: true }),
+    );
+    viewer.destroy();
+  });
+
+  it('打开会话时用户授权开关关闭：什么都不做', async () => {
     const query = stubQuery();
     stubPermissions('prompt');
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ enabled: false, notified: true }));
     const viewer = await createViewer({ localFonts: { enabled: true, defaultEnabled: true } });
     await flush();
-    expect(localFontsDialog()).not.toBeNull();
-    clickDialog('deny');
-    await flush();
+    expect(query, '开关关闭时不得请求授权').not.toHaveBeenCalled();
+    expect(viewer.getLocalFontsStatus().userState, '开关关闭').toBe('off');
     expect(localFontsDialog()).toBeNull();
-    expect(viewer.getLocalFontsStatus().enabled, '拒绝后开关关闭').toBe(false);
-    // 拒绝写入用户选择（本会话 + 记忆）。
-    const stored = localStorage.getItem(STORAGE_KEY);
-    expect(stored).not.toBeNull();
-    expect(JSON.parse(stored as string)).toEqual({ enabled: false, notified: true });
+    viewer.destroy();
+  });
+});
 
-    await viewer.open(new ArrayBuffer(8));
+describe('OFDViewer 未授权时经「关于」触发授权', () => {
+  it('用户打开开关即请求授权，授权成功重开页面', async () => {
+    // 权限初为 prompt，恰好扮演「未授权」，无需先发一次授权请求。
+    let permission: 'granted' | 'prompt' = 'prompt';
+    stubPermissionsGetter(() => permission);
+    const query = vi.fn(async (options?: { postscriptNames?: readonly string[] }) => {
+      permission = 'granted';
+      const names = options?.postscriptNames ?? [];
+      return names
+        .filter((name) => name === 'SimSun')
+        .map((name) => ({
+          postscriptName: name,
+          fullName: name,
+          family: name,
+          style: 'Regular',
+          blob: async () => new Blob([new Uint8Array([0, 1, 0, 0])]),
+        }));
+    });
+    vi.stubGlobal('queryLocalFonts', query);
+    const viewer = await createViewer({ localFonts: { enabled: true } });
     await flush();
-    expect(localFontsDialog(), '再次打开不再询问').toBeNull();
-    expect(query, '拒绝后不查询').not.toHaveBeenCalled();
+    expect(query, '未表态时打开不请求').not.toHaveBeenCalled();
+    const opens = engineMocks.open.mock.calls.length;
+
+    await viewer.setLocalFontsEnabled(true);
+    // 授权申请在点击的同步栈内发起：点击返回时查询已发生。
+    expect(query, '点击开关后在同步栈内已发起查询').toHaveBeenCalled();
+    expect(query.mock.calls[0]?.[0]).toEqual({ postscriptNames: expect.arrayContaining(['SimSun']) });
+    await flush(20);
+    expect(engineMocks.open.mock.calls.length, '授权成功后重开').toBeGreaterThan(opens);
+    const status = viewer.getLocalFontsStatus();
+    expect(status.enabled).toBe(true);
+    expect(status.userState).toBe('on');
     viewer.destroy();
   });
 
-  it('Esc/遮罩关闭确认框视同不允许，但不写用户选择（下次仍询问）', async () => {
-    stubQuery();
-    stubPermissions('prompt');
-    const viewer = await createViewer({ localFonts: { enabled: true, defaultEnabled: true } });
+  it('用户打开开关但浏览器未授权：开关置关并持久化，不重开', async () => {
+    const query = stubQuery({ reject: true });
+    stubPermissions('denied');
+    const viewer = await createViewer({ localFonts: { enabled: true } });
     await flush();
-    expect(localFontsDialog()).not.toBeNull();
-    // Esc 由焦点陷阱转发为 close()。
-    const dialog = localFontsDialog() as HTMLElement;
-    dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    await flush();
-    expect(localFontsDialog()).toBeNull();
-    // Esc 不写入「用户选择关闭」：持久化的 enabled 不得变成 false
-    // （notified 在弹框前即置位，不能作为判断依据）。
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) expect(JSON.parse(stored).enabled).not.toBe(false);
+    const opens = engineMocks.open.mock.calls.length;
 
-    await viewer.open(new ArrayBuffer(8));
-    await flush();
-    expect(localFontsDialog(), 'Esc 后下次打开仍询问').not.toBeNull();
+    await viewer.setLocalFontsEnabled(true);
+    expect(query).toHaveBeenCalledTimes(1);
+    await flush(20);
+    expect(engineMocks.open.mock.calls.length, '未授权不重开').toBe(opens);
+    const status = viewer.getLocalFontsStatus();
+    expect(status.enabled).toBe(false);
+    expect(status.userState).toBe('off');
+    expect(localStorage.getItem(STORAGE_KEY)).toBe(
+      JSON.stringify({ enabled: false, notified: true }),
+    );
     viewer.destroy();
   });
 });
@@ -434,7 +540,7 @@ describe('OFDViewer 重开与视图恢复（T-V3、T-V5）', () => {
     viewer.destroy();
   });
 
-  it('关闭开关后立即重开当前文档，并保持视图', async () => {
+  it('关闭开关只改状态、不重载文档（避免字体缺失 warning 刷屏）', async () => {
     stubQuery({ SimSun: true });
     stubPermissions('granted');
     const viewer = await createViewer({ localFonts: { enabled: true, defaultEnabled: true } });
@@ -447,11 +553,12 @@ describe('OFDViewer 重开与视图恢复（T-V3、T-V5）', () => {
 
     await viewer.setLocalFontsEnabled(false);
     await flush(20);
-    expect(engineMocks.open.mock.calls.length, '关开关触发重开').toBeGreaterThan(opens);
-    const after = viewer.getState().view;
-    expect(after.pageNumber, '页码').toBe(before.pageNumber);
-    expect(after.scale, '缩放').toBeCloseTo(before.scale, 5);
+    // 关闭不重载：重载会把已解析字体全部丢弃，而本机字体不再注入，文档里依赖它的
+    // 文字会逐条产生 W_FONT_MISSING，出现刷屏。
+    expect(engineMocks.open.mock.calls.length, '关开关不触发重开').toBe(opens);
     expect(viewer.getLocalFontsStatus().enabled).toBe(false);
+    // 视图保持不变（没有被重载打断）。
+    expect(viewer.getState().view.pageNumber, '页码不变').toBe(before.pageNumber);
     viewer.destroy();
   });
 });

@@ -25,7 +25,7 @@ import type { SidebarView } from '../state';
  * @returns 对应的功能键。
  */
 export function sidebarViewFeature(view: SidebarView): ViewerFeature {
-  return view === 'settings' ? 'sidebar' : view;
+  return view;
 }
 
 /** 控件当前的功能门控结果。 */

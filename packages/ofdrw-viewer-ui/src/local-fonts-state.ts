@@ -26,12 +26,28 @@ export const MAX_LOCAL_FONTS_MAX_FONTS = 32;
  */
 export type LocalFontStatus = 'prompt' | 'granted' | 'denied' | 'unsupported';
 
+/** 用户授权开关状态：开、关、未决定（用户尚未在任何授权入口表态）。 */
+export type LocalFontsUserState = 'on' | 'off' | 'undecided';
+
 /** 本地字体当前状态（设计 §3.5）。 */
 export interface LocalFontsStatus {
   /** 浏览器是否提供 `queryLocalFonts`。 */
   readonly supported: boolean;
-  /** 开关是否开启（用户选择或宿主默认值）。 */
+  /**
+   * 开关是否开启（= 真正生效）。
+   *
+   * 与浏览器授权状态同步：`用户意向为开 && permission === 'granted'`。权限为 `prompt`
+   * 或 `denied` 时恒为 `false`——拒绝授权后开关自动回到关闭态，用户再点一次即可重新
+   * 发起申请，不会停在「开着却不起作用」的假象上。
+   */
   readonly enabled: boolean;
+  /**
+   * 用户授权开关（用户意向本身，不代表浏览器是否授权）。
+   *
+   * `on` 用户已开启；`off` 用户已关闭；`undecided` 尚未表态。`enabled` 是它与浏览器
+   * 权限的共同结果，`userState` 用于区分「开着但浏览器没授权」与「用户主动关闭」。
+   */
+  readonly userState: LocalFontsUserState;
   /** 权限状态：未申请 / 已授权 / 已拒绝 / 不支持。 */
   readonly permission: LocalFontStatus;
   /** 是否应展示「使用本机字体」开关（能力可用且宿主允许）。 */
@@ -167,6 +183,25 @@ export function writeLocalFontsPreference(
       LOCAL_FONTS_STORAGE_KEY,
       JSON.stringify({ enabled: preference.enabled, notified: preference.notified }),
     );
+  } catch {
+    // 隐私模式或配额不足：降级为「无记忆」，不影响阅读。
+  }
+}
+
+/**
+ * 清除已持久化的用户选择。
+ *
+ * 授权失败（用户拒绝或浏览器权限为 `denied`）时调用：开关要回到「关」并与浏览器授权
+ * 状态保持一致，用户下次点开关即可重新发起申请。写入失败静默忽略。
+ *
+ * @param storage localStorage 实现；省略时取全局 `localStorage`。
+ */
+export function clearLocalFontsPreference(
+  storage: Storage | undefined = getLocalStorage(),
+): void {
+  if (!storage) return;
+  try {
+    storage.removeItem(LOCAL_FONTS_STORAGE_KEY);
   } catch {
     // 隐私模式或配额不足：降级为「无记忆」，不影响阅读。
   }

@@ -51,7 +51,6 @@ export const SIDEBAR_VIEWS = [
   'bookmarks',
   'signatures',
   'attachments',
-  'settings',
 ] as const;
 
 /** 侧栏视图。 */

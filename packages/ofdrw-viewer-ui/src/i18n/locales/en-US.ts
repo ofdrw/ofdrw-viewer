@@ -82,6 +82,7 @@ export const enUS: MessageDictionary = {
   'localFonts.status.enabled': 'Enabled',
   'localFonts.status.unsupported': 'Not supported by this browser',
   'localFonts.status.denied': 'Not authorized',
+  'localFonts.status.loading': 'Requesting permission…',
   'localFonts.dialog.title': 'Use local fonts',
   'localFonts.dialog.description':
     'Allow the viewer to use fonts installed on this device so the document looks closer to the original.',

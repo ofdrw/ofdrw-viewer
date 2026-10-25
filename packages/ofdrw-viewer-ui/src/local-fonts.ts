@@ -153,6 +153,49 @@ export async function queryLocalFontFaces(
 }
 
 /**
+ * 以定向查询触发浏览器授权，并复查授权结果。
+ *
+ * 调用点必须在用户点击事件的同步栈内：浏览器只接受手势内的 `local-fonts` 权限申请，
+ * `queryLocalFonts` 在第一个 `await` 之前同步调用。
+ *
+ * 授权结果判定（设计 §5.2）：`queryLocalFonts` 未抛错且复查权限为 `granted` 才算成功。
+ * 权限为 `denied` 时 `queryLocalFonts` 会 resolve 为 `[]` 而不抛错，因此只看「没有抛错」
+ * 会漏判拒绝。
+ *
+ * @param names 候选 PostScript 名；为空时补一份固定的常见中文字体名，保证点击后一定能
+ *   触发授权申请。仅供申请权限使用，查询到的字体面不参与渲染。
+ * @returns 授权后的权限状态：`granted` 成功；`denied` 用户拒绝；`prompt` 未取得授权。
+ */
+export async function requestLocalFontsGrant(
+  names: readonly string[],
+): Promise<LocalFontStatus> {
+  if (!supportsLocalFonts()) return 'unsupported';
+  const scope = getGlobalObject() as { queryLocalFonts?: QueryLocalFonts };
+  const query = scope.queryLocalFonts;
+  if (typeof query !== 'function') return 'unsupported';
+  const postscriptNames = names.length > 0 ? [...names] : [...GRANT_PROBE_NAMES];
+  let failed = false;
+  try {
+    await query.call(scope, { postscriptNames });
+  } catch {
+    // 拒绝（NotAllowedError）、无手势（SecurityError）、策略禁用等统一交给权限复查判定。
+    failed = true;
+  }
+  const permission = await queryLocalFontsPermission();
+  if (permission === 'granted' && !failed) return 'granted';
+  if (permission === 'unsupported') return 'unsupported';
+  return permission === 'denied' ? 'denied' : 'prompt';
+}
+
+/** 触发授权用的退化候选名：Windows/macOS 中文环境最常见字体。 */
+const GRANT_PROBE_NAMES: readonly string[] = [
+  'SimSun',
+  'SimHei',
+  'MicrosoftYaHei',
+  'PingFangSC-Regular',
+];
+
+/**
  * 把浏览器返回的字体面按候选优先级重排。
  *
  * 只保留候选名中确实出现过的项；同一候选名对应多个字体面时取第一个。

@@ -181,7 +181,6 @@ new OFDViewer({
 | `properties.*` | 文档属性对话框六个分组 | 分组标题、新元数据字段、权限项、单位与数值模板 |
 | `feature.attachments` | 功能开关文案 | — |
 | `localFonts.*` | 设置侧栏的本机字体分组与授权确认框 | `group`、`toggle`、`toggleHint`、`status.prompt`、`status.enabled`、`status.unsupported`、`status.denied`、`dialog.title`、`dialog.description`、`dialog.allow`、`dialog.deny` |
-| `sidebar.settings` | 侧栏「设置」标签 | — |
 
 ### 容器与来源
 
@@ -227,7 +226,7 @@ new OFDViewer({
 启用需要宿主与用户双方同意，缺一不可：
 
 1. **宿主配置**：`fonts.localFonts.enabled: true`，否则能力对用户完全不可见（侧栏不出现开关，`{ local }` 来源按不支持跳过）；
-2. **用户授权**：用户在侧栏「设置 → 字体」里打开「使用本机字体」，并在确认框点「允许」——浏览器只接受**用户手势**内的权限申请，因此阅读器不会在 `open()` 里静默申请，也不会自动弹浏览器授权框。
+2. **用户授权**：文档打开后弹出确认框，用户点「允许」——浏览器只接受**用户手势**内的权限申请，因此阅读器不会在 `open()` 里静默申请，也不会自动弹浏览器授权框。之后可在工具栏「更多」→「关于」里随时修改该开关。
 
 `LocalFontsOptions` 字段：
 
@@ -239,14 +238,24 @@ new OFDViewer({
 | `maxFonts` | `number` | `8` | 单个文档最多查询多少个**文档声明字体**；非有限数或 `< 1` 按 8，上限钳到 32 |
 | `consentText` | `string` | 内置文案 | 授权确认框说明文案覆盖（例如内网统一口径） |
 
-生效值遵循「**宿主配置决定默认值，用户选择优先**」：
+生效值分两步计算，遵循「**宿主配置决定默认值，用户选择优先，最终与浏览器授权同步**」：
 
-| 条件 | 生效的 `enabled` | 展示开关 |
+**第一步：用户意向 `wanted`**
+
+| 条件 | `wanted` | 展示开关 |
 | --- | --- | --- |
-| `fonts.localFonts` 未配置，或 `enabled !== true` | `false` | 否 |
-| 浏览器没有 `queryLocalFonts` | `false` | 否（只展示「浏览器不支持」原因） |
+| `fonts.localFonts` 未配置，或 `enabled !== true` | — | 否（能力不可见） |
+| 浏览器没有 `queryLocalFonts` | — | 否（只展示「浏览器不支持」原因） |
 | `remember !== false` 且 `localStorage` 有用户选择 | 用户选择 | 是 |
 | 以上都不成立 | `defaultEnabled === true` | 是 |
+
+**第二步：与浏览器授权同步**
+
+```ts
+LocalFontsStatus.enabled = wanted && permission === 'granted'
+```
+
+即**权限为 `prompt` 或 `denied` 时，`enabled` 一律为 `false`**（开关显示为关）。这是「开关状态与浏览器授权状态同步」的落地方式：任何授权失败都会让开关自动回到关闭态，用户点一下即可重新发起申请，不会出现「开着却不起作用」的假象。
 
 `FontSource` 的 `{ local }` 来源：
 
@@ -561,7 +570,7 @@ class OFDViewer {
 
 - `supported: false` 表示「该能力对本次阅读器不生效」——宿主未启用 `fonts.localFonts`、或浏览器不提供 `queryLocalFonts`、或站点策略禁用；此时 `permission` 恒为 `unsupported`，侧栏不展示开关。
 - `permission: 'denied'` 与「本机未安装」在 `queryLocalFonts()` 层面返回值相同（都是空数组），阅读器用 `navigator.permissions.query({ name: 'local-fonts' })` 区分，因此不要用查询结果自行判断「用户拒绝」。
-- 用户拒绝后：开关置为关闭并写入用户选择，**本会话不再弹确认框**；侧栏开关仍可手动打开再次尝试。拒绝反馈只在侧栏面板内展示文案，不发 toast。
+- 用户拒绝后：`enabled` 与 `permission` 同步降级——开关显示为**关**，同时清除已持久化的用户意向。此后**不再自动弹确认框**，用户可点「关于」里的开关重新发起申请。注意 Chrome 在权限已为 `denied` 时不会再次弹授权框，用户需先在浏览器「站点设置 → 本地字体」里改为允许。拒绝反馈只在「关于」的状态文案里展示，不发 toast。
 - 确认框「允许」为 Sync 回调内发起权限申请；Esc / 遮罩关闭视同「不允许」但**不**写入用户选择（下次仍会询问）。
 
 ### 导航与缩放
@@ -584,7 +593,7 @@ class OFDViewer {
 
 | 方法 | 说明 |
 | --- | --- |
-| `openSidebar(view)` | 打开 `thumbnails`/`outline`/`bookmarks`/`signatures`/`attachments`/`settings`；需要 `sidebar` 及对应功能 |
+| `openSidebar(view)` | 打开 `thumbnails`/`outline`/`bookmarks`/`signatures`/`attachments`；需要 `sidebar` 及对应功能 |
 | `closeSidebar()` | 关闭侧栏；已关闭时无操作 |
 | `toggleSidebar()` | 已打开则关闭，否则打开第一个可用侧栏 |
 | `setFullscreen(value): Promise<void>` | 进入/退出全屏；原生不支持或失败时回退为沉浸式样式并产生 `W_FULLSCREEN_FALLBACK` |
@@ -615,20 +624,21 @@ interface UIDialogOptions {
 
 `DialogName` 允许宿主扩展字符串，内置名称仅为约定。
 
-`SidebarView` 为 `'thumbnails' | 'outline' | 'bookmarks' | 'signatures' | 'attachments' | 'settings'`。`settings` 是设置面板，只有「字体」一组（本机字体开关），行为见下节；它不参与 `toggleSidebar()` 的「第一个可用侧栏」自动选择，也不新增功能键——访问控制只来自 `sidebar` 功能门控与 `fonts.localFonts.enabled`。
+`SidebarView` 为 `'thumbnails' | 'outline' | 'bookmarks' | 'signatures' | 'attachments'`，只承载文档内容视图。本机字体开关不在侧栏，见[本机字体](#本机字体)。
 
-#### 设置侧栏（本机字体开关）
+#### 「关于」对话框（本机字体开关）
 
-`settings` 侧栏展示本机字体开关，是启用 `queryLocalFonts` 的用户入口（见[本机字体](#本机字体)）：
+本机字体开关位于工具栏「更多」→「关于」，追加在版本信息与「开源软件许可」之后（见[本机字体](#本机字体)）：
 
 | 项 | 内容 |
 | --- | --- |
-| 分组 | 「字体」 |
-| 开关 | 「使用本机字体」+ 说明「用本机已安装的字体替换缺失字体」，`role="switch"` + `aria-checked`，键盘可操作 |
-| 状态文案 | `未授权`（首次）/ `已启用` / `未获得授权`（`denied`）/ `浏览器不支持` |
-| 隐藏条件 | 浏览器不支持，或 `fonts.localFonts.enabled !== true`（整个字体分组不出现） |
+| 位置 | 「关于」对话框内，版本信息之后，一行 `dt`（「使用本机字体」）+ `dd`（开关 + 状态文案） |
+| 开关 | `role="switch"` + `aria-checked` + `data-enabled`，键盘可操作；点击调用 `setLocalFontsEnabled(!current)` 并就地刷新文案 |
+| 状态文案 | `未授权`（`prompt`）/ `已启用` / `未获得授权`（`denied`）/ `浏览器不支持`（`supported === false`，此时开关隐藏并禁用） |
+| 开关取值 | `enabled = 用户意向为开 && permission === 'granted'`——与浏览器授权状态同步，权限为 `prompt`/`denied` 时一律显示为关 |
+| 渲染条件 | `LocalFontsStatus.visible === false`（宿主未配置 `fonts.localFonts.enabled: true`）时整行不渲染 |
 
-约束：**不新增工具栏按钮、不加 toast 引导、不在缺字时主动打扰**，用户从侧栏设置进入。点击开关在用户手势内同步发起授权申请。
+约束：**不新增工具栏按钮、不加 toast 引导、不在缺字时主动打扰**；首次授权由文档打开后的确认框负责，用户在「关于」里只做事后调整。
 
 #### 附件侧栏
 

@@ -177,7 +177,7 @@ crypto 可以重导出 engine 的 `ByteSource` 类型，但不得借此扩大 en
 - 功能键新增 `attachments`（依赖 `sidebar`，默认开启）：引擎无 `saveAttachment()` 时标记 `unsupported`，文档无附件时按 `document` 关闭。
 - `ViewerState.document` 字段不变（不承载权限/附件）；权限与附件通过 `getDocumentInfo()` 或既有 `getPermissions()` 读取。
 - 包根同时透出引擎的 `AttachmentInfo`、`DocumentPermissions`、`DocumentMetadata` 及其新增子类型。
-- 本机字体（`queryLocalFonts`）：`OFDViewer` 新增 `getLocalFontsStatus()`、`setLocalFontsEnabled(enabled)`、`onLocalFontsStatusChange(handler)`；构造选项 `fonts.localFonts`（五字段 `enabled`/`defaultEnabled`/`remember`/`maxFonts`/`consentText`，默认关闭）；`FontSource` 新增 `{ local }` 第五态；事件新增 `local-fonts:change`；侧栏新增 `settings` 视图（不新增功能键）。包根导出 `LocalFontsOptions`、`LocalFontStatus`、`LocalFontsStatus`、`LocalFontsChangeEvent`。默认关闭、需宿主配置 + 用户授权双重开启，失败静默回退，详见 [本地字体加载方案设计](本地字体加载方案设计.md) 与 UI API.md「本机字体」。
+- 本机字体（`queryLocalFonts`）：`OFDViewer` 新增 `getLocalFontsStatus()`、`setLocalFontsEnabled(enabled)`、`onLocalFontsStatusChange(handler)`；构造选项 `fonts.localFonts`（五字段 `enabled`/`defaultEnabled`/`remember`/`maxFonts`/`consentText`，默认关闭）；`FontSource` 新增 `{ local }` 第五态；事件新增 `local-fonts:change`；开关位于工具栏「更多」→「关于」对话框（**不新增侧栏视图、不新增功能键**）。包根导出 `LocalFontsOptions`、`LocalFontStatus`、`LocalFontsStatus`、`LocalFontsChangeEvent`、`LocalFontDeclaration`。默认关闭、需宿主配置 + 用户授权双重开启；`LocalFontsStatus.enabled` 与浏览器授权状态同步（权限非 `granted` 时一律为 `false`），失败静默回退，详见 [本地字体加载方案设计](本地字体加载方案设计.md) 与 UI API.md「本机字体」。
 
 UI 的包根导入会安装 UI shell，并加载文本、导航、签章、打印、导出等副作用模块；React/Vue/Web Component 入口复用同一 `OFDViewer` 内核，不建立第二套文档生命周期。
 

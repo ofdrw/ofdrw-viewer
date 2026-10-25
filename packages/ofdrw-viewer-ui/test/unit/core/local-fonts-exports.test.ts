@@ -58,6 +58,7 @@ describe('本机字体公共导出', () => {
     const status: LocalFontsStatus = {
       supported: true,
       enabled: false,
+      userState: 'undecided',
       permission: 'prompt',
       visible: true,
       loading: false,
