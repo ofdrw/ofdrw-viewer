@@ -268,12 +268,6 @@ function renderNotes({ tag, version, previousTag, commits, packages, repository 
     lines.push(`线上演示站已同步更新：<${siteUrl}>`, '');
   }
 
-  lines.push('## 校验', '');
-  lines.push('下载 `SHA256SUMS` 后，在同一目录执行：', '');
-  lines.push('```bash');
-  lines.push('sha256sum -c SHA256SUMS');
-  lines.push('```', '');
-
   if (repository) {
     lines.push('## 完整变更', '');
     lines.push(
