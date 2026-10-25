@@ -435,6 +435,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private localFontsPreference: LocalFontsPreference | undefined;
   /** 最近一次广播的本地字体状态；用于去重，保证「一次变化只触发一次」。 */
   private localFontsPublished: LocalFontsStatus | null = null;
+  /** 是否正在补「带上本机字体」的重开（防止 open() 再次触发重开）。 */
+  private localFontsReopening = false;
   private scrollFrame: number | null = null;
   private reflowFrame: number | null = null;
   private lastVisibleRange = { start: 0, end: -1 };
@@ -866,7 +868,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     /** 本次来源的原始信息；成功后写入状态供导出命名。 */
     let origin: ViewerOrigin | undefined;
     // 本机字体生效值必须在打开文档之前同步给控制器，否则本次打开读不到开关状态。
-    this.syncLocalFontsToController();
+    // 权限查询是异步的，必须先完成，否则首次授权后本次打开读到的仍是旧权限态。
+    await this.prepareLocalFontsForOpen();
     try {
       // URL → HttpByteSource 只在这里做一次；crypto 与 engine 共用同一实例。
       const normalized: NormalizedViewerSource = normalizeViewerSourceDetailed(
@@ -956,6 +959,17 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       void this.loadSideData(token);
       this.syncHash();
       this.maybeAutoVerify();
+      // 首次打开时声明未知，读到这里才知道是否要用本机字体。需要时在本轮收尾处补一次
+      // 重开：重开会重建字节源（两次打开不能共享同一个已关闭的源），并恢复阅读位置。
+      if (!this.localFontsReopening && this.controller.needsLocalFontsReopen()) {
+        this.localFontsReopening = true;
+        try {
+          await this.open(this.lastOpenSource ?? resolved);
+        } finally {
+          this.localFontsReopening = false;
+        }
+        return;
+      }
       // 设计 §4.1：先按原有方式打开文档，文档就绪后再询问是否使用本机字体。
       // 权限态只做纯查询（不申请），据此决定是否弹确认框。
       void this.refreshLocalFontsPermission().then(() => this.maybePromptLocalFontsConsent());
@@ -1912,6 +1926,18 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
    * 控制器据此决定是否按文档声明生成 `{ local }` 来源；开关变化、权限变化与每次打开
    * 文档前都必须调用，否则注入开关会停留在旧值（REQ-007 / REQ-0180）。
    */
+  /**
+   * 打开文档前刷新权限态，并把生效值同步给控制器。
+   *
+   * 权限查询是异步的，必须在 `open()` 真正打开文档之前完成。
+   */
+  private async prepareLocalFontsForOpen(): Promise<void> {
+    if (this.localFontsSupported()) {
+      this.localFontsPermission = await queryLocalFontsPermission();
+    }
+    this.syncLocalFontsToController();
+  }
+
   private syncLocalFontsToController(): void {
     const config = this.resolveLocalFontsConfig();
     // 只有「开关开启且浏览器已授权」才真正读取本机字体：权限未授予时发起查询必然失败，

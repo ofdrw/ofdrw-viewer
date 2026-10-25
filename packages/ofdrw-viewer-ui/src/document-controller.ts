@@ -520,8 +520,10 @@ export class DocumentController {
     signal?: AbortSignal,
   ): Promise<OpenedDocumentInfo> {
     await this.closeInternal();
-    // 清空上一个文档的声明：本机字体查询必须基于当前文档（跨文档复用会查到错误字体）。
-    this.fontDeclarations = [];
+    // 声明缓存由「同一来源的重开」继承：本机字体注入依赖它生成 `{ local }` 来源，
+    // 若在此清空，重开时会读到空声明、本机字体永远注入不进去。切换文档时由
+    // `reopenForLocalFonts()` 之外的普通 `open()` 路径在下方按新文档重新读取覆盖。
+    // 真正的跨文档隔离靠「每次打开都重新读取声明」（见下方 openOnce 之后的赋值）。
     // closeInternal 会递增 openToken；打开代次必须在关闭之后捕获。
     const token = ++this.openToken;
     if (signal?.aborted) throw createOpenAbortError();
@@ -549,35 +551,11 @@ export class DocumentController {
       });
 
     let document = await openOnce(fonts);
-    // 声明只能从已打开的文档读取（设计 §3.6），而查询本机字体又必须先有声明。因此这里
-    // 每条打开路径都做「打开 → 读当前文档声明 → 有本机字体则静默重开一次」
-    // （需求清单 REQ-0190 方案 A）。不使用缓存做短路，避免切换文档时沿用上一个文档的
-    // 声明；未启用本机字体时完全跳过，不产生额外打开与查询。
-    {
-      // 声明与开关解耦：即使尚未启用本机字体也要读一次，供授权手势展开候选名
-      // （开关打开后才会真正注入；未启用时不产生额外重开）。
-      const declarations = await this.readFontDeclarations(document);
-      if (token !== this.openToken || signal?.aborted) {
-        await closeQuietly(document);
-        throw createOpenAbortError();
-      }
-      this.fontDeclarations = declarations;
-      if (declarations.length > 0 && this.localFontsState?.enabled) {
-        const reopenFonts = await this.resolveFonts(signal);
-        // 只有真的产生了本机字体来源才值得多打开一次。
-        if (hasLocalFonts(reopenFonts)) {
-          const reopened = await openOnce(reopenFonts);
-          if (token !== this.openToken || signal?.aborted) {
-            await closeQuietly(document);
-            await closeQuietly(reopened);
-            throw createOpenAbortError();
-          }
-          await closeQuietly(document);
-          document = reopened;
-          fonts = reopenFonts;
-        }
-      }
-    }
+    // 声明与开关解耦：即使尚未启用本机字体也读一次，供授权手势展开候选名。
+    // 是否需要「带上本机字体再打开一次」由调用方决定（`needsLocalFontsReopen`）：
+    // 两次打开会共享同一个字节源，关闭旧文档会连带关闭它，因此重开交给阅读器层发起，
+    // 由它重建来源、必要时恢复视图。
+    this.fontDeclarations = await this.readFontDeclarations(document);
     if (token !== this.openToken || signal?.aborted) {
       await closeQuietly(document);
       throw createOpenAbortError();
@@ -589,6 +567,21 @@ export class DocumentController {
       source: normalized,
       pageCount: document.pageCount,
     };
+  }
+
+  /**
+   * 判断本次打开是否需要「带上本机字体再打开一次」。
+   *
+   * 首次打开时声明未知，只有打开后才能读到；若此时本机字体已启用且声明非空，
+   * 就需要由阅读器重开一次以注入本机字体（需求清单 REQ-0190 方案 A）。
+   *
+   * @returns 需要重开时返回 true。
+   */
+  needsLocalFontsReopen(): boolean {
+    return (
+      this.localFontsState?.enabled === true &&
+      this.getLocalFontDeclarations(this.localFontsState.maxFonts).length > 0
+    );
   }
 
   /**

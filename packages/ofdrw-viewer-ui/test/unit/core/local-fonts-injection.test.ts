@@ -123,16 +123,13 @@ describe('document-controller 声明筛选', () => {
         return makeDocument(fonts);
       },
     });
-    // 开启本机字体后打开：先按无本机字体打开，读到声明后再静默重开一次。
+    // 开启本机字体后打开：控制器读取声明并给出「是否需要重开」的信号，
+    // 重开本身由阅读器层发起（两次打开共享同一个字节源，必须重建来源）。
     controller.setLocalFonts({ enabled: true });
     await controller.open(new ArrayBuffer(8));
-    // 只查询无内嵌字体的声明（含 fontFile 的「宋体」被跳过）。
+    // 只保留无内嵌字体的声明（含 fontFile 的「宋体」被跳过）。
     expect(controller.getLocalFontDeclarations(8).map((item) => item.fontName)).toEqual(['黑体']);
-    const requested = query.mock.calls.flatMap(
-      (call) => (call[0] as { postscriptNames?: readonly string[] } | undefined)?.postscriptNames ?? [],
-    );
-    expect(requested.length, '应发生本机字体查询').toBeGreaterThan(0);
-    expect(requested, '不得为内嵌字体发起查询').not.toContain('宋体');
+    expect(controller.needsLocalFontsReopen(), '有可用的本机字体候选').toBe(true);
   });
 
   it('maxFonts 默认 8，且只取前 N 个无内嵌字体的声明', async () => {
@@ -257,14 +254,14 @@ describe('document-controller 注入顺序', () => {
     });
     controller.setLocalFonts({ enabled: true });
     await controller.open(new ArrayBuffer(8));
-    // 首次打开不带本机字体，拿到声明后重开一次并带上本机字体。
-    expect(calls.length).toBeGreaterThanOrEqual(2);
-    const first = calls[0];
-    const second = calls.at(-1);
+    // 首次打开不带本机字体（此时还读不到声明），并给出重开信号。
     const familyOf = (options: OFDOpenOptions | undefined): readonly string[] =>
       (options?.defaultFonts ?? []).map((input) => String(input.family ?? ''));
-    expect(familyOf(first), '第一次打开不含本机字体').not.toContain('宋体');
-    expect(familyOf(second), '第二次打开含本机字体').toContain('宋体');
+    expect(familyOf(calls[0]), '第一次打开不含本机字体').not.toContain('宋体');
+    expect(controller.needsLocalFontsReopen(), '首次打开后应要求重开').toBe(true);
+    // 阅读器重开时再打开一次，这次带上本机字体。
+    await controller.open(new ArrayBuffer(8));
+    expect(familyOf(calls.at(-1)), '重开后含本机字体').toContain('宋体');
   });
 
   it('声明为空时不额外重开', async () => {
@@ -281,5 +278,6 @@ describe('document-controller 注入顺序', () => {
     controller.setLocalFonts({ enabled: true });
     await controller.open(new ArrayBuffer(8));
     expect(calls).toHaveLength(1);
+    expect(controller.needsLocalFontsReopen(), '无声明时不需要重开').toBe(false);
   });
 });
