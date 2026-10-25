@@ -348,20 +348,30 @@ export function expandLocalFontCandidates(
     declaredKeys.add(normalizeLocalFontName(name));
     declaredKeys.add(normalizeLocalFontName(stripStyleWords(name)));
   }
+  // 别名成员占用的槽位上限：为文档原始名至少保留一个位置（见下方第 4 步）。
+  const aliasBudget = MAX_CANDIDATES_PER_DECLARATION - RESERVED_FOR_ORIGINAL;
   for (const group of aliases) {
     const members = group.map((member) => normalizeLocalFontName(member)).filter(Boolean);
     const hit = [...declaredKeys].some((key) => key !== '' && members.includes(key));
     if (!hit) continue;
-    for (const member of group) push(postscriptNameOf(member), true);
+    for (const member of group) {
+      if (names.length >= aliasBudget) break;
+      push(postscriptNameOf(member), true);
+    }
   }
 
   // 4. 文档原始名：原样保留（含空格也不改写），文档直接写 PostScript 面名时才能命中。
-  //    归一化后与已有候选相同的原始名不再追加：`simsun` 与 `SimSun` 应得到相同候选集，
-  //    避免为同一字体面重复提交大小写变体。
-  const pushedKeys = new Set(names.map((name) => normalizeLocalFontName(name)));
+  //    跳过规则：仅当它与已有候选「归一化后相同且大小写仅有大小写差异」时跳过，
+  //    使 `simsun` 与 `SimSun` 得到相同候选集（不为同一面重复提交大小写变体）；
+  //    而 `SimHei-bold` 与 `SimHei` 虽然归一化后不同（含连字符与词干），必须双双保留。
   for (const name of declared) {
     const key = normalizeLocalFontName(name);
-    if (key && pushedKeys.has(key)) continue;
+    const duplicated = key !== '' && names.some((existing) => normalizeLocalFontName(existing) === key);
+    if (duplicated && !names.includes(name)) {
+      // 已有同归一化名的候选，且原始名本身是纯大小写变体（无额外分隔符/词干）→ 跳过。
+      const hasExtraParts = /[^A-Za-z0-9]/.test(name.replace(/^[\w.-]+$/, '')) || isStyledName(name);
+      if (!hasExtraParts) continue;
+    }
     push(name, false, true);
   }
 
@@ -371,4 +381,14 @@ export function expandLocalFontCandidates(
     ...(base ? { base } : {}),
   };
 
+}
+
+/**
+ * 判断名称是否带变体词（用于区分 `SimSun` 与 `SimHei-bold` 这类原始名）。
+ *
+ * @param name 原始声明名。
+ * @returns 含粗体/斜体等变体词时返回 true。
+ */
+function isStyledName(name: string): boolean {
+  return styleWordsOf(name).length > 0;
 }
