@@ -35,6 +35,10 @@ export interface BuildZipOptions {
   comment?: string;
   /** 生成 ZIP64 EOCD/中央目录 extra。 */
   zip64?: boolean;
+  /** ZIP64 EOCD record 的 extensible data sector 长度，byte；0 表示无。 */
+  zip64ExtensibleBytes?: number;
+  /** EOCD 之后的尾随字节（模拟 MIME 结束边界等包装数据）。 */
+  trailing?: string;
 }
 
 /** 32 位无符号整数转小端字节。 */
@@ -211,10 +215,12 @@ export function buildZip(
   if (zip64) {
     // ZIP64 EOCD record 必须位于中央目录之后，其偏移为“中央目录起点 + 中央目录长度”。
     const zip64RecordOffset = cdOffset + cdBytes.byteLength;
+    const extensible = new Uint8Array(options.zip64ExtensibleBytes ?? 0);
     zip64Parts.push(
       concat([
         u32(0x06064b50),
-        u64(44),
+        // 记录长度不含 12 字节签名与长度字段本身；扩展段追加在其后。
+        u64(44 + extensible.byteLength),
         u16(45),
         u16(45),
         u32(0),
@@ -223,6 +229,7 @@ export function buildZip(
         u64(count),
         u64(cdBytes.byteLength),
         u64(cdOffset),
+        extensible,
       ]),
     );
     zip64Parts.push(
@@ -247,7 +254,8 @@ export function buildZip(
     commentBytes,
   ]);
 
-  return concat([...localParts, cdBytes, ...zip64Parts, eocd]);
+  const trailing = encode(options.trailing ?? '');
+  return concat([...localParts, cdBytes, ...zip64Parts, eocd, trailing]);
 }
 
 /**

@@ -300,6 +300,78 @@ describe('container/zip-reader', () => {
     reader.close();
   });
 
+  it('BUG-V2-01 R2：ZIP64 × 前缀包装 / 尾随数据 / 非零注释组合均可打开', async () => {
+    const entries = [
+      { name: 'OFD.xml', data: '<OFD/>', method: 8 as const },
+      { name: 'Doc_0/Document.xml', data: '<Document/>', method: 8 as const },
+      { name: 'Doc_0/Res/big.bin', data: new Uint8Array(512).fill(3), method: 0 as const },
+    ];
+    const cases: Array<{ name: string; zip: Uint8Array }> = [
+      { name: '仅前缀包装', zip: wrapMultipart(buildZip(entries, { zip64: true })) },
+      {
+        name: '仅尾随数据',
+        zip: buildZip(entries, { zip64: true, trailing: '\r\n--boundary--\r\n' }),
+      },
+      { name: '仅非零注释', zip: buildZip(entries, { zip64: true, comment: 'zip64-comment' }) },
+      {
+        name: '前缀包装 + 尾随数据',
+        zip: wrapMultipart(buildZip(entries, { zip64: true, trailing: '\r\n--boundary--\r\n' })),
+      },
+      {
+        name: '前缀包装 + 尾随数据 + 注释',
+        zip: wrapMultipart(
+          buildZip(entries, { zip64: true, comment: 'zip64-comment', trailing: 'TRAILING' }),
+        ),
+      },
+    ];
+    for (const item of cases) {
+      const reader = await ZipReader.open(new ArrayBufferSource(item.zip));
+      expect(reader.listEntries().map((entry) => entry.name), item.name).toEqual([
+        'OFD.xml',
+        'Doc_0/Document.xml',
+        'Doc_0/Res/big.bin',
+      ]);
+      expect(new TextDecoder().decode(await reader.readEntry('OFD.xml')), item.name).toBe('<OFD/>');
+      expect(
+        (await reader.readEntry('Doc_0/Res/big.bin')).byteLength,
+        item.name,
+      ).toBe(512);
+      reader.close();
+    }
+  });
+
+  it('BUG-V2-01 R2：ZIP64 EOCD extensible data sector（4/16/64B）不破坏 record 定位', async () => {
+    const entries = [
+      { name: 'OFD.xml', data: '<OFD/>', method: 8 as const },
+      { name: 'Doc_0/Document.xml', data: '<Document/>', method: 8 as const },
+    ];
+    for (const extensibleBytes of [4, 16, 64]) {
+      const bare = buildZip(entries, { zip64: true, zip64ExtensibleBytes: extensibleBytes });
+      const wrapped = wrapMultipart(
+        buildZip(entries, {
+          zip64: true,
+          zip64ExtensibleBytes: extensibleBytes,
+          trailing: 'TRAILING',
+        }),
+      );
+      for (const [label, zip] of [
+        [`extensible=${extensibleBytes}`, bare],
+        [`extensible=${extensibleBytes}+前缀+尾随`, wrapped],
+      ] as const) {
+        const reader = await ZipReader.open(new ArrayBufferSource(zip));
+        expect(reader.listEntries().map((entry) => entry.name), label).toEqual([
+          'OFD.xml',
+          'Doc_0/Document.xml',
+        ]);
+        expect(
+          new TextDecoder().decode(await reader.readEntry('Doc_0/Document.xml')),
+          label,
+        ).toBe('<Document/>');
+        reader.close();
+      }
+    }
+  });
+
   it('getEntry 对非法路径返回 undefined 而不抛错', async () => {
     const zip = buildZip([{ name: 'a.txt', data: 'x' }]);
     const reader = await ZipReader.open(new ArrayBufferSource(zip));

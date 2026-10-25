@@ -37,6 +37,8 @@ const CENTRAL_HEADER_SIZE = 46;
 const ZIP64_EOCD_SIZE = 56;
 /** ZIP64 locator 长度，byte。 */
 const ZIP64_LOCATOR_SIZE = 20;
+/** ZIP64 EOCD record 反向搜索窗口上限，byte。 */
+const MAX_ZIP64_RECORD_SCAN = 1 << 20;
 /** 32 位哨兵值。 */
 const UINT32_MAX = 0xffffffff;
 /** 16 位哨兵值。 */
@@ -296,20 +298,18 @@ export class ZipReader {
     const tail = await this.readExact(tailStart, tailLength, 'ZIP 尾部');
     const tailView = new DataView(tail.buffer, tail.byteOffset, tail.byteLength);
 
-    // 优先取“注释恰好到文件尾”的标准 EOCD；尾部残留数据（如 MIME 结束边界）时，
-    // 回退到能让声明长度落在文件内的最后一个候选。
+    // 从尾部向前扫描 EOCD 签名，优先取结构自洽（isPlausibleEocd）且最晚出现的候选；
+    // 结构自洽的候选都不可用时，退到最晚出现的任意候选，交由后续流程给出精确诊断。
     let eocdIndex = -1;
-    let fallbackIndex = -1;
+    let looseIndex = -1;
     for (let index = tail.length - EOCD_SIZE; index >= 0; index -= 1) {
       if (tailView.getUint32(index, true) !== EOCD_SIGNATURE) continue;
-      const end = index + EOCD_SIZE + tailView.getUint16(index + 20, true);
-      if (end === tail.length) {
-        eocdIndex = index;
-        break;
-      }
-      if (fallbackIndex < 0 && end < tail.length) fallbackIndex = index;
+      if (looseIndex < 0) looseIndex = index;
+      if (!isPlausibleEocd(tailView, index)) continue;
+      eocdIndex = index;
+      break;
     }
-    if (eocdIndex < 0) eocdIndex = fallbackIndex;
+    if (eocdIndex < 0) eocdIndex = looseIndex;
     if (eocdIndex < 0) {
       throw new OFDError('OFD_INVALID_PACKAGE', '未找到 ZIP EOCD');
     }
@@ -367,8 +367,16 @@ export class ZipReader {
   /**
    * 解析 ZIP64 EOCD locator/record。
    *
-   * 归档声明偏移均以包体起点为原点，包体前带包装数据时不可直接使用；
-   * 此处按 locator/EOCD 与 ZIP64 record 的固定相邻关系定位 record。
+   * 偏移语义：归档内偏移以包体起点为原点，包体前带包装数据（如 MIME multipart 头）
+   * 时不能直接当作文件偏移。定位顺序：
+   * 1. 由 EOCD 位置反推 locator 位置并校验签名与分卷字段；
+   * 2. 优先采用 locator 第 8 字节自报的 ZIP64 record 偏移，兼容「绝对位置」与
+   *    「相对包体起点」两种写法，必要时反向搜索最近的 record 签名（见
+   *    {@link locateZip64Record}）；
+   * 3. record 的「记录长度」允许大于 44（extensible data sector），实际跨度
+   *    = 记录长度 + 12，据此校验 record 与 locator 相邻；
+   * 4. 32 位 EOCD 中 cdOffset/cdSize/条目数在 ZIP64 包内是哨兵值 0xFFFFFFFF/0xFFFF，
+   *    真实值只取自 ZIP64 record。
    *
    * @param eocdAbsoluteOffset EOCD 在文件中的绝对偏移，byte。
    * @returns 中央目录信息；cdOffset 仍为归档声明值，base 为包体起点偏移，byte。
@@ -391,16 +399,17 @@ export class ZipReader {
     if (locatorDisk !== 0 || totalDisks > 1) {
       throw new OFDError('OFD_INVALID_PACKAGE', '不支持分卷 ZIP64');
     }
-    const recordOffset = eocdAbsoluteOffset - ZIP64_LOCATOR_SIZE - ZIP64_EOCD_SIZE;
-    if (recordOffset < 0) throw new OFDError('OFD_INVALID_PACKAGE', 'ZIP64 EOCD 区间越界');
-    const record = await this.readExact(recordOffset, ZIP64_EOCD_SIZE, 'ZIP64 EOCD');
-    const view = new DataView(record.buffer, record.byteOffset, record.byteLength);
-    if (view.getUint32(0, true) !== ZIP64_EOCD_SIGNATURE) {
-      throw new OFDError('OFD_INVALID_PACKAGE', 'ZIP64 EOCD 签名非法');
-    }
+
+    const declaredOffset = readUint64(locatorView, 8, 'ZIP64 EOCD 偏移');
+    const resolved = await this.locateZip64Record(declaredOffset, eocdAbsoluteOffset);
+    const { recordOffset, view } = resolved;
     const recordSize = readUint64(view, 4, 'ZIP64 EOCD 记录长度');
     if (recordSize < ZIP64_EOCD_SIZE - 12) {
       throw new OFDError('OFD_INVALID_PACKAGE', 'ZIP64 EOCD 记录长度非法');
+    }
+    // 记录实际跨度含 12 字节签名与长度字段；允许 trailing extensible data sector。
+    if (recordOffset + recordSize + 12 !== eocdAbsoluteOffset - ZIP64_LOCATOR_SIZE) {
+      throw new OFDError('OFD_INVALID_PACKAGE', 'ZIP64 EOCD 记录长度与相邻结构不一致');
     }
     const disk = view.getUint32(16, true);
     const cdDisk = view.getUint32(20, true);
@@ -410,15 +419,71 @@ export class ZipReader {
     const entriesTotal = readUint64(view, 32, 'ZIP64 条目数');
     const cdSize = readUint64(view, 40, 'ZIP64 中央目录大小');
     const cdOffset = readUint64(view, 48, 'ZIP64 中央目录偏移');
-    const span = recordSize + 12;
-    const recordStart = eocdAbsoluteOffset - ZIP64_LOCATOR_SIZE - span;
-    if (recordStart !== recordOffset) {
-      throw new OFDError('OFD_INVALID_PACKAGE', 'ZIP64 EOCD 记录长度与相邻结构不一致');
+    if (recordOffset < cdSize) {
+      throw new OFDError('OFD_INVALID_PACKAGE', 'ZIP 中央目录区间越界');
     }
-    // 中央目录实际起点 = record 实际起点 − 中央目录长度；与其声明偏移之差即包体起点。
+    // 中央目录紧邻 ZIP64 record 之前：record 绝对位置 − 中央目录长度 = 目录起点，
+    // 与归档声明偏移之差即包体前缀长度 base。
     const base = recordOffset - cdSize - cdOffset;
     if (base < 0) throw new OFDError('OFD_INVALID_PACKAGE', 'ZIP 中央目录区间越界');
     return { entriesTotal, cdOffset, cdSize, base };
+  }
+
+  /**
+   * 定位 ZIP64 EOCD record 并读回头部。
+   *
+   * locator 自报偏移的语义在真实包体中并不统一（有的写相对包体起点，有的在包装后
+   * 已写成绝对位置），因此同时尝试三种解释，命中签名者即采用：
+   * 1. 原值即文件绝对偏移；
+   * 2. 原值相对包体起点：真实位置 = locator 实际位置 − 声明偏移（首尾相接的包）；
+   * 3. 由 locator 反向搜索最近的 ZIP64 record 签名（兼容记录长度/包装差异）。
+   * 候选必须位于 locator 之前；record 记录长度随后再做相邻一致性校验。
+   *
+   * @param declaredOffset locator 自报的 record 偏移，byte。
+   * @param eocdAbsoluteOffset EOCD 绝对偏移，byte。
+   * @returns record 绝对偏移与头部视图。
+   * @throws OFDError 无法定位到合法 record 时。
+   */
+  private async locateZip64Record(
+    declaredOffset: number,
+    eocdAbsoluteOffset: number,
+  ): Promise<{ recordOffset: number; view: DataView }> {
+    const limit = eocdAbsoluteOffset - ZIP64_LOCATOR_SIZE;
+    for (const offset of [declaredOffset, limit - declaredOffset]) {
+      const found = await this.tryZip64RecordAt(offset, limit);
+      if (found) return found;
+    }
+    // 反向搜索：覆盖包装、注释与 ext 段导致的长度差异。
+    const windowSize = Math.min(limit, MAX_ZIP64_RECORD_SCAN);
+    const windowStart = limit - windowSize;
+    const window = await this.readExact(windowStart, windowSize, 'ZIP64 EOCD 扫描区');
+    const windowView = new DataView(window.buffer, window.byteOffset, window.byteLength);
+    for (let index = windowSize - ZIP64_EOCD_SIZE; index >= 0; index -= 1) {
+      if (windowView.getUint32(index, true) !== ZIP64_EOCD_SIGNATURE) continue;
+      const found = await this.tryZip64RecordAt(windowStart + index, limit);
+      if (found) return found;
+    }
+    throw new OFDError('OFD_INVALID_PACKAGE', 'ZIP64 EOCD 签名非法');
+  }
+
+  /**
+   * 尝试在指定偏移读取 ZIP64 EOCD record 头部。
+   *
+   * @param offset 候选偏移，byte。
+   * @param limit record 必须位于其之前的边界（locator 起始），byte。
+   * @returns record 偏移与头部视图；签名不符或越界时返回 undefined。
+   */
+  private async tryZip64RecordAt(
+    offset: number,
+    limit: number,
+  ): Promise<{ recordOffset: number; view: DataView } | undefined> {
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset + ZIP64_EOCD_SIZE > limit) {
+      return undefined;
+    }
+    const record = await this.readExact(offset, ZIP64_EOCD_SIZE, 'ZIP64 EOCD');
+    const view = new DataView(record.buffer, record.byteOffset, record.byteLength);
+    if (view.getUint32(0, true) !== ZIP64_EOCD_SIGNATURE) return undefined;
+    return { recordOffset: offset, view };
   }
 
   /**
@@ -595,6 +660,27 @@ function warn(
   const warning: OFDWarning = { code, message };
   if (resourceId !== undefined) warning.resourceId = resourceId;
   handler(warning);
+}
+
+/**
+ * 判断候选 EOCD 是否结构自洽。
+ *
+ * 注释长度必须为文件尾 22 字节固定区之后的首段；ZIP64 包的四个 16 位字段连续为
+ * 0xFFFF 时，其后允许紧跟 ZIP64 locator，而不要求注释长度恰好吞掉 locator。
+ *
+ * @param view 尾部字节视图。
+ * @param index EOCD 签名在视图中的偏移，byte。
+ * @returns 是否为可信 EOCD。
+ */
+function isPlausibleEocd(view: DataView, index: number): boolean {
+  const commentLength = view.getUint16(index + 20, true);
+  const end = index + EOCD_SIZE + commentLength;
+  if (end === view.byteLength) return true;
+  if (end > view.byteLength) return false;
+  // 尾随数据场景：只有 ZIP64 包允许 locator 夹在 EOCD 与其注释之间。
+  const isZip64Sentinel =
+    view.getUint16(index + 8, true) === UINT16_MAX && view.getUint16(index + 10, true) === UINT16_MAX;
+  return isZip64Sentinel && end + ZIP64_LOCATOR_SIZE <= view.byteLength;
 }
 
 /**
