@@ -20,8 +20,23 @@ export interface SealDecodeOptions {
   source?: SealImageSource;
 }
 
-/** 支持的印章图片格式。 */
-const SUPPORTED_TYPES = new Set(['PNG', 'GIF', 'JPG', 'JPEG', 'BMP', 'OFD']);
+/**
+ * 支持的印章图片格式（小写规范名，与 `image/format.ts#detectImageFormat` 一致）。
+ *
+ * 图片类型在同一流程内只以该规范名比较，避免 'JPEG'/'jpeg' 两套写法错配；
+ * 对外报告的 `SealImage.type` 仍为大写（PNG/JPEG/GIF/BMP/OFD）。
+ */
+const SUPPORTED_TYPES = new Set(['png', 'gif', 'jpg', 'jpeg', 'bmp', 'ofd']);
+
+/**
+ * 把印章图片类型归一化为小写规范名。
+ *
+ * @param raw 原始类型字符串（大小写、空白均不敏感）。
+ * @returns 小写规范名；空串表示未声明。
+ */
+function normalizeSealType(raw: string): string {
+  return raw.trim().toLowerCase();
+}
 
 /**
  * 解码 Seal.esl/SignedValue.dat 并提取内嵌印章图片或矢量 OFD 字节。
@@ -63,8 +78,9 @@ export function decodeSealImage(
     emitWarning(options, 'W_IMAGE_DECODE', `${label} 印章图片数据为空`);
     return undefined;
   }
-  let declared = (derString(picture.children[0]) ?? '').trim().toUpperCase();
-  const detected = detectImageType(imageBytes);
+  // 全部比较使用小写规范名；对外报告时再统一大写。
+  let declared = normalizeSealType(derString(picture.children[0]) ?? '');
+  const detected = detectImageType(imageBytes)?.toLowerCase();
   if (!declared) {
     declared = detected ?? '';
     emitWarning(options, 'W_IMAGE_DECODE', `${label} 缺少图片类型，按魔术字节识别`);
@@ -73,14 +89,26 @@ export function decodeSealImage(
       emitWarning(
         options,
         'W_IMAGE_DECODE',
-        `${label} 图片类型 ${JSON.stringify(declared)} 不支持，按魔术字节识别为 ${detected}`,
+        `${label} 图片类型 ${JSON.stringify(declared.toUpperCase())} 不支持，按魔术字节识别为 ${detected.toUpperCase()}`,
       );
       declared = detected;
     } else {
-      emitWarning(options, 'W_IMAGE_DECODE', `${label} 图片类型 ${JSON.stringify(declared)} 不支持`);
+      emitWarning(
+        options,
+        'W_IMAGE_DECODE',
+        `${label} 图片类型 ${JSON.stringify(declared.toUpperCase())} 不支持`,
+      );
     }
+  } else if (declared !== 'ofd' && detected !== undefined && declared !== detected) {
+    // 声明类型与实际字节不符时以魔术字节为准，否则会选错解码器导致整枚印章丢失。
+    emitWarning(
+      options,
+      'W_IMAGE_DECODE',
+      `${label} 图片类型声明为 ${declared.toUpperCase()}，实际字节为 ${detected.toUpperCase()}，按魔术字节解码`,
+    );
+    declared = detected;
   }
-  if (declared === 'OFD' && !startsWith(imageBytes, [0x50, 0x4b])) {
+  if (declared === 'ofd' && !startsWith(imageBytes, [0x50, 0x4b])) {
     emitWarning(options, 'W_IMAGE_DECODE', `${label} picture.type=ofd 但数据不是 ZIP，保留原始字节`);
   }
   let width = derInteger(picture.children[2]);
@@ -93,7 +121,7 @@ export function decodeSealImage(
     emitWarning(options, 'W_BAD_NUMBER', `${label} 图片高度非法：${String(height)}，按 0 mm 处理`);
     height = 0;
   }
-  const type = declared || 'UNKNOWN';
+  const type = declared ? declared.toUpperCase() : 'UNKNOWN';
   return {
     version: structure.version,
     source,
@@ -213,8 +241,10 @@ function magicFallback(
   options: SealDecodeOptions,
   source: SealImageSource,
 ): SealImage | undefined {
-  const type = detectImageType(data);
-  if (!type) return undefined;
+  const detected = detectImageType(data);
+  if (!detected) return undefined;
+  // SealImage.type 对外统一大写。
+  const type = detected.toUpperCase();
   const label = source === 'seal-esl' ? 'Seal.esl' : 'SignedValue.dat';
   emitWarning(options, 'W_IMAGE_DECODE', `${label} DER 结构不可用，按魔术字节识别为 ${type}，尺寸未知`);
   return {
@@ -259,7 +289,7 @@ function sealCacheKey(
  * 按文件头识别图片格式。
  *
  * @param data 图片字节。
- * @returns PNG/JPEG/GIF/BMP；无法识别时返回 undefined。
+ * @returns 大写格式名 PNG/JPEG/GIF/BMP；无法识别时返回 undefined。
  */
 export function detectImageType(data: Uint8Array): string | undefined {
   if (startsWith(data, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'PNG';

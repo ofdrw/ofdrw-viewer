@@ -164,8 +164,9 @@ describe('drawImage multiply 合成', () => {
     const mask = renderer.createImage({ width: 2, height: 2, data: maskData });
 
     renderer.drawImage(image, SCALE_10, 1, true, mask, 'multiply');
-    expect(readPixel(context, 2, 5)).toEqual([100, 0, 0, 255]);
-    expect(readPixel(context, 7, 5)).toEqual([100, 150, 200, 255]);
+    // 蒙版边缘与颜色通道按面积采样平滑过渡：蒙版内为 multiply 后的实色，蒙版外保持背景。
+    expect(readPixel(context, 0, 5)).toEqual([100, 0, 0, 255]);
+    expect(readPixel(context, 9, 5)).toEqual([100, 150, 200, 255]);
     expect(context.globalCompositeOperation).toBe('source-over');
     renderer.close();
   });

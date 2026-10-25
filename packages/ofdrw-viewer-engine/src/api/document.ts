@@ -2653,6 +2653,21 @@ export class OFDDocument {
    * @returns loader 实现；无 Signatures.xml 时不注册签章方法，避免额外调用。
    */
   private createLoader(signal: AbortSignal, pageIndex: number): PreparePageLoader {
+    // 签章重采样画布优先用文档级工厂；宿主只注入 H5 渲染器时退回渲染器的 createCanvas。
+    const resampleCanvas = this.createCanvas ?? createCanvasFromRenderer(this.renderer);
+    // 印章输出尺寸画布按实例缓存复用：同一渲染流程内复用同一块画布，避免 Node 画布（Skia）
+    // 反复新建同尺寸画布时图片过滤退化为最近邻，二值掩码章的细笔画随之被压淡。
+    const sealScratch = new Map<string, Canvas2DLike>();
+    const resampleSurface = resampleCanvas
+      ? (width: number, height: number): Canvas2DLike => {
+          const key = `${width}x${height}`;
+          const cached = sealScratch.get(key);
+          if (cached) return cached;
+          const canvas = resampleCanvas(width, height);
+          sealScratch.set(key, canvas);
+          return canvas;
+        }
+      : undefined;
     return {
       loadFontFaces: async (resources) => {
         throwIfAborted(signal);
@@ -2681,6 +2696,13 @@ export class OFDDocument {
               throwIfAborted(signal);
               return this.decodeSeal(seal);
             },
+            // 签章印章先在目标精度重采样一次再贴图，避免细笔画掩码章被页面缩放压浅。
+            ...(resampleSurface
+              ? {
+                  createResampleRenderer: () =>
+                    new H5Canvas2DRenderer({ createCanvas: resampleSurface }),
+                }
+              : {}),
           }
         : {}),
     };
@@ -3164,11 +3186,8 @@ export class OFDDocument {
     const cacheKey = seal.cacheKey ?? seal;
     const cached = this.signatureSealPromises.get(cacheKey);
     if (cached) return cached;
-    const format = normalizeSealFormat(seal.type) || detectImageFormat(seal.data, 'Seal.esl');
-    const promise = (format === 'ofd' || isZipData(seal.data)
-      ? this.decodeVectorSeal(seal)
-      : this.decodeImageBytes(seal.data, format)
-    )
+    const declared = normalizeSealFormat(seal.type) || detectImageFormat(seal.data, 'Seal.esl');
+    const promise = this.decodeSealBytes(seal, declared, true)
       .then((decoded) => {
         this.signatureSealImages.add(decoded);
         return decoded;
@@ -3179,6 +3198,35 @@ export class OFDDocument {
       });
     this.signatureSealPromises.set(cacheKey, promise);
     return promise;
+  }
+
+  /**
+   * 按指定格式解码签章图片；插件失败且声明格式与魔术字节不符时按魔术字节重试一次。
+   *
+   * @param seal 签章图片元数据。
+   * @param format 本次使用的格式（小写）。
+   * @param allowRetry 是否允许按魔术字节纠偏重试。
+   * @returns 解码结果。
+   */
+  private async decodeSealBytes(
+    seal: SealImage,
+    format: string,
+    allowRetry: boolean,
+  ): Promise<DecodedImage> {
+    if (format === 'ofd' || isZipData(seal.data)) return this.decodeVectorSeal(seal);
+    try {
+      return await this.decodeImageBytes(seal.data, format);
+    } catch (error) {
+      const detected = detectImageFormat(seal.data, 'Seal.esl');
+      if (!allowRetry || detected === 'unknown' || detected === format) {
+        throw error;
+      }
+      this.warnings.warn(
+        'W_IMAGE_DECODE',
+        `签章图片按 ${format} 解码失败，改按魔术字节识别为 ${detected} 重试`,
+      );
+      return this.decodeSealBytes(seal, detected, false);
+    }
   }
 
   /**

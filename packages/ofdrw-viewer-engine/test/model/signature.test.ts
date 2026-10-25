@@ -192,6 +192,55 @@ describe('签章模型（T14a）', () => {
     expect(warnings).toEqual([]);
   });
 
+  it('BUG-V2-03：发票示例 Sign_1 声明 gif 实为 PNG，按魔术字节纠正而非整枚丢失', async () => {
+    const { bundle, warnings } = await openSampleSignatures('发票示例.ofd');
+    const signature = bundle.signatures.find((item) => item.id === '3');
+    expect(signature).toBeDefined();
+    expect(signature?.sealFile).toBeUndefined();
+    expect(signature?.signedValueFile).toBe('Doc_0/Signs/Sign_1/SignedValue.dat');
+    expect(signature?.seal?.source).toBe('signed-value');
+    // SES_ESPictrueInfo 声明 gif，实际字节是 PNG；必须按魔术字节纠正。
+    expect(signature?.seal?.type).toBe('PNG');
+    const data = signature?.seal?.data ?? new Uint8Array();
+    expect([0x89, 0x50, 0x4e, 0x47].every((byte, index) => data[index] === byte)).toBe(true);
+    expect(signature?.seal?.width).toBe(18);
+    expect(signature?.seal?.height).toBe(18);
+    expect(warnings.some((warning) => warning.message.includes('声明为 GIF'))).toBe(true);
+  });
+
+  it('BUG-V2-03：声明类型与魔术字节不一致时以魔术字节为准并 warning', () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const gif = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]);
+    const sealInfo = (declared: string, bytes: Uint8Array) =>
+      seq(
+        seq(ia5('ES'), int(4), ia5('V')),
+        ia5('id'),
+        seq(),
+        seq(ia5(declared), octet(bytes), int(18), int(18)),
+      );
+    const warnings: OFDWarning[] = [];
+    const image = decodeSealImage(seq(sealInfo('gif', png), seq()), {
+      source: 'signed-value',
+      onWarning: (warning) => warnings.push(warning),
+    });
+    expect(image?.type).toBe('PNG');
+    expect(warnings.some((warning) => warning.message.includes('声明为 GIF，实际字节为 PNG'))).toBe(
+      true,
+    );
+
+    // 声明与字节一致时不产生纠偏 warning。
+    const consistent: OFDWarning[] = [];
+    expect(
+      decodeSealImage(seq(sealInfo('PNG', png), seq()), {
+        onWarning: (warning) => consistent.push(warning),
+      })?.type,
+    ).toBe('PNG');
+    expect(consistent.filter((warning) => warning.message.includes('按魔术字节'))).toEqual([]);
+
+    // 声明为 OFD 但字节是位图时不改动声明，只保留原始字节（既有语义）。
+    expect(decodeSealImage(seq(sealInfo('OFD', gif), seq()))?.type).toBe('OFD');
+  });
+
   it('坏 Seal.esl/签名 XML warning 降级，不抛出', async () => {
     const warnings: OFDWarning[] = [];
     const options = { onWarning: (warning: OFDWarning) => warnings.push(warning) };

@@ -473,7 +473,10 @@ function decodeLzw(input: Uint8Array, minCodeSize: number, maxOutput: number): U
     if (nextCode < 4096) {
       prefix[nextCode] = previous;
       suffix[nextCode] = firstCurrent;
-      first[nextCode] = firstCurrent;
+      // `first` 必须存“新词条的首字符”，即 previous 词条的首字符（不是当前码的首字符）。
+      // 存错会让后续词条的首字符错误，但 `suffix` 链仍正确，因此输出序列看似正常、颜色
+      // 索引却被破坏（GIF 印章曾因此整片丢墨）。
+      first[nextCode] = first[previous]!;
       nextCode += 1;
       if (nextCode === (1 << codeSize) && codeSize < 12) codeSize += 1;
     }

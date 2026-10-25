@@ -367,10 +367,18 @@ export class H5Canvas2DRenderer implements Renderer {
   onWarning?: (code: string, message: string) => void;
 
   /**
-   * @param options 宿主 createCanvas 与 HWA 选项；Node/小程序必须传 createCanvas。
+   * 自持画布工厂；仅 `beginPageFresh` 使用，页面渲染仍走 `canvasFactory`（宿主画布工厂）。
+   * 宿主可注入尺寸相同的画布工厂，用于引擎内部重采样这类需要读回像素的临时绘制。
    */
-  constructor(options: H5Canvas2DRendererOptions = {}) {
+  private surfaceFactory: CanvasFactory | null;
+
+  /**
+   * @param options 宿主 createCanvas 与 HWA 选项；Node/小程序必须传 createCanvas。
+   * @param surfaceFactory 可选的临时画布工厂，仅用于 `beginPageFresh`。
+   */
+  constructor(options: H5Canvas2DRendererOptions = {}, surfaceFactory?: CanvasFactory) {
     this.options = options;
+    this.surfaceFactory = surfaceFactory ?? null;
   }
 
   /** 当前合成模式；供内部/测试断言使用。 */
@@ -709,6 +717,24 @@ export class H5Canvas2DRenderer implements Renderer {
     );
   }
 
+  /**
+   * 用渲染器自己创建的临时画布开始一页（画布由本渲染器持有）。
+   *
+   * 供签章印章重采样使用：核心层拿不到渲染器内部画布的生命周期，若由宿主
+   * `createCanvas` 提供画布，渲染器关闭时会把它释放为 0×0，像素无法读回。
+   * 这里用渲染器的画布工厂（与传入尺寸相同）创建画布，页面结束后画布仍有效。
+   *
+   * @param viewport 目标像素尺寸与 DPI。
+   * @returns 该画布的 2D 上下文，可直接 `getImageData`。
+   */
+  beginPageFresh(viewport: Viewport): CanvasRenderingContext2DLike {
+    if (this.closed) throw new OFDError('OFD_CLOSED', '渲染器已关闭');
+    const created = this.surfaceFactory ?? this.canvasFactory;
+    const entry = created.create(viewport.width, viewport.height);
+    this.beginPage(entry.context, viewport);
+    return entry.context;
+  }
+
   /** @inheritdoc */
   beginGroup(options: GroupOptions): void {
     this.ensurePage();
@@ -905,6 +931,8 @@ export class H5Canvas2DRenderer implements Renderer {
       compositeEntry = this.canvasFactory.create(width, height);
       const maskContext = compositeEntry.context;
       maskContext.setTransform(1, 0, 0, 1, 0, 0);
+      // 中间画布按不透明画布处理：1:1 贴图、关闭 alpha 乘算，避免把主图自身的 alpha
+      // 叠加到结果（否则 mask 只保留 alpha 交集时会被二次衰减）。
       maskContext.globalAlpha = 1;
       maskContext.globalCompositeOperation = 'source-over';
       maskContext.drawImage(source, 0, 0, width, height);
@@ -921,6 +949,13 @@ export class H5Canvas2DRenderer implements Renderer {
         // 签章白底使用 multiply；其他图片缺省沿用当前 composite（通常 source-over）。
         context.globalCompositeOperation = blendMode ?? state.composite;
         context.imageSmoothingEnabled = smoothing;
+        // 图片缩放需要面积采样：缺省双线性会把 1px 细线（如签章掩码章的框线）压成稀疏点。
+        // 只在真正缩放时提升质量，1:1 贴图保持平台默认，避免改变既有像素结果。
+        const scaleX = Math.hypot(transform[0], transform[1]);
+        const scaleY = Math.hypot(transform[2], transform[3]);
+        if (smoothing && (Math.abs(scaleX - 1) > 1e-6 || Math.abs(scaleY - 1) > 1e-6)) {
+          context.imageSmoothingQuality = 'high';
+        }
         context.transform(
           transform[0],
           transform[1],

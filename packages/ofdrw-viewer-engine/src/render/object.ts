@@ -118,8 +118,10 @@ export interface BlockBuildCallbacks {
 }
 
 /** 图片占位计划；只在 render 内部使用，不进入公共类型。 */
-interface DeferredImagePlan {
+export interface DeferredImagePlan {
   object: ImageObject;
+  /** 准备阶段已解码的图片；绘制期由渲染器 `createImage` 物化。 */
+  image: DecodedImage;
   role: 'main' | 'substitution' | 'mask';
   /** 构建期替换图选择模式；绘制期按该模式物化。 */
   mode: ImageSubstitutionMode;
@@ -199,7 +201,7 @@ export function createDeferredImageHandle(
     width: Math.max(1, Math.ceil(image.width)),
     height: Math.max(1, Math.ceil(image.height)),
   };
-  DEFERRED_IMAGE_PLANS.set(handle, { object, role, mode });
+  DEFERRED_IMAGE_PLANS.set(handle, { object, image, role, mode });
   return handle;
 }
 
@@ -211,6 +213,16 @@ export function createDeferredImageHandle(
  */
 export function isDeferredImageHandle(handle: ImageHandle): boolean {
   return DEFERRED_IMAGE_PLANS.has(handle);
+}
+
+/**
+ * 取占位句柄对应的图片计划。
+ *
+ * @param handle 图片句柄。
+ * @returns 图片计划；非占位句柄返回 undefined。
+ */
+export function getDeferredImagePlan(handle: ImageHandle): DeferredImagePlan | undefined {
+  return DEFERRED_IMAGE_PLANS.get(handle);
 }
 
 /**

@@ -89,6 +89,46 @@ describe('GIF 解码', () => {
     });
   });
 
+  it('LZW 字典 first 字符：解码结果与参考解码器逐像素一致（BUG-V2-04 根因）', async () => {
+    // 保函.ofd 的 Sign_1 印章 GIF：250×249、4 色调色板、透明索引 3。
+    // 该 GIF 的 LZW 码流会触发“词条首字符”存储错误：输出长度与颜色直方图看似正常，
+    // 但像素位置被打乱，印章整体丢墨（曾导致方章几乎不可见）。
+    const path = fileURLToPath(
+      new URL('../../../../ofd_pdf_match/保函.ofd', import.meta.url),
+    );
+    const { ZipReader } = await import('../../src/container/zip-reader');
+    const { ArrayBufferSource } = await import('../../src/container/byte-source');
+    const zip = await ZipReader.open(new ArrayBufferSource(readFileSync(path)));
+    const signedValue = await zip.readEntry('Doc_0/Signs/Sign_1/SignedValue.dat');
+    await zip.close();
+    const start = signedValue.findIndex(
+      (byte, index) =>
+        byte === 0x47 &&
+        signedValue[index + 1] === 0x49 &&
+        signedValue[index + 2] === 0x46 &&
+        signedValue[index + 3] === 0x38,
+    );
+    expect(start).toBeGreaterThanOrEqual(0);
+    // GIF 文件到图像数据结束：最小码长 2、单帧、无局部调色板。
+    const result = await decodeGif(signedValue.subarray(start), { maxPixels: 1_000_000 });
+    expect(result.width).toBe(250);
+    expect(result.height).toBe(249);
+    const alpha = (result.data as { data: Uint8ClampedArray }).data;
+    // 不透明像素总数（源图 18003 个 α=255）。
+    let opaque = 0;
+    for (let index = 3; index < alpha.length; index += 4) if (alpha[index]! > 0) opaque += 1;
+    expect(opaque).toBe(18003);
+    // 顶部框线：源图每行不透明像素数（第 6/7 行为 200/217）。
+    const rowCount = (row: number): number => {
+      let count = 0;
+      for (let x = 0; x < 250; x += 1) if (alpha[(row * 250 + x) * 4 + 3]! > 0) count += 1;
+      return count;
+    };
+    expect([5, 6, 7].map(rowCount)).toEqual([70, 200, 217]);
+    // 底部编号行仍在（第 210 行有近百个不透明像素，说明像素未被打乱）。
+    expect(rowCount(210)).toBeGreaterThan(80);
+  });
+
   it('解码真实样本 2.gif', async () => {
     const path = fileURLToPath(
       new URL('../../../../ofd_pdf_match/不规范资源路径.ofd', import.meta.url),

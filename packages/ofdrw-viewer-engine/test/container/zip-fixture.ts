@@ -35,6 +35,10 @@ export interface BuildZipOptions {
   comment?: string;
   /** 生成 ZIP64 EOCD/中央目录 extra。 */
   zip64?: boolean;
+  /** ZIP64 EOCD record 的 extensible data sector 长度，byte；0 表示无。 */
+  zip64ExtensibleBytes?: number;
+  /** EOCD 之后的尾随字节（模拟 MIME 结束边界等包装数据）。 */
+  trailing?: string;
 }
 
 /** 32 位无符号整数转小端字节。 */
@@ -199,15 +203,24 @@ export function buildZip(
     );
   });
   const cdBytes = concat(centralParts);
+  // 中央目录起始偏移必须在拼接本地文件头之后计算（与 localOffsets 累加口径一致）。
+  const cdStop = localParts.reduce((sum, part) => sum + part.byteLength, 0);
+  if (cdStop !== cdOffset) {
+    throw new Error(`测试 ZIP 构造异常：中央目录偏移 ${cdStop} 与预期 ${cdOffset} 不一致`);
+  }
   const commentBytes = encode(options.comment ?? '');
   const count = prepared.length;
 
   const zip64Parts: Uint8Array[] = [];
   if (zip64) {
+    // ZIP64 EOCD record 必须位于中央目录之后，其偏移为“中央目录起点 + 中央目录长度”。
+    const zip64RecordOffset = cdOffset + cdBytes.byteLength;
+    const extensible = new Uint8Array(options.zip64ExtensibleBytes ?? 0);
     zip64Parts.push(
       concat([
         u32(0x06064b50),
-        u64(44),
+        // 记录长度不含 12 字节签名与长度字段本身；扩展段追加在其后。
+        u64(44 + extensible.byteLength),
         u16(45),
         u16(45),
         u32(0),
@@ -216,13 +229,14 @@ export function buildZip(
         u64(count),
         u64(cdBytes.byteLength),
         u64(cdOffset),
+        extensible,
       ]),
     );
     zip64Parts.push(
       concat([
         u32(0x07064b50),
         u32(0),
-        u64(cdOffset + cdBytes.byteLength),
+        u64(zip64RecordOffset),
         u32(1),
       ]),
     );
@@ -240,7 +254,29 @@ export function buildZip(
     commentBytes,
   ]);
 
-  return concat([...localParts, cdBytes, ...zip64Parts, eocd]);
+  const trailing = encode(options.trailing ?? '');
+  return concat([...localParts, cdBytes, ...zip64Parts, eocd, trailing]);
+}
+
+/**
+ * 用 MIME multipart 包装 ZIP，模拟“包体前后带包装数据”的 OFD。
+ *
+ * @param zip 完整 ZIP 字节。
+ * @param boundary 分隔字符串。
+ * @returns 带前导头与尾随结束边界的字节。
+ */
+export function wrapMultipart(zip: Uint8Array, boundary = 'boundary_.oOo._TEST'): Uint8Array {
+  const encoder = new TextEncoder();
+  const head = encoder.encode(
+    `--${boundary}\r\nContent-Disposition: form-data; name="source"; filename="a.ofd"\r\n` +
+      'Content-Type: application/ofd\r\n\r\n',
+  );
+  const tail = encoder.encode(`\r\n--${boundary}--\r\n`);
+  const output = new Uint8Array(head.byteLength + zip.byteLength + tail.byteLength);
+  output.set(head, 0);
+  output.set(zip, head.byteLength);
+  output.set(tail, head.byteLength + zip.byteLength);
+  return output;
 }
 
 /** 简单字节源包装，用于统计读取次数与区间。 */
