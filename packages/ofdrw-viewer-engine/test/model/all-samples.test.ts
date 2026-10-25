@@ -1,5 +1,5 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ArrayBufferSource } from '../../src/container/byte-source';
 import { ZipReader } from '../../src/container/zip-reader';
@@ -15,16 +15,14 @@ import {
 import { applyPageArea, resolvePageArea } from '../../src/model/page-area';
 import type { PageModel, ResourceDefinitionSet, ResourceId } from '../../src/model/types';
 
-const SAMPLE_DIR = fileURLToPath(new URL('../../../../ofd_pdf_match/', import.meta.url));
+import { assertSampleManifest, loadSampleManifest, SAMPLE_DIR } from '../helpers/samples';
 
-/** 样例文件列表。 */
-const samples = readdirSync(SAMPLE_DIR)
-  .filter((name) => name.endsWith('.ofd'))
-  .sort();
+/** 样例文件列表：按实际可识别样本动态获取（无法识别的文件由 helpers 统计）。 */
+const samples = assertSampleManifest(loadSampleManifest());
 
 /** 读取样例。 */
 async function openSample(name: string): Promise<ZipReader> {
-  return ZipReader.open(new ArrayBufferSource(readFileSync(`${SAMPLE_DIR}${name}`)));
+  return ZipReader.open(new ArrayBufferSource(readFileSync(join(SAMPLE_DIR, name))));
 }
 
 /** 读取并解析 XML。 */
@@ -39,7 +37,7 @@ describe('真实 OFD 样例解码健壮性', () => {
     let decoded = 0;
     for (const name of samples) {
       // 超大页面（>300 KB）会把 saxes 解析拖到分钟级，留给 T9/QA 的渲染回归。
-      if (statSync(`${SAMPLE_DIR}${name}`).size > 300_000) continue;
+      if (statSync(join(SAMPLE_DIR, name)).size > 300_000) continue;
       try {
         const zip = await openSample(name);
         const info = decodeOfdRoot(parseXml(await zip.readEntry('OFD.xml')));
