@@ -80,7 +80,7 @@ const files = {
     `${HEADER}<ofd:Page ${NS}><ofd:Content><ofd:Layer ID="1">` +
       textObject(10, 30, 30, 8, '黑体兜底测试') +
       textObject(11, 30, 45, 5, '本文档仅声明黑体且未内嵌字体文件') +
-      textObject(12, 30, 55, 5, '无字体时应整页空白，配置文泉驿微米黑后应可见') +
+      textObject(12, 30, 55, 5, '无字体时应整页空白，配置思源黑体后应可见') +
       textObject(13, 30, 65, 5, 'ABCDEFG 0123456789 中文混排测试') +
       `</ofd:Layer></ofd:Content></ofd:Page>`,
   ),

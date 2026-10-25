@@ -1,5 +1,5 @@
 /**
- * 演示站字体配置单元测试：本地文泉驿兜底、CDN 回落、宋体别名衔接与资源路径。
+ * 演示站字体配置单元测试：本地思源宋体/思源黑体兜底、别名衔接与资源路径。
  *
  * 直接读取 `site/main.ts` 源码做静态断言，并单独校验别名追加语义；不启动浏览器，
  * 避免测试依赖 DOM/网络。
@@ -66,21 +66,20 @@ function readDefaultFontUrls(): string[] {
 }
 
 describe('演示站字体配置', () => {
-  it('本地思源宋体与文泉驿微米黑子集及其授权说明随站点分发', () => {
-    // 体积与 NOTICE.md 记录一致（单位 byte）：思源宋体约 10.6 MiB、文泉驿微米黑约 1.07 MiB。
-    expect(statSync(findHashedFont('source-han-serif-sc')).size).toBe(11_109_788);
-    expect(statSync(findHashedFont('wqy-microhei')).size).toBe(1_118_044);
+  it('本地思源宋体与思源黑体子集及其授权说明随站点分发', () => {
+    // 体积与 NOTICE.md 记录一致（单位 byte）：思源宋体约 10.6 MiB、思源黑体约 7.5 MiB。
+    expect(statSync(findHashedFont('source-han-serif-sc')).size).toBe(11_098_716);
+    expect(statSync(findHashedFont('source-han-sans-sc')).size).toBe(7_817_104);
     const notice = readFileSync(LOCAL_FONT_NOTICE, 'utf8');
     expect(notice).toContain('Noto Serif CJK SC');
-    expect(notice).toContain('WenQuanYi Micro Hei');
+    expect(notice).toContain('Noto Sans CJK SC');
     expect(notice).toContain('SIL Open Font License');
-    expect(notice).toContain('Apache License 2.0');
     expect(notice).toContain('scripts/build-site-fonts.py');
   });
 
   it('字体文件名带内容哈希，并配置长期强缓存头', () => {
     // 哈希命名是强缓存的前提：内容变化 → 文件名变化，旧文件不会被误用。
-    for (const stem of ['source-han-serif-sc', 'wqy-microhei']) {
+    for (const stem of ['source-han-serif-sc', 'source-han-sans-sc']) {
       const path = findHashedFont(stem);
       expect(path).toMatch(new RegExp(`${stem}\\.[0-9a-f]{8}\\.woff2$`));
     }
@@ -98,7 +97,7 @@ describe('演示站字体配置', () => {
     expect(headers).toContain('immutable');
   });
 
-  it('仅使用本地思源宋体与文泉驿微米黑，不依赖外部 CDN', () => {
+  it('仅使用本地思源宋体与思源黑体，不依赖外部 CDN', () => {
     const source = readFileSync(MAIN_TS, 'utf8');
     const urls = readDefaultFontUrls();
     // 只保留一个本地来源：不再配置 CDN 回落。
@@ -119,7 +118,7 @@ describe('演示站字体配置', () => {
     expect(source).not.toContain('fontUrl(');
   });
 
-  it('别名追加后同时保留内置组，且宋体↔思源宋体、黑体↔文泉驿互为别名', () => {
+  it('别名追加后同时保留内置组，且宋体↔思源宋体、黑体↔思源黑体互为别名', () => {
     const groups = readSiteAliasGroups();
     expect(groups).toHaveLength(2);
     const [serifGroup, sansGroup] = groups;
@@ -141,9 +140,10 @@ describe('演示站字体配置', () => {
       'heiti',
       '微软雅黑',
       'microsoftyahei',
-      'wenquanyimicrohei',
-      'wenquanyimicroheimono',
-      '文泉驿微米黑',
+      'notosanscjksc',
+      'notosanssc',
+      'sourcehansanssc',
+      '思源黑体',
     ]) {
       expect(sansGroup).toContain(name);
     }
@@ -155,7 +155,7 @@ describe('演示站字体配置', () => {
     );
     const merged = new Set(composed.flat().map((name) => name.toLowerCase()));
     expect(merged.has('simhei')).toBe(true);
-    expect(merged.has('wenquanyimicrohei')).toBe(true);
+    expect(merged.has('notosanscjksc')).toBe(true);
     expect(merged.has('notoserifcjksc')).toBe(true);
 
     /** 归一化名称与引擎 `normalizeFontName` 一致：小写并去掉空白/连字符/下划线/逗号/点。 */
@@ -171,8 +171,8 @@ describe('演示站字体配置', () => {
       return expanded;
     };
     expect(expand('宋体').has('notoserifcjksc')).toBe(true);
-    expect(expand('黑体').has('wenquanyimicrohei')).toBe(true);
-    // 跨组不误连：宋体组与文泉驿组互不包含。
-    expect(expand('宋体').has('wenquanyimicrohei')).toBe(false);
+    expect(expand('黑体').has('notosanscjksc')).toBe(true);
+    // 跨组不误连：宋体组与黑体组互不包含。
+    expect(expand('宋体').has('notosanscjksc')).toBe(false);
   });
 });

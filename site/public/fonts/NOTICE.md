@@ -7,8 +7,8 @@
 
 | 文件 | 字体 | 真实 family 名 | 授权 | 体积 |
 | --- | --- | --- | --- | --- |
-| `source-han-serif-sc.<hash>.woff2` | 思源宋体（Noto Serif CJK SC） | `Noto Serif CJK SC` | SIL Open Font License 1.1 | 11 109 788 B（约 10.6 MiB） |
-| `wqy-microhei.<hash>.woff2` | 文泉驿微米黑 | `WenQuanYi Micro Hei` | Apache License 2.0 | 1 118 044 B（约 1.07 MiB） |
+| `source-han-serif-sc.<hash>.woff2` | 思源宋体（Noto Serif CJK SC） | `Noto Serif CJK SC` | SIL Open Font License 1.1 | 11 098 716 B（约 10.6 MiB） |
+| `source-han-sans-sc.<hash>.woff2` | 思源黑体（Noto Sans CJK SC） | `Noto Sans CJK SC` | SIL Open Font License 1.1 | 7 817 104 B（约 7.5 MiB） |
 
 文件名中的 8 位十六进制是该文件 `sha256` 的前缀：内容一变文件名就变，因此可以设置
 `Cache-Control: immutable` 长期缓存（见 `site/public/_headers`）。修改字体后需同步更新
@@ -36,13 +36,13 @@
   抽取第 2 面（`Noto Serif CJK SC`）。
 - 版权：Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'.
 
-### 文泉驿微米黑（WenQuanYi Micro Hei）
+### 思源黑体（Noto Sans CJK SC）
 
-- 上游：文泉驿项目 WenQuanYi Micro Hei。
-- 授权：Apache License 2.0。
-- 本次来源：系统包 `fonts-wqy-microhei` 的 `/usr/share/fonts/truetype/wqy/wqy-microhei.ttc`，
-  抽取第 0 面。
-- 版权：Copyright 2008-2020 WenQuanYi Project, all rights reserved.
+- 上游：Adobe Source Han Sans / Google Noto Sans CJK，二者为同一套字形。
+- 授权：SIL Open Font License 1.1，允许再分发与子集化。
+- 本次来源：系统包 `fonts-noto-cjk` 的 `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc`，
+  抽取第 2 面（`Noto Sans CJK SC`）。
+- 版权：Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'.
 
 ## 重新生成
 

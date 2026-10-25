@@ -25,7 +25,7 @@ const FONT_DIR = join(REPO, 'site/public/fonts');
  * 字体文件名形如 `<主干>.<sha256前8位>.woff2`，每次重新生成后哈希会变，
  * 因此这里按前缀匹配而不是写死文件名。
  *
- * @param stem 文件名主干，例如 `wqy-microhei`
+ * @param stem 文件名主干，例如 `source-han-sans-sc`
  * @returns 字体文件绝对路径
  */
 function siteFont(stem: string): string {
@@ -39,7 +39,7 @@ async function darkPixels(fonts: Record<string, unknown>, label: string) {
   const warnings: OFDWarning[] = [];
   const doc = await openTestDocument(readFileSync(FIXTURE) as unknown as Uint8Array, {
     ...(fonts as object),
-    aliases: [...DEFAULT_FONT_ALIASES, ['黑体', 'simhei', 'heiti', 'wenquanyimicrohei', '文泉驿微米黑']],
+    aliases: [...DEFAULT_FONT_ALIASES, ['黑体', 'simhei', 'heiti', 'notosanscjksc', '思源黑体']],
     onWarning: (warning: OFDWarning) => warnings.push(warning),
   } as never);
   try {
@@ -64,13 +64,13 @@ async function darkPixels(fonts: Record<string, unknown>, label: string) {
 }
 
 describe('黑体兜底夹具（site/test/fixtures/black-font-only.ofd）', () => {
-  it('无字体时空白；文泉驿与思源宋体都能兜底', async () => {
-    const wqy = readFileSync(siteFont('wqy-microhei'));
+  it('无字体时空白；思源黑体与思源宋体都能兜底', async () => {
+    const sans = readFileSync(siteFont('source-han-sans-sc'));
     const serif = readFileSync(siteFont('source-han-serif-sc'));
     const none = await darkPixels({}, '无字体');
     expect(none.dark).toBe(0);
     expect(none.warnings).toContain('W_FONT_MISSING');
-    const a = await darkPixels({ supplementaryFonts: [{ data: wqy, family: 'WenQuanYi Micro Hei' }] }, '文泉驿');
+    const a = await darkPixels({ supplementaryFonts: [{ data: sans, family: 'Noto Sans CJK SC' }] }, '思源黑体');
     expect(a.dark).toBeGreaterThan(0);
     expect(a.warnings).not.toContain('W_FONT_MISSING');
     const b = await darkPixels({ defaultFonts: [{ data: serif, family: 'Noto Serif CJK SC' }] }, '思源宋体');

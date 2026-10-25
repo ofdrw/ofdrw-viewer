@@ -3,7 +3,7 @@
 
 产物（写入 site/public/fonts/）：
 - source-han-serif-sc.woff2：思源宋体（Noto Serif CJK SC），对应文档声明的「宋体/SimSun」等衬线字体；
-- wqy-microhei.woff2：文泉驿微米黑（WenQuanYi Micro Hei），对应文档声明的「黑体/SimHei/微软雅黑」等无衬线字体。
+- source-han-sans-sc.woff2：思源黑体（Noto Sans CJK SC），对应文档声明的「黑体/SimHei/微软雅黑」等无衬线字体。
 
 处理流程：
 1. 从系统 TTC 中按索引抽出单个字体面（TTC 各面共享表数据，需按该面的表目录重建独立 sfnt）；
@@ -19,7 +19,7 @@
 
     python3 scripts/build-site-fonts.py
 
-输入文件默认取系统字体路径，可用 --noto-ttc / --wqy-ttc 覆盖；
+输入文件默认取系统字体路径，可用 --serif-ttc / --sans-ttc 覆盖；
 环境变量 FONTSUBSET 可指定 pyftsubset 可执行文件（默认使用 PATH 中的 pyftsubset）。
 """
 
@@ -34,14 +34,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-# 默认系统字体路径（Debian/Ubuntu 的 fonts-noto-cjk 与 fonts-wqy-microhei 包）。
-DEFAULT_NOTO_TTC = "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc"
-DEFAULT_WQY_TTC = "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"
+# 默认系统字体路径（Debian/Ubuntu 的 fonts-noto-cjk 包）。
+DEFAULT_SERIF_TTC = "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc"
+DEFAULT_SANS_TTC = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
 
-# 思源宋体 TTC 中 Noto Serif CJK SC 面的索引（0=JP、1=KR、2=SC、3=TC、4=HK）。
-NOTO_FACE_INDEX = 2
-# 文泉驿微米黑 TTC 中正体面的索引（1 为 Mono 等宽面）。
-WQY_FACE_INDEX = 0
+# Noto CJK TTC 中简体中文面的索引（0=JP、1=KR、2=SC、3=TC、4=HK）。
+NOTO_SC_FACE_INDEX = 2
 
 # 子集保留的 Unicode 范围：CJK 基本区 + 扩展标点 + 全角 + 基本拉丁 + 常用符号。
 # 不含 ExtA–E（U+3400–4DBF、U+20000 以上）与部首扩展块。
@@ -163,8 +161,8 @@ def main() -> int:
         进程退出码；0 表示成功。
     """
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--noto-ttc", default=DEFAULT_NOTO_TTC, help="Noto Serif CJK TTC 路径")
-    parser.add_argument("--wqy-ttc", default=DEFAULT_WQY_TTC, help="文泉驿微米黑 TTC 路径")
+    parser.add_argument("--serif-ttc", default=DEFAULT_SERIF_TTC, help="思源宋体 TTC 路径")
+    parser.add_argument("--sans-ttc", default=DEFAULT_SANS_TTC, help="思源黑体 TTC 路径")
     parser.add_argument(
         "--out-dir",
         default=str(Path(__file__).resolve().parent.parent / "site" / "public" / "fonts"),
@@ -177,15 +175,15 @@ def main() -> int:
     generated: list[Path] = []
     with tempfile.TemporaryDirectory(prefix="site-fonts-") as work:
         work_dir = Path(work)
-        noto_face = work_dir / "NotoSerifCJK-SC.otf"
-        wqy_face = work_dir / "wqy-microhei.face0.ttf"
-        print(f"抽取思源宋体面 {NOTO_FACE_INDEX} → {noto_face}")
-        extract_ttc_face(Path(args.noto_ttc), NOTO_FACE_INDEX, noto_face)
-        print(f"抽取文泉驿面 {WQY_FACE_INDEX} → {wqy_face}")
-        extract_ttc_face(Path(args.wqy_ttc), WQY_FACE_INDEX, wqy_face)
+        noto_serif_face = work_dir / "NotoSerifCJK-SC.otf"
+        noto_sans_face = work_dir / "NotoSansCJK-SC.otf"
+        print(f"抽取思源宋体面 {NOTO_SC_FACE_INDEX} → {noto_serif_face}")
+        extract_ttc_face(Path(args.serif_ttc), NOTO_SC_FACE_INDEX, noto_serif_face)
+        print(f"抽取思源黑体面 {NOTO_SC_FACE_INDEX} → {noto_sans_face}")
+        extract_ttc_face(Path(args.sans_ttc), NOTO_SC_FACE_INDEX, noto_sans_face)
 
-        generated.append(_finalize(noto_face, out_dir, "source-han-serif-sc"))
-        generated.append(_finalize(wqy_face, out_dir, "wqy-microhei"))
+        generated.append(_finalize(noto_serif_face, out_dir, "source-han-serif-sc"))
+        generated.append(_finalize(noto_sans_face, out_dir, "source-han-sans-sc"))
 
     for path in generated:
         print(f"{path}: {path.stat().st_size} bytes")

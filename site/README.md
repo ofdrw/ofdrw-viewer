@@ -50,8 +50,8 @@ OFD 文档普遍只声明 `FontName="宋体"`/`"黑体"` 而不内嵌字体，�
 
 | 字体 | 文件 | 体积 | 覆盖声明 | 授权 |
 | --- | --- | --- | --- | --- |
-| 思源宋体（Noto Serif CJK SC） | `public/fonts/source-han-serif-sc.woff2` | 11 109 788 B（约 10.6 MiB） | 宋体 / SimSun / 仿宋 / 楷体等衬线声明 | SIL Open Font License 1.1 |
-| 文泉驿微米黑（WenQuanYi Micro Hei） | `public/fonts/wqy-microhei.woff2` | 1 118 044 B（约 1.07 MiB） | 黑体 / SimHei / 微软雅黑等无衬线声明 | Apache License 2.0 |
+| 思源宋体（Noto Serif CJK SC） | `public/fonts/source-han-serif-sc.woff2` | 11 098 716 B（约 10.6 MiB） | 宋体 / SimSun / 仿宋 / 楷体等衬线声明 | SIL Open Font License 1.1 |
+| 思源黑体（Noto Sans CJK SC） | `public/fonts/source-han-sans-sc.woff2` | 7 817 104 B（约 7.5 MiB） | 黑体 / SimHei / 微软雅黑等无衬线声明 | SIL Open Font License 1.1 |
 
 来源、子集范围（仅 CJK 基本区 `U+4E00–9FFF` + 标点/全角/基本拉丁/常用符号）与重新生成命令见
 [`site/public/fonts/NOTICE.md`](./public/fonts/NOTICE.md)。构建时 `public/` 原样复制到
@@ -67,11 +67,11 @@ OFD 文档普遍只声明 `FontName="宋体"`/`"黑体"` 而不内嵌字体，�
 `site/main.ts` 的 `SITE_FONTS`：
 
 - `default`：本地 `source-han-serif-sc.woff2`（唯一来源）；
-- `supplementary`：本地 `wqy-microhei.woff2`（唯一来源）；
+- `supplementary`：本地 `source-han-sans-sc.woff2`（唯一来源）；
 - 两份字体都同时覆盖基本拉丁与常用标点，因此不需要额外的西文补字来源，也不回落到任何 CDN；
 - `aliases`：追加两组别名——
   衬线组 `宋体/simsun/nsimsun/新宋体/notoserifcjksc/notoserifsc/sourcehanserifsc/思源宋体`，
-  无衬线组 `黑体/simhei/heiti/微软雅黑/microsoftyahei/wenquanyimicrohei/文泉驿微米黑`。
+  无衬线组 `黑体/simhei/heiti/微软雅黑/microsoftyahei/notosanscjksc/notosanssc/sourcehansanssc/思源黑体`。
   UI 的 `fonts.aliases` 是「引擎内置组 + 追加」语义，不会丢内置的仿宋/楷体等映射。
 
 本地路径用 `import.meta.env.BASE_URL` 拼接（`siteAsset()`），部署到 GitHub Pages 子路径
@@ -154,6 +154,6 @@ site/
 ├── package.json      # 独立 workspace 包与本地脚本
 └── public/
     ├── .nojekyll     # 兼容非 Actions 的传统 Pages 部署
-    ├── fonts/        # 本地兜底字体（思源宋体 + 文泉驿微米黑子集）与 NOTICE.md
+    ├── fonts/        # 本地兜底字体（思源宋体 + 思源黑体子集）与 NOTICE.md
     └── samples/      # 内置示例 OFD
 ```

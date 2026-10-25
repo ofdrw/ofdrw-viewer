@@ -24,7 +24,7 @@ const SAMPLES = [
  * 使用 `import.meta.env.BASE_URL` 前缀，保证部署到 GitHub Pages 子路径（如 `/ofdrw-viewer/`）
  * 时仍能取到 `public/` 下的文件；本地开发时 Base 为 `/`。
  *
- * @param path 相对 `public/` 目录的路径，例如 `fonts/wqy-microhei.woff2`
+ * @param path 相对 `public/` 目录的路径，例如 `fonts/source-han-sans-sc.woff2`
  * @returns 去掉多余斜杠后的站点绝对路径
  */
 function siteAsset(path: string): string {
@@ -34,8 +34,8 @@ function siteAsset(path: string): string {
 /**
  * 站点字体别名组：把 OFD 常见的「宋体」「黑体」声明与本站兜底字体的真实名关联。
  *
- * - 衬线组：宋体/SimSun 等 → 本地思源宋体（真实名 Noto Serif CJK SC）与 CDN 回落字体；
- * - 无衬线组：黑体/SimHei/微软雅黑 → 本地文泉驿微米黑（真实名 WenQuanYi Micro Hei）。
+ * - 衬线组：宋体/SimSun 等 → 本地思源宋体（真实名 Noto Serif CJK SC）；
+ * - 无衬线组：黑体/SimHei/微软雅黑 → 本地思源黑体（真实名 Noto Sans CJK SC）。
  *
  * UI 的 `fonts.aliases` 是追加语义（引擎内置别名组 + 本数组），因此不会丢失内置的
  * 仿宋/楷体/等线等映射；引擎会把同名归一化名扩散到同组内所有名称。
@@ -48,9 +48,10 @@ const SITE_FONT_ALIASES: readonly (readonly string[])[] = [
     'heiti',
     '微软雅黑',
     'microsoftyahei',
-    'wenquanyimicrohei',
-    'wenquanyimicroheimono',
-    '文泉驿微米黑',
+    'notosanscjksc',
+    'notosanssc',
+    'sourcehansanssc',
+    '思源黑体',
   ],
 ];
 
@@ -60,22 +61,22 @@ const SITE_FONT_ALIASES: readonly (readonly string[])[] = [
  * 文件名内嵌 `sha256` 前 8 位：字体内容一变文件名就变，浏览器可长期强缓存旧版本而不必
  * 担心读到过期字体。改动字体后须同步更新此处，`scripts/build-site-fonts.py` 会打印新名字。
  */
-const LOCAL_SERIF_FILE = 'fonts/source-han-serif-sc.8d948a48.woff2';
+const LOCAL_SERIF_FILE = 'fonts/source-han-serif-sc.6d1b245b.woff2';
 /** 本地无衬线兜底字体文件名；哈希规则同上。 */
-const LOCAL_SANS_FILE = 'fonts/wqy-microhei.cdece858.woff2';
+const LOCAL_SANS_FILE = 'fonts/source-han-sans-sc.d006e954.woff2';
 
 /**
  * 站点内置字体：随站点分发的两个本地字体，不依赖任何外部 CDN。
  *
  * - `default`：思源宋体子集（OFL，约 10.6 MiB），覆盖 CJK 基本区全部汉字，负责「宋体」类声明；
- * - `supplementary`：文泉驿微米黑子集（Apache-2.0，约 1.07 MiB），负责「黑体」类声明，
+ * - `supplementary`：思源黑体子集（OFL，约 7.5 MiB），负责「黑体」类声明，
  *   同时作为思源宋体缺字时的逐字形补充。
  *
  * 两个文件都同时覆盖基本拉丁与常用标点，因此不再需要额外的西文补字来源。
  */
 const SITE_FONTS: ViewerFontOptions = {
   default: [{ url: siteAsset(LOCAL_SERIF_FILE), family: 'Noto Serif CJK SC' }],
-  supplementary: [{ url: siteAsset(LOCAL_SANS_FILE), family: 'WenQuanYi Micro Hei' }],
+  supplementary: [{ url: siteAsset(LOCAL_SANS_FILE), family: 'Noto Sans CJK SC' }],
   aliases: SITE_FONT_ALIASES,
 };
 

@@ -190,7 +190,7 @@ new OFDViewer({
 - `fonts` 与 `crypto` 同级：只在实例创建时读取，修改后重新 `open()`；Web Component 还可用 `font-default`/`font-supplementary` 逗号分隔 URL 简写，变更时重建实例。
 - 排查缺字：控制台默认打印 `[ofd-viewer] warning W_FONT_MISSING ...` / `W_GLYPH_MISSING ...`（含 `pageIndex`/`resourceId`，同一文档会话内去重），需要静默时传 `debug: { console: false }`。
 - 典型样本：`ofd_pdf_match/拿来主义_page6.ofd` 的 `PublicRes` 只声明 `FontName="宋体"`、没有 `FontFile`，不配字体时整页空白；配上宋体风格默认字体后正文可见。
-- 在线演示站的字体策略（可复制的宿主示例）：本地兜底 + CDN 回落——`default` 为站点自带思源宋体子集（`fonts/source-han-serif-sc.woff2`，OFL，约 10.6 MiB）再回落 CDN `noto-serif-sc` 简中片；`supplementary` 首位为站点自带文泉驿微米黑子集（`fonts/wqy-microhei.woff2`，Apache-2.0，约 1.07 MiB），其后为 CDN 拉丁/无衬线补字；`aliases` 追加「宋体/simsun/…/notoserifcjksc」与「黑体/simhei/微软雅黑/wenquanyimicrohei」两组，保证宋体与黑体声明都能命中对应字体。本地路径用 `import.meta.env.BASE_URL` 拼接以兼容子路径部署；字体文件不进入 npm 包。
+- 在线演示站的字体策略（可复制的宿主示例）：纯本地兜底、不依赖 CDN——`default` 为站点自带思源宋体子集（`fonts/source-han-serif-sc.woff2`，OFL，约 10.6 MiB），`supplementary` 为站点自带思源黑体子集（`fonts/source-han-sans-sc.woff2`，OFL，约 7.5 MiB），同时作为宋体缺字时的逐字形补充；`aliases` 追加「宋体/simsun/…/notoserifcjksc」与「黑体/simhei/微软雅黑/…/notosanscjksc」两组，保证宋体与黑体声明都能命中对应字体。本地路径用 `import.meta.env.BASE_URL` 拼接以兼容子路径部署；字体文件不进入 npm 包。
 
 完整设计（引擎兼容性、CDN 选型、安全边界）见 [字体配置方案设计](../../../docs/字体配置方案设计.md)，字段与类型见 [API.md 字体配置](./API.md#字体配置)。
 
