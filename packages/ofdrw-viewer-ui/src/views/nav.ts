@@ -13,6 +13,7 @@ import { runMicrotask } from '../compat';
 
 import type { Translator } from '../i18n';
 import { getUIShell } from '../ui';
+import { sidebarViewFeature } from '../ui/feature-control';
 import { registerViewerExtension, type OFDViewer } from '../viewer';
 import { AttachmentView } from './attachments';
 import { BookmarkView } from './bookmarks';
@@ -122,7 +123,7 @@ export function attachNavigation(viewer: OFDViewer): () => void {
   // 选中态；两者保持一致需要导航层补一刀（不修改 viewer.ts）。
   const closeDisabledSidebar = (): void => {
     const view = viewer.getSidebarView();
-    if (view && !viewer.getFeatureState(view).enabled) viewer.closeSidebar();
+    if (view && !viewer.isFeatureEnabled(sidebarViewFeature(view))) viewer.closeSidebar();
   };
 
   const offs = [

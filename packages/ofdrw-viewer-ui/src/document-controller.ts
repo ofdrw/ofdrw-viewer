@@ -12,6 +12,7 @@ import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
 import type {
   AttachmentInfo,
   BookmarkItem,
+  DocumentFontResource,
   DocumentMetadata,
   DocumentPermissions,
   FontAliasTable,
@@ -41,6 +42,7 @@ import {
   type FontSource,
   type ViewerFontOptions,
 } from './font';
+import { normalizeLocalFontsMaxFonts } from './local-fonts-state';
 import { HttpByteSource } from './source/http-byte-source';
 
 /** 引擎渲染任务的最小结构。 */
@@ -96,6 +98,8 @@ export interface EngineDocument {
     signatureId: string,
     options?: { signal?: AbortSignal },
   ): Promise<SignedValueFile | undefined>;
+  /** 文档声明的字体资源清单；旧引擎实现可能不含该方法。 */
+  getFontResources?(): Promise<readonly DocumentFontResource[]>;
   /** 关闭并释放缓存。 */
   close(): Promise<void>;
 }
@@ -300,6 +304,28 @@ export function mergeHeaders(
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
+/** 关闭文档并忽略失败；用于过期/被替换的文档实例。 */
+async function closeQuietly(document: EngineDocument): Promise<void> {
+  try {
+    await document.close();
+  } catch {
+    // 过期文档关闭失败不影响调用方。
+  }
+}
+
+/**
+ * 判断一次打开参数里是否包含本机字体来源。
+ *
+ * @param fonts `resolveFonts()` 的结果。
+ * @returns 含本机字体时返回 true。
+ */
+function hasLocalFonts(fonts: {
+  readonly defaultFonts?: readonly FontInput[];
+  readonly supplementaryFonts?: readonly FontInput[];
+}): boolean {
+  return (fonts.defaultFonts?.length ?? 0) > 0;
+}
+
 /** 判断错误是否为取消。 */
 export function isAbortError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -330,6 +356,23 @@ export class DocumentController {
   private signatureEntriesPromise: Promise<readonly SignatureEntryInfo[]> | null = null;
   /** 字体来源解析器；创建时按 `font.loader` 与 `requestInit` 构造一次。 */
   private readonly fonts: FontSourceResolver;
+  /**
+   * 上一次打开文档的字体声明缓存。
+   *
+   * `getFontResources()` 需要文档实例，而字体要在 `openDocument()` 之前准备好；因此本次
+   * 打开使用上一次缓存的声明，打开完成后再刷新缓存，由阅读器的重开流程补齐首屏
+   * （需求清单 REQ-0190 的推荐实现）。
+   */
+  private fontDeclarations: readonly DocumentFontResource[] = [];
+  /**
+   * 本机字体的当前生效值（用户选择或宿主默认值），由阅读器在每次打开前同步。
+   *
+   * 与 `font.localFonts.enabled`（宿主是否允许展示开关）语义不同：后者是能力开关，
+   * 前者是用户当前是否真的要使用本机字体（需求清单 REQ-007 / REQ-0180）。
+   */
+  private localFontsState:
+    | { readonly enabled: boolean; readonly maxFonts: number }
+    | undefined;
 
   /**
    * @param options 打开工厂、请求参数、warning 回调与字体配置。
@@ -339,6 +382,16 @@ export class DocumentController {
     this.fonts = new FontSourceResolver({
       ...(options.font?.loader ? { loader: options.font.loader } : {}),
       ...(options.requestInit ? { requestInit: options.requestInit } : {}),
+      ...(options.font?.localFonts
+        ? {
+            localFonts: {
+              enabled: options.font.localFonts.enabled === true,
+              ...(options.font.aliases
+                ? { aliases: composeFontAliases(options.font.aliases) }
+                : {}),
+            },
+          }
+        : {}),
     });
   }
 
@@ -467,6 +520,10 @@ export class DocumentController {
     signal?: AbortSignal,
   ): Promise<OpenedDocumentInfo> {
     await this.closeInternal();
+    // 声明缓存由「同一来源的重开」继承：本机字体注入依赖它生成 `{ local }` 来源，
+    // 若在此清空，重开时会读到空声明、本机字体永远注入不进去。切换文档时由
+    // `reopenForLocalFonts()` 之外的普通 `open()` 路径在下方按新文档重新读取覆盖。
+    // 真正的跨文档隔离靠「每次打开都重新读取声明」（见下方 openOnce 之后的赋值）。
     // closeInternal 会递增 openToken；打开代次必须在关闭之后捕获。
     const token = ++this.openToken;
     if (signal?.aborted) throw createOpenAbortError();
@@ -485,18 +542,22 @@ export class DocumentController {
     } finally {
       if (hasFonts) this.options.onFontState?.('ready');
     }
-    const document = await openDocument({
-      ...extra,
-      ...fonts,
-      ...(this.options.onWarning ? { onWarning: this.options.onWarning } : {}),
-      ...(signal ? { signal } : {}),
-    });
+    const openOnce = (openFonts: Awaited<ReturnType<DocumentController['resolveFonts']>>) =>
+      openDocument({
+        ...extra,
+        ...openFonts,
+        ...(this.options.onWarning ? { onWarning: this.options.onWarning } : {}),
+        ...(signal ? { signal } : {}),
+      });
+
+    let document = await openOnce(fonts);
+    // 声明与开关解耦：即使尚未启用本机字体也读一次，供授权手势展开候选名。
+    // 是否需要「带上本机字体再打开一次」由调用方决定（`needsLocalFontsReopen`）：
+    // 两次打开会共享同一个字节源，关闭旧文档会连带关闭它，因此重开交给阅读器层发起，
+    // 由它重建来源、必要时恢复视图。
+    this.fontDeclarations = await this.readFontDeclarations(document);
     if (token !== this.openToken || signal?.aborted) {
-      try {
-        await document.close();
-      } catch {
-        // 过期文档关闭失败不影响调用方。
-      }
+      await closeQuietly(document);
       throw createOpenAbortError();
     }
     this.doc = document;
@@ -506,6 +567,129 @@ export class DocumentController {
       source: normalized,
       pageCount: document.pageCount,
     };
+  }
+
+  /**
+   * 判断本次打开是否需要「带上本机字体再打开一次」。
+   *
+   * 首次打开时声明未知，只有打开后才能读到；若此时本机字体已启用且声明非空，
+   * 就需要由阅读器重开一次以注入本机字体（需求清单 REQ-0190 方案 A）。
+   *
+   * @returns 需要重开时返回 true。
+   */
+  needsLocalFontsReopen(): boolean {
+    return (
+      this.localFontsState?.enabled === true &&
+      this.getLocalFontDeclarations(this.localFontsState.maxFonts).length > 0
+    );
+  }
+
+  /**
+   * 读取文档声明的字体资源（不写缓存）。
+   *
+   * @param document 已打开的引擎文档。
+   * @returns 声明列表；引擎未提供该 API 或读取失败时为空数组。
+   */
+  private async readFontDeclarations(
+    document: EngineDocument,
+  ): Promise<readonly DocumentFontResource[]> {
+    if (typeof document.getFontResources !== 'function') return [];
+    try {
+      return await document.getFontResources();
+    } catch {
+      // OFD_CLOSED / OFD_ABORTED / 旧引擎：按「无声明」处理，不上报 error。
+      return [];
+    }
+  }
+
+  /**
+   * 筛选参与本机字体查询的文档声明（需求清单 REQ-0190 / §0.2 的 `maxFonts`）。
+   *
+   * 规则：跳过含内嵌 `fontFile` 的声明（内嵌字体本来就优先，查询是浪费）；按
+   * `maxFonts`（默认 8，上限 32）截断。结果顺序沿用引擎给定的 `id` 升序。
+   *
+   * @param maxFonts 单文档最多查询的声明数；非法值按默认 8 处理。
+   * @returns 需要查询本机字体的声明列表。
+   */
+  getLocalFontDeclarations(maxFonts?: number): readonly DocumentFontResource[] {
+    const limit = normalizeLocalFontsMaxFonts(maxFonts);
+    const candidates = this.fontDeclarations.filter(
+      (resource) => resource.fontFile === undefined,
+    );
+    return candidates.slice(0, limit);
+  }
+
+  /**
+   * 透传本地字体开关到字体来源解析器。
+   *
+   * 生效值变化时清空本机字体缓存（需求清单 REQ-0260 / C14），宿主 url/path 缓存不受影响。
+   *
+   * @param enabled 生效的开关值（用户选择或宿主默认值）。
+   */
+  setLocalFontsEnabled(enabled: boolean): void {
+    this.fonts.setLocalFontsEnabled(enabled);
+  }
+
+  /**
+   * 同步本机字体的生效配置（阅读器在开关/权限变化与每次打开前调用）。
+   *
+   * `enabled=false` 时既不会生成 `{ local }` 来源，也会让 resolver 清空本机字体缓存，
+   * 保证关闭开关后 `queryLocalFonts` 调用次数为 0（REQ-0180 行为底线）。
+   *
+   * @param options 生效的开关值与 `maxFonts`；省略表示能力不可用。
+   */
+  setLocalFonts(
+    options: { readonly enabled: boolean; readonly maxFonts?: number } | undefined,
+  ): void {
+    this.localFontsState = options
+      ? { enabled: options.enabled, maxFonts: normalizeLocalFontsMaxFonts(options.maxFonts) }
+      : undefined;
+    this.fonts.setLocalFontsEnabled(options?.enabled === true);
+  }
+
+  /**
+   * 已读取到的当前文档字体声明。
+   *
+   * 与 `getLocalFontDeclarations()` 的区别：本方法不按开关过滤，供「授权手势」在尚未
+   * 启用本机字体时展开候选名（此时开关还没打开，但仍需要一次有效查询来触发授权框）。
+   *
+   * @returns 当前文档的声明列表；未读取或为空时为空数组。
+   */
+  getDocumentFontDeclarations(): readonly DocumentFontResource[] {
+    return this.fontDeclarations;
+  }
+
+  /** 当前生效的本机字体配置；省略表示不可用。 */
+  get localFonts(): { readonly enabled: boolean; readonly maxFonts: number } | undefined {
+    return this.localFontsState;
+  }
+
+  /**
+   * 按文档声明生成本机字体来源列表（需求清单 REQ-0190 / REQ-0200）。
+   *
+   * 每个声明产出声明对象形态的 `{ local }`，候选展开与 `FontInput.family = fontName`
+   * （F6）由 resolver 负责。未开启 / 浏览器不支持 / 无声明时返回空数组，打开流程与
+   * 「未引入本功能」完全一致。
+   *
+   * @returns 追加在宿主来源之后的本机字体来源。
+   */
+  private createLocalFontSources(): readonly FontSource[] {
+    const localFonts = this.localFontsState;
+    if (!localFonts || !localFonts.enabled) return [];
+    const declarations = this.getLocalFontDeclarations(localFonts.maxFonts);
+    const sources: FontSource[] = [];
+    for (const declaration of declarations) {
+      // 直接用声明对象：候选展开与 `FontInput.family = fontName`（F6）由 resolver 负责。
+      sources.push({
+        local: {
+          fontName: declaration.fontName,
+          ...(declaration.familyName ? { familyName: declaration.familyName } : {}),
+          bold: declaration.bold,
+          italic: declaration.italic,
+        },
+      });
+    }
+    return sources;
   }
 
   /**
@@ -528,6 +712,7 @@ export class DocumentController {
   }> {
     const font = this.options.font;
     if (!font) return {};
+    const localFonts = font.localFonts;
     const report = (source: FontSource, error: unknown): void => {
       // 取消导致的失败不再上报：打开流程本身会以 AbortError 结束。
       if (isAbortError(error) || signal?.aborted) return;
@@ -536,11 +721,24 @@ export class DocumentController {
         message: `字体读取失败（${describeFontSource(source)}）：${describeError(error)}`,
       });
     };
-    const [defaultFonts, supplementaryFonts] = await Promise.all([
+    // 本机字体来源：按文档声明生成 `{ local }`，追加在宿主来源之后（宿主优先，F3）。
+    const localSources = this.createLocalFontSources();
+    const [hostDefaults, hostSupplementary, localInputs] = await Promise.all([
       this.fonts.resolve(font.default ?? [], signal, report),
       this.fonts.resolve(font.supplementary ?? [], signal, report),
+      localSources.length > 0
+        ? this.fonts.resolve(localSources, signal, report)
+        : Promise.resolve<FontInput[]>([]),
     ]);
     if (signal?.aborted) return {};
+    // 宿主配置在前、本机字体在后（F3/C2）；宿主 `default` 为空时结果即 `[...localInputs]`，
+    // 不需要额外分支。
+    const defaultFonts = [...hostDefaults, ...localInputs];
+    // 本机字体只进 defaultFonts：引擎按 `default:N` 与 `supplementary:M` 分别建 FontFace
+    // 且不跨列表去重（font/provider.ts loadDefaultFaces / loadSupplementaryFaces），
+    // 同时注入会让同一份 10–20 MB 字体被解析两次、内存翻倍。本机字体是「替代/优先」语义，
+    // 不是「补字」语义，因此固定放默认候选。
+    const supplementaryFonts = [...hostSupplementary];
     return {
       ...(defaultFonts.length > 0 ? { defaultFonts } : {}),
       ...(supplementaryFonts.length > 0 ? { supplementaryFonts } : {}),
@@ -725,6 +923,16 @@ export class DocumentController {
  */
 function describeFontSource(source: FontSource): string {
   if (typeof source !== 'object' || source === null) return 'invalid';
+  if ('local' in source) {
+    // 本机字体来源只用于诊断：不打印字体字节，也不展开成字体清单（设计 §6.3 / §7）。
+    const local = source.local;
+    const name = typeof local === 'string'
+      ? local
+      : Array.isArray(local)
+        ? local.join(',')
+        : (local as { fontName?: string }).fontName ?? 'unknown';
+    return `local=${name}`;
+  }
   if ('url' in source) return `url=${source.url}`;
   if ('path' in source) return `path=${source.path}`;
   if ('filePath' in source) return `filePath=${source.filePath}`;

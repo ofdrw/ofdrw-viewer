@@ -137,6 +137,32 @@ function parseFonts(raw: string | null): { default?: HarnessFontSource[]; supple
 
 const fonts = parseFonts(rawFonts);
 const rawAliases = params.get('aliases');
+
+/**
+ * 解析本机字体能力参数（本地字体加载方案设计 §3.2）。
+ *
+ * `localFonts=1` 展示并启用开关；`localDefault=1` 使宿主默认值为开启；
+ * `localRemember=0` 关闭 localStorage 记忆；`localMax=<n>` 覆盖 `maxFonts`；
+ * `localConsent=<文本>` 覆盖确认框说明。未给出 `localFonts=1` 时返回 undefined，
+ * 与未配置 `fonts.localFonts` 的行为完全一致。
+ *
+ * @param raw `localFonts` 查询参数。
+ * @returns 阅读器的 `fonts.localFonts`；未启用时为 undefined。
+ */
+function parseLocalFonts(raw: string | null): Record<string, unknown> | undefined {
+  if (raw !== '1') return undefined;
+  const max = Number(params.get('localMax'));
+  const consent = params.get('localConsent');
+  return {
+    enabled: true,
+    ...(params.get('localDefault') === '1' ? { defaultEnabled: true } : {}),
+    ...(params.get('localRemember') === '0' ? { remember: false } : {}),
+    ...(Number.isFinite(max) && max > 0 ? { maxFonts: max } : {}),
+    ...(consent ? { consentText: consent } : {}),
+  };
+}
+
+const localFonts = parseLocalFonts(params.get('localFonts'));
 /** 宿主追加别名组：`a+b;c+d` 形式。 */
 const fontAliases =
   rawAliases && fonts
@@ -145,12 +171,14 @@ const fontAliases =
         .map((group) => group.split('+').map((name) => name.trim()).filter(Boolean))
         .filter((group) => group.length > 0)
     : undefined;
+// 只声明本机字体能力时也要构造 `fonts`，否则配置会被整体丢掉。
 const fontOptions =
-  fonts === undefined
+  fonts === undefined && localFonts === undefined
     ? undefined
     : {
-        ...fonts,
+        ...(fonts ?? {}),
         ...(fontAliases && fontAliases.length > 0 ? { aliases: fontAliases } : {}),
+        ...(localFonts === undefined ? {} : { localFonts }),
       };
 
 const events: HarnessEvent[] = [];

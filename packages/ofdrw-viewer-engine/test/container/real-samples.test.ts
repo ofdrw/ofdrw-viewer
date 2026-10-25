@@ -1,12 +1,9 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { ZipReader } from '../../src/container/zip-reader';
 import { ArrayBufferSource } from '../../src/container/byte-source';
-
-/** 仓库根样本目录（测试文件位于 packages/ofdrw-viewer-engine/test/container）。 */
-const SAMPLE_DIR = fileURLToPath(new URL('../../../../ofd_pdf_match/', import.meta.url));
+import { assertSampleManifest, loadSampleManifest, SAMPLE_DIR } from '../helpers/samples';
 
 describe('container/zip-reader 真实样本', () => {
   it.skipIf(!existsSync(join(SAMPLE_DIR, 'containsJPEG.ofd')))(
@@ -38,10 +35,10 @@ describe('container/zip-reader 真实样本', () => {
     },
   );
 
-  it.skipIf(!existsSync(SAMPLE_DIR))('可打开 55 对样本中的全部 OFD 并读取入口 XML', async () => {
-    const files = readdirSync(SAMPLE_DIR);
-    const ofdFiles = files.filter((name) => name.toLowerCase().endsWith('.ofd')).sort();
-    expect(ofdFiles.length).toBeGreaterThanOrEqual(50);
+  it('可打开样本目录中全部可识别 OFD 并读取入口 XML', async () => {
+    // 样本数量随仓库演进，按实际可识别样本动态断言；无法识别的文件由 helpers 统计并校验比例。
+    const manifest = loadSampleManifest();
+    const ofdFiles = assertSampleManifest(manifest);
 
     let xmlEntries = 0;
     for (const name of ofdFiles) {
@@ -60,6 +57,7 @@ describe('container/zip-reader 真实样本', () => {
       xmlEntries += entries.filter((entry) => entry.name.endsWith('.xml')).length;
       reader.close();
     }
+    // 下限保护：样本被清空或几乎全坏时不会静默通过。
     expect(xmlEntries).toBeGreaterThan(50);
   });
 });

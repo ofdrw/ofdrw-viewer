@@ -65,6 +65,8 @@ import type {
   AttachmentSink,
   BookmarkItem,
   CommonDataSummary,
+  DocumentFontResource,
+  DocumentFontResourcesOptions,
   DocumentMetadata,
   DocumentPageArea,
   DocumentPermissions,
@@ -1133,6 +1135,46 @@ export class OFDDocument {
     // close() 需要等待 getPage 的终止事件派发完成，保证 abort 早于 close:end。
     this.trackActiveRun(run);
     return run;
+  }
+
+  /**
+   * 读取文档声明的字体资源清单。
+   *
+   * 只返回 `DocumentRes.xml` / `PublicRes.xml` 中已解析的字体声明：不加载页面、不解析
+   * 字体、不访问容器，因此结果只反映「文档声明了什么」，不反映运行时实际用到了哪些
+   * 字体或回退到了哪个字体。页面级 `PageRes.xml` 的声明不进入清单。
+   *
+   * 顺序按资源 ID 的字符串升序（`'10'` 排在 `'2'` 前），与 `Map` 键的稳定顺序一致，
+   * 不受 `PublicRes`/`DocumentRes` 书写次序影响；每次调用返回新数组，调用方修改不影响
+   * 后续调用。
+   *
+   * @param options 取消信号；已中止时以 `OFD_ABORTED` 拒绝。
+   * @returns 字体资源快照数组；文档没有字体声明时为空数组。
+   * @throws {OFDError} `OFD_CLOSED`（文档已关闭）或 `OFD_ABORTED`（信号已中止）。
+   */
+  async getFontResources(
+    options: DocumentFontResourcesOptions = {},
+  ): Promise<readonly DocumentFontResource[]> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    const result: DocumentFontResource[] = [];
+    for (const font of this.documentResources.fonts.values()) {
+      result.push({
+        id: font.id,
+        fontName: font.fontName,
+        // 可选字段缺失时省略，保证 `'familyName' in resource === false`。
+        ...(font.familyName !== undefined ? { familyName: font.familyName } : {}),
+        charset: font.charset,
+        serif: font.serif,
+        bold: font.bold,
+        italic: font.italic,
+        fixedSize: font.fixedSize,
+        ...(font.fontFile !== undefined ? { fontFile: font.fontFile } : {}),
+        documentLevel: true,
+      });
+    }
+    result.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    return result;
   }
 
   /**

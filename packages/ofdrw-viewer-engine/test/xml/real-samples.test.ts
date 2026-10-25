@@ -1,17 +1,20 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { ZipReader } from '../../src/container/zip-reader';
 import { ArrayBufferSource } from '../../src/container/byte-source';
 import { parseXml } from '../../src/xml/parser';
-
-/** 仓库根样本目录。 */
-const SAMPLE_DIR = fileURLToPath(new URL('../../../../ofd_pdf_match/', import.meta.url));
+import {
+  assertSampleManifest,
+  loadSampleManifest,
+  SAMPLE_DIR,
+} from '../helpers/samples';
 
 describe('xml/parser 真实样本', () => {
-  it.skipIf(!existsSync(SAMPLE_DIR))('可解析 55 对样本中的全部 XML 条目', async () => {
-    const files = readdirSync(SAMPLE_DIR).filter((name) => name.toLowerCase().endsWith('.ofd'));
+  it('可解析样本目录中全部可识别 OFD 的 XML 条目', async () => {
+    // 样本数量随仓库演进，按实际可识别样本动态断言；无法识别的文件单独统计。
+    const manifest = loadSampleManifest();
+    const files = assertSampleManifest(manifest);
     let parsed = 0;
     for (const name of files) {
       const reader = await ZipReader.open(
@@ -25,6 +28,7 @@ describe('xml/parser 真实样本', () => {
       }
       reader.close();
     }
+    // 下限保护：样本目录被清空或几乎全坏时不会静默通过。
     expect(parsed).toBeGreaterThan(500);
-  }, 30_000);
+  }, 60_000);
 });

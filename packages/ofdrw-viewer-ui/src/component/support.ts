@@ -12,6 +12,7 @@ import type {
   ViewerSource,
   ViewerState,
 } from '../index';
+import { SIDEBAR_VIEWS } from '../state';
 
 /** 旋转角度；与核心 `Rotation` 同构。 */
 export type Rotation = ViewerState['view']['rotation'];
@@ -246,13 +247,8 @@ export function isTheme(value: unknown): value is Theme {
  * @returns 是侧栏视图时 true。
  */
 export function isSidebarView(value: unknown): value is SidebarView {
-  return (
-    value === 'thumbnails' ||
-    value === 'outline' ||
-    value === 'bookmarks' ||
-    value === 'signatures' ||
-    value === 'attachments'
-  );
+  // 复用 state.ts 的单一清单，避免适配层与核心各维护一份视图白名单。
+  return typeof value === 'string' && (SIDEBAR_VIEWS as readonly string[]).includes(value);
 }
 
 /**

@@ -72,6 +72,22 @@ export const enUS: MessageDictionary = {
   'sidebar.noOutline': 'This document has no outline',
   'sidebar.noBookmarks': 'This document has no bookmarks',
   'sidebar.noSignatures': 'This document has no signatures',
+  'sidebar.settings': 'Settings',
+
+  // Local fonts (design §5.1 / §5.2).
+  'localFonts.group': 'Fonts',
+  'localFonts.toggle': 'Use local fonts',
+  'localFonts.toggleHint': 'Replace missing fonts with fonts installed on this device',
+  'localFonts.status.prompt': 'Not authorized',
+  'localFonts.status.enabled': 'Enabled',
+  'localFonts.status.unsupported': 'Not supported by this browser',
+  'localFonts.status.denied': 'Not authorized',
+  'localFonts.status.loading': 'Requesting permission…',
+  'localFonts.dialog.title': 'Use local fonts',
+  'localFonts.dialog.description':
+    'Allow the viewer to use fonts installed on this device so the document looks closer to the original.',
+  'localFonts.dialog.allow': 'Allow',
+  'localFonts.dialog.deny': "Don't allow",
 
   // Attachment sidebar (design §6.2.6).
   'attachments.title': 'Attachments',

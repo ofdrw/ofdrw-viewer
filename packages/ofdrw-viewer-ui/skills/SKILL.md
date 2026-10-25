@@ -183,7 +183,7 @@ new OFDViewer({
 });
 ```
 
-- 来源四态与证书一致：`{ data }`、`{ url, headers? }`、`{ path }`、`{ filePath }`；后两类需要 `fonts.loader`，UI 自身不访问文件系统。
+- 来源四态与证书一致：`{ data }`、`{ url, headers? }`、`{ path }`、`{ filePath }`；后两类需要 `fonts.loader`，UI 自身不访问文件系统。另有第五态 `{ local }`（浏览器本机字体），见下文本机字体一节。
 - `url` 的 `headers` 与 `requestInit.headers` 合并（来源优先）；同一 URL 在实例生命周期内只读取一次。
 - 只接受**完整字体文件**（`.ttf`/`.otf`/`.woff2`），不接受 CSS 的 unicode-range 子集切片；引擎用字形轮廓绘制，与 CSS 字体加载无关。
 - 读取失败只产生 `W_FONT_MISSING` warning（`onWarning`/`ofd-warning`），不阻断文档打开；`fonts.aliases` 会追加到引擎内置别名组，而不是替换。
@@ -193,6 +193,84 @@ new OFDViewer({
 - 在线演示站的字体策略（可复制的宿主示例）：纯本地兜底、不依赖 CDN——`default` 为站点自带思源宋体子集（`fonts/source-han-serif-sc.woff2`，OFL，约 10.6 MiB），`supplementary` 为站点自带思源黑体子集（`fonts/source-han-sans-sc.woff2`，OFL，约 7.5 MiB），同时作为宋体缺字时的逐字形补充；`aliases` 追加「宋体/simsun/…/notoserifcjksc」与「黑体/simhei/微软雅黑/…/notosanscjksc」两组，保证宋体与黑体声明都能命中对应字体。本地路径用 `import.meta.env.BASE_URL` 拼接以兼容子路径部署；字体文件不进入 npm 包。
 
 完整设计（引擎兼容性、CDN 选型、安全边界）见 [字体配置方案设计](../../../docs/字体配置方案设计.md)，字段与类型见 [API.md 字体配置](./API.md#字体配置)。
+
+### 本机字体（可选）
+
+浏览器本机字体（`queryLocalFonts`，Chrome 103+ 桌面端）让阅读器在用户授权后读取本机已安装的字体，补上宿主没提供、而用户机器上恰好有的同名字体（如 Windows 自带的宋体、黑体、微软雅黑）。**默认关闭，且必须宿主与用户双方同意**。
+
+```ts
+new OFDViewer({
+  container: '#viewer',
+  source: '/sample.ofd',
+  fonts: {
+    default: [{ url: '/fonts/NotoSerifSC-Regular.woff2', family: '宋体' }],
+    // 想在文档打开时自动询问用户，把 defaultEnabled 设为 true（演示站的默认做法）。
+    // 只想让用户在「关于」里手动开，保持 defaultEnabled: false。
+    localFonts: { enabled: true, defaultEnabled: true, maxFonts: 8 },
+    // 可选：直接声明本机字体来源（仍受上面的开关与用户授权约束）。
+    supplementary: [{ local: 'SimSun' }],
+  },
+});
+```
+
+#### `LocalFontsOptions` 五个字段
+
+| 字段 | 类型 | 默认 | 作用 |
+| --- | --- | --- | --- |
+| `enabled` | `boolean` | `false` | **总闸**。为 `true` 才启用能力；否则「关于」里不出现开关、`{ local }` 来源按不支持跳过 |
+| `defaultEnabled` | `boolean` | `false` | **用户意向的默认值**。用户从未表态时生效：`true` 时文档打开就会弹确认框；`false` 时用户需去「关于」里手动开 |
+| `remember` | `boolean` | `true` | 是否把用户选择记进 `localStorage`（只存两个布尔值）；`false` 时每次打开都会重新询问 |
+| `maxFonts` | `number` | `8` | 单文档最多查询几个**文档声明字体**（不是候选名字数；单个声明最多 6 个候选名） |
+| `consentText` | `string` | 内置文案 | 覆盖确认框的说明文字（内网统一口径时用） |
+
+#### 生效值：四个状态字段的分工
+
+| 字段 | 来源 | 含义 | 与开关的关系 |
+| --- | --- | --- | --- |
+| `visible` | 宿主 `fonts.localFonts.enabled === true` 且浏览器提供 API | 能力是否对用户可见 | `false` 时「关于」里整行不渲染 |
+| `supported` | `typeof window.queryLocalFonts === 'function'` | **仅**表示浏览器提供 API | `false` 时开关隐藏并禁用，只留原因文案 |
+| `permission` | `navigator.permissions` 的 `local-fonts` | 浏览器授权态：`prompt`/`granted`/`denied` | 决定 `enabled` 与状态文案 |
+| `enabled` | 计算值 | **真正生效值**：`用户意向为开 && permission === 'granted'` | **这就是开关的显示状态** |
+
+用户意向 = 已记住的用户选择，没有则用 `defaultEnabled`。
+
+**核心原则：开关状态与浏览器授权状态同步。** 权限为 `prompt` 或 `denied` 时 `enabled` 一律为 `false`（开关显示为关）——任何授权失败都会让开关自动回到关闭态，用户点一下即可重新申请，不会停在「开着却不起作用」的假象上。
+
+注入路径与显示值同源：控制器用同一个条件（`用户意向 && permission === 'granted'`）决定是否生成 `{ local }` 来源，因此「开关显示为开」与「字体真的被注入」永远一致。权限未授予时发起查询必然失败，还会让「未授权」与「本机没装」无法区分。
+
+#### 开启方式与行为
+
+- **宿主配置**：`fonts.localFonts.enabled: true`；不配或为 `false` 时能力对用户完全不可见（`visible === false`，「关于」里不渲染开关行，`{ local }` 来源按不支持跳过）。
+- **用户授权（两个入口）**：
+  1. **文档打开后自动弹确认框**——条件是「能力可见 + 用户意向为开 + 浏览器权限仍是 `prompt` + 本会话未问过 + 跨会话未表态」。点「允许」后在同一 click 事件内申请浏览器权限（浏览器只接受**用户手势**内的申请，阅读器不会在 `open()` 里静默申请）。
+  2. **工具栏「更多」→「关于」里的开关**——事后修改意向，切换后立即生效。
+- **授权只需一次**：浏览器记住授权后，刷新页面、重开文档都静默生效；开启/关闭开关会重开当前文档并恢复页码/缩放/旋转。
+- **开关状态与浏览器授权同步**：`LocalFontsStatus.enabled = 用户意向为开 && permission === 'granted'`。权限为 `prompt`/`denied` 时开关一律显示为关——任何授权失败都会让开关自动回到关闭态，不会停在「开着却不起作用」的假象上。
+- **三种关闭确认框的方式结果不同**：
+  - 点「允许」且授权成功 → 开关为开、记住选择，下次不再问；
+  - 点「不允许」/ 浏览器拒绝 → 开关为**关**、**清除用户意向记录**，下次不再自动弹框，用户可点开关重新申请（Chrome 在 `denied` 后不会再次弹授权框，需先在浏览器站点设置里改为允许）；
+  - 按 Esc / 点遮罩 → 不写入任何记录，**下次仍会询问**。
+- **关闭即回退**：关闭开关清空本机字体缓存并重开文档，画面立即回到原有字体来源，其它功能不受影响。
+- **注入位置**：宿主配置的 `default` 在前、本机字体追加在后，宿主显式字体始终优先。本机字体**只进 `defaultFonts`，不进 `supplementaryFonts`**——同一份 10–20 MB 字体同时注入两个列表会被引擎解析两次、内存翻倍，而本机字体是「替代/优先」语义而非补字语义。
+- **失败静默回退**：浏览器不支持、用户拒绝、站点 `Permissions-Policy` 禁用、本机未安装、读字节失败时，本机字体被跳过，只产生 `W_FONT_MISSING` warning（`message` 只含字体名与错误摘要），不阻断打开。注意**不支持时也会产生该 warning**；需要完全静默时用 `debug: { codes: [...] }` 过滤或先查 `getLocalFontsStatus().supported`。
+- **隐私**：只按文档声明做定向查询，不做全量枚举；字体字节只在内存中交给引擎渲染，不上传、不落盘、不写日志。
+
+#### 机制概要（一次 `open()` 发生了什么）
+
+```text
+① 刷新权限态 + 把生效值同步给控制器
+② resolveFonts()：宿主 default/supplementary 先读，本机来源按【上一次】读到的声明生成
+③ openDocument(...)              ← 首次打开（此时可能还没有本机字体）
+④ document.getFontResources()    ← 打开后才知道文档声明了什么字体
+⑤ 声明非空且已启用 → 带本机字体重开一次（恢复页码/缩放/旋转）
+⑥ 权限仍为 prompt 且未表态 → 弹确认框
+```
+
+因此一次「打开」最多可能调用 3 次 `openDocument`（首屏 / 补注入 / 授权后），这是设计选择而非缺陷：声明只能在打开后读取，合并时机会互相纠缠。重开用的是已缓存字节，无网络开销。
+
+名字转换是关键一环：文档声明的是 `宋体`，而 `queryLocalFonts` 只接受**区分大小写的 PostScript 名**（`SimSun`）。阅读器按「变体后缀 → 基础名 → 别名成员 → 原始名」展开候选名（单个声明最多 6 个，为原始名预留槽位），**不推断大小写**（`Simsun` 查不到，只有 `SimSun` 能命中），一次调用整批传入后按候选顺序取第一个命中。命中后 `FontInput.family` 取**文档声明的名字**（`宋体`），让引擎的「精确名匹配 200 分」生效。
+
+状态与控制：`viewer.getLocalFontsStatus()`、`viewer.setLocalFontsEnabled(enabled)`（须在用户点击事件内调用）、`viewer.onLocalFontsStatusChange(handler)`，以及核心事件 `local-fonts:change`。详见 [API.md 本机字体](./API.md#本机字体) 与 [本地字体加载方案设计](../../../docs/本地字体加载方案设计.md)。
 
 `source` 取值补充说明：
 
@@ -495,6 +573,13 @@ console.log(report.overall);
 - **纯 SPA**：不承诺 SSR/水合；不提供局部/瓦片渲染。
 - **网络在 UI 层**：URL 由 `HttpByteSource` 读取（Range + 整包回退），跨域需要 CORS 与 `Content-Range` 暴露头；鉴权头由宿主提供。
 - **字体在 UI 层读取**：引擎不读取字体 URL/路径，UI 层可用 `fonts.default`/`fonts.supplementary` 的 `{ url }` 直接配置，读取由 UI 完成；只接受完整字体文件，不接受 CSS 切片，读取失败只产生 `W_FONT_MISSING` warning。设计见 [字体配置方案设计](../../../docs/字体配置方案设计.md)。
+- **本机字体仅 Chromium 桌面端**：`queryLocalFonts` 自 Chrome 103 起可用，Firefox / Safari / 移动端 / 旧版 Chromium / 站点被 `Permissions-Policy: local-fonts` 禁用时整个能力不可见，行为与引入该功能前一致，不做 polyfill。默认关闭且需宿主 `fonts.localFonts.enabled` + 用户授权双重开启（授权入口：文档打开后的确认框，或「关于」对话框里的开关）；关闭开关或授权失败时立即回退到原有字体来源。
+- **本机字体授权必须由点击触发**：无用户手势调用 `queryLocalFonts` 必然 `SecurityError`，因此确认框的「允许」在 click 回调内同步发起申请；`permission: 'denied'` 与「字体未安装」在 API 层返回值相同，阅读器用 `navigator.permissions.query({ name: 'local-fonts' })` 区分。
+- **本机字体不做全量枚举、不做字体选择器**：只按文档声明的字体名定向查询（无内嵌 `fontFile` 的声明，按 `maxFonts` 截断）；中文名不能直接用于查询，需经内置常见字体表与别名表展开为 PostScript 名（匹配区分大小写）。
+- **本机字体不做合成加粗**：粗体请求按 `<base>-Bold` → `<base>Bold` → `<base>` 回退，`SimHei-Bold` 这类不存在的变体会落到常规字形，观感上是「粗体请求用了常规字形」。
+- **本机字体重开代价**：开启/关闭开关会重开当前文档（恢复页码/缩放/旋转），大文档有短暂加载；不做字体热替换。
+- **`local-fonts:change` 只走核心通道**：Web Component / React / Vue 尚未桥接该事件，也没有转发 `getLocalFontsStatus`/`setLocalFontsEnabled`，需要时通过底层实例调用。
+- **页级字体声明不参与本机字体匹配**：只处理 `DocumentRes`/`PublicRes` 中的文档级字体声明，`PageRes.xml` 里声明的字体不进入查询清单。
 - **控制台诊断默认开启**：缺字体 `W_FONT_MISSING`、缺字 `W_GLYPH_MISSING`、`W_CANVAS_LIMIT` 等 warning 与错误会以 `[ofd-viewer] warning <code>` / `[ofd-viewer] error <code>` 前缀打印到浏览器控制台，附 `{ pageIndex, resourceId }` 上下文；同一 `code` + `pageIndex` + `resourceId` 在一个文档会话内只打印一次，`open()` 时重置。`onWarning`/`onError` 语义不变；`debug: { console: false }` 可整体关闭，`debug.levels`/`debug.codes` 可只保留指定级别或码（过滤先于去重）。UI 自有码表导出为 `UI_WARNING_CODES`（错误码前缀为 `OFD_*`）。见 [API.md 诊断与日志](./API.md#诊断与日志)。
 - **URI 参数预览只读查询串**：`?file=` 仅接受 `http(s)`；`?base64=` 默认上限 64 MiB，且会进入历史/日志/Referer，敏感文档不应使用。
 - **打印/导出范围**：打印调用浏览器对话框，不生成 PDF；图片导出不合并为 PDF；原 OFD 导出是字节拷贝，不重新打包或修正文档。

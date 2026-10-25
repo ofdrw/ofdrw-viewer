@@ -111,6 +111,8 @@ export type {
   DestinationType,
   CommonDataSummary,
   DocumentDestination,
+  DocumentFontResource,
+  DocumentFontResourcesOptions,
   DocumentHeader,
   DocumentMetadata,
   DocumentPageArea,

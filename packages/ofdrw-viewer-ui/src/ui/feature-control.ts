@@ -13,6 +13,20 @@ import type {
   ViewerFeatureStates,
 } from '../features';
 import type { Translator } from '../i18n';
+import type { SidebarView } from '../state';
+
+/**
+ * 侧栏视图对应的功能键。
+ *
+ * `settings` 刻意没有独立功能键（需求清单 C3），由侧栏功能门控；映射集中在此处，
+ * 避免各调用点各写一份判断。
+ *
+ * @param view 侧栏视图。
+ * @returns 对应的功能键。
+ */
+export function sidebarViewFeature(view: SidebarView): ViewerFeature {
+  return view;
+}
 
 /** 控件当前的功能门控结果。 */
 export interface FeatureGate {

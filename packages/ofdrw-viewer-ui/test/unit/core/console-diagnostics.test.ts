@@ -339,4 +339,23 @@ describe('控制台诊断', () => {
     });
     viewer.destroy();
   });
+
+  it('重新打开文档时清空状态里的 warning 列表（只反映当前文档）', async () => {
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+    });
+    await viewer.ready;
+    emitEngineWarning({ code: 'W_FONT_MISSING', message: '字体缺失', resourceId: '3' });
+    expect(viewer.getState().ui.warnings.length).toBeGreaterThan(0);
+
+    // 重开同一来源：上一次打开的历史 warning 不应残留，否则「当前文档是否缺字」
+    // 会被历史累积污染（本机字体切换后的重开尤其依赖这一点）。
+    await viewer.open(new ArrayBuffer(8));
+    expect(
+      viewer.getState().ui.warnings.filter((item) => item.code === 'W_FONT_MISSING'),
+    ).toHaveLength(0);
+    viewer.destroy();
+  });
 });
