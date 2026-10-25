@@ -385,7 +385,7 @@ const viewer = new OFDViewer({ container: '#viewer', source: '/api/doc.ofd' });
 </script>
 ```
 
-标签默认是 `ofd-viewer`，采用 light DOM，不创建 Shadow DOM。基础属性为 `src`、`page`、`scale`、`rotation`、`theme`、`locale`、`sidebar`、`font-default`、`font-supplementary`；复杂配置用 `features`、`crypto`、`fonts`、`source` property。`font-default`/`font-supplementary` 是逗号分隔的字体 URL 简写，变更时销毁并按新属性重建实例。省略 `src` 时仍会创建实例并读取查询参数；断开连接销毁实例，重新连接按当前属性重建。事件名为 `ofd-*`，`event.detail` 为对应载荷，`reader.viewer` 是底层只读实例。`sidebar` 属性只接受 `thumbnails`/`outline`/`bookmarks`/`signatures`（空、`none`、`off` 关闭），暂不接受 `attachments`；要打开附件侧栏，用 `reader.viewer.openSidebar('attachments')`。
+标签默认是 `ofd-viewer`，采用 light DOM，不创建 Shadow DOM。基础属性为 `src`、`page`、`scale`、`rotation`、`theme`、`locale`、`sidebar`、`font-default`、`font-supplementary`；复杂配置用 `features`、`crypto`、`fonts`、`source` property。`font-default`/`font-supplementary` 是逗号分隔的字体 URL 简写，变更时销毁并按新属性重建实例。省略 `src` 时仍会创建实例并读取查询参数；断开连接销毁实例，重新连接按当前属性重建。事件名为 `ofd-*`，`event.detail` 为对应载荷，`reader.viewer` 是底层只读实例。本机字体能力可直接调用 `reader.getLocalFontsStatus()`、`reader.setLocalFontsEnabled(enabled)`、`reader.onLocalFontsStatusChange(handler)`（未创建实例时分别返回默认状态、抛 `Error('阅读器尚未创建')`、返回空退订函数），状态变化同时派发 `ofd-local-fonts-change`。`sidebar` 属性只接受 `thumbnails`/`outline`/`bookmarks`/`signatures`（空、`none`、`off` 关闭），暂不接受 `attachments`；要打开附件侧栏，用 `reader.viewer.openSidebar('attachments')`。
 
 完整属性/property/方法/事件见 [API.md Web Component](./API.md#web-component)。
 
@@ -412,7 +412,7 @@ export function Reader() {
 }
 ```
 
-`source`/`features` 等 prop 变化只调用核心方法，不会重建实例；卸载时销毁。`page` 为 1-based 受控页码，`scale` 可传数字或缩放模式，`sidebar` 传 `null` 关闭。ref 暴露 `getInstance`、`open`、`goToPage`、`setScale`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage`、`exportOfd`、`verify` 等薄方法。外层容器默认 `width/height: 100%`。
+`source`/`features` 等 prop 变化只调用核心方法，不会重建实例；卸载时销毁。`page` 为 1-based 受控页码，`scale` 可传数字或缩放模式，`sidebar` 传 `null` 关闭。ref 暴露 `getInstance`、`open`、`goToPage`、`setScale`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage`、`exportOfd`、`verify`、`getLocalFontsStatus`、`setLocalFontsEnabled`、`onLocalFontsStatusChange` 等薄方法；本机字体状态变化还可通过 `onLocalFontsChange` 回调接收。外层容器默认 `width/height: 100%`。
 
 完整 props、事件回调和句柄见 [API.md React](./API.md#react)。
 
@@ -437,7 +437,7 @@ const features = { print: false };
 </template>
 ```
 
-组件只创建一个外层 `div`，实例用 `shallowRef`/`markRaw` 持有，不进入响应式代理。公共 props 覆盖 `options` 里的同名项；事件使用 kebab-case。模板 ref 可调用 `getInstance`、`goToPage`、`setScale`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage`、`exportOfd`、`verify` 等 expose 方法。
+组件只创建一个外层 `div`，实例用 `shallowRef`/`markRaw` 持有，不进入响应式代理。公共 props 覆盖 `options` 里的同名项；事件使用 kebab-case。模板 ref 可调用 `getInstance`、`goToPage`、`setScale`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage`、`exportOfd`、`verify`、`getLocalFontsStatus`、`setLocalFontsEnabled`、`onLocalFontsStatusChange` 等 expose 方法；本机字体状态变化还可通过 `@local-fonts-change` 接收。
 
 完整 props、emits 与 expose 见 [API.md Vue](./API.md#vue)。
 
@@ -578,7 +578,7 @@ console.log(report.overall);
 - **本机字体不做全量枚举、不做字体选择器**：只按文档声明的字体名定向查询（无内嵌 `fontFile` 的声明，按 `maxFonts` 截断）；中文名不能直接用于查询，需经内置常见字体表与别名表展开为 PostScript 名（匹配区分大小写）。
 - **本机字体不做合成加粗**：粗体请求按 `<base>-Bold` → `<base>Bold` → `<base>` 回退，`SimHei-Bold` 这类不存在的变体会落到常规字形，观感上是「粗体请求用了常规字形」。
 - **本机字体重开代价**：开启/关闭开关会重开当前文档（恢复页码/缩放/旋转），大文档有短暂加载；不做字体热替换。
-- **`local-fonts:change` 只走核心通道**：Web Component / React / Vue 尚未桥接该事件，也没有转发 `getLocalFontsStatus`/`setLocalFontsEnabled`，需要时通过底层实例调用。
+- **`local-fonts:change` 三端均可接收**：核心 `viewer.on('local-fonts:change', …)`；Web Component 派发 `ofd-local-fonts-change` 并转发 `getLocalFontsStatus`/`setLocalFontsEnabled`/`onLocalFontsStatusChange`；React 为 `onLocalFontsChange` 回调与命令句柄同名方法；Vue 为 `@local-fonts-change` 与 expose 同名方法。启用本机字体仍需在用户点击事件的同步栈内调用 `setLocalFontsEnabled(true)`，在挂载回调或定时器中调用不会弹出授权框。
 - **页级字体声明不参与本机字体匹配**：只处理 `DocumentRes`/`PublicRes` 中的文档级字体声明，`PageRes.xml` 里声明的字体不进入查询清单。
 - **控制台诊断默认开启**：缺字体 `W_FONT_MISSING`、缺字 `W_GLYPH_MISSING`、`W_CANVAS_LIMIT` 等 warning 与错误会以 `[ofd-viewer] warning <code>` / `[ofd-viewer] error <code>` 前缀打印到浏览器控制台，附 `{ pageIndex, resourceId }` 上下文；同一 `code` + `pageIndex` + `resourceId` 在一个文档会话内只打印一次，`open()` 时重置。`onWarning`/`onError` 语义不变；`debug: { console: false }` 可整体关闭，`debug.levels`/`debug.codes` 可只保留指定级别或码（过滤先于去重）。UI 自有码表导出为 `UI_WARNING_CODES`（错误码前缀为 `OFD_*`）。见 [API.md 诊断与日志](./API.md#诊断与日志)。
 - **URI 参数预览只读查询串**：`?file=` 仅接受 `http(s)`；`?base64=` 默认上限 64 MiB，且会进入历史/日志/Referer，敏感文档不应使用。

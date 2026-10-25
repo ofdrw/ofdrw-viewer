@@ -21,6 +21,7 @@ import {
   type ExportOfdResult,
   type FeatureState,
   type FindOptions,
+  type LocalFontsStatus,
   type OFDViewerOptions,
   type VerificationReport,
   type ViewerFeature,
@@ -93,6 +94,17 @@ export interface OFDViewerHandle {
   getRootCertificates(): readonly CertificateSummary[];
   /** 打开工具栏验证面板。 */
   openVerificationPanel(): void;
+  /** 本机字体状态快照；只做查询，不触发授权。 */
+  getLocalFontsStatus(): LocalFontsStatus;
+  /**
+   * 设置本机字体开关。
+   *
+   * 传入 `true` 时会在用户点击处理函数内申请浏览器授权；请直接在事件回调里调用，
+   * 放到 `useEffect` 或定时器中不会弹出授权框。
+   */
+  setLocalFontsEnabled(enabled: boolean): Promise<void>;
+  /** 订阅本机字体状态变化；返回退订函数。 */
+  onLocalFontsStatusChange(handler: (status: LocalFontsStatus) => void): () => void;
 }
 
 /** React 组件属性。 */
@@ -150,6 +162,21 @@ function createOptions(
     ...(sidebar === undefined ? {} : { sidebar }),
   };
 }
+
+/**
+ * 阅读器尚未挂载时的本机字体状态。
+ *
+ * 与 Web Component 同义：没有实例就按「能力不可见、开关关闭、尚未表态」返回，
+ * 使句柄方法在挂载前调用也能拿到完整快照。
+ */
+const DISABLED_LOCAL_FONTS_STATUS: LocalFontsStatus = Object.freeze({
+  supported: false,
+  enabled: false,
+  userState: 'undecided',
+  permission: 'unsupported',
+  visible: false,
+  loading: false,
+});
 
 /** 安全执行同步/异步核心方法，避免受控同步导致渲染树异常。 */
 function run(action: () => unknown): void {
@@ -232,6 +259,14 @@ export const OFDViewer = forwardRef<OFDViewerHandle, OFDViewerProps>(
         openVerificationPanel: () => {
           run(() => viewerRef.current?.openVerificationPanel());
         },
+        getLocalFontsStatus: () =>
+          viewerRef.current?.getLocalFontsStatus() ?? DISABLED_LOCAL_FONTS_STATUS,
+        setLocalFontsEnabled: async (enabled) => {
+          if (!viewerRef.current) throw new Error('阅读器尚未挂载');
+          return viewerRef.current.setLocalFontsEnabled(enabled);
+        },
+        onLocalFontsStatusChange: (handler) =>
+          viewerRef.current?.onLocalFontsStatusChange(handler) ?? (() => undefined),
       }),
       [],
     );

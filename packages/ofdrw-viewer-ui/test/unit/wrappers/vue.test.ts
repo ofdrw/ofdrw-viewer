@@ -90,6 +90,31 @@ describe('Vue wrapper', () => {
     expect(wrapper.emitted('features-change')).toHaveLength(1);
   });
 
+  it('emit 本机字体事件，expose 转发状态与方法', async () => {
+    const onLocalFontsChange = vi.fn();
+    const wrapper = mount(OFDViewer, {
+      props: { source: 'a.ofd', onLocalFontsChange },
+    });
+    await nextTick();
+    const viewer = FakeViewer.instances[0]!;
+    const exposed = wrapper.vm as unknown as {
+      getLocalFontsStatus: () => { enabled: boolean };
+      setLocalFontsEnabled: (enabled: boolean) => Promise<void>;
+      onLocalFontsStatusChange: (handler: () => void) => () => void;
+    };
+
+    expect(exposed.getLocalFontsStatus()).toBe(viewer.localFontsStatus);
+    expect(typeof exposed.onLocalFontsStatusChange(() => undefined)).toBe('function');
+
+    await exposed.setLocalFontsEnabled(true);
+    await nextTick();
+
+    expect(viewer.localFontsCalls).toEqual([true]);
+    expect(exposed.getLocalFontsStatus().enabled).toBe(true);
+    expect(wrapper.emitted('local-fonts-change')).toHaveLength(1);
+    expect(onLocalFontsChange).toHaveBeenCalledTimes(1);
+  });
+
   it('expose 提供实例与常用命令，卸载销毁实例', async () => {
     const wrapper = mount(OFDViewer, {
       props: { source: 'a.ofd' },

@@ -118,6 +118,13 @@ export const VIEWER_EVENT_BRIDGES = [
     react: 'onFeaturesChange',
     vue: 'features-change',
   },
+  // 本机字体开关/权限/加载状态变化；Web Component 直接派发，React/Vue 由同一张表生成。
+  {
+    event: 'local-fonts:change',
+    dom: 'ofd-local-fonts-change',
+    react: 'onLocalFontsChange',
+    vue: 'local-fonts-change',
+  },
   { event: 'statechange', dom: 'ofd-state-change', react: 'onStateChange', vue: 'state-change' },
 ] as const satisfies readonly ViewerEventBridge[];
 

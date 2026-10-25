@@ -24,6 +24,7 @@ import {
   type ExportOfdResult,
   type FeatureState,
   type FindOptions,
+  type LocalFontsStatus,
   type OFDViewerOptions,
   type VerificationReport,
   type ViewerFeature,
@@ -43,6 +44,21 @@ import {
 
 /** 构造选项；组件公共 props 会覆盖同名项。 */
 type AdvancedOptions = Omit<OFDViewerOptions, 'container' | 'source'>;
+
+/**
+ * 阅读器尚未挂载时的本机字体状态。
+ *
+ * 与 Web Component / React 同义：没有实例就按「能力不可见、开关关闭、尚未表态」
+ * 返回，使 `expose` 方法在挂载前调用也能拿到完整快照。
+ */
+const DISABLED_LOCAL_FONTS_STATUS: LocalFontsStatus = Object.freeze({
+  supported: false,
+  enabled: false,
+  userState: 'undecided',
+  permission: 'unsupported',
+  visible: false,
+  loading: false,
+});
 
 /** Vue emits 名称；与核心事件一一对应。 */
 const EMITS = [
@@ -68,6 +84,7 @@ const EMITS = [
   'warning',
   'error',
   'features-change',
+  'local-fonts-change',
   'state-change',
 ] as const;
 
@@ -94,6 +111,7 @@ const VUE_EVENT_NAMES: Readonly<Record<string, (typeof EMITS)[number]>> = {
   warning: 'warning',
   error: 'error',
   featureschange: 'features-change',
+  'local-fonts:change': 'local-fonts-change',
   statechange: 'state-change',
 };
 
@@ -353,6 +371,16 @@ export const OFDViewer = defineComponent({
       openVerificationPanel: (): void => {
         run(() => viewer.value?.openVerificationPanel());
       },
+      getLocalFontsStatus: (): LocalFontsStatus =>
+        viewer.value?.getLocalFontsStatus() ?? DISABLED_LOCAL_FONTS_STATUS,
+      setLocalFontsEnabled: async (enabled: boolean): Promise<void> => {
+        if (!viewer.value) throw new Error('阅读器尚未挂载');
+        return viewer.value.setLocalFontsEnabled(enabled);
+      },
+      onLocalFontsStatusChange: (
+        handler: (status: LocalFontsStatus) => void,
+      ): (() => void) =>
+        viewer.value?.onLocalFontsStatusChange(handler) ?? (() => undefined),
     });
 
     return () =>

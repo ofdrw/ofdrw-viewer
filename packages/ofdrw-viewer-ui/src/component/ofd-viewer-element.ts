@@ -30,6 +30,7 @@ import type {
   ExportOfdOptions,
   ExportOfdResult,
   FontSource,
+  LocalFontsStatus,
   VerificationReport,
   ViewerFontOptions,
   ViewerSource,
@@ -50,6 +51,21 @@ const OBSERVED_ATTRIBUTES = [
 
 /** 自定义元素标签名。 */
 export const OFD_VIEWER_TAG = 'ofd-viewer';
+
+/**
+ * 实例尚未创建时的本机字体状态。
+ *
+ * 元素未连接或已销毁时没有底层阅读器，按「能力不可见、开关关闭、尚未表态」返回，
+ * 使 `getLocalFontsStatus()` 在任何时刻都能给出完整快照而不抛错。
+ */
+const DISABLED_LOCAL_FONTS_STATUS: LocalFontsStatus = Object.freeze({
+  supported: false,
+  enabled: false,
+  userState: 'undecided',
+  permission: 'unsupported',
+  visible: false,
+  loading: false,
+});
 
 /**
  * `<ofd-viewer>` 自定义元素。
@@ -299,6 +315,43 @@ export class OFDViewerElement extends HTMLElement {
   /** 打开工具栏验证面板。 */
   openVerificationPanel(): void {
     this.instance?.openVerificationPanel();
+  }
+
+  /**
+   * 读取本机字体状态快照。
+   *
+   * 只做纯查询（能力探测 + 权限状态），**不触发**任何权限申请，元素尚未创建实例时
+   * 返回未启用的默认状态。
+   *
+   * @returns 本机字体状态。
+   */
+  getLocalFontsStatus(): LocalFontsStatus {
+    return this.instance?.getLocalFontsStatus() ?? DISABLED_LOCAL_FONTS_STATUS;
+  }
+
+  /**
+   * 设置「使用本机字体」开关。
+   *
+   * 传入 `true` 时核心会先申请浏览器授权，并**要求调用发生在用户点击事件的同步栈内**
+   * （浏览器只接受用户手势内的权限申请）；在定时器或挂载回调中调用不会弹出授权框，
+   * 开关会保持关闭。
+   *
+   * @param enabled 目标开关值。
+   * @throws {Error} 元素尚未创建阅读器实例时。
+   */
+  async setLocalFontsEnabled(enabled: boolean): Promise<void> {
+    if (!this.instance) throw new Error('阅读器尚未创建');
+    return this.instance.setLocalFontsEnabled(enabled);
+  }
+
+  /**
+   * 订阅本机字体状态变化。
+   *
+   * @param handler 状态回调。
+   * @returns 退订函数；重复订阅互不影响。
+   */
+  onLocalFontsStatusChange(handler: (status: LocalFontsStatus) => void): () => void {
+    return this.instance?.onLocalFontsStatusChange(handler) ?? (() => undefined);
   }
 
   /**

@@ -35,8 +35,9 @@ describe('wrapper 公共桥接', () => {
     expect(toDomEventName('documentopen')).toBe('ofd-document-open');
     expect(toDomEventName('pagechanging')).toBe('ofd-page-change');
     expect(toDomEventName('error')).toBe('ofd-error');
-    expect(VIEWER_EVENT_BRIDGES).toHaveLength(22);
-    expect(new Set(VIEWER_EVENT_BRIDGES.map((item) => item.dom)).size).toBe(22);
+    expect(toDomEventName('local-fonts:change')).toBe('ofd-local-fonts-change');
+    expect(VIEWER_EVENT_BRIDGES).toHaveLength(23);
+    expect(new Set(VIEWER_EVENT_BRIDGES.map((item) => item.dom)).size).toBe(23);
     for (const item of VIEWER_EVENT_BRIDGES) {
       expect(item.react.startsWith('on')).toBe(true);
       expect(item.vue.includes('_')).toBe(false);

@@ -449,7 +449,7 @@ viewer.setFeatureDisplay({ export: 'disable' });
 - `ErrorEvent`：等同于 `ViewerErrorInfo`，在 warning 字段之外可带 `cause`。
 - `FeaturesChangeEvent`：等同于 `ViewerFeatureStates`。
 - `StateChangeEvent`：等同于完整的 `ViewerState` 快照。
-- `LocalFontsChangeEvent`：等同于 `LocalFontsStatus`；本机字体开关/权限/加载状态变化时触发。目前只有核心事件通道（`viewer.on('local-fonts:change', …)` 与 `onLocalFontsStatusChange()`），Web Component / React / Vue 适配层尚未桥接该事件。
+- `LocalFontsChangeEvent`：等同于 `LocalFontsStatus`；本机字体开关/权限/加载状态变化时触发。核心可订阅 `viewer.on('local-fonts:change', …)` 或 `onLocalFontsStatusChange()`；Web Component 派发 `ofd-local-fonts-change`，React 为 `onLocalFontsChange`，Vue 为 `@local-fonts-change`。
 
 ### 订阅
 
@@ -1243,7 +1243,7 @@ type CertificateInputLoader = (
 | `exportOfd(options?)` | 导出当前 OFD 原文件；无实例时返回 `null` |
 | `destroy()` | 销毁实例；可重复调用 |
 
-Web Component 尚未转发本机字体方法（`getLocalFontsStatus`/`setLocalFontsEnabled`/`onLocalFontsStatusChange`），需要程序化控制时通过 `el.viewer` 访问底层实例。`fonts` property 支持 `localFonts`，但与本机字体其余配置一样只在实例创建时读取。
+Web Component 转发本机字体方法：`el.getLocalFontsStatus()`（未创建实例时返回默认状态）、`el.setLocalFontsEnabled(enabled)`（未创建实例时抛 `Error('阅读器尚未创建')`）、`el.onLocalFontsStatusChange(handler)`（未创建实例时返回空退订函数）；状态变化同时派发 `ofd-local-fonts-change`。注意启用本机字体需在用户点击处理函数的同步栈内调用 `setLocalFontsEnabled(true)`，浏览器只接受用户手势内的权限申请。`fonts` property 支持 `localFonts`，但与本机字体其余配置一样只在实例创建时读取。
 
 ### 组件事件
 
@@ -1290,10 +1290,11 @@ Web Component 尚未转发本机字体方法（`getLocalFontsStatus`/`setLocalFo
 - 查找/输出：`find`、`print`、`exportImage`、`exportOfd`；
 - 状态：`getState`、`getFeatureState`、`isFeatureEnabled`；
 - 验证：`verify`、`getVerificationReport`、`setRootCertificates`、`getRootCertificates`、`openVerificationPanel`。
+- 本机字体：`getLocalFontsStatus`、`setLocalFontsEnabled`、`onLocalFontsStatusChange`。
 
 `getInstance` 在挂载前返回 `null`；`exportImage`/`exportOfd` 在无实例时返回 `null`；`verify` 在无实例时抛 `Error('阅读器尚未挂载')`。
 
-本机字体方法未进入命令句柄：需要 `getLocalFontsStatus()`/`setLocalFontsEnabled()` 时用 `getInstance()`（或 `getViewer()`）拿到实例后调用。`fonts.localFonts` 仍是构造期选项，通过继承的 `fonts` prop 传入。
+本机字体方法已进入命令句柄：`getLocalFontsStatus()`（未挂载时返回默认状态）、`setLocalFontsEnabled(enabled)`（未挂载时抛 `Error('阅读器尚未挂载')`）、`onLocalFontsStatusChange(handler)`（未挂载时返回空退订函数）；状态变化同时触发 `onLocalFontsChange` 回调。启用需在点击事件处理函数内调用，`useEffect`/定时器中调用不会弹出授权框。`fonts.localFonts` 仍是构造期选项，通过继承的 `fonts` prop 传入。
 
 ### React 受控同步
 
@@ -1329,9 +1330,9 @@ Web Component 尚未转发本机字体方法（`getLocalFontsStatus`/`setLocalFo
 
 ### Expose
 
-模板 ref 暴露 `getInstance`、`getViewer`、`open`、`close`、`goToPage`、`nextPage`、`previousPage`、`setScale`、`setZoomMode`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage`、`exportOfd`、`getState`、`getFeatureState`、`isFeatureEnabled`、`verify`、`getVerificationReport`、`setRootCertificates`、`getRootCertificates`、`openVerificationPanel`。
+模板 ref 暴露 `getInstance`、`getViewer`、`open`、`close`、`goToPage`、`nextPage`、`previousPage`、`setScale`、`setZoomMode`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage`、`exportOfd`、`getState`、`getFeatureState`、`isFeatureEnabled`、`verify`、`getVerificationReport`、`setRootCertificates`、`getRootCertificates`、`openVerificationPanel`、`getLocalFontsStatus`、`setLocalFontsEnabled`、`onLocalFontsStatusChange`。
 
-本机字体方法未进入 expose：需要 `getLocalFontsStatus()`/`setLocalFontsEnabled()` 时用 `getInstance()` 调用；`fonts.localFonts` 通过 `options`（`AdvancedOptions`）传入。
+本机字体方法已进入 expose：`getLocalFontsStatus()`（未挂载时返回默认状态）、`setLocalFontsEnabled(enabled)`（未挂载时抛 `Error('阅读器尚未挂载')`）、`onLocalFontsStatusChange(handler)`（未挂载时返回空退订函数）；状态变化同时触发 `@local-fonts-change`。启用需在点击事件处理函数内调用；`fonts.localFonts` 通过 `options`（`AdvancedOptions`）传入。
 
 ### Vue 受控同步
 

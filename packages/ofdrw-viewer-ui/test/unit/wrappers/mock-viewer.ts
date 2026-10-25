@@ -35,6 +35,16 @@ interface FakeState {
   ui: { theme: string; locale: string; features: Record<string, boolean> };
 }
 
+/** 本机字体状态的最小结构；与核心 `LocalFontsStatus` 同构。 */
+export interface FakeLocalFontsStatus {
+  supported: boolean;
+  enabled: boolean;
+  userState: 'on' | 'off' | 'undecided';
+  permission: 'prompt' | 'granted' | 'denied' | 'unsupported';
+  visible: boolean;
+  loading: boolean;
+}
+
 /** 核心阅读器替身。 */
 export class FakeViewer {
   /** 全部已创建实例。 */
@@ -324,11 +334,62 @@ export class FakeViewer {
     return { blob: new Blob(), filename: 'fake.ofd', size: 4 };
   }
 
+  /** 本机字体状态变化监听器。 */
+  private localFontsListeners = new Set<(status: FakeLocalFontsStatus) => void>();
+
+  /** 记录 `setLocalFontsEnabled` 的入参，单位次。 */
+  readonly localFontsCalls: boolean[] = [];
+
+  /** 当前本机字体状态；由 `setLocalFontsEnabled` 更新。 */
+  localFontsStatus: FakeLocalFontsStatus = {
+    supported: true,
+    enabled: false,
+    userState: 'undecided',
+    permission: 'prompt',
+    visible: true,
+    loading: false,
+  };
+
+  /** 读取本机字体状态快照。 */
+  getLocalFontsStatus(): FakeLocalFontsStatus {
+    return this.localFontsStatus;
+  }
+
+  /**
+   * 设置本机字体开关并广播一次状态变化。
+   *
+   * @param enabled 目标开关值。
+   */
+  async setLocalFontsEnabled(enabled: boolean): Promise<void> {
+    this.localFontsCalls.push(enabled);
+    this.localFontsStatus = {
+      ...this.localFontsStatus,
+      enabled,
+      userState: enabled ? 'on' : 'off',
+      permission: enabled ? 'granted' : this.localFontsStatus.permission,
+    };
+    this.emit('local-fonts:change', this.localFontsStatus);
+  }
+
+  /**
+   * 订阅本机字体状态变化。
+   *
+   * @param handler 状态回调。
+   * @returns 退订函数。
+   */
+  onLocalFontsStatusChange(handler: (status: FakeLocalFontsStatus) => void): () => void {
+    this.localFontsListeners.add(handler);
+    return () => {
+      this.localFontsListeners.delete(handler);
+    };
+  }
+
   /** 销毁实例。 */
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
     this.listeners.clear();
+    this.localFontsListeners.clear();
     this.root.remove();
   }
 }

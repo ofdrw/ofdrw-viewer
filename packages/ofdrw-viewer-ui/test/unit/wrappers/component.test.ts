@@ -177,6 +177,32 @@ describe('<ofd-viewer>', () => {
     expect(received[1]!.type).toBe('ofd-error');
   });
 
+  it('转发本机字体方法与事件，未连接时返回默认状态', async () => {
+    const element = document.createElement(OFD_VIEWER_TAG) as OFDViewerElement;
+    // 未连接元素没有实例：查询返回默认状态、订阅得到空退订函数。
+    expect(element.getLocalFontsStatus().supported).toBe(false);
+    expect(element.getLocalFontsStatus().visible).toBe(false);
+    expect(typeof element.onLocalFontsStatusChange(() => undefined)).toBe('function');
+    await expect(element.setLocalFontsEnabled(true)).rejects.toThrow('阅读器尚未创建');
+
+    element.setAttribute('src', 'a.ofd');
+    document.body.append(element);
+    const viewer = FakeViewer.instances[0]!;
+    const received: CustomEvent[] = [];
+    element.addEventListener('ofd-local-fonts-change', (event) => {
+      received.push(event as CustomEvent);
+    });
+
+    expect(element.getLocalFontsStatus()).toBe(viewer.localFontsStatus);
+    await element.setLocalFontsEnabled(true);
+
+    expect(viewer.localFontsCalls).toEqual([true]);
+    expect(element.getLocalFontsStatus().enabled).toBe(true);
+    expect(received).toHaveLength(1);
+    expect(received[0]!.type).toBe('ofd-local-fonts-change');
+    expect((received[0]!.detail as { enabled: boolean }).enabled).toBe(true);
+  });
+
   it('支持 source property（Blob），断开销毁、重连重建且保留来源', async () => {
     const element = document.createElement(OFD_VIEWER_TAG) as OFDViewerElement;
     const source = new Blob(['ofd']);

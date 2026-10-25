@@ -96,6 +96,28 @@ describe('React wrapper', () => {
     expect(ref.current!.getState()).toBe(viewer.getState());
   });
 
+  it('ref 句柄转发本机字体方法与事件回调', async () => {
+    const ref = createRef<OFDViewerHandle>();
+    const onLocalFontsChange = vi.fn();
+    render(<OFDViewer ref={ref} source="a.ofd" onLocalFontsChange={onLocalFontsChange} />);
+    await waitFor(() => expect(ref.current).not.toBeNull());
+    const viewer = FakeViewer.instances[0]!;
+
+    expect(ref.current!.getLocalFontsStatus()).toBe(viewer.localFontsStatus);
+    const unsubscribe = ref.current!.onLocalFontsStatusChange(() => undefined);
+    expect(typeof unsubscribe).toBe('function');
+
+    await act(async () => {
+      await ref.current!.setLocalFontsEnabled(true);
+    });
+    expect(viewer.localFontsCalls).toEqual([true]);
+    expect(ref.current!.getLocalFontsStatus().enabled).toBe(true);
+    // 事件经桥接表转发为 onLocalFontsChange 回调。
+    await waitFor(() => expect(onLocalFontsChange).toHaveBeenCalledTimes(1));
+    expect(onLocalFontsChange.mock.calls[0]![0]).toMatchObject({ enabled: true });
+    unsubscribe();
+  });
+
   it('StrictMode 双挂载后只保留一个活跃实例，卸载全部销毁', async () => {
     const { unmount } = render(
       <StrictMode>
