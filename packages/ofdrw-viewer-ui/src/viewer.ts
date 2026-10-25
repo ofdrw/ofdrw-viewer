@@ -865,6 +865,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     let httpSource: HttpByteSource | null = null;
     /** 本次来源的原始信息；成功后写入状态供导出命名。 */
     let origin: ViewerOrigin | undefined;
+    // 本机字体生效值必须在打开文档之前同步给控制器，否则本次打开读不到开关状态。
+    this.syncLocalFontsToController();
     try {
       // URL → HttpByteSource 只在这里做一次；crypto 与 engine 共用同一实例。
       const normalized: NormalizedViewerSource = normalizeViewerSourceDetailed(
@@ -1691,6 +1693,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       // 手势内同步发起权限申请；后续 await 不影响浏览器对手势的判定。
       void this.requestLocalFontsPermission();
     }
+    this.syncLocalFontsToController();
     this.publishLocalFontsStatus();
     if (previous === enabled) return;
     // 开关变化只影响字体来源；重开一次让画面立刻切换（设计 §4.3）。
@@ -1718,9 +1721,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       if (typeof query !== 'function') throw new Error('浏览器不再提供本机字体能力');
       // 候选名必须是展开后的 PostScript 写法（中文名不能用于查询，设计 §1.3 / REQ-0130）。
       // 展开是同步纯函数，不打断手势栈；空候选时不发起调用（避免全量枚举，§1.4）。
-      const declaration = this.controller.getLocalFontDeclarations(
-        this.resolveLocalFontsConfig().maxFonts,
-      )[0];
+      const declaration = this.controller.getDocumentFontDeclarations()[0];
       const names = declaration ? this.localFontCandidates(declaration) : [];
       if (names.length === 0) throw new Error('文档声明无法映射为本机字体名');
       await query.call(win, { postscriptNames: names });
@@ -1730,6 +1731,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         writeLocalFontsPreference(this.localFontsPreference);
       }
       this.localFontsLoading = false;
+      this.syncLocalFontsToController();
       this.publishLocalFontsStatus();
       await this.reopenForLocalFonts();
     } catch (error) {
@@ -1741,6 +1743,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       if (this.resolveLocalFontsConfig().remember) {
         writeLocalFontsPreference(this.localFontsPreference);
       }
+      this.syncLocalFontsToController();
       this.publishLocalFontsStatus();
     }
   }
@@ -1901,6 +1904,20 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       composeFontAliases(this.options.fonts?.aliases),
     );
     return expanded.names.slice(0, MAX_CANDIDATES_PER_DECLARATION);
+  }
+
+  /**
+   * 把当前生效的本机字体配置同步给文档控制器。
+   *
+   * 控制器据此决定是否按文档声明生成 `{ local }` 来源；开关变化、权限变化与每次打开
+   * 文档前都必须调用，否则注入开关会停留在旧值（REQ-007 / REQ-0180）。
+   */
+  private syncLocalFontsToController(): void {
+    const config = this.resolveLocalFontsConfig();
+    // 只有「开关开启且浏览器已授权」才真正读取本机字体：权限未授予时发起查询必然失败，
+    // 也会让「未授权」与「未安装」无法区分（设计 §1.1 / §6.3）。
+    const effective = config.enabled && this.localFontsPermission === 'granted';
+    this.controller.setLocalFonts({ enabled: effective, maxFonts: config.maxFonts });
   }
 
   /** 开关/授权变化后重开当前文档并恢复视图；失败只上报，不改开关。 */

@@ -553,14 +553,16 @@ export class DocumentController {
     // 每条打开路径都做「打开 → 读当前文档声明 → 有本机字体则静默重开一次」
     // （需求清单 REQ-0190 方案 A）。不使用缓存做短路，避免切换文档时沿用上一个文档的
     // 声明；未启用本机字体时完全跳过，不产生额外打开与查询。
-    if (this.localFontsState?.enabled) {
+    {
+      // 声明与开关解耦：即使尚未启用本机字体也要读一次，供授权手势展开候选名
+      // （开关打开后才会真正注入；未启用时不产生额外重开）。
       const declarations = await this.readFontDeclarations(document);
       if (token !== this.openToken || signal?.aborted) {
         await closeQuietly(document);
         throw createOpenAbortError();
       }
       this.fontDeclarations = declarations;
-      if (declarations.length > 0) {
+      if (declarations.length > 0 && this.localFontsState?.enabled) {
         const reopenFonts = await this.resolveFonts(signal);
         // 只有真的产生了本机字体来源才值得多打开一次。
         if (hasLocalFonts(reopenFonts)) {
@@ -650,6 +652,18 @@ export class DocumentController {
       ? { enabled: options.enabled, maxFonts: normalizeLocalFontsMaxFonts(options.maxFonts) }
       : undefined;
     this.fonts.setLocalFontsEnabled(options?.enabled === true);
+  }
+
+  /**
+   * 已读取到的当前文档字体声明。
+   *
+   * 与 `getLocalFontDeclarations()` 的区别：本方法不按开关过滤，供「授权手势」在尚未
+   * 启用本机字体时展开候选名（此时开关还没打开，但仍需要一次有效查询来触发授权框）。
+   *
+   * @returns 当前文档的声明列表；未读取或为空时为空数组。
+   */
+  getDocumentFontDeclarations(): readonly DocumentFontResource[] {
+    return this.fontDeclarations;
   }
 
   /** 当前生效的本机字体配置；省略表示不可用。 */

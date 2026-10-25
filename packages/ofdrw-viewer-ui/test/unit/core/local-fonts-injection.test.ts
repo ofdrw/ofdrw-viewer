@@ -123,12 +123,16 @@ describe('document-controller 声明筛选', () => {
         return makeDocument(fonts);
       },
     });
-    // 第一次打开：无声明缓存，本机字体不参与（推荐实现）。
+    // 开启本机字体后打开：先按无本机字体打开，读到声明后再静默重开一次。
+    controller.setLocalFonts({ enabled: true });
     await controller.open(new ArrayBuffer(8));
-    expect(query).not.toHaveBeenCalled();
-    // 第二次打开：使用上一次缓存的声明。
-    await controller.open(new ArrayBuffer(8));
+    // 只查询无内嵌字体的声明（含 fontFile 的「宋体」被跳过）。
     expect(controller.getLocalFontDeclarations(8).map((item) => item.fontName)).toEqual(['黑体']);
+    const requested = query.mock.calls.flatMap(
+      (call) => (call[0] as { postscriptNames?: readonly string[] } | undefined)?.postscriptNames ?? [],
+    );
+    expect(requested.length, '应发生本机字体查询').toBeGreaterThan(0);
+    expect(requested, '不得为内嵌字体发起查询').not.toContain('宋体');
   });
 
   it('maxFonts 默认 8，且只取前 N 个无内嵌字体的声明', async () => {
@@ -139,11 +143,8 @@ describe('document-controller 声明筛选', () => {
       font: { localFonts: { enabled: true, maxFonts: 3 } },
       openDocument: async () => makeDocument(fonts),
     });
+    controller.setLocalFonts({ enabled: true, maxFonts: 3 });
     await controller.open(new ArrayBuffer(8));
-    // 先打开一次以填充缓存，再读取筛选结果。
-    await vi.waitFor(() => {
-      expect(controller.getLocalFontDeclarations(3)).toHaveLength(3);
-    });
     expect(controller.getLocalFontDeclarations(3).map((item) => item.fontName)).toEqual([
       '字体1',
       '字体2',
