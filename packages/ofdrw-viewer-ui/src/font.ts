@@ -411,7 +411,7 @@ export class FontSourceResolver {
     // 查询本身可能不可取消（浏览器不响应 signal），因此与取消信号竞速：一旦中止立即
     // 以 AbortError 结束，避免打开流程被挂起的查询拖住。
     const result = await raceAbort(
-      queryLocalFontFaces(names.slice(0, MAX_QUERY_NAMES), { signal }),
+      queryLocalFontFaces(names.slice(0, MAX_NAMES_PER_QUERY), { signal }),
       signal,
     );
     if (signal.aborted) throw createAbortError();
@@ -592,8 +592,8 @@ function createAbortError(): Error {
   return error;
 }
 
-/** 单次 `queryLocalFonts` 调用的候选名上限（设计 §3.3 候选上限 6 与 §1.4 单次 ≤8 取严）。 */
-const MAX_QUERY_NAMES = 6;
+/** 单次 `queryLocalFonts` 调用的候选名上限（需求清单 §0.2 `MAX_NAMES_PER_QUERY`；设计 §3.3 候选上限 6 与 §1.4 单次 ≤8 取严）。 */
+const MAX_NAMES_PER_QUERY = 6;
 
 /**
  * 把本地字体来源声明规范化为候选展开用的声明列表。
