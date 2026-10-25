@@ -13,7 +13,7 @@ import { createDefaultFeatureStates, getFeatureState } from '../features';
 import type { FeatureState, ViewerFeature, ViewerFeatureStates } from '../features';
 import { createTranslator } from '../i18n';
 import type { Translator } from '../i18n';
-import { createFindState } from '../state';
+import { SIDEBAR_VIEWS, createFindState } from '../state';
 import type { SidebarView, Theme } from '../state';
 import { ThemeController, isTheme } from '../theme';
 import { DialogManager } from './dialog';
@@ -40,14 +40,8 @@ import {
   resolveViewport,
 } from './viewport';
 
-/** 侧栏标签回退顺序。 */
-const SIDEBAR_VIEW_ORDER: readonly SidebarView[] = Object.freeze([
-  'thumbnails',
-  'outline',
-  'bookmarks',
-  'signatures',
-  'attachments',
-]);
+/** 侧栏标签回退顺序；直接复用 `state.ts` 的单一清单，避免多份名单不同步。 */
+const SIDEBAR_VIEW_ORDER: readonly SidebarView[] = SIDEBAR_VIEWS;
 
 /** 对话框名称到功能的映射，用于功能关闭时收起弹窗。 */
 const DIALOG_FEATURES: Readonly<Record<string, ViewerFeature>> = Object.freeze({

@@ -39,8 +39,22 @@ export type ScaleValue = number | ZoomMode;
 /** 页面旋转角度，顺时针。 */
 export type Rotation = 0 | 90 | 180 | 270;
 
+/**
+ * 侧栏视图清单（内部单一来源）。
+ *
+ * 类型 `SidebarView` 由本清单派生，新增视图只需改这一处；各模块的标签/空态映射仍是
+ * `Record<SidebarView, …>`，漏补键会在 typecheck 阶段报错。本常量不进入包公共导出面。
+ */
+export const SIDEBAR_VIEWS = [
+  'thumbnails',
+  'outline',
+  'bookmarks',
+  'signatures',
+  'attachments',
+] as const;
+
 /** 侧栏视图。 */
-export type SidebarView = 'thumbnails' | 'outline' | 'bookmarks' | 'signatures' | 'attachments';
+export type SidebarView = (typeof SIDEBAR_VIEWS)[number];
 
 /** 主题。 */
 export type Theme = 'light' | 'dark' | 'auto';

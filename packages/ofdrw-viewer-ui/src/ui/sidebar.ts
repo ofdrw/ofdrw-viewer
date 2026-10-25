@@ -12,19 +12,10 @@ import { replaceChildren } from '../compat';
 import { FocusTrap } from '../a11y';
 import type { ViewerFeatureStates } from '../features';
 import type { MessageKey, Translator } from '../i18n';
-import type { SidebarView } from '../state';
+import { SIDEBAR_VIEWS, type SidebarView } from '../state';
 import { applyFeatureGate, resolveFeatureGate } from './feature-control';
 import { createIcon } from './icons';
 import type { SidebarMode, SidebarPanelContext, SidebarPanelMount, UIShellViewState } from './types';
-
-/** 侧栏标签顺序。 */
-export const SIDEBAR_VIEWS: readonly SidebarView[] = Object.freeze([
-  'thumbnails',
-  'outline',
-  'bookmarks',
-  'signatures',
-  'attachments',
-]);
 
 /** 标签文案键。 */
 const TAB_LABEL_KEYS: Readonly<Record<SidebarView, MessageKey>> = Object.freeze({

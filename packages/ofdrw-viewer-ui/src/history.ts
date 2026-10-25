@@ -8,7 +8,7 @@
  * 纯解析/格式化函数与 DOM 解耦，便于单测。
  */
 
-import type { Rotation, ScaleValue, SidebarView } from './state';
+import { SIDEBAR_VIEWS, type Rotation, type ScaleValue, type SidebarView } from './state';
 
 /** 可从 hash 恢复的视图状态。 */
 export interface ViewerHashState {
@@ -35,15 +35,6 @@ export interface ViewerHistoryOptions {
   /** 宿主 window；默认全局 window。 */
   readonly window?: Window;
 }
-
-/** 合法侧栏视图。 */
-const SIDEBAR_VIEWS: readonly SidebarView[] = [
-  'thumbnails',
-  'outline',
-  'bookmarks',
-  'signatures',
-  'attachments',
-];
 
 /** 合法缩放模式。 */
 const ZOOM_MODES = ['auto', 'page-actual', 'page-fit', 'page-width'] as const;
