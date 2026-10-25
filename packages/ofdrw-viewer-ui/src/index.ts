@@ -81,6 +81,7 @@ export type {
   FontSource,
   FontSourceLoader,
   FontSourceResolverOptions,
+  LocalFontsOptions,
   ViewerFontOptions,
 } from './font';
 export type {
@@ -89,6 +90,15 @@ export type {
   FontMatchRequest,
   FontProvider,
 } from '@ofdrw/ofdrw-viewer-engine';
+
+// ---------------------------------------------------------------------------
+// 本机字体（queryLocalFonts）：状态类型与开关配置
+// ---------------------------------------------------------------------------
+export type {
+  LocalFontStatus,
+  LocalFontsStatus,
+} from './local-fonts-state';
+export type { LocalFontsChangeEvent } from './types';
 
 // ---------------------------------------------------------------------------
 // 公共类型：来源、状态、功能、事件、导出/打印/签章选项与详情
