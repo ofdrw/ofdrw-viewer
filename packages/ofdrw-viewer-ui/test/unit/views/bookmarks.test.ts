@@ -63,14 +63,40 @@ describe('BookmarkView 书签列表', () => {
       gap: DEFAULT_PAGE_GAP,
       padding: DEFAULT_PAGE_PADDING,
     });
-    const expected = layout.getPageTop(4) + 20 * MM_TO_CSS_PX * 1.5;
-    expect(viewer.getElements().main.scrollTop).toBeCloseTo(expected, 3);
+    // 落点按浏览器语义向上取整到整数 scrollTop，与核心 `toIntegerScrollTop` 一致。
+    const expected = Math.ceil(layout.getPageTop(4) + 20 * MM_TO_CSS_PX * 1.5);
+    // 跳转走平滑滚动：等待补间结束后校验最终落点。
+    await vi.waitFor(() => {
+      expect(viewer.getElements().main.scrollTop).toBe(expected);
+    });
     expect(bookmarkView.getCurrentName()).toBe('正文');
     expect(bookmarkItems(panel)[1]!.getAttribute('aria-current')).toBe('true');
 
     viewer.goToPage(10);
     expect(bookmarkView.getCurrentName()).toBe('附录');
     expect(bookmarkItems(panel)[2]!.getAttribute('aria-current')).toBe('true');
+    viewer.destroy();
+  });
+
+  it('点击书签请求平滑滚动，并在动画结束后仍停在目标位置', async () => {
+    const { viewer, shell } = await createIntegratedViewer({
+      pageCount: 10,
+      bookmarks,
+    });
+    await vi.waitFor(() => {
+      expect(viewer.getState().document.bookmarks).toHaveLength(4);
+    });
+    viewer.openSidebar('bookmarks');
+    const panel = shell.sidebar.getPanel('bookmarks')!;
+    const goToPage = vi.spyOn(viewer, 'goToPage');
+
+    bookmarkItems(panel)[1]!.click();
+    // 页内偏移与页顶合并进同一次滚动，避免两段动画互相打断。
+    expect(goToPage).toHaveBeenCalledWith(5, {
+      smooth: true,
+      offsetPx: expect.closeTo(20 * MM_TO_CSS_PX * 1.5, 3),
+    });
+    expect(viewer.getPageNumber()).toBe(5);
     viewer.destroy();
   });
 

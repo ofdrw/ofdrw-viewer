@@ -92,7 +92,7 @@ URL 字符串和 `{ url, headers }` 由 UI 的 `HttpByteSource` 读取：先探�
 
 ### 导航、缩放与阅读控制
 
-- 页码：`goToPage(pageNumber, { smooth? })`、`nextPage()`、`previousPage()`、`firstPage()`、`lastPage()`；页码 1-based，边界不循环。
+- 页码：`goToPage(pageNumber, { smooth?, durationMs? })`、`nextPage()`、`previousPage()`、`firstPage()`、`lastPage()`；页码 1-based，边界不循环。`smooth` 使用 rAF 补间，时长钳在 150–360ms，可被用户滚动/缩放/新跳转立即打断；系统要求减少动效时退化为直接定位。
 - 缩放：`setScale()`、`setZoomMode('auto'|'page-actual'|'page-fit'|'page-width')`、`zoomIn()`、`zoomOut()`、`resetZoom()`；实际倍率限制在 10%–2500%。
 - 旋转：`setRotation(value)` 接受数字并规范到 0/90/180/270，`rotateClockwise()`、`rotateCounterClockwise()` 每次旋转 90°；旋转是阅读器行为，引擎始终输出未旋转页面。
 - 侧栏：`openSidebar(view)`、`closeSidebar()`、`toggleSidebar()`；视图为缩略图、大纲、书签、签章。

@@ -238,13 +238,71 @@ export class SignatureService implements ViewerSignatureService {
    */
   async showSignature(id: string): Promise<void> {
     this.assertEnabled();
-    const entry = await this.findEntry(id);
-    const stamp = entry.stamps.find((item) => item.pageIndex !== undefined);
-    if (stamp?.pageIndex !== undefined && this.viewer.isFeatureEnabled('pageNavigation')) {
-      this.viewer.goToPage(stamp.pageIndex + 1);
-    }
+    await this.findEntry(id);
+    this.scrollToSignature(id);
     this.highlight(id);
     await this.openDetail(id);
+  }
+
+  /**
+   * 平滑滚动主区域到签章覆盖层。
+   *
+   * 只发一次滚动：页顶与页内偏移由 `goToPage` 的 `offsetPx` 合并成同一次补间，
+   * 避免「先到页顶、再对齐覆盖层」两段动画互相打断。戳记只在单页时把覆盖层对齐
+   * 到视口中心；跨页签章分处不同页，不强行对齐，只落到离当前位置最近的戳记页。
+   *
+   * @param id 签章 ID。
+   * @returns 是否由本方法接管了滚动。
+   */
+  scrollToSignature(id: string): boolean {
+    if (this.destroyed) return false;
+    if (!this.viewer.isFeatureEnabled('pageNavigation')) return false;
+    this.syncOverlays();
+    const stamps = this.overlays.filter((record) => record.signatureId === id);
+    if (stamps.length === 0) return false;
+    const current = this.viewer.getPageNumber();
+    const primary =
+      stamps.find((record) => record.pageNumber === current) ??
+      stamps.reduce((best, record) =>
+        Math.abs(record.pageNumber - current) < Math.abs(best.pageNumber - current) ? record : best,
+      );
+    const single = stamps.length === 1;
+    // 已在目标页且覆盖层就在视口内时不滚动，避免原地小幅跳动。
+    if (primary.pageNumber === current && single && this.isOverlayVisible(primary.element)) {
+      return false;
+    }
+    const offsetPx = single ? this.overlayCenterOffset(primary) : 0;
+    this.viewer.goToPage(primary.pageNumber, { smooth: true, offsetPx });
+    return true;
+  }
+
+  /**
+   * 计算覆盖层对齐到视口中心所需的页内偏移。
+   *
+   * @param overlay 覆盖层记录。
+   * @returns 页内偏移，单位 px；正数表示向下滚动。
+   */
+  private overlayCenterOffset(overlay: OverlayRecord): number {
+    const pxPerMm = MM_TO_CSS_PX * this.viewer.getScale();
+    const boxTop = overlay.boundary.y * pxPerMm;
+    const boxHeight = overlay.boundary.h * pxPerMm;
+    const viewport = this.viewer.getElements().main.getBoundingClientRect().height;
+    return boxTop + boxHeight / 2 - Math.max(0, viewport) / 2;
+  }
+
+  /**
+   * 判断覆盖层当前是否完整落在主区域视口内。
+   *
+   * @param element 覆盖层按钮。
+   * @returns 是否可见；无布局信息（如离屏环境）时返回 false。
+   */
+  private isOverlayVisible(element: HTMLElement): boolean {
+    if (!element.isConnected) return false;
+    const main = this.viewer.getElements().main;
+    const viewport = main.getBoundingClientRect();
+    if (viewport.height <= 0) return false;
+    const box = element.getBoundingClientRect();
+    return box.top >= viewport.top && box.bottom <= viewport.bottom;
   }
 
   /** 销毁服务：移除监听、覆盖层、面板内容与对话框。 */

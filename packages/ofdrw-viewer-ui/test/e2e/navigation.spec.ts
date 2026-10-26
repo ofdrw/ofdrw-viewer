@@ -141,6 +141,54 @@ test('书签跳转回目标页', async ({ page, issues }) => {
   await expectNoPageErrors(page, issues);
 });
 
+test('书签跳转使用平滑滚动而不是瞬间切换', async ({ page, issues }) => {
+  await openViewer(page, FIXTURES.bookmarks);
+  await page.evaluate(() => window.__viewer!.goToPage(5));
+  await expect.poll(async () => (await viewState(page)).pageNumber).toBe(5);
+  await page.evaluate(() => window.__viewer!.openSidebar('bookmarks'));
+  await expect(page.locator('.ofd-bookmark')).toHaveCount(1);
+
+  // 逐帧记录主区域位置：要求出现多个中间位置，且在一帧预算的时长内落位。
+  const trace = await page.evaluate(
+    () =>
+      new Promise<{ distinct: number; settleAt: number; start: number; end: number }>((resolve) => {
+        const main = document.querySelector<HTMLElement>('.ofd-viewer__main')!;
+        const samples: Array<{ t: number; top: number }> = [];
+        const startedAt = performance.now();
+        let running = true;
+        const tick = (): void => {
+          samples.push({ t: performance.now() - startedAt, top: main.scrollTop });
+          if (running) requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+        document.querySelector<HTMLButtonElement>('.ofd-bookmark')!.click();
+        setTimeout(() => {
+          running = false;
+          const start = samples[0]!.top;
+          const end = samples[samples.length - 1]!.top;
+          // 落位时刻：此后所有采样都停在同一位置。
+          const settledAt = samples.findIndex((item, index) =>
+            samples.slice(index).every((later) => later.top === end),
+          );
+          resolve({
+            distinct: new Set(samples.map((item) => item.top)).size,
+            settleAt: samples[settledAt]!.t,
+            start,
+            end,
+          });
+        }, 800);
+      }),
+  );
+  // 中间帧 ≥ 6 个：确实在滚动，不是一步到位。
+  expect(trace.distinct).toBeGreaterThanOrEqual(6);
+  expect(trace.start).toBeGreaterThan(trace.end);
+  expect(trace.end).toBeLessThan(120);
+  // 滚动时长上限 360ms，留出一帧与调度余量。
+  expect(trace.settleAt).toBeLessThan(450);
+  await expect.poll(async () => (await viewState(page)).pageNumber).toBe(1);
+  await expectNoPageErrors(page, issues);
+});
+
 test('多级大纲树：aria-level 1-4、嵌套 role=group、逐层展开、第四级跳转与截图', async ({
   page,
   issues,

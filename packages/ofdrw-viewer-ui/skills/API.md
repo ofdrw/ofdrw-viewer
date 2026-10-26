@@ -577,7 +577,7 @@ class OFDViewer {
 
 | 方法 | 说明 |
 | --- | --- |
-| `goToPage(pageNumber, { smooth? })` | 跳页；1-based，越界夹取；`smooth` 控制平滑滚动 |
+| `goToPage(pageNumber, { smooth?, durationMs? })` | 跳页；1-based，越界夹取；`smooth` 控制平滑滚动，`durationMs` 指定时长（单位毫秒，钳到 150–360ms，省略时按滚动距离估算） |
 | `nextPage()` / `previousPage()` | 下一页/上一页 |
 | `firstPage()` / `lastPage()` | 首页/末页 |
 | `setScale(scale)` | 设置实际倍率，夹取到 0.1–25 |

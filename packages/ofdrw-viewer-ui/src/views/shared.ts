@@ -88,7 +88,14 @@ export interface NavigationViewer {
   /** 判断功能是否可用。 */
   isFeatureEnabled(feature: ViewerFeature): boolean;
   /** 跳转到指定页，页码 1-based。 */
-  goToPage(pageNumber: number, options?: { readonly smooth?: boolean }): void;
+  goToPage(
+    pageNumber: number,
+    options?: {
+      readonly smooth?: boolean;
+      readonly durationMs?: number;
+      readonly offsetPx?: number;
+    },
+  ): void;
   /** 设置缩放倍率。 */
   setScale(scale: number): void;
   /** 设置缩放模式。 */
@@ -286,8 +293,11 @@ function applyDestinationZoom(viewer: NavigationViewer, dest: DocumentDestinatio
 /**
  * 统一锚点跳转。
  *
- * 先按目标类型调整缩放，再滚动到目标页，最后按 `topMm` 修正页内偏移；无效目标
- * 只上报 warning 并返回 false，节点仍保留在列表中。
+ * 先按目标类型调整缩放，再按 `topMm` 换算页内偏移，最后交给 `goToPage` 用一次
+ * 平滑滚动落到「页顶 + 偏移」。页内偏移必须与页顶合并成同一次滚动：分两步写会
+ * 出现两套动画互相打断，缩放后的页顶也会让第一步算出的坐标过期。
+ *
+ * 无效目标只上报 warning 并返回 false，节点仍保留在列表中。
  *
  * @param viewer 阅读器。
  * @param dest 跳转目标。
@@ -304,8 +314,9 @@ export function goToDestination(
     return false;
   }
   applyDestinationZoom(viewer, dest);
+  const offset = destinationOffsetPx(viewer, dest);
   try {
-    viewer.goToPage(dest.pageIndex + 1);
+    viewer.goToPage(dest.pageIndex + 1, { smooth: true, offsetPx: offset });
   } catch (error) {
     reportNavigationWarning(
       viewer,
@@ -315,19 +326,26 @@ export function goToDestination(
     );
     return false;
   }
-  // 缩放后重新排版，再滚动到页内目标位置。
+  return true;
+}
+
+/**
+ * 计算跳转目标的页内偏移。
+ *
+ * 只有带纵向坐标的目标类型（`XYZ`/`FitH`/`FitR`）才有偏移；结果按当前缩放换算为
+ * CSS 像素，并夹在页面高度内，避免落到下一页。
+ *
+ * @param viewer 阅读器。
+ * @param dest 已通过校验的跳转目标。
+ * @returns 页内偏移，单位 px；无偏移时为 0。
+ */
+function destinationOffsetPx(viewer: NavigationViewer, dest: DocumentDestination): number {
+  if (dest.type !== 'XYZ' && dest.type !== 'FitH' && dest.type !== 'FitR') return 0;
   const layout = createViewerLayout(viewer);
-  const main = viewer.getElements().main;
-  const scale = viewer.getScale();
-  const pageTop = layout.getPageTop(dest.pageIndex);
-  let offset = 0;
-  if (dest.type === 'XYZ' || dest.type === 'FitH' || dest.type === 'FitR') {
-    offset = mmToCssPx(dest.topMm ?? 0, scale);
-  }
   const pageHeight = layout.getPageHeight(dest.pageIndex);
   const maxOffset = Math.max(0, pageHeight - 1);
-  main.scrollTop = Math.max(0, pageTop + Math.min(offset, maxOffset));
-  return true;
+  const offset = mmToCssPx(dest.topMm ?? 0, viewer.getScale());
+  return Math.min(Math.max(0, offset), maxOffset);
 }
 
 /**

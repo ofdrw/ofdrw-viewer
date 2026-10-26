@@ -117,8 +117,21 @@ export type PageRange =
 
 /** `goToPage` 选项。 */
 export interface GoToPageOptions {
-  /** 是否平滑滚动；大跨度跳转建议关闭。 */
+  /** 是否平滑滚动。 */
   readonly smooth?: boolean;
+  /**
+   * 平滑滚动时长，单位毫秒；只在 `smooth=true` 时生效，会钳到 150–360 ms。
+   *
+   * 省略时按滚动距离估算：近距 150 ms、约一个 A4 页高以上 360 ms。
+   */
+  readonly durationMs?: number;
+  /**
+   * 页内额外偏移，单位 px；正值向下、负值向上。
+   *
+   * 用于书签/大纲等需要精确落到页内位置的跳转：偏移与页顶合并成一次滚动，
+   * 避免「先到页顶再微调」的两段动画。
+   */
+  readonly offsetPx?: number;
 }
 
 /** 查找选项。 */

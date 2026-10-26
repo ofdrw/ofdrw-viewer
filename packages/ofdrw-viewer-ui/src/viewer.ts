@@ -183,6 +183,13 @@ export interface ViewerSignatureService {
   getSignatureDetail?(id: string): SignatureDetail | Promise<SignatureDetail>;
   /** 打开/定位签章。 */
   showSignature?(id: string): void | Promise<void>;
+  /**
+   * 滚动到签章覆盖层的位置。
+   *
+   * 详情面板等调用方在打开面板之前调用它，保证出现面板时正文已经停在签章附近；
+   * 返回是否由它接管了滚动。
+   */
+  scrollToSignature?(id: string): boolean;
   /** 销毁。 */
   destroy?(): void;
 }
@@ -220,6 +227,20 @@ const activeViewers = new Set<OFDViewer>();
 /** 浮点页顶的舍入容差，避免整数页顶因浮点误差多进 1px。单位：px。 */
 const SCROLL_TOP_EPSILON = 1e-6;
 
+/** 平滑滚动的最短时长，单位：毫秒。 */
+export const MIN_SMOOTH_SCROLL_MS = 150;
+
+/** 平滑滚动的最长时长，单位：毫秒；单次跳转不允许拖得比这更久。 */
+export const MAX_SMOOTH_SCROLL_MS = 360;
+
+/**
+ * 平滑滚动的距离基准，单位 px。
+ *
+ * 滚动距离达到该值时使用 {@link MAX_SMOOTH_SCROLL_MS}；约等于一个 A4 页高，
+ * 即跨页跳转与远距离跳转的分界。
+ */
+const SMOOTH_SCROLL_DISTANCE_REFERENCE_PX = 1123;
+
 /**
  * 将排版偏移量转换为浏览器可稳定保存的整数 scrollTop。
  *
@@ -231,6 +252,26 @@ const SCROLL_TOP_EPSILON = 1e-6;
  */
 function toIntegerScrollTop(offset: number): number {
   return Math.max(0, Math.ceil(offset - SCROLL_TOP_EPSILON));
+}
+
+/**
+ * 解析平滑滚动时长。
+ *
+ * 显式传入的时长直接钳到允许区间；省略时按距离估算：起步即
+ * {@link MIN_SMOOTH_SCROLL_MS}，距离达到 {@link SMOOTH_SCROLL_DISTANCE_REFERENCE_PX}
+ * 时升到 {@link MAX_SMOOTH_SCROLL_MS}，中间线性增长。这样近距跳转干脆利落，
+ * 远距跳转也不会长时间遮挡目标内容。单位：毫秒。
+ *
+ * @param durationMs 显式时长，单位毫秒；非法值视为省略。
+ * @param distance 滚动距离，单位 px。
+ * @returns 实际时长，单位毫秒。
+ */
+function resolveSmoothScrollDuration(durationMs: number | undefined, distance: number): number {
+  const span = MAX_SMOOTH_SCROLL_MS - MIN_SMOOTH_SCROLL_MS;
+  const ratio = Math.min(1, Math.max(0, distance) / SMOOTH_SCROLL_DISTANCE_REFERENCE_PX);
+  const derived = MIN_SMOOTH_SCROLL_MS + ratio * span;
+  if (typeof durationMs !== 'number' || !Number.isFinite(durationMs)) return Math.round(derived);
+  return Math.round(Math.min(MAX_SMOOTH_SCROLL_MS, Math.max(MIN_SMOOTH_SCROLL_MS, durationMs)));
 }
 
 /** 判断是否为 PromiseLike。 */
@@ -462,6 +503,19 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private scrollListenerBound = false;
   /** 主区域滚动回调；只做 rAF 合并，实际更新在 `handleScroll` 中完成。 */
   private readonly onScroll = (): void => this.scheduleScrollUpdate();
+  /** 进行中的平滑滚动；null 表示当前没有滚动。 */
+  private smoothScroll: {
+    /** 起始滚动位置，单位 px。 */
+    readonly start: number;
+    /** 目标滚动位置，单位 px。 */
+    readonly target: number;
+    /** 起始时间戳，单位毫秒；首帧回调时写入。 */
+    startedAt: number | undefined;
+    /** 总时长，单位毫秒。 */
+    readonly duration: number;
+  } | null = null;
+  /** 平滑滚动的 rAF 句柄。 */
+  private smoothScrollFrame: number | null = null;
   /** 触摸屏当前按下的触点；key 为 pointerId，坐标单位 px。 */
   private readonly touchPoints = new Map<number, { x: number; y: number }>();
   /** 捏合开始时的两指距离，单位 px；0 表示未开始。 */
@@ -979,7 +1033,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         rotation: this.options.rotation,
       });
       this.reflow();
-      this.scrollToPageInternal(initialIndex, false);
+      this.scrollToPageInternal(initialIndex, { smooth: false });
       await this.applyAvailability(token);
       this.commit();
       this.emit('documentopen', { pageCount: opened.pageCount });
@@ -1338,6 +1392,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.ownerDocument.removeEventListener('keydown', this.onFullscreenFallbackEscape);
     if (this.scrollFrame !== null) cancelAnimationFrame(this.scrollFrame);
     if (this.reflowFrame !== null) cancelAnimationFrame(this.reflowFrame);
+    this.cancelSmoothScroll();
     for (const cleanup of this.extensionCleanups.splice(0)) this.safeCleanup(cleanup);
     this.appliedExtensions.clear();
     // 先中止进行中的字体读取，再关闭文档。
@@ -1359,14 +1414,22 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /**
    * 跳转到指定页。
    *
+   * `smooth` 为真时主区域平滑滚动，时长由 `durationMs` 或滚动距离决定，并被限制在
+   * {@link MIN_SMOOTH_SCROLL_MS}..{@link MAX_SMOOTH_SCROLL_MS} 之间；系统要求减少
+   * 动效时退化为直接定位。`offsetPx` 用于书签/大纲等「页内定位」场景，让整段跳转
+   * 由同一次动画完成，避免两段滚动互相打断。
+   *
    * @param pageNumber 页码，1-based。
-   * @param options 平滑滚动选项。
+   * @param options 滚动选项。
    */
-  goToPage(pageNumber: number, options: { smooth?: boolean } = {}): void {
+  goToPage(
+    pageNumber: number,
+    options: { smooth?: boolean; durationMs?: number; offsetPx?: number } = {},
+  ): void {
     this.assertFeature('pageNavigation');
     this.assertOpen();
     const index = this.toIndex(pageNumber);
-    this.scrollToPageInternal(index, options.smooth ?? false);
+    this.scrollToPageInternal(index, options);
     this.patchView({ pageNumber: index + 1 });
     this.commit();
     this.renderVisible();
@@ -2486,6 +2549,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
 
   /** 重新排版并更新页定位；可恢复滚动锚点。 */
   private reflow(anchor?: ScrollAnchor): void {
+    // 排版变化会让原目标偏移失效，平滑滚动必须先中断。
+    this.cancelSmoothScroll();
     const boxes = this.layout.getBoxes();
     this.pagesElement.style.height = `${Math.max(0, this.layout.totalHeight)}px`;
     for (let index = 0; index < this.pageViews.length; index += 1) {
@@ -2572,20 +2637,102 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     return this.layout.getAnchor(this.mainScrollTop);
   }
 
-  /** 滚动到指定页；保留页顶。 */
-  private scrollToPageInternal(index: number, smooth: boolean): void {
-    const top = toIntegerScrollTop(this.layout.getPageTop(index));
-    if (smooth && typeof this.elements.main.scrollTo === 'function') {
-      try {
-        this.elements.main.scrollTo({ top, behavior: 'smooth' });
-      } catch {
-        this.mainScrollTop = top;
-      }
-    } else {
-      this.mainScrollTop = top;
+  /**
+   * 滚动到指定页；保留页顶。
+   *
+   * @param index 页索引，0-based。
+   * @param options 滚动选项。
+   */
+  private scrollToPageInternal(
+    index: number,
+    options: { smooth?: boolean; durationMs?: number; offsetPx?: number },
+  ): void {
+    const offset = options.offsetPx;
+    const usable = typeof offset === 'number' && Number.isFinite(offset) ? offset : 0;
+    this.scrollToOffsetInternal(this.layout.getPageTop(index) + usable, options);
+  }
+
+  /**
+   * 滚动到主区域内的指定偏移；越界值由浏览器钳制。
+   *
+   * `smooth` 为真时用自实现的 rAF 补间：WebKit 不支持 `scrollTo` 的时长参数，
+   * 原生平滑滚动也常超过 400ms；自实现可固定结束时间，并在用户滚动、缩放或
+   * 新跳转时立即打断。
+   *
+   * @param top 目标滚动位置，单位 px。
+   * @param options 滚动选项。
+   */
+  private scrollToOffsetInternal(
+    top: number,
+    options: { smooth?: boolean; durationMs?: number },
+  ): void {
+    const target = toIntegerScrollTop(top);
+    const animate = options.smooth === true && !this.prefersReducedMotion();
+    this.cancelSmoothScroll();
+    if (!animate) {
+      this.mainScrollTop = target;
+      // 直接定位没有后续帧：在这里同步刷新页码与可见范围，避免状态滞后一帧。
+      this.handleScroll();
+      return;
     }
-    this.patchView({ pageNumber: index + 1 });
+    const start = this.mainScrollTop;
+    const distance = target - start;
+    if (Math.abs(distance) < 1) {
+      this.mainScrollTop = target;
+      return;
+    }
+    this.smoothScroll = {
+      start,
+      target,
+      startedAt: undefined,
+      duration: resolveSmoothScrollDuration(options.durationMs, Math.abs(distance)),
+    };
+    this.smoothScrollFrame = requestAnimationFrame(this.stepSmoothScroll);
+  }
+
+  /**
+   * 推进一帧平滑滚动。
+   *
+   * @param now `requestAnimationFrame` 回调时间戳，单位毫秒。
+   */
+  private readonly stepSmoothScroll = (now: number): void => {
+    this.smoothScrollFrame = null;
+    const scroll = this.smoothScroll;
+    if (!scroll) return;
+    if (scroll.startedAt === undefined) scroll.startedAt = now;
+    const progress = Math.min(1, Math.max(0, (now - scroll.startedAt) / scroll.duration));
+    // 二次缓出：起步快、收尾稳，短距离也不会显得迟滞。
+    const eased = 1 - (1 - progress) * (1 - progress);
+    this.mainScrollTop =
+      progress >= 1 ? scroll.target : scroll.start + (scroll.target - scroll.start) * eased;
+    if (progress >= 1) this.smoothScroll = null;
+    else this.smoothScrollFrame = requestAnimationFrame(this.stepSmoothScroll);
+    // 每帧都刷新页码/可见范围：动画途经的页要及时进入渲染队列，不能只等 scroll 事件。
     this.scheduleScrollUpdate();
+  };
+
+  /**
+   * 立即中断平滑滚动并停在中途位置。
+   *
+   * 用户滚轮/触控接管、缩放旋转重排、新跳转、文档关闭与销毁都调用它。
+   */
+  private cancelSmoothScroll(): void {
+    if (this.smoothScrollFrame !== null) {
+      cancelAnimationFrame(this.smoothScrollFrame);
+      this.smoothScrollFrame = null;
+    }
+    this.smoothScroll = null;
+  }
+
+  /** 当前环境是否要求减少动效。 */
+  private prefersReducedMotion(): boolean {
+    const view = this.ownerDocument.defaultView ?? window;
+    if (!view || typeof view.matchMedia !== 'function') return false;
+    try {
+      return view.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    } catch {
+      return false;
+    }
   }
 
   /** 计算当前可见页并调度渲染。 */
@@ -2987,7 +3134,11 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
    * @param event 滚轮事件；clientX/clientY 单位 px。
    */
   private handleWheel(event: WheelEvent): void {
-    if (!(event.ctrlKey || event.metaKey)) return;
+    if (!(event.ctrlKey || event.metaKey)) {
+      // 普通滚轮只走主区域原生滚动：进行中的程序化滚动必须让位给用户。
+      this.cancelSmoothScroll();
+      return;
+    }
     if (!this.featureGate.isEnabled('zoom')) return;
     event.preventDefault();
     if (Math.abs(event.deltaY) < 1e-6) return;
@@ -3004,6 +3155,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
    * @param event 指针事件；坐标单位 px。
    */
   private handlePointerDown(event: PointerEvent): void {
+    this.cancelSmoothScroll();
     if (event.pointerType !== 'touch') return;
     this.touchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (this.touchPoints.size > 2) {

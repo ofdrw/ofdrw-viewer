@@ -12,7 +12,7 @@ vi.mock('@ofdrw/ofdrw-viewer-engine', () => ({
   toOFDError: (error: unknown) => error,
 }));
 
-import { OFDViewer } from '../../../src/viewer';
+import { MAX_SMOOTH_SCROLL_MS, MIN_SMOOTH_SCROLL_MS, OFDViewer } from '../../../src/viewer';
 import { UI_WARNING_CODES } from '../../../src/diagnostics';
 
 interface FakePage {
@@ -359,6 +359,154 @@ describe('OFDViewer 核心', () => {
     expect(viewer.getRotation()).toBe(90);
     expect(viewer.getPageView(1)?.element.dataset.rotation).toBe('90');
     viewer.destroy();
+  });
+
+  it('goToPage smooth 用 rAF 补间并在 MAX 时长内落位', async () => {
+    engineMocks.open.mockImplementation(async () => makeDocument(5));
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+      initialScale: 1,
+    });
+    await viewer.ready;
+    const main = viewer.getElements().main;
+    // 可控时钟：每帧推进 16ms，便于断言总时长上限。
+    const originalRaf = globalThis.requestAnimationFrame;
+    const originalCancel = globalThis.cancelAnimationFrame;
+    let now = 0;
+    const frames: FrameRequestCallback[] = [];
+    globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    }) as typeof requestAnimationFrame;
+    globalThis.cancelAnimationFrame = (() => undefined) as typeof cancelAnimationFrame;
+    const restoreFrames = (): void => {
+      globalThis.requestAnimationFrame = originalRaf;
+      globalThis.cancelAnimationFrame = originalCancel;
+    };
+    const runFrames = (limit = 200): void => {
+      let count = 0;
+      while (frames.length > 0 && count < limit) {
+        now += 16;
+        frames.shift()!(now);
+        count += 1;
+      }
+    };
+
+    const target = pageTop(viewer, 4);
+    const origin = main.scrollTop;
+    viewer.goToPage(4, { smooth: true });
+    // 页码立即更新，但滚动位置由动画推进，调用当帧仍停在原处。
+    expect(viewer.getPageNumber()).toBe(4);
+    expect(main.scrollTop).toBe(origin);
+    // 首帧只记录起始时间，之后按进度写入位置。
+    frames.shift()!(now += 16);
+    expect(main.scrollTop).toBe(origin);
+    frames.shift()!(now += 16);
+    const firstStep = main.scrollTop;
+    expect(firstStep).toBeGreaterThan(origin);
+    expect(firstStep).toBeLessThan(Math.ceil(target));
+    // 补间期间阅读器还会调度其他帧回调，逐帧推进直到位置落定。
+    for (let round = 0; round < 60 && main.scrollTop < Math.ceil(target); round += 1) {
+      runFrames(1);
+    }
+    expect(main.scrollTop).toBe(Math.ceil(target));
+    // 总时长不超过上限：首帧只记录起始时间，故允许一帧额外开销。
+    expect(now).toBeLessThanOrEqual(MAX_SMOOTH_SCROLL_MS + 32);
+    expect(now).toBeGreaterThanOrEqual(MIN_SMOOTH_SCROLL_MS);
+    viewer.destroy();
+
+    // smooth=false 时直接落位，不排任何帧。
+    const plain = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+      initialScale: 1,
+    });
+    await plain.ready;
+    frames.length = 0;
+    plain.goToPage(4);
+    expect(frames).toHaveLength(0);
+    expect(plain.getElements().main.scrollTop).toBeCloseTo(Math.ceil(pageTop(plain, 4)), 5);
+    plain.destroy();
+    restoreFrames();
+  });
+
+  it('平滑滚动被用户滚动或新跳转打断', async () => {
+    engineMocks.open.mockImplementation(async () => makeDocument(5));
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+      initialScale: 1,
+    });
+    await viewer.ready;
+    const main = viewer.getElements().main;
+    const originalRaf = globalThis.requestAnimationFrame;
+    const originalCancel = globalThis.cancelAnimationFrame;
+    let now = 0;
+    const frames: FrameRequestCallback[] = [];
+    globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    }) as typeof requestAnimationFrame;
+    globalThis.cancelAnimationFrame = (() => undefined) as typeof cancelAnimationFrame;
+
+    viewer.goToPage(5, { smooth: true });
+    frames.shift()!(now += 16);
+    const midway = main.scrollTop;
+    expect(midway).toBeGreaterThan(0);
+    // 用户滚轮接管：进行中的补间必须停止，不得把用户滚回目标位置。
+    main.dispatchEvent(
+      new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true }),
+    );
+    frames.length = 0;
+    main.dispatchEvent(new Event('scroll'));
+    const stalled = main.scrollTop;
+    // 即使继续推进帧，也不再有任何补间回调。
+    expect(frames).toHaveLength(0);
+    expect(main.scrollTop).toBe(stalled);
+    expect(stalled).toBeCloseTo(midway, 5);
+    viewer.destroy();
+    globalThis.requestAnimationFrame = originalRaf;
+    globalThis.cancelAnimationFrame = originalCancel;
+  });
+
+  it('prefers-reduced-motion 下 smooth 退化为直接落位', async () => {
+    engineMocks.open.mockImplementation(async () => makeDocument(5));
+    const originalMatchMedia = globalThis.matchMedia;
+    const originalRaf = globalThis.requestAnimationFrame;
+    Object.defineProperty(globalThis, 'matchMedia', {
+      configurable: true,
+      writable: true,
+      value: (query: string) => ({ matches: query.includes('reduced-motion'), media: query }),
+    });
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+      initialScale: 1,
+    });
+    await viewer.ready;
+    const frames: FrameRequestCallback[] = [];
+    globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    }) as typeof requestAnimationFrame;
+    viewer.goToPage(4, { smooth: true });
+    expect(frames).toHaveLength(0);
+    expect(viewer.getElements().main.scrollTop).toBeCloseTo(
+      Math.ceil(pageTop(viewer, 4)),
+      5,
+    );
+    viewer.destroy();
+    globalThis.requestAnimationFrame = originalRaf;
+    Object.defineProperty(globalThis, 'matchMedia', {
+      configurable: true,
+      writable: true,
+      value: originalMatchMedia,
+    });
   });
 
   it('页面各层用四边定位代替 Chrome 67 不支持的 inset', async () => {
