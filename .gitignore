@@ -58,3 +58,4 @@ __pycache__/
 
 # AgentTeams 隔离工作树（并行任务在独立 worktree 中工作，不纳入版本管理）
 /.worktrees/
+.diag_pw_cache
