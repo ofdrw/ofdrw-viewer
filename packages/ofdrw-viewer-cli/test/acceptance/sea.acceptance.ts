@@ -105,7 +105,7 @@ describe('图片 CLI 黑盒验收：SEA 无 Node 运行', () => {
       timeoutMs: 120_000,
     });
     expect(version.code).toBe(0);
-    expect(version.stdout).toContain('ofdrw-viewer-cli 0.1.2');
+    expect(version.stdout).toContain('ofdrw-viewer-cli 0.1.3');
     expect(version.stdout).toContain(`${process.platform}-${process.arch}`);
 
     const help = await runSea(['--help'], {

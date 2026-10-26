@@ -1,6 +1,6 @@
 {
   "name": "@ofdrw/ofdrw-viewer-engine",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "平台无关的 OFD 页面渲染引擎",
   "license": "MIT",
   "type": "module",
