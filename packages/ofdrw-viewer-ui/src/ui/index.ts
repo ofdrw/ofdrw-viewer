@@ -98,7 +98,19 @@ export interface UIShellHost {
   setLocalFontsEnabled?(enabled: boolean): Promise<void>;
   /** 订阅本地字体状态变化。 */
   onLocalFontsStatusChange?(handler: (status: LocalFontsStatus) => void): () => void;
+  /**
+   * 用内置对话框向用户确认是否授权使用本机字体。核心在浏览器授权状态与用户意向不一致时
+   * 调用它，拿到对话框按钮上的**真实用户手势**后再申请 `local-fonts` 权限。
+   * 未挂载内置 UI 时返回 false。
+   */
+  confirmLocalFontsGrant?(): Promise<boolean>;
 }
+
+/**
+ * 当前待用户确认的本地字体授权请求；同一时刻只允许一个，避免自动打开与用户操作叠加出多个框。
+ * 放在模块级：一个页面只有一个对话框层，多实例叠加也没有意义。
+ */
+let pendingLocalFontsGrant: { readonly resolve: (confirmed: boolean) => void } | null = null;
 
 /** 扩展注册函数；`registerViewerExtension` 结构兼容。 */
 export type UIShellExtensionRegistrar = (
@@ -138,6 +150,64 @@ function toShellState(
  */
 export function getUIShell(viewer: UIShellHost): UIShell | undefined {
   return uiShells.get(viewer);
+}
+
+/**
+ * 弹出「使用本机字体」授权确认框，并等待用户选择。
+ *
+ * 浏览器只接受**用户手势内**的 `local-fonts` 权限申请，页面启动等非手势时机直接调用会抛
+ * `SecurityError` 且不弹授权框；因此这里先给出一个真实可点的按钮，「允许」按钮的 `click`
+ * 同步栈里调用核心的 `setLocalFontsEnabled(true)`，让授权申请带上该手势。
+ *
+ * 用户点「不允许」、点遮罩或按 Esc 都按**用户拒绝**处理：同样调用
+ * `setLocalFontsEnabled(false)`，把开关置关并持久化，下次打开不再重复询问。
+ *
+ * 已有其它确认框时不再叠加，直接按「未确认」返回。
+ *
+ * @param shell 当前外壳。
+ * @param viewer 阅读器实例。
+ * @returns 用户是否点了「允许」。
+ */
+export function askLocalFontsGrant(shell: UIShell, viewer: UIShellHost): Promise<boolean> {
+  if (pendingLocalFontsGrant) return Promise.resolve(false);
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    /** 结算一次；重复调用（如 onClose 与按钮回调先后触发）直接忽略。 */
+    const settleOnce = (confirmed: boolean): void => {
+      if (settled) return;
+      settled = true;
+      if (pendingLocalFontsGrant?.resolve === settleOnce) pendingLocalFontsGrant = null;
+      if (!confirmed) {
+        // 拒绝也要落状态：开关置关并持久化，否则下次打开仍处于「想开、浏览器未授权」
+        // 的不一致状态，会再次弹框。
+        void viewer.setLocalFontsEnabled?.(false).catch(() => undefined);
+      }
+      resolve(confirmed);
+    };
+    pendingLocalFontsGrant = { resolve: settleOnce };
+    const translator = shell.translatorInstance;
+    // 按钮回调返回 Promise 时，对话框管理器会等它 settle 再关闭，授权往返期间按钮不会重复触发。
+    shell.openDialog({
+      name: 'localFonts',
+      title: translator.t('localFonts.dialog.title'),
+      description: translator.t('localFonts.dialog.description'),
+      // 点遮罩或 Esc 视为「不允许」：授权入口应当显式可点，不能靠误触打开。
+      onClose: () => settleOnce(false),
+      actions: [
+        { label: translator.t('localFonts.dialog.deny') },
+        {
+          label: translator.t('localFonts.dialog.allow'),
+          primary: true,
+          onClick: () => {
+            settleOnce(true);
+            // 必须在本 click 的同步栈内发起：`setLocalFontsEnabled(true)` 在第一个 await
+            // 之前同步调用 `queryLocalFonts`，手势尚未失效。
+            return viewer.setLocalFontsEnabled?.(true);
+          },
+        },
+      ],
+    });
+  });
 }
 
 /**

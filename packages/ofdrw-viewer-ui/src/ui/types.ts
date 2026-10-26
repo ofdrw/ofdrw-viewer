@@ -124,8 +124,13 @@ export interface UIDialogAction {
   readonly primary?: boolean;
   /** 点击后是否关闭对话框；默认 true。 */
   readonly closeOnClick?: boolean;
-  /** 点击回调。 */
-  readonly onClick?: () => void;
+  /**
+   * 点击回调。
+   *
+   * 返回 Promise 时对话框会等它 settle 后再关闭，且等待期间按钮不可重复触发
+   * （用于「点击后先完成异步授权再关闭」的流程）。
+   */
+  readonly onClick?: () => void | Promise<unknown>;
 }
 
 /** 对话框内容。 */

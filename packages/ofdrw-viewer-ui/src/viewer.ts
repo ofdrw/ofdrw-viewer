@@ -111,7 +111,7 @@ import {
   MAX_CANDIDATES_PER_DECLARATION,
   expandLocalFontCandidates,
 } from './local-font-names';
-import { getUIShell } from './ui';
+import { askLocalFontsGrant, getUIShell } from './ui';
 import type { UIDialogOptions, UIShellElements } from './ui/types';
 import type { UIShellHost } from './ui';
 import type { CertificateSource } from './options';
@@ -498,6 +498,13 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private localFontsPublished: LocalFontsStatus | null = null;
   /** 是否正在补「带上本机字体」的重开（防止 open() 再次触发重开）。 */
   private localFontsReopening = false;
+  /**
+   * 当前文档打开流程是否已经询问过本机字体授权。
+   *
+   * 一次打开（含授权成功后 / 补注入时的重开）只问一次，避免「提问 → 重开 → 再提问」的循环；
+   * `open()` 开始时复位，用户手动点「关于」里的开关不受此限制。
+   */
+  private localFontsGrantAsked = false;
   private scrollFrame: number | null = null;
   private reflowFrame: number | null = null;
   private lastVisibleRange = { start: 0, end: -1 };
@@ -956,6 +963,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     // 本机字体生效值必须在打开文档之前同步给控制器，否则本次打开读不到开关状态。
     // 权限查询是异步的，必须先完成，否则首次授权后本次打开读到的仍是旧权限态。
     await this.prepareLocalFontsForOpen();
+    // 授权询问按「一次打开」计：重开（授权成功后 / 补注入）复用本次询问结果，不再追问。
+    this.localFontsGrantAsked = false;
     try {
       // URL → HttpByteSource 只在这里做一次；crypto 与 engine 共用同一实例。
       const normalized: NormalizedViewerSource = normalizeViewerSourceDetailed(
@@ -1743,6 +1752,26 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   }
 
   /**
+   * 通过内置对话框请求本机字体授权。
+   *
+   * 浏览器只接受**用户手势内**的 `local-fonts` 权限申请：页面自动打开时调用
+   * `queryLocalFonts` 会抛 `SecurityError` 且不弹授权框，导致「开关想开、浏览器却没授权」
+   * 的不一致状态长期存在。此时由内置 UI 弹出确认框，用户点「允许」的 `click` 回调里再走
+   * `setLocalFontsEnabled(true)`，授权申请因此带上真实手势。
+   *
+   * 只在能力可见（宿主启用）且浏览器确实支持时使用；未挂载内置 UI 时返回 false。
+   *
+   * @returns 用户是否在对话框中点了「允许」。
+   */
+  async confirmLocalFontsGrant(): Promise<boolean> {
+    this.assertNotDisposed();
+    if (!this.localFontsSupported() || !this.hasLocalFontsConfig()) return false;
+    const shell = getUIShell(this);
+    if (!shell) return false;
+    return askLocalFontsGrant(shell, this);
+  }
+
+  /**
    * 订阅本地字体状态变化。
    *
    * @param handler 状态回调。
@@ -1946,21 +1975,24 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   }
 
   /**
-   * 会话被打开（文档就绪）后，按用户授权开关状态决定是否立即请求浏览器授权。
+   * 会话被打开（文档就绪）后处理「用户想用本机字体，但浏览器尚未授权」的不一致状态。
    *
-   * - 用户授权开关关闭或尚未表态：什么都不做；
-   * - 开关开启且浏览器已授权：无需请求，本机字体已在本次打开中注入；
-   * - 开关开启但浏览器未授权或已拒绝：直接发起授权请求（由 `queryLocalFonts` 触发浏览器
-   *   原生授权弹框，无需额外的确认框）。授权成功则重开页面，拒绝则把开关置关。
-   *
-   * 自动请求仅在用户已明确表态开启时发生（有持久化的用户选择，或宿主用
-   * `defaultEnabled` 预设开启），避免在用户尚未表态时反复打扰。
+   * - 浏览器不支持或宿主未启用：不处理；
+   * - 用户已明确拒绝（开关关闭）：尊重选择，不打扰；
+   * - 授权状态与意向一致（授权成功，或用户自己关掉了开关）：无需处理；
+   * - 其余情况（浏览器未决定、或浏览器已拒绝但用户仍希望使用）：**不能**直接调用
+   *   `queryLocalFonts`——页面自动打开时没有用户手势，浏览器会抛 `SecurityError` 且不弹
+   *   授权框。改为弹内置确认框，用户点「允许」后再在该点击的手势内申请授权；用户按
+   *   「不允许」则什么都不做，本会话不再追问。
    */
   private maybeRequestLocalFontsGrantOnOpen(): void {
     if (!this.localFontsSupported() || !this.hasLocalFontsConfig()) return;
-    if (!this.localFontsDecided || !this.localFontsWanted) return;
-    if (this.localFontsPermission === 'granted') return;
-    void this.expandLocalFontsAccess();
+    if (this.localFontsDecided && !this.localFontsWanted) return;
+    if (this.localFontsPermission === 'granted' && this.localFontsWanted) return;
+    // 本次打开已经问过（含用户点了「不允许」）：不重复追问。
+    if (this.localFontsGrantAsked) return;
+    this.localFontsGrantAsked = true;
+    void this.confirmLocalFontsGrant();
   }
 
   /**

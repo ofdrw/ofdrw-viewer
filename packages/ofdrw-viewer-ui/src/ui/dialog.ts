@@ -13,6 +13,20 @@ import type { UIDialogOptions } from './types';
 
 let dialogSequence = 0;
 
+/**
+ * 判断回调返回值是否为 thenable（可能是 Promise）。
+ *
+ * @param value 回调返回值。
+ * @returns 可等待时为 true。
+ */
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    (typeof value === 'object' || typeof value === 'function') &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
+}
+
 /** 对话框管理器选项。 */
 export interface DialogManagerOptions {
   /** 对话框层容器（`.ofd-viewer__dialog-layer`）。 */
@@ -129,8 +143,22 @@ export class DialogManager {
         : 'ofd-button ofd-dialog__action';
       button.textContent = action.label;
       button.addEventListener('click', () => {
-        action.onClick?.();
-        if (action.closeOnClick !== false) this.close();
+        // 同步调用 `onClick`：需要用户手势的 API（如 `queryLocalFonts`）必须在这里的
+        // 同步栈内发起，任何 `await` 都会让手势失效。
+        const result = action.onClick?.();
+        if (action.closeOnClick === false) return;
+        if (isThenable(result)) {
+          // 异步回调：等它 settle 再关闭；等待期间禁用按钮，避免重复触发。
+          button.disabled = true;
+          const done = (): void => {
+            button.disabled = false;
+            // 等待期间对话框可能已被其它操作替换或关闭，此时不再关闭新对话框。
+            if (this.current?.element === dialog) this.close();
+          };
+          void result.then(done, done);
+          return;
+        }
+        this.close();
       });
       footer.appendChild(button);
     }

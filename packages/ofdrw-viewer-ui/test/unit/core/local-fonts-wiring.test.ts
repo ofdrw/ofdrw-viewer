@@ -21,7 +21,8 @@ vi.mock('@ofdrw/ofdrw-viewer-engine', () => ({
   DEFAULT_FONT_ALIASES: [['宋体', 'simsun', 'songti', 'stsong']],
 }));
 
-import { OFDViewer } from '../../../src/viewer';
+import { OFDViewer, registerViewerExtension } from '../../../src/viewer';
+import { attachUIShell } from '../../../src/ui';
 
 /** 构造页信息。 */
 function makeInfos(count: number): PageInfo[] {
@@ -117,6 +118,8 @@ function defaultFamilies(options: OFDOpenOptions | undefined): readonly string[]
 
 beforeEach(() => {
   document.body.innerHTML = '';
+  // 授权确认框由内置 UI 外壳提供。
+  registerViewerExtension(attachUIShell as never);
   localStorage.clear();
   engineMocks.open.mockReset();
   engineMocks.open.mockImplementation(async () =>
@@ -218,8 +221,25 @@ describe('本机字体接线（走 viewer 公开入口）', () => {
   });
 });
 
+/**
+ * 点击「使用本机字体」授权确认框里的按钮。
+ *
+ * @param label 按钮文案。
+ */
+function clickGrantDialog(label: string): void {
+  const dialog = Array.from(document.querySelectorAll<HTMLElement>('.ofd-dialog')).find((item) =>
+    item.textContent?.includes('使用本机字体'),
+  );
+  if (!dialog) throw new Error('没有弹出「使用本机字体」确认框');
+  const button = Array.from(dialog.querySelectorAll<HTMLButtonElement>('.ofd-dialog__action')).find(
+    (candidate) => candidate.textContent === label,
+  );
+  if (!button) throw new Error(`确认框里没有「${label}」按钮`);
+  button.click();
+}
+
 describe('授权后补注入（prompt → 允许）', () => {
-  it('打开会话时请求授权成功后重开会带上本机字体（不再需要首屏就已授权）', async () => {
+  it('确认框点「允许」后重开会带上本机字体（不再需要首屏就已授权）', async () => {
     const query = stubLocalFonts('prompt');
     const viewer = new OFDViewer({
       container: document.body,
@@ -236,9 +256,11 @@ describe('授权后补注入（prompt → 允许）', () => {
 
     await flush(20);
 
-    // 会话打开后自动请求授权（无内置确认框），授权成功即重开并注入本机字体。
-    expect(query, '应有授权请求').toHaveBeenCalled();
-    expect(document.querySelector('.ofd-dialog'), '不弹内置确认框').toBeNull();
+    // 会话打开时没有用户手势：先弹内置确认框，点击前不请求授权。
+    expect(query, '点击前不应请求授权').not.toHaveBeenCalled();
+    clickGrantDialog('允许');
+    expect(query, '点「允许」后在同步栈内请求授权').toHaveBeenCalled();
+    await flush(20);
     const afterGrant = engineMocks.open.mock.calls.at(-1)?.[0] as OFDOpenOptions | undefined;
     expect(defaultFamilies(afterGrant), '授权后重开应注入本机字体').toContain('宋体');
     expect(viewer.getLocalFontsStatus().enabled).toBe(true);

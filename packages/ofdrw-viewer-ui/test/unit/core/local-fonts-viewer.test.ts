@@ -22,7 +22,8 @@ vi.mock('@ofdrw/ofdrw-viewer-engine', () => ({
   DEFAULT_FONT_ALIASES: [['宋体', 'simsun', 'songti', 'stsong']],
 }));
 
-import { OFDViewer } from '../../../src/viewer';
+import { OFDViewer, registerViewerExtension } from '../../../src/viewer';
+import { attachUIShell } from '../../../src/ui';
 import type { LocalFontsStatus } from '../../../src/local-fonts-state';
 
 /** 存储键（REQ-008）。 */
@@ -193,6 +194,20 @@ function localFontsDialog(): HTMLElement | null {
   return dialogs.find((dialog) => dialog.textContent?.includes('使用本机字体')) ?? null;
 }
 
+/**
+ * 点击对话框底部指定文案的按钮。
+ *
+ * @param dialog 对话框根元素。
+ * @param label 按钮文案。
+ */
+function clickDialogAction(dialog: HTMLElement, label: string): void {
+  const button = Array.from(dialog.querySelectorAll<HTMLButtonElement>('.ofd-dialog__action')).find(
+    (candidate) => candidate.textContent === label,
+  );
+  if (!button) throw new Error(`对话框里没有「${label}」按钮`);
+  button.click();
+}
+
 /** 等待若干个宏任务（重开流程跨多个 await）。 */
 async function flush(times = 12): Promise<void> {
   for (let index = 0; index < times; index += 1) {
@@ -217,6 +232,8 @@ async function createViewer(
 
 beforeEach(() => {
   document.body.innerHTML = '';
+  // 授权确认框由内置 UI 外壳提供；未挂载外壳时 `confirmLocalFontsGrant()` 直接返回 false。
+  registerViewerExtension(attachUIShell as never);
   localStorage.clear();
   // 上一个用例遗留的订阅者/对话框会跨用例影响「是否弹框」的判定，逐例重置。
   sessionStorage.clear();
@@ -302,28 +319,95 @@ describe('OFDViewer 本机字体开关生效值（T-V1）', () => {
 });
 
 describe('OFDViewer 授权流程（T-V2、T-V4）', () => {
-  it('用户授权开关未表态时不调用 queryLocalFonts，也不弹任何确认框', async () => {
+  it('用户授权开关未表态：弹内置确认框，但在用户点击前不调用 queryLocalFonts', async () => {
     const query = stubQuery();
     stubPermissions('prompt');
     const viewer = await createViewer({ localFonts: { enabled: true } });
     await flush();
-    expect(query, '未表态时不得请求授权').not.toHaveBeenCalled();
-    expect(localFontsDialog(), '不再有内置确认框').toBeNull();
+    expect(query, '没有用户手势时不得请求授权').not.toHaveBeenCalled();
+    expect(localFontsDialog(), '状态不一致时弹出确认框').not.toBeNull();
     expect(viewer.getLocalFontsStatus().userState, '未表态').toBe('undecided');
     viewer.destroy();
   });
 
-  it('打开会话时开关开启、浏览器权限为 prompt：文档就绪后立即请求授权', async () => {
+  it('打开会话时开关开启、浏览器权限为 prompt：先弹确认框，点「允许」后才请求授权', async () => {
     const query = stubQuery({ SimSun: true });
     const permissions = stubPermissions('prompt');
     const viewer = await createViewer({ localFonts: { enabled: true, defaultEnabled: true } });
     await flush();
-    expect(query, '开关开启且未授权应直接请求').toHaveBeenCalledTimes(1);
+    const dialog = localFontsDialog();
+    expect(dialog, '授权状态与意向不一致时弹出确认框').not.toBeNull();
+    expect(query, '点击前不得请求授权').not.toHaveBeenCalled();
+
+    clickDialogAction(dialog as HTMLElement, '允许');
+    // 授权申请在点击的同步栈内发起。
+    expect(query, '点「允许」后在同步栈内请求授权').toHaveBeenCalledTimes(1);
     const options = query.mock.calls[0]?.[0] as { postscriptNames?: readonly string[] } | undefined;
     expect(Object.keys(options ?? {})).toEqual(['postscriptNames']);
     expect(options?.postscriptNames).toContain('SimSun');
     expect(permissions).toHaveBeenCalled();
-    expect(localFontsDialog(), '不弹内置确认框').toBeNull();
+    viewer.destroy();
+  });
+
+  it('确认框点「不允许」：不请求授权，但把开关置关并持久化', async () => {
+    const query = stubQuery();
+    stubPermissions('prompt');
+    const viewer = await createViewer({ localFonts: { enabled: true } });
+    await flush();
+    clickDialogAction(localFontsDialog() as HTMLElement, '不允许');
+    await flush();
+    expect(query, '用户拒绝后不请求授权').not.toHaveBeenCalled();
+    expect(viewer.getLocalFontsStatus().userState, '拒绝即表态为关').toBe('off');
+    expect(localStorage.getItem(STORAGE_KEY), '拒绝要落持久化').toBe(
+      JSON.stringify({ enabled: false, notified: true }),
+    );
+    expect(localFontsDialog(), '确认框已关闭').toBeNull();
+    viewer.destroy();
+  });
+
+  it('确认框被 Esc 关闭与点「不允许」同义：开关置关并持久化', async () => {
+    const query = stubQuery();
+    stubPermissions('prompt');
+    const viewer = await createViewer({ localFonts: { enabled: true } });
+    await flush();
+    const dialog = localFontsDialog() as HTMLElement;
+    dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flush();
+    expect(query, '关闭确认框不请求授权').not.toHaveBeenCalled();
+    expect(viewer.getLocalFontsStatus().userState).toBe('off');
+    expect(localStorage.getItem(STORAGE_KEY)).toBe(
+      JSON.stringify({ enabled: false, notified: true }),
+    );
+    viewer.destroy();
+  });
+
+  it('拒绝后重新打开文档：不再弹确认框', async () => {
+    const query = stubQuery();
+    stubPermissions('prompt');
+    const viewer = await createViewer({ localFonts: { enabled: true, defaultEnabled: true } });
+    await flush();
+    clickDialogAction(localFontsDialog() as HTMLElement, '不允许');
+    await flush();
+
+    await viewer.open(new ArrayBuffer(16));
+    await flush(20);
+    expect(query, '拒绝后不再请求授权').not.toHaveBeenCalled();
+    expect(localFontsDialog(), '拒绝后不再弹框').toBeNull();
+    viewer.destroy();
+  });
+
+  it('浏览器已拒绝但用户意向仍为开：同样走确认框，而不是静默失败', async () => {
+    const query = stubQuery({ reject: true });
+    stubPermissions('denied');
+    const viewer = await createViewer({ localFonts: { enabled: true, defaultEnabled: true } });
+    await flush();
+    expect(query, '没有手势时不直接请求').not.toHaveBeenCalled();
+    const dialog = localFontsDialog();
+    expect(dialog, '浏览器已拒绝也给出重新授权入口').not.toBeNull();
+    clickDialogAction(dialog as HTMLElement, '允许');
+    expect(query, '用户在确认框里点了允许才请求').toHaveBeenCalledTimes(1);
+    await flush(20);
+    expect(viewer.getLocalFontsStatus().userState, '浏览器仍拒绝则开关归位为关').toBe('off');
     viewer.destroy();
   });
 
@@ -348,7 +432,12 @@ describe('OFDViewer 授权流程（T-V2、T-V4）', () => {
 
     const viewer = await createViewer({ localFonts: { enabled: true, defaultEnabled: true } });
     await flush();
-    // 首次打开（prompt，无手势授权请求失败）→ 文档就绪后请求授权成功 → 重开。
+    expect(query, '点击确认框前不请求授权').not.toHaveBeenCalled();
+    const dialog = localFontsDialog();
+    expect(dialog, '状态不一致时弹出确认框').not.toBeNull();
+    clickDialogAction(dialog as HTMLElement, '允许');
+    await flush(20);
+    // 点「允许」→ 在手势内请求授权成功 → 重开。
     expect(query.mock.calls.length, '授权请求 + 重开后的字体解析查询').toBeGreaterThanOrEqual(2);
     expect(engineMocks.open.mock.calls.length, '授权成功需要重开').toBeGreaterThan(1);
     const status = viewer.getLocalFontsStatus();
@@ -364,6 +453,7 @@ describe('OFDViewer 授权流程（T-V2、T-V4）', () => {
     stubPermissions('denied');
     const viewer = await createViewer({ localFonts: { enabled: true, defaultEnabled: true } });
     await flush();
+    clickDialogAction(localFontsDialog() as HTMLElement, '允许');
     const opens = engineMocks.open.mock.calls.length;
     await flush(20);
     expect(query).toHaveBeenCalledTimes(1);
@@ -389,6 +479,7 @@ describe('OFDViewer 授权流程（T-V2、T-V4）', () => {
     stubPermissions('denied');
     const viewer = await createViewer({ localFonts: { enabled: true, defaultEnabled: true } });
     await flush();
+    clickDialogAction(localFontsDialog() as HTMLElement, '允许');
     const opens = engineMocks.open.mock.calls.length;
     await flush(20);
     expect(query).toHaveBeenCalledTimes(1);
