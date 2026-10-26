@@ -1287,14 +1287,17 @@
   }
 }
 
+/*
+ * 打印页容器：只提供兜底外观。
+ * 这里不能给打印根设置 position/离屏定位/尺寸限制：离屏绝对定位的容器在打印
+ * 媒质下不参与分页，多页文档只会输出第一页。打印根的显示方式、文档流定位与
+ * 尺寸统一由 print-document.ts 注入的 @media print 规则控制。
+ */
 .ofd-print-root {
   --ofd-print-bg: #ffffff;
-  position: absolute;
-  left: -10000px;
-  top: 0;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
+  display: none;
+  margin: 0;
+  padding: 0;
 }
 
 .ofd-print-page {
@@ -1320,11 +1323,7 @@
 
 @media print {
   .ofd-print-root {
-    position: static;
-    left: auto;
-    top: auto;
-    width: auto;
-    height: auto;
+    display: block;
     overflow: visible;
   }
 }

@@ -97,6 +97,10 @@ describe('打印范围与 DOM', () => {
     expect(snapshot.css).toContain(
       'body > :not(.ofd-print-root) { display: none !important; }',
     );
+    // 宿主全屏壳层的 height/overflow 裁剪在打印时必须解除，否则多页会被截成一页。
+    expect(snapshot.css).toContain('height: auto !important');
+    expect(snapshot.css).toContain('overflow: visible !important');
+    expect(snapshot.css).toContain('position: static !important; }');
     expect(document.querySelector('.ofd-print-root')).toBeNull();
     expect(printSpy).toHaveBeenCalledTimes(1);
     expect(host.events.filter((event) => event.event === 'printstart')).toHaveLength(1);
@@ -135,7 +139,14 @@ describe('打印范围与 DOM', () => {
         (element) => element.dataset.size,
       ),
     ).toEqual(['0', '1', '0']);
-    expect(prepared.container.style.display).toBe('');
+    // 打印根在屏幕上隐藏，且必须是普通文档流：离屏/绝对定位会让打印分页失效。
+    expect(prepared.container.style.display).toBe('none');
+    expect(prepared.container.style.position).toBe('static');
+    expect(prepared.container.style.width).toBe('auto');
+    expect(prepared.container.style.height).toBe('auto');
+    expect(css).toContain(
+      '.ofd-print-root { display: block !important; position: static !important;',
+    );
     prepared.cleanup();
     expect(prepared.container.isConnected).toBe(false);
     expect(prepared.style.isConnected).toBe(false);

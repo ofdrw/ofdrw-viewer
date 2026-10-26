@@ -73,10 +73,59 @@ export interface PreparePrintOptions {
   readonly onProgress?: (progress: { readonly current: number; readonly total: number }) => void;
 }
 
-/** 默认 A4 宽，单位 mm。 */
+/**
+ * 默认 A4 宽，单位 mm。
+ */
 const A4_WIDTH_MM = 210;
 /** 默认 A4 高，单位 mm。 */
 const A4_HEIGHT_MM = 297;
+
+/**
+ * 打印根容器在屏幕上的初始内联样式。
+ *
+ * 屏幕态不需要渲染打印页（图片最多整份文档大小），因此默认隐藏；打印态由
+ * 注入的 `@media print` 规则恢复为普通块级文档流。`position`/`width`/`height`
+ * 显式声明为 `static`/`auto`，用来屏蔽 `.ofd-print-root` 历史样式表中的离屏
+ * 绝对定位，保证无论 host 是否引入 `style.css` 都能正确分页。
+ */
+const PRINT_ROOT_STYLE: Readonly<Record<string, string>> = Object.freeze({
+  display: 'none',
+  position: 'static',
+  left: 'auto',
+  top: 'auto',
+  width: 'auto',
+  height: 'auto',
+  minWidth: '0',
+  maxWidth: 'none',
+  minHeight: '0',
+  maxHeight: 'none',
+  margin: '0',
+  padding: '0',
+  border: '0',
+  backgroundColor: '#ffffff',
+  overflow: 'visible',
+});
+
+/**
+ * 把打印根容器的初始样式写为内联样式。
+ *
+ * @param container 打印根容器。
+ */
+function applyPrintRootStyle(container: HTMLElement): void {
+  for (const [name, value] of Object.entries(PRINT_ROOT_STYLE)) {
+    container.style.setProperty(kebabCase(name), value);
+  }
+}
+
+/**
+ * 驼峰样式名转 kebab-case。
+ *
+ * @param name 驼峰属性名，例如 `minWidth`。
+ * @returns CSS 属性名，例如 `min-width`。
+ */
+function kebabCase(name: string): string {
+  return name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+}
 
 /**
  * 构建打印 DOM（不调用 `window.print`）。
@@ -102,6 +151,10 @@ export async function preparePrintDocument(
   const container = doc.createElement('div');
   container.className = 'ofd-print-root';
   container.setAttribute('aria-hidden', 'true');
+  // 打印根必须独立于宿主样式表（宿主可能未引入 style.css）并固定为普通文档流，
+  // 否则离屏/绝对定位的容器会让打印分页失效，多页只输出一页。样式全部内联，
+  // 宿主样式表无法覆盖，`@media print` 规则只需切换显示与否。
+  applyPrintRootStyle(container);
   const preparedPages: PreparedPrintPage[] = [];
   const objectUrls: string[] = [];
 
@@ -151,9 +204,14 @@ export async function preparePrintDocument(
       img.alt = `第 ${pageNumber} 页`;
       img.draggable = false;
       img.src = objectUrl;
+      img.style.position = 'absolute';
+      img.style.left = '50%';
+      img.style.top = '50%';
+      img.style.display = 'block';
       img.style.width = `${formatMm(size.widthMm)}mm`;
       img.style.height = `${formatMm(size.heightMm)}mm`;
       img.style.transform = `translate(-50%, -50%) rotate(${options.rotation}deg)`;
+      img.style.transformOrigin = 'center center';
       element.appendChild(img);
       container.appendChild(element);
       preparedPages.push({
@@ -336,13 +394,16 @@ export function buildPrintCss(
     : [];
 
   return [
-    '.ofd-print-root { display: none; }',
     pageRules,
     '@media print {',
-    '  html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }',
+    // 宿主页面常把 html/body 设为全屏壳层（height: 100% + overflow: hidden，甚至 position: fixed）。
+    // 这种裁剪在打印媒体下会把内容截成一页，所以必须显式还原为可增长、可溢出的文档流。
+    '  html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; height: auto !important; min-height: 0 !important; max-height: none !important; overflow: visible !important; position: static !important; }',
+    '  body { display: block !important; }',
     '  body > :not(.ofd-print-root) { display: none !important; }',
     '  .ofd-viewer { display: none !important; }',
-    '  .ofd-print-root { display: block !important; }',
+    // 打印根以普通块级元素参与文档流；离屏/绝对定位会让分页失效（多页只打印一页）。
+    '  .ofd-print-root { display: block !important; position: static !important; left: auto !important; top: auto !important; width: auto !important; height: auto !important; min-width: 0 !important; min-height: 0 !important; max-width: none !important; max-height: none !important; overflow: visible !important; }',
     '  .ofd-print-page { position: relative; overflow: hidden; margin: 0; padding: 0; background: #fff; break-after: page; page-break-after: always; }',
     '  .ofd-print-page:last-child { break-after: auto; page-break-after: auto; }',
     '  .ofd-print-page__image { display: block; position: absolute; left: 50%; top: 50%; transform-origin: center center; }',

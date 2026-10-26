@@ -664,6 +664,88 @@ async function verifyPrintPdf(
 // Chromium 的 printToPDF 与 Playwright trace 资源回收存在竞态，输出用例关闭 trace。
 test.use({ trace: 'off' });
 
+test('打印根在引入 style.css 后仍是普通文档流，全部页分页完整', async ({ page, issues }) => {
+  // 回归：`.ofd-print-root` 曾以离屏绝对定位（left:-10000px; width/height:1px）挂在
+  // style.css 中，打印媒体下该容器不参与分页，勾选全部页也只输出一页。
+  test.setTimeout(120_000);
+  await openViewer(page, FIXTURES.multi);
+  await dismissFindbar(page);
+  mkdirSync(ARTIFACT_DIR, { recursive: true });
+  await installHeldPrint(page);
+  let released = false;
+  try {
+    await submitPrintDialog(page);
+    await expectPrintCalls(page, 1);
+    const layout = await page.evaluate(() => {
+      const root = document.querySelector<HTMLElement>('.ofd-print-root')!;
+      const style = getComputedStyle(root);
+      return {
+        position: style.position,
+        left: style.left,
+        width: style.width,
+        height: style.height,
+        pages: document.querySelectorAll('.ofd-print-page').length,
+      };
+    });
+    const pdfPath = join(ARTIFACT_DIR, 'print-pageflow-4p.pdf');
+    await page.pdf({ path: pdfPath, printBackground: true, preferCSSPageSize: true });
+    const pdfPages = readPdfInfo(pdfPath).pages;
+    writeFileSync(
+      join(ARTIFACT_DIR, 'print-pageflow-4p-layout.json'),
+      JSON.stringify({ layout, pdfPages }, null, 2),
+    );
+    expect(layout.pages).toBe(4);
+    // 屏幕态打印根保持隐藏且不采用离屏绝对定位（定位由打印规则切换为 static）。
+    expect(layout.position).toBe('static');
+    expect(layout.width).toBe('auto');
+    expect(pdfPages).toBe(4);
+    expect(readPdfImageCounts(pdfPath)).toEqual([1, 1, 1, 1]);
+    await releaseHeldPrint(page);
+    released = true;
+    await expectNoPageErrors(page, issues);
+  } finally {
+    if (!released) {
+      await releaseHeldPrint(page).catch(() => undefined);
+    }
+  }
+});
+
+test('打印：宿主 html/body 全屏裁剪时仍输出全部页', async ({ page, issues }) => {
+  // 回归：全屏 SPA 宿主常把 html/body 设成 height:100% + overflow:hidden（演示站即如此）。
+  // 打印媒体下这种裁剪会把内容截成一页，必须由注入的打印样式还原为可溢出的文档流。
+  test.setTimeout(120_000);
+  await openViewer(page, FIXTURES.multi);
+  await dismissFindbar(page);
+  await page.addStyleTag({
+    content: 'html, body { height: 100% !important; overflow: hidden !important; }',
+  });
+  mkdirSync(ARTIFACT_DIR, { recursive: true });
+  await installHeldPrint(page);
+  let released = false;
+  try {
+    await submitPrintDialog(page);
+    await expectPrintCalls(page, 1);
+    const snapshot = await readHeldPrintSnapshot(page);
+    expect(snapshot.pages).toBe(4);
+    const pdfPath = join(ARTIFACT_DIR, 'print-host-clipped-4p.pdf');
+    await page.pdf({ path: pdfPath, printBackground: true, preferCSSPageSize: true });
+    const pdfPages = readPdfInfo(pdfPath).pages;
+    writeFileSync(
+      join(ARTIFACT_DIR, 'print-host-clipped-4p-report.json'),
+      JSON.stringify({ domPages: snapshot.pages, pdfPages }, null, 2),
+    );
+    expect(pdfPages).toBe(4);
+    expect(readPdfImageCounts(pdfPath)).toEqual([1, 1, 1, 1]);
+    await releaseHeldPrint(page);
+    released = true;
+    await expectNoPageErrors(page, issues);
+  } finally {
+    if (!released) {
+      await releaseHeldPrint(page).catch(() => undefined);
+    }
+  }
+});
+
 for (const pdfCase of [
   { name: 'showcase-10p', fixture: SHOWCASE_FIXTURE, pageCount: 10 },
   { name: 'multi-4p', fixture: FIXTURES.multi, pageCount: 4 },
