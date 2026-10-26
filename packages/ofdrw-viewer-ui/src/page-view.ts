@@ -119,6 +119,10 @@ export class PageView {
   private stateValue: PageRenderState = 'empty';
   private generationValue = 0;
   private renderedKeyValue: string | null = null;
+  /** 当前 canvas 实际使用的渲染倍率；0 表示尚未渲染。 */
+  private renderedScaleValue = 0;
+  /** 本次渲染请求的倍率；由 completeRender 在提交成功后写入。 */
+  private pendingRenderScale = 0;
   private currentRotation: Rotation = 0;
   private currentScale = 1;
   private destroyed = false;
@@ -242,9 +246,9 @@ export class PageView {
     return this.renderedKeyValue;
   }
 
-  /** 当前 canvas 对应的渲染缩放倍率（非 1:1 的 CSS 缩放）；未渲染为 0。 */
+  /** 当前 canvas 实际使用的渲染倍率；未渲染为 0。 */
   get renderedScale(): number {
-    return this.renderedKeyValue === null ? 0 : this.currentScale;
+    return this.renderedScaleValue;
   }
 
   /** 当前 canvas；未创建为 null。 */
@@ -412,14 +416,16 @@ export class PageView {
    * 默认按代次号启动 150ms 计时作为兜底；`eventDrivenLoading` 为 true 时由
    * 引擎 `page:render:start` 以 `operationId` 启动。
    *
-   * @param renderKey 渲染参数键（scale/rotation/dpr）。
+   * @param renderKey 渲染参数键（渲染倍率/rotation/dpr）。
+   * @param renderScale 本次实际渲染倍率；省略时取当前布局倍率。
    * @returns 本次渲染代次号。
    */
-  beginRender(renderKey: string): number {
+  beginRender(renderKey: string, renderScale = this.currentScale): number {
     // 上一代未提交的离屏画布直接丢弃；旧显示 canvas 保持可见。
     this.discardPendingCanvas();
     this.generationValue += 1;
     this.renderedKeyValue = null;
+    this.pendingRenderScale = renderScale;
     this.stateValue = 'queued';
     this.element.dataset.pageState = 'queued';
     this.errorLayer.hidden = true;
@@ -538,11 +544,12 @@ export class PageView {
     if (this.pendingCanvasElement) this.commitPendingCanvas(renderKey);
     this.stateValue = 'rendered';
     this.renderedKeyValue = renderKey;
+    this.renderedScaleValue = this.pendingRenderScale;
     this.painted = true;
     this.finishLoading(String(generation));
     this.errorLayer.hidden = true;
     this.element.dataset.pageState = 'rendered';
-    this.element.dataset.renderedScale = String(this.currentScale);
+    this.element.dataset.renderedScale = String(this.renderedScaleValue);
     this.element.dataset.rotation = String(this.currentRotation);
     this.canvasWrapper.hidden = this.canvasElement === null;
     if (this.canvasElement) {
@@ -597,6 +604,7 @@ export class PageView {
     this.cancelLoading();
     this.errorLayer.hidden = true;
     this.painted = false;
+    this.renderedScaleValue = 0;
     const canvas = this.canvasElement;
     if (!canvas) {
       this.stateValue = 'empty';

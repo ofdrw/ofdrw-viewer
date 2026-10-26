@@ -99,6 +99,7 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 - 移动端默认值在**构造时**按 `matchMedia('(max-width: 767px)')` 判断：页缓存 4、渲染并发 1；桌面为 10/2。断点变化不会自动改这些值。
 - `locale` 会设置根节点 `lang` 并写入 `state.ui.locale`；翻译器会把 `zh`/`en` 等别名归一，未注册语言回落到 `zh-CN`，但 `state.ui.locale` 保留传入值。
 - `maxCanvasPixels` 超限时通常静默降低该页渲染 DPI；只有连续降档仍失败时才产生 `W_CANVAS_LIMIT` warning，不能用它判断每一次降档。
+- 主画布分辨率有下限：不低于页面 100% CSS 尺寸的 `min(devicePixelRatio, 2)` 倍。缩放低于对应倍率（`min(1, 2 / dpr)`）时不再重绘 canvas、也不改变 canvas 尺寸，只由 CSS 缩小显示；因此缩小/放大到下限以下不会触发重绘或页面 loading。下限只由 DPR 决定，窗口尺寸变化不影响它。
 - `thumbnailCacheSize` 当前只被解析，未接入缩略图缓存实现，实际缓存数量固定；不要依赖该选项控制缩略图内存。
 - `updateHash` 默认关闭，避免嵌入场景污染宿主地址。启用后 hash 形如 `#page=3&zoom=page-width&rotation=90&sidebar=outline`，未知参数会保留；监听 `hashchange`/`popstate` 恢复视图，非法字段忽略。查询串 `?file=`/`?base64=` 与 hash 互不覆盖。
 

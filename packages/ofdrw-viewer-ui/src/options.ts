@@ -55,13 +55,24 @@ export const DEFAULT_ROTATION: Rotation = 0;
 /**
  * 最小缩放倍率（25%）。
  *
- * 主画布按缩放倍率换算渲染 DPI，低于此倍率继续缩小会以更低的 DPI 重绘，
- * 显示质量随之下降；因此缩放到底后不再继续缩小。缩略图使用独立尺寸，不受此限制。
+ * 低于主画布最低渲染倍率（见 {@link MAX_CANVAS_BASE_DPR}）时画布不再降低分辨率，
+ * 只由 CSS 缩小；缩放到底后不再继续缩小。缩略图使用独立尺寸，不受此限制。
  */
 export const MIN_SCALE = 0.25;
 
 /** 最大缩放倍率（2500%）。 */
 export const MAX_SCALE = 25;
+
+/**
+ * 主画布基准渲染密度上限（2×）。
+ *
+ * 画布后备尺寸不低于页面 100% CSS 尺寸的 `min(devicePixelRatio, 2)` 倍；等价于
+ * 最低渲染倍率为 `min(1, 2 / dpr)`。缩放倍率低于该值时不再重绘画布、也不改变
+ * canvas 尺寸，只由 CSS 缩小显示，避免小图按低分辨率重绘后出现色块。
+ *
+ * 上限取 2 是为了在 3×/4× 高 DPR 移动设备上限制内存；与缩略图渲染的 DPR 上限一致。
+ */
+export const MAX_CANVAS_BASE_DPR = 2;
 
 /** 预置缩放档位；UI 的 +/- 与下拉菜单共用，最低档与 {@link MIN_SCALE} 一致。 */
 export const ZOOM_LEVELS: readonly number[] = Object.freeze([

@@ -80,6 +80,17 @@ function makeDocument(count: number, exportAllowed = true): unknown {
 }
 
 /**
+ * 测试替身返回的 A4 canvas 宽度，单位设备像素。
+ *
+ * @param renderScale 实际渲染倍率。
+ * @param dpr 设备像素比。
+ * @returns 向上取整的 canvas 宽度。
+ */
+function a4CanvasWidth(renderScale: number, dpr = 1): number {
+  return Math.ceil((210 / 25.4) * 96 * renderScale * dpr);
+}
+
+/**
  * 读取页视图的排版顶部偏移，单位 px。
  *
  * @param viewer 阅读器实例。
@@ -609,6 +620,71 @@ describe('OFDViewer 核心', () => {
     expect(viewer.getPageViews()).toHaveLength(100);
     viewer.destroy();
     expect(viewer.getRoot().isConnected).toBe(false);
+  });
+
+  it('缩小到最低渲染倍率以下只做 CSS 缩放，不重绘 canvas', async () => {
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+      initialScale: 1,
+    });
+    await viewer.ready;
+    const page = viewer.getPageView(1)!;
+    await vi.waitFor(() => expect(page.state).toBe('rendered'));
+    const canvas = page.canvas!;
+    expect(canvas.width).toBe(a4CanvasWidth(1));
+    const clearCalls = contextMock.clearRect.mock.calls.length;
+    const surfaceWidth = Number.parseFloat(page.surface.style.width);
+    expect(surfaceWidth).toBeCloseTo((210 / 25.4) * 96, 3);
+
+    // 0.5 / 0.25 低于基准倍率：页盒 CSS 尺寸继续缩小，画布保持 100% 分辨率。
+    viewer.setScale(0.5);
+    await vi.waitFor(() => expect(viewer.getScale()).toBe(0.5));
+    expect(page.canvas).toBe(canvas);
+    expect(canvas.width).toBe(a4CanvasWidth(1));
+    expect(contextMock.clearRect.mock.calls.length).toBe(clearCalls);
+    expect(Number.parseFloat(page.surface.style.width)).toBeCloseTo(surfaceWidth * 0.5, 3);
+
+    viewer.setScale(0.25);
+    await vi.waitFor(() => expect(viewer.getScale()).toBe(0.25));
+    expect(page.canvas).toBe(canvas);
+    expect(canvas.width).toBe(a4CanvasWidth(1));
+    expect(contextMock.clearRect.mock.calls.length).toBe(clearCalls);
+
+    // 放大回基准倍率以上时恢复按实际倍率重绘。
+    viewer.setScale(1.5);
+    await vi.waitFor(() => expect(page.canvas?.width).toBe(a4CanvasWidth(1.5)));
+    expect(page.renderedScale).toBeCloseTo(1.5, 5);
+
+    viewer.destroy();
+  });
+
+  it('最低渲染倍率按 devicePixelRatio 推导并以 2 倍封顶', async () => {
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 3 });
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+      initialScale: 1,
+    });
+    await viewer.ready;
+    const page = viewer.getPageView(1)!;
+    await vi.waitFor(() => expect(page.state).toBe('rendered'));
+    expect(page.canvas!.width).toBe(a4CanvasWidth(1, 3));
+
+    // DPR=3 时下限为 2/3：低于该倍率后画布固定为 2 倍 CSS 尺寸。
+    viewer.setScale(0.5);
+    await vi.waitFor(() => expect(page.canvas?.width).toBe(a4CanvasWidth(2 / 3, 3)));
+    expect(page.renderedScale).toBeCloseTo(2 / 3, 5);
+    const floorCanvas = page.canvas!;
+
+    viewer.setScale(0.25);
+    await vi.waitFor(() => expect(viewer.getScale()).toBe(0.25));
+    expect(page.canvas).toBe(floorCanvas);
+    expect(floorCanvas.width).toBe(a4CanvasWidth(2 / 3, 3));
+
+    viewer.destroy();
   });
 
   it('主区域 scroll 事件驱动连续滚动状态、事件与后续页渲染', async () => {

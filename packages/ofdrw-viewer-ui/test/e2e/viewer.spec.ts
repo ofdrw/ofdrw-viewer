@@ -111,6 +111,55 @@ test('跳页、缩放、旋转、查找与选择复制', async ({ page, issues, 
   await expectNoPageErrors(page, issues);
 });
 
+test('缩小到最低渲染倍率以下只做 CSS 缩放，不重绘 canvas', async ({ page, issues }) => {
+  await openViewer(page, FIXTURES.text, { scale: 1 });
+  const canvas = page.locator('.ofd-page[data-page-number="1"] canvas');
+  await expect(canvas).toHaveCount(1);
+  await expect
+    .poll(() => canvas.evaluate((element) => element.getBoundingClientRect().width))
+    .toBeGreaterThan(0);
+  const base = await canvas.evaluate((element) => ({
+    width: (element as HTMLCanvasElement).width,
+    cssWidth: element.getBoundingClientRect().width,
+    renderKey: (element as HTMLCanvasElement).dataset.renderKey,
+  }));
+  // 给当前 canvas 打标记：一旦触发重绘，元素会被离屏画布替换，标记随之消失。
+  await canvas.evaluate((element) => {
+    (element as HTMLCanvasElement & { __e2eFloor?: boolean }).__e2eFloor = true;
+  });
+
+  await page.evaluate(() => window.__viewer!.setScale(0.5));
+  await expect.poll(async () => (await viewState(page)).scale).toBe(0.5);
+  const half = await canvas.evaluate((element) => ({
+    width: (element as HTMLCanvasElement).width,
+    cssWidth: element.getBoundingClientRect().width,
+    renderKey: (element as HTMLCanvasElement).dataset.renderKey,
+    marked: (element as HTMLCanvasElement & { __e2eFloor?: boolean }).__e2eFloor === true,
+  }));
+  expect(half.width).toBe(base.width);
+  expect(half.renderKey).toBe(base.renderKey);
+  expect(half.marked).toBe(true);
+  expect(half.cssWidth).toBeCloseTo(base.cssWidth / 2, 1);
+
+  await page.evaluate(() => window.__viewer!.setScale(0.25));
+  await expect.poll(async () => (await viewState(page)).scale).toBe(0.25);
+  const quarter = await canvas.evaluate((element) => ({
+    width: (element as HTMLCanvasElement).width,
+    cssWidth: element.getBoundingClientRect().width,
+    marked: (element as HTMLCanvasElement & { __e2eFloor?: boolean }).__e2eFloor === true,
+  }));
+  expect(quarter.width).toBe(base.width);
+  expect(quarter.marked).toBe(true);
+  expect(quarter.cssWidth).toBeCloseTo(base.cssWidth / 4, 1);
+
+  // 放大回下限以上仍按实际倍率重绘。
+  await page.evaluate(() => window.__viewer!.setScale(2));
+  await expect
+    .poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).width))
+    .toBeGreaterThan(base.width);
+  await expectNoPageErrors(page, issues);
+});
+
 test('移动 390×844 打开本地 OFD 并保持抽屉布局', async ({ page, issues }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openViewer(page, FIXTURES.multi);

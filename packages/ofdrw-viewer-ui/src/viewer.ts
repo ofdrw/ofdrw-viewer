@@ -61,6 +61,7 @@ import { KeyboardController } from './keyboard';
 import {
   DEFAULT_MOBILE_RENDER_CONCURRENCY,
   DEFAULT_RENDER_CONCURRENCY,
+  MAX_CANVAS_BASE_DPR,
   MAX_SCALE,
   MIN_SCALE,
   resolveViewerOptions,
@@ -2601,6 +2602,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       return;
     }
     const previous = this.state.view.scale;
+    const previousRenderScale = this.effectiveRenderScale();
     const pointerOffset = origin ? this.pointerOffsetY(origin.clientY) : 0;
     const anchor = origin
       ? this.layout.getAnchor(this.mainScrollTop + pointerOffset)
@@ -2614,10 +2616,26 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       this.reflow(anchor);
     }
     this.emit('scalechanging', { scale: nextScale, zoomMode, previous });
-    this.cancelAllPageTasks();
-    this.renderVisible(true);
+    this.renderAfterScaleChange(previousRenderScale);
     this.commit();
     this.syncHash();
+  }
+
+  /**
+   * 缩放提交后按有效渲染倍率决定重绘范围。
+   *
+   * 有效渲染倍率不变（缩放仍低于最低渲染倍率）时只更新页盒 CSS 尺寸，不取消
+   * 任务、不重绘，避免小图反复重绘导致闪烁和 loading。
+   *
+   * @param previousRenderScale 缩放前的有效渲染倍率。
+   */
+  private renderAfterScaleChange(previousRenderScale: number): void {
+    if (Math.abs(this.effectiveRenderScale() - previousRenderScale) > 0.0001) {
+      this.cancelAllPageTasks();
+      this.renderVisible(true);
+      return;
+    }
+    this.renderVisible();
   }
 
   /**
@@ -2762,13 +2780,14 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private renderPage(index: number, force: boolean, priority = 0): void {
     const pageView = this.pageViews[index];
     if (!pageView || pageView.isDestroyed) return;
-    const key = this.renderKey();
+    const renderScale = this.effectiveRenderScale();
+    const key = this.renderKey(renderScale);
     if (!force && pageView.renderedKey === key) return;
     // 屏幕外预渲染页不跟随缩小降低渲染 DPI：直接复用已画好的 canvas，
     // 避免一次缩小触发所有缓存页以低质量重绘。
     const offscreen = index < this.lastVisibleRange.start || index > this.lastVisibleRange.end;
-    if (!force && offscreen && pageView.renderedScale > this.state.view.scale) return;
-    const generation = pageView.beginRender(key);
+    if (!force && offscreen && pageView.renderedScale > renderScale) return;
+    const generation = pageView.beginRender(key, renderScale);
     this.queue.enqueue({
       key: `page:${index}`,
       pageIndex: index,
@@ -2777,7 +2796,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       run: async (signal) => {
         const page = await this.controller.getPage(index);
         if (signal.aborted) throw createAbortError();
-        const size = this.computeCanvasSize(page);
+        const size = this.computeCanvasSize(page, renderScale);
         const context = pageView.prepareCanvas(size.width, size.height, generation);
         if (!context) throw new OFDViewerError('OFD_UNSUPPORTED', '当前环境不支持 Canvas 2D');
         pageView.markRendering(generation);
@@ -2823,11 +2842,44 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     });
   }
 
-  /** 计算 canvas 设备像素与受上限约束的 DPI。 */
-  private computeCanvasSize(page: EnginePage): { width: number; height: number; dpi: number } {
-    const dpr = typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1;
-    const baseDpi = 96 * this.state.view.scale * dpr;
-    let dpi = baseDpi;
+  /**
+   * 当前设备像素比。
+   *
+   * 非浏览器环境或非法值回退 1。
+   */
+  private devicePixelRatio(): number {
+    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio : 1;
+    return Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+  }
+
+  /**
+   * 最低渲染倍率。
+   *
+   * 画布后备尺寸不低于页面 100% CSS 尺寸的 `min(dpr, 2)` 倍，即低于该倍率时
+   * 不再按显示倍率重绘，只由 CSS 缩小画布。下限只由 DPR 决定，窗口尺寸变化
+   * 不会改变它。
+   */
+  private minRenderScale(): number {
+    return Math.min(1, MAX_CANVAS_BASE_DPR / this.devicePixelRatio());
+  }
+
+  /** 当前有效渲染倍率：显示倍率与最低渲染倍率取大。 */
+  private effectiveRenderScale(): number {
+    return Math.max(this.state.view.scale, this.minRenderScale());
+  }
+
+  /**
+   * 计算 canvas 设备像素与受上限约束的 DPI。
+   *
+   * @param page 引擎页。
+   * @param renderScale 有效渲染倍率。
+   */
+  private computeCanvasSize(
+    page: EnginePage,
+    renderScale: number,
+  ): { width: number; height: number; dpi: number } {
+    const dpr = this.devicePixelRatio();
+    let dpi = 96 * renderScale * dpr;
     const maxPixels = Math.max(1, this.options.maxCanvasPixels);
     const maxSide = 32767;
     for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -2857,10 +2909,13 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     };
   }
 
-  /** 当前渲染参数键。 */
-  private renderKey(): string {
-    const dpr = typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1;
-    return `${this.state.view.scale.toFixed(4)}:${this.state.view.rotation}:${dpr}`;
+  /**
+   * 当前渲染参数键。
+   *
+   * @param renderScale 有效渲染倍率；省略时按当前状态计算。
+   */
+  private renderKey(renderScale = this.effectiveRenderScale()): string {
+    return `${renderScale.toFixed(4)}:${this.state.view.rotation}:${this.devicePixelRatio()}`;
   }
 
   /** 记录已渲染页并裁剪 LRU。 */
@@ -3287,6 +3342,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     for (const pageView of this.pageViews) pageView.setPreviewScale(1);
     if (target === null) return;
     const previous = this.state.view.scale;
+    const previousRenderScale = this.effectiveRenderScale();
     // 预览阶段已把指针下的内容锚定在原位；提交时须按“指针下的页面内容”恢复滚动位置，
     // 否则 applyScale 的默认页顶锚点会把内容整体推移。
     const pointer = this.previewPointer;
@@ -3310,8 +3366,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       zoomMode: this.state.view.zoomMode,
       previous,
     });
-    this.cancelAllPageTasks();
-    this.renderVisible(true);
+    this.renderAfterScaleChange(previousRenderScale);
     this.commit();
     this.syncHash();
   }
