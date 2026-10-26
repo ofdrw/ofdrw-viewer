@@ -157,6 +157,38 @@ test('缩小到最低渲染倍率以下只做 CSS 缩放，不重绘 canvas', as
   await expect
     .poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).width))
     .toBeGreaterThan(base.width);
+
+  // Ctrl+滚轮放大经预览提交后同样重绘画布；不能只把旧 canvas 用 CSS 拉大。
+  await page.evaluate(() => window.__viewer!.setScale(1));
+  await expect
+    .poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).width))
+    .toBe(base.width);
+  const wheelBase = await canvas.evaluate((element) => ({
+    width: (element as HTMLCanvasElement).width,
+    renderKey: (element as HTMLCanvasElement).dataset.renderKey,
+  }));
+  await page.evaluate(() => {
+    const main = document.querySelector<HTMLElement>('.ofd-viewer__main')!;
+    for (let index = 0; index < 3; index += 1) {
+      main.dispatchEvent(
+        new WheelEvent('wheel', {
+          deltaY: -100,
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+          clientX: 720,
+          clientY: 450,
+        }),
+      );
+    }
+  });
+  await expect.poll(async () => (await viewState(page)).scale).toBeGreaterThan(1);
+  await expect
+    .poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).width))
+    .toBeGreaterThan(wheelBase.width);
+  expect(await canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.renderKey)).not.toBe(
+    wheelBase.renderKey,
+  );
   await expectNoPageErrors(page, issues);
 });
 
