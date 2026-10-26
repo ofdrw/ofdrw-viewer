@@ -43,6 +43,14 @@
   --ofd-status-unknown: #8a5300;
   --ofd-status-unsupported: #5b3f9e;
   --ofd-status-neutral: #4b5563;
+  /* 状态图标的浅色底：与同色状态前景保持足够对比。 */
+  --ofd-status-valid-soft: rgba(6, 118, 71, 0.12);
+  --ofd-status-invalid-soft: rgba(179, 38, 30, 0.12);
+  --ofd-status-unknown-soft: rgba(138, 83, 0, 0.12);
+  --ofd-status-unsupported-soft: rgba(91, 63, 158, 0.12);
+  --ofd-status-neutral-soft: rgba(75, 85, 99, 0.12);
+  /* 卡片 hover 的轻微投影。 */
+  --ofd-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   --ofd-text-muted: var(--ofd-text-secondary);
   --ofd-surface: var(--ofd-toolbar-bg);
   --ofd-seal-bg: #ffffff;
@@ -146,6 +154,13 @@
   --ofd-status-unknown: #ffc46b;
   --ofd-status-unsupported: #c9b6ff;
   --ofd-status-neutral: #c3c7cf;
+  /* 暗色下浅底改为半透明白，保持状态色前景清晰。 */
+  --ofd-status-valid-soft: rgba(255, 255, 255, 0.1);
+  --ofd-status-invalid-soft: rgba(255, 255, 255, 0.1);
+  --ofd-status-unknown-soft: rgba(255, 255, 255, 0.1);
+  --ofd-status-unsupported-soft: rgba(255, 255, 255, 0.1);
+  --ofd-status-neutral-soft: rgba(255, 255, 255, 0.1);
+  --ofd-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
   --ofd-text-muted: var(--ofd-text-secondary);
   --ofd-surface: var(--ofd-toolbar-bg);
   --ofd-seal-bg: #ffffff;
@@ -596,6 +611,55 @@
 .ofd-signature-badge[data-status='not-verified'] {
   color: var(--ofd-text-secondary);
   border-color: var(--ofd-border);
+}
+
+/* 签章列表验证状态：只用图标 + 颜色表达，具体含义由 title/aria-label 给出。 */
+.ofd-signature-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  cursor: help;
+}
+
+.ofd-signature-status .ofd-icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.4;
+}
+
+.ofd-signature-status[data-status='valid'] {
+  color: var(--ofd-success);
+  background: var(--ofd-status-valid-soft);
+}
+
+.ofd-signature-status[data-status='invalid'] {
+  color: var(--ofd-danger);
+  background: var(--ofd-status-invalid-soft);
+}
+
+.ofd-signature-status[data-status='unknown'] {
+  color: var(--ofd-status-unknown);
+  background: var(--ofd-status-unknown-soft);
+}
+
+.ofd-signature-status[data-status='unsupported'] {
+  color: var(--ofd-status-unsupported);
+  background: var(--ofd-status-unsupported-soft);
+}
+
+.ofd-signature-status[data-status='not-applicable'] {
+  color: var(--ofd-status-neutral);
+  background: var(--ofd-status-neutral-soft);
+}
+
+/* 未验证：中性灰 + 时钟，与“验证未知”明确区分。 */
+.ofd-signature-status[data-status='not-verified'] {
+  color: var(--ofd-text-secondary);
+  background: var(--ofd-hover-bg);
 }
 
 /* 签章者可信 tag：文字 + 颜色双重编码，不出现“证书链通过”措辞。 */
@@ -2178,14 +2242,49 @@
   font-weight: 600;
 }
 
-/* 附件侧栏（设计方案 §6.2）。 */
+/* 附件侧栏（设计方案 §6.2）：卡片式，与签章列表保持同一视觉语言。 */
 .ofd-attachments__toolbar {
   display: flex;
   margin-bottom: 8px;
 }
 
+/* “导出全部”：带边框与 hover 反馈的整行按钮。 */
 .ofd-attachments__export {
+  justify-content: center;
   width: 100%;
+  min-height: 32px;
+  color: var(--ofd-text);
+  background: var(--ofd-surface);
+  border: 1px solid var(--ofd-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.ofd-attachments__export:hover:not(:disabled) {
+  color: var(--ofd-accent);
+  background: var(--ofd-hover-bg);
+  border-color: var(--ofd-accent);
+  box-shadow: var(--ofd-card-shadow);
+}
+
+/* chrome67: focus fallback（67 无 :focus-visible，改用 :focus 提供焦点环） */
+.ofd-attachments__export:focus {
+  outline: 2px solid var(--ofd-accent);
+  outline-offset: 2px;
+}
+
+.ofd-attachments__export:focus-visible {
+  outline: 2px solid var(--ofd-accent);
+  outline-offset: 2px;
+}
+
+.ofd-attachments__export:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .ofd-attachments__status {
@@ -2200,32 +2299,130 @@
 }
 
 .ofd-attachments {
+  display: grid;
+  gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+/* 附件卡片：左侧文件类型图标、中间名称与元信息、右侧图标下载按钮。 */
 .ofd-attachment {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  padding: 6px 4px;
-  border-bottom: 1px solid var(--ofd-border);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--ofd-surface);
+  border: 1px solid var(--ofd-border);
+  border-radius: 10px;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease;
+}
+
+.ofd-attachment:hover {
+  background: var(--ofd-hover-bg);
+  border-color: var(--ofd-accent);
+}
+
+.ofd-attachment__icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  color: var(--ofd-text-secondary);
+  background: var(--ofd-hover-bg);
+  border-radius: 8px;
+}
+
+.ofd-attachment__icon .ofd-icon {
+  width: 20px;
+  height: 20px;
+}
+
+/* 常见格式用可区分的主题色；具体格式仍由图标形状与名称区分。 */
+.ofd-attachment__icon[data-kind='pdf'] {
+  color: var(--ofd-danger, #b42318);
+}
+
+.ofd-attachment__icon[data-kind='doc'] {
+  color: var(--ofd-accent);
+}
+
+.ofd-attachment__icon[data-kind='sheet'] {
+  color: var(--ofd-success, #067647);
+}
+
+.ofd-attachment__icon[data-kind='image'] {
+  color: var(--ofd-warning, #a15c00);
+}
+
+.ofd-attachment__icon[data-kind='archive'] {
+  color: var(--ofd-status-unknown);
+}
+
+.ofd-attachment__body {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+  min-width: 0;
 }
 
 .ofd-attachment__name {
+  display: block;
+  overflow: hidden;
   color: var(--ofd-text);
-  word-break: break-all;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+/* 侧栏较窄：类型/大小与日期分两行，避免截断成省略号。 */
 .ofd-attachment__meta {
-  margin: 2px 0 4px;
+  display: flex;
+  flex-direction: column;
   color: var(--ofd-text-secondary);
   font-size: 12px;
+  line-height: 1.35;
 }
 
+/* chrome67: flex gap 不生效，改由日期行自带外边距。 */
+.ofd-attachment__meta-date {
+  margin-top: 2px;
+}
+
+.ofd-attachment__meta-size,
+.ofd-attachment__meta-date {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 下载按钮：纯图标按钮，名称与动作由 aria-label/title 提供，hover 只换配色。 */
 .ofd-attachment__download {
-  align-self: flex-start;
+  flex: 0 0 auto;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0 6px;
+  color: var(--ofd-text-secondary);
+  background: transparent;
+  border: 1px solid var(--ofd-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.ofd-attachment__download:hover:not(:disabled),
+.ofd-attachment__download:focus-visible:not(:disabled) {
+  color: var(--ofd-accent);
+  background: var(--ofd-surface);
+  border-color: var(--ofd-accent);
 }
 
 /* 超过大附件阈值的条目：只提示改为下载整个 OFD。 */
@@ -2818,8 +3015,42 @@
   word-break: break-word;
 }
 
-.ofd-signature-popover__full {
-  width: 100%;
+/* 浮层底部操作区：查看签章详情 / 查看完整验证结果。 */
+.ofd-signature-popover__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ofd-signature-popover__full,
+.ofd-signature-popover__panel {
+  flex: 1 1 120px;
+}
+
+/* 签章详情中的“验证结果”：卡片化呈现，与验证面板的层级一致。 */
+.ofd-signature-verification {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--ofd-border);
+  border-radius: 8px;
+  background: var(--ofd-surface);
+}
+
+.ofd-signature-verification > h3 {
+  margin-bottom: 8px;
+}
+
+/* 与验证面板一致，问题列表保持醒目。 */
+.ofd-signature-verification__issues {
+  margin-top: 8px;
+  color: var(--ofd-danger);
+  font-size: 12px;
+}
+
+.ofd-signature-verification__issues-title {
+  margin: 0 0 4px;
+  font-weight: 600;
 }
 
 /* ========================================================================= */

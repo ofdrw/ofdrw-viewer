@@ -1,7 +1,8 @@
 /**
  * 附件侧栏视图（设计方案 §6.2）。
  *
- * 列表展示附件元信息，提供单个下载与批量 ZIP 导出。安全约束：
+ * 卡片式列表展示附件元信息（文件类型图标 + 名称 + 元信息 + 图标下载按钮），
+ * 提供单个下载与批量 ZIP 导出。安全约束：
  * - 附件内容一律不进入 DOM，不使用 innerHTML/srcdoc；
  * - 未知格式只提供下载，不提供预览；
  * - 单附件声明大小超过阈值时不读取内容，改为提示下载整个 OFD 原文件；
@@ -13,6 +14,7 @@ import { replaceChildren } from '../compat';
 import type { AttachmentInfo } from '@ofdrw/ofdrw-viewer-engine';
 import {
   ATTACHMENT_LARGE_THRESHOLD_BYTES,
+  attachmentIconKind,
   buildAttachmentFilename,
   concatChunks,
   formatAttachmentDate,
@@ -21,6 +23,9 @@ import {
   triggerAttachmentDownload,
   uniqueAttachmentEntryName,
 } from '../attachment-utils';
+import type { AttachmentIconKind } from '../attachment-utils';
+import { createGlyph, setButtonGlyph } from '../ui/glyphs';
+import type { GlyphName } from '../ui/glyphs';
 import { createStoreZip } from '../export/zip';
 import type { ZipEntry } from '../export/zip';
 import type { ViewerFeature } from '../features';
@@ -97,6 +102,17 @@ function documentNameFromOrigin(origin: ViewerOrigin | undefined): string {
   const cleaned = stem.replace(/[\\/:*?"<>|]/g, '_').trim();
   return cleaned || 'document';
 }
+
+/** 图标类别到文件图标名称。 */
+const ICON_BY_KIND: Readonly<Record<AttachmentIconKind, GlyphName>> = Object.freeze({
+  pdf: 'file-pdf',
+  doc: 'file-doc',
+  sheet: 'file-sheet',
+  image: 'file-image',
+  text: 'file-text',
+  archive: 'file-archive',
+  other: 'file',
+});
 
 /**
  * 附件侧栏视图。
@@ -371,8 +387,10 @@ export class AttachmentView {
   /** 更新常驻文案与忙碌态。 */
   private updateLabels(): void {
     const translator = this.getTranslator();
-    this.exportButton.textContent = translator.t('attachments.exportAll');
-    this.exportButton.setAttribute('aria-label', translator.t('attachments.exportAll'));
+    const exportLabel = translator.t('attachments.exportAll');
+    setButtonGlyph(this.exportButton, 'export', exportLabel, this.host.ownerDocument);
+    this.exportButton.setAttribute('aria-label', exportLabel);
+    this.exportButton.title = exportLabel;
     this.root.setAttribute('aria-label', translator.t('attachments.title'));
     this.exportButton.disabled = this.busy;
   }
@@ -403,39 +421,75 @@ export class AttachmentView {
       // 无名称的条目无法展示也无法命名下载文件，直接跳过。
       if (!attachment.name) continue;
       rendered += 1;
-      const item = doc.createElement('li');
-      item.className = 'ofd-attachment';
-      item.dataset.attachmentId = attachment.id;
-
-      const name = doc.createElement('span');
-      name.className = 'ofd-attachment__name';
-      name.textContent = attachment.name;
-
-      const meta = doc.createElement('span');
-      meta.className = 'ofd-attachment__meta';
-      meta.textContent = [
-        attachment.format ?? translator.t('attachments.missing'),
-        formatAttachmentSize(translator, attachment.size),
-        formatAttachmentDate(attachment, translator),
-      ].join(' · ');
-
-      const button = doc.createElement('button');
-      button.type = 'button';
-      button.className = 'ofd-button ofd-attachment__download';
-      button.textContent = translator.t('attachments.download');
-      button.setAttribute(
-        'aria-label',
-        translator.t('attachments.downloadNamed', { name: attachment.name }),
-      );
-      if (isLargeAttachment(attachment)) button.dataset.large = 'true';
-      button.addEventListener('click', () => void this.download(attachment));
-
-      item.append(name, meta, button);
-      this.root.append(item);
+      this.root.append(this.createAttachmentCard(attachment));
     }
     if (rendered === 0) {
       this.root.append(createEmptyState(doc, translator.t('attachments.empty')));
     }
+  }
+
+  /**
+   * 创建单个附件卡片：文件图标 + 名称 + 元信息 + 图标下载按钮。
+   *
+   * @param attachment 附件元信息。
+   * @returns 卡片元素。
+   */
+  private createAttachmentCard(attachment: AttachmentInfo): HTMLLIElement {
+    const doc = this.host.ownerDocument;
+    const translator = this.getTranslator();
+    // 无名称的条目已被过滤；`name` 在此为非空字符串。
+    const name = attachment.name as string;
+    const kind = attachmentIconKind(attachment);
+    const large = isLargeAttachment(attachment);
+
+    const item = doc.createElement('li');
+    item.className = 'ofd-attachment';
+    item.dataset.attachmentId = attachment.id;
+    item.dataset.kind = kind;
+
+    const icon = doc.createElement('span');
+    icon.className = 'ofd-attachment__icon';
+    icon.dataset.kind = kind;
+    icon.setAttribute('aria-hidden', 'true');
+    icon.appendChild(createGlyph(ICON_BY_KIND[kind], doc));
+
+    const body = doc.createElement('div');
+    body.className = 'ofd-attachment__body';
+    const nameElement = doc.createElement('span');
+    nameElement.className = 'ofd-attachment__name';
+    nameElement.textContent = name;
+    nameElement.title = name;
+    const meta = doc.createElement('span');
+    meta.className = 'ofd-attachment__meta';
+    // 侧栏较窄：类型/大小与日期分两行，缺失值显示 -，完整信息由 title 提供。
+    const sizeText = [
+      attachment.format ?? translator.t('attachments.missing'),
+      formatAttachmentSize(translator, attachment.size),
+    ].join(' · ');
+    const dateText = formatAttachmentDate(attachment, translator);
+    const sizeLine = doc.createElement('span');
+    sizeLine.className = 'ofd-attachment__meta-size';
+    sizeLine.textContent = sizeText;
+    const dateLine = doc.createElement('span');
+    dateLine.className = 'ofd-attachment__meta-date';
+    dateLine.textContent = dateText;
+    meta.append(sizeLine, dateLine);
+    meta.title = `${sizeText} · ${dateText}`;
+    body.append(nameElement, meta);
+
+    // 图标按钮：只保留图标，名称/动作由 aria-label 与 title 提供，避免挤压卡片正文。
+    const button = doc.createElement('button');
+    button.type = 'button';
+    button.className = 'ofd-button ofd-attachment__download';
+    setButtonGlyph(button, 'download', undefined, doc);
+    const label = translator.t('attachments.downloadNamed', { name });
+    button.setAttribute('aria-label', label);
+    button.title = label;
+    if (large) button.dataset.large = 'true';
+    button.addEventListener('click', () => void this.download(attachment));
+
+    item.append(icon, body, button);
+    return item;
   }
 
   /** 组装失败文案。 */

@@ -30,6 +30,8 @@ export interface SignaturePopoverOptions {
   readonly sealLabel?: string;
   /** 打开签章详情（与侧栏点击一致）。 */
   readonly onOpenDetails: () => void;
+  /** 打开工具栏验证面板（文档级验证结果）；省略时不渲染该入口。 */
+  readonly onOpenPanel?: () => void;
 }
 
 /** 浮层实例。 */
@@ -117,6 +119,19 @@ export function openSignaturePopover(
   full.dataset.ofdControl = 'signature-popover-details';
   full.textContent = text.viewDetails;
 
+  // 印章点击浮层与侧栏列表点击打开同一份详情；详情本身已合并验证结果，
+  // 这里额外保留“完整验证结果”入口，方便直接查看文档级验证面板。
+  const actions = doc.createElement('div');
+  actions.className = 'ofd-signature-popover__actions';
+  let panelButton: HTMLButtonElement | null = null;
+  if (options.onOpenPanel) {
+    panelButton = doc.createElement('button');
+    panelButton.type = 'button';
+    panelButton.className = 'ofd-button ofd-signature-popover__panel';
+    panelButton.dataset.ofdControl = 'signature-popover-panel';
+    panelButton.textContent = text.panelTitle;
+  }
+
   let sealBox: HTMLElement | null = null;
   const sealImageHandle: SealImageHandle | null = options.sealImage
     ? createSealImageElement(doc, options.sealImage, {
@@ -132,10 +147,12 @@ export function openSignaturePopover(
     sealBox.className = 'ofd-signature-popover__seal';
     sealBox.dataset.ofdControl = 'signature-popover-seal-image';
     sealBox.appendChild(sealImageHandle.element);
-    popover.append(header, sealBox, body, full);
+    popover.append(header, sealBox, body, actions);
   } else {
-    popover.append(header, body, full);
+    popover.append(header, body, actions);
   }
+  actions.append(full);
+  if (panelButton) actions.appendChild(panelButton);
 
   // 浮层必须脱离页面栈：签章按钮位于页面的 signature-layer 内，后续页会
   // 覆盖浮层，阅读器滚动容器也会裁切它。portal 到 .ofd-viewer 根后使用
@@ -151,9 +168,9 @@ export function openSignaturePopover(
   popover.style.top = '0px';
   popover.style.visibility = 'hidden';
 
-  // 标题与完整面板按钮固定，只有内容区滚动，避免小视口下按钮被滚出可视区。
+  // 标题与操作区固定，只有内容区滚动，避免小视口下按钮被滚出可视区。
   header.style.flex = '0 0 auto';
-  full.style.flex = '0 0 auto';
+  actions.style.flex = '0 0 auto';
   if (sealBox) sealBox.style.flex = '0 0 auto';
   body.style.flex = '1 1 auto';
   body.style.minHeight = '0';
@@ -287,6 +304,10 @@ export function openSignaturePopover(
   full.addEventListener('click', () => {
     close(false);
     options.onOpenDetails();
+  });
+  panelButton?.addEventListener('click', () => {
+    close(false);
+    options.onOpenPanel?.();
   });
   doc.addEventListener('pointerdown', onOutside, true);
   doc.addEventListener('keydown', onKeydown, true);

@@ -75,7 +75,14 @@ test('真实签章：覆盖层、列表、未验证详情与 Esc 关闭', async 
   await expect(page.locator('.ofd-viewer__sidebar')).toBeVisible();
   const summary = page.locator('.ofd-signature-summary-item');
   await expect(summary).toHaveCount(1);
-  await expect(summary.locator('.ofd-signature-badge')).toContainText(/未验证|验证未知|验证无效|验证有效|无 效|无效|有效/);
+  // 验证状态只用图标表达；含义放在 title/aria-label 上。
+  const statusIcon = summary.locator('.ofd-signature-status');
+  await expect(statusIcon).toBeVisible();
+  await expect(statusIcon).toHaveAttribute(
+    'data-status',
+    /未验证|valid|invalid|unknown|unsupported|not-applicable/,
+  );
+  await expect(statusIcon).toHaveAttribute('title', /验证/);
   await expect(summary).toContainText(detail!.seal!.name!);
 
   await summary.click();
@@ -84,7 +91,10 @@ test('真实签章：覆盖层、列表、未验证详情与 Esc 关闭', async 
   await expect(page.locator('.ofd-dialog__title')).toContainText('签章信息');
   const dialogText = await dialog.textContent();
   expect(dialogText).toContain(detail!.seal!.name!);
-  expect(dialogText).not.toMatch(/验证通过|签名有效|验签成功/);
+  // 详情与验证面板合并后，签名数学/引用校验通过是验证报告字段，属于允许的
+  // 限定表述；不得出现未加限定的“验证通过/签名有效/验签成功”结论。
+  expect(dialogText).not.toMatch(/验证通过|验签成功/);
+  expect(dialogText).not.toMatch(/(?<!数学|引用|链状态|证书链（不影响总体状态）)签名有效/);
 
   // 真实 PNG 印章：Blob URL 解码成功，alt 可读，按 mm 比例显示。
   const sealImage = dialog.locator('.ofd-seal-image img');
@@ -445,7 +455,10 @@ test('缺失 SignedValue.dat：保留签章列表并降级提示', async ({ page
   await page.locator('[data-ofd-control="signatures"]').click();
   const summary = page.locator('.ofd-signature-summary-item');
   await expect(summary).toHaveCount(1);
-  await expect(summary.locator('.ofd-signature-badge')).toContainText(/未验证|验证未知|验证无效|验证有效/);
+  await expect(summary.locator('.ofd-signature-status')).toHaveAttribute(
+    'data-status',
+    /未验证|valid|invalid|unknown|unsupported|not-applicable/,
+  );
 
   await summary.click();
   const dialog = page.locator('.ofd-dialog');
@@ -462,13 +475,19 @@ test('缺失 SignedValue.dat：保留签章列表并降级提示', async ({ page
   await expectNoPageErrors(page, issues);
 });
 
-test('侧栏签章列表卡片化：无图标、可选中且窄屏不溢出', async ({ page, issues }) => {
+test('侧栏签章列表卡片化：状态用图标表达、可选中且窄屏不溢出', async ({ page, issues }) => {
   await openViewer(page, SHOWCASE, { sidebar: 'signatures', waitForRender: false });
   const panel = page.locator('.ofd-sidebar__panel:not([hidden])');
   const items = panel.locator('.ofd-signature-summary-item');
   await expect(items.first()).toBeVisible();
+  // 列表不再使用 ▣/✎ 之类的文本符号，验证状态改为彩色 SVG 图标。
   await expect(panel).not.toContainText('▣');
   await expect(panel).not.toContainText('✎');
+  const status = items.first().locator('.ofd-signature-status');
+  await expect(status.locator('svg')).toHaveCount(1);
+  await expect(status).toHaveAttribute('role', 'img');
+  await expect(status).toHaveAttribute('title', /未验证|验证有效|验证无效|验证未知|不支持验证/);
+  await expect(status).not.toHaveText(/./);
 
   const style = await items.first().evaluate((element) => {
     const computed = getComputedStyle(element);

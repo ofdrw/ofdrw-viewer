@@ -75,7 +75,9 @@ test('验证面板：配置根证书后有效，时间戳固定为已解析未�
   );
   expect(overall).toBe('valid');
 
-  await page.locator('[data-ofd-control="verification"]').click();
+  // 顶部不再有“验证”按钮：验证结果与签章列表点击、印章详情统一，文档级
+  // 完整结果通过验证面板 API 打开（与详情/印章浮层里的入口等价）。
+  await page.evaluate(() => window.__viewer!.openVerificationPanel());
   const panel = page.locator('.ofd-verification-panel');
   await expect(panel).toBeVisible();
   await expect(panel).toContainText('有效');

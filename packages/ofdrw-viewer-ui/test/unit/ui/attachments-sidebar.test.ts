@@ -109,11 +109,15 @@ describe('附件侧栏：列表渲染', () => {
       '明细.xlsx',
       '无格式附件',
     ]);
-    // 元信息列依次为「格式 · 大小 · 日期」，缺失以 - 占位。
-    const meta = nodes.map((node) => node.querySelector('.ofd-attachment__meta')?.textContent);
-    expect(meta[0]).toBe('PDF · 2 KB · 2024-03-03');
-    expect(meta[1]).toBe('xlsx · - · -');
-    expect(meta[2]).toBe('- · - · -');
+    // 元信息分两行：首行「格式 · 大小」，次行日期，缺失以 - 占位。
+    const meta = nodes.map((node) => ({
+      size: node.querySelector('.ofd-attachment__meta-size')?.textContent,
+      date: node.querySelector('.ofd-attachment__meta-date')?.textContent,
+      full: node.querySelector('.ofd-attachment__meta')?.getAttribute('title'),
+    }));
+    expect(meta[0]).toEqual({ size: 'PDF · 2 KB', date: '2024-03-03', full: 'PDF · 2 KB · 2024-03-03' });
+    expect(meta[1]).toEqual({ size: 'xlsx · -', date: '-', full: 'xlsx · - · -' });
+    expect(meta[2]).toEqual({ size: '- · -', date: '-', full: '- · - · -' });
     // 每条都有下载按钮，且 aria-label 带上附件名。
     const buttons = nodes.map((node) => node.querySelector('.ofd-attachment__download'));
     expect(buttons.every((button) => button !== null)).toBe(true);

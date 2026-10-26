@@ -102,7 +102,7 @@ export interface OpenOptions {
   /** 宿主容器宽度，单位 px；用于嵌入式断点。 */
   readonly hostWidth?: number;
   /** 初始侧栏。 */
-  readonly sidebar?: 'thumbnails' | 'outline' | 'bookmarks' | 'signatures';
+  readonly sidebar?: 'thumbnails' | 'outline' | 'bookmarks' | 'signatures' | 'attachments';
   /** 是否等待首个 pagerendered；默认 true。 */
   readonly waitForRender?: boolean;
   /** 口令凭据；缺省且 autoPrompt 时由内置弹窗收集。 */

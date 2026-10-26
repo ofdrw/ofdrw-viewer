@@ -81,7 +81,9 @@ test('axe 扫描阅读页、侧栏、查找栏、打印/导出与签章对话框
   record('sidebar', await scan(page, '.ofd-viewer'));
 
   // 验证面板：状态徽标含 aria-hidden 图标与文字，不能只靠颜色表达。
-  await page.locator('[data-ofd-control="verification"]').click();
+  // 顶部不再有“验证”按钮：验证结果与签章列表点击、印章详情统一，文档级
+  // 完整结果通过验证面板 API 打开（与详情/印章浮层里的入口等价）。
+  await page.evaluate(() => window.__viewer!.openVerificationPanel());
   await expect(page.locator('.ofd-verification-panel')).toBeVisible();
   // 等待对话框入场动画结束，避免半透明中间态造成对比度误报。
   await settleAnimations(page.locator('.ofd-dialog'));

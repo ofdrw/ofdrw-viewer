@@ -410,17 +410,8 @@ export class Toolbar {
     });
     viewGroup.appendChild(signatures);
 
-    const verification = this.createButton(
-      'verification',
-      'shield',
-      'toolbar.verification',
-      'verification',
-      'compact',
-    );
-    verification.addEventListener('click', () => {
-      this.options.onCommand({ type: 'verification.open' });
-    });
-    viewGroup.appendChild(verification);
+    // 顶部不再单列“验证”按钮：验证结果已并入签章列表点击后的详情（详情内
+    // 与验证面板同源），文档级完整结果可从详情或印章浮层进入验证面板。
 
     this.fullscreenButton = this.createButton(
       'fullscreen',

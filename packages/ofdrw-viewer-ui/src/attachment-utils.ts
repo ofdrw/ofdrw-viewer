@@ -99,6 +99,74 @@ export function sanitizeAttachmentName(value: string): string {
     .trim();
 }
 
+/** 附件图标类别；与 `ui/glyphs.ts` 中的文件图标一一对应。 */
+export type AttachmentIconKind =
+  | 'pdf'
+  | 'doc'
+  | 'sheet'
+  | 'image'
+  | 'text'
+  | 'archive'
+  | 'other';
+
+/** 扩展名到图标类别；键为小写扩展名。 */
+const ICON_KINDS: Readonly<Record<string, AttachmentIconKind>> = Object.freeze({
+  pdf: 'pdf',
+  ofd: 'pdf',
+  ofd2: 'pdf',
+  doc: 'doc',
+  docx: 'doc',
+  dot: 'doc',
+  dotx: 'doc',
+  wps: 'doc',
+  rtf: 'doc',
+  odt: 'doc',
+  xls: 'sheet',
+  xlsx: 'sheet',
+  xlsm: 'sheet',
+  et: 'sheet',
+  csv: 'sheet',
+  ods: 'sheet',
+  ppt: 'sheet',
+  pptx: 'sheet',
+  png: 'image',
+  jpg: 'image',
+  jpeg: 'image',
+  gif: 'image',
+  bmp: 'image',
+  webp: 'image',
+  svg: 'image',
+  tif: 'image',
+  tiff: 'image',
+  txt: 'text',
+  md: 'text',
+  json: 'text',
+  xml: 'text',
+  log: 'text',
+  html: 'text',
+  zip: 'archive',
+  rar: 'archive',
+  '7z': 'archive',
+  gz: 'archive',
+  tar: 'archive',
+});
+
+/**
+ * 判断附件格式对应的图标类别。
+ *
+ * 优先取名称里的扩展名，其次使用 XML 声明的格式。
+ *
+ * @param attachment 附件元信息。
+ * @returns 图标类别；无法识别时为 `other`。
+ */
+export function attachmentIconKind(attachment: AttachmentInfo): AttachmentIconKind {
+  const name = attachment.name ?? '';
+  const dot = name.lastIndexOf('.');
+  const fromName = dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+  const fromFormat = attachment.format?.trim().toLowerCase() ?? '';
+  return ICON_KINDS[fromName || fromFormat] ?? 'other';
+}
+
 /**
  * 生成附件下载文件名。
  *

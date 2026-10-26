@@ -50,7 +50,6 @@ export const zhCN = {
   'toolbar.print': '打印',
   'toolbar.export': '导出',
   'toolbar.signatures': '签章信息',
-  'toolbar.verification': '验证',
   'toolbar.fullscreen': '进入全屏',
   'toolbar.exitFullscreen': '退出全屏',
   'toolbar.more': '更多操作',

@@ -51,7 +51,6 @@ export const enUS: MessageDictionary = {
   'toolbar.print': 'Print',
   'toolbar.export': 'Export',
   'toolbar.signatures': 'Signature information',
-  'toolbar.verification': 'Verify',
   'toolbar.fullscreen': 'Enter fullscreen',
   'toolbar.exitFullscreen': 'Exit fullscreen',
   'toolbar.more': 'More actions',

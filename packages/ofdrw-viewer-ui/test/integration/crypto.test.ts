@@ -852,14 +852,22 @@ describe('t47 修复回归', () => {
     await viewer.verify();
     expect((await viewer.getSignatureDetail('s001')).verification?.status).toBe('valid');
     await viewer.showSignature('s001');
+    // 详情与验证面板合并后，总体状态使用验证面板的措辞（有效/无效/未知）。
     await vi.waitFor(() =>
-      expect(document.querySelector('.ofd-signature-detail')?.textContent).toContain('验证有效'),
+      expect(document.querySelector('.ofd-signature-detail')?.textContent).toContain(
+        '验证结果总体状态有效',
+      ),
     );
     cryptoMocks.verify.mockRejectedValueOnce(new Error('verify failed'));
     await expect(viewer.verify()).rejects.toBeTruthy();
     const detail = await viewer.getSignatureDetail('s001');
     expect(detail.verification).toBeUndefined();
-    expect(document.querySelector('.ofd-signature-detail')?.textContent).not.toContain('验证有效');
+    expect(document.querySelector('.ofd-signature-detail')?.textContent).toContain(
+      '验证结果总体状态尚未验证',
+    );
+    expect(document.querySelector('.ofd-signature-detail')?.textContent).not.toContain(
+      '验证结果总体状态有效',
+    );
     expect(overlayLabel(viewer)).toContain('未验证');
     expect(viewer.getVerificationReport()).toBeUndefined();
   });

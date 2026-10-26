@@ -170,16 +170,45 @@ describe('附件列表', () => {
     const items = host.querySelectorAll('.ofd-attachment');
     expect(items).toHaveLength(2);
     expect(items[0]!.querySelector('.ofd-attachment__name')?.textContent).toBe('说明.pdf');
-    expect(items[0]!.querySelector('.ofd-attachment__meta')?.textContent).toBe(
-      'PDF · 2 KB · 2024-03-03',
+    expect(items[0]!.querySelector('.ofd-attachment__meta-size')?.textContent).toBe(
+      'PDF · 2 KB',
     );
-    expect(items[1]!.querySelector('.ofd-attachment__meta')?.textContent).toBe(
-      '- · - · -',
+    expect(items[0]!.querySelector('.ofd-attachment__meta-date')?.textContent).toBe(
+      '2024-03-03',
     );
-    expect(items[0]!.querySelector('button')?.textContent).toBe('下载');
+    // 缺失的格式/大小/日期都显示 -。
+    expect(items[1]!.querySelector('.ofd-attachment__meta-size')?.textContent).toBe('- · -');
+    expect(items[1]!.querySelector('.ofd-attachment__meta-date')?.textContent).toBe('-');
+    // 下载按钮以图标呈现，可读名称放在 aria-label/title 上。
+    const button = items[0]!.querySelector('button')!;
+    expect(button.querySelector('.ofd-icon')).not.toBeNull();
+    // 纯图标按钮：不含文字，名称由 aria-label/title 提供。
+    expect(button.textContent).toBe('');
+    expect(button.getAttribute('aria-label')).toBe('下载附件 说明.pdf');
+    expect(button.getAttribute('title')).toBe('下载附件 说明.pdf');
     // 附件内容不进入 DOM。
     expect(host.innerHTML).not.toContain('srcdoc');
     expect(host.innerHTML).not.toContain('<iframe');
+  });
+
+  it('按文件格式渲染常见文件图标，未知格式回退为通用文件图标', async () => {
+    const { viewer } = createViewer([
+      { id: 'a1', name: '说明.pdf', format: 'PDF' },
+      { id: 'a2', name: '合同.docx' },
+      { id: 'a3', name: '明细.xlsx' },
+      { id: 'a4', name: '扫描件.JPG' },
+      { id: 'a5', name: '打包.zip' },
+      { id: 'a6', name: '没有扩展名' },
+    ]);
+    const { host } = mount(viewer);
+    await flush();
+    const kinds = [...host.querySelectorAll<HTMLElement>('.ofd-attachment__icon')].map(
+      (icon) => icon.dataset.kind,
+    );
+    expect(kinds).toEqual(['pdf', 'doc', 'sheet', 'image', 'archive', 'other']);
+    const icons = [...host.querySelectorAll('.ofd-attachment__icon .ofd-icon')];
+    expect(icons.every((icon) => icon.getAttribute('aria-hidden') === 'true')).toBe(true);
+    expect(icons.every((icon) => icon.querySelector('[d], path') !== null)).toBe(true);
   });
 
   it('跳过没有名称的条目', async () => {

@@ -1035,9 +1035,6 @@ function dispatchCommand(
     case 'signatures.open':
       settle(viewer.openSidebar('signatures'), shell);
       return;
-    case 'verification.open':
-      settle(viewer.openVerificationPanel?.(), shell);
-      return;
     case 'fullscreen.set':
       settle(viewer.setFullscreen(command.value), shell);
       return;

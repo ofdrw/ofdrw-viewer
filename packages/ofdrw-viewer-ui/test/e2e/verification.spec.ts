@@ -294,7 +294,9 @@ test('验证面板：无根时签名/完整性仍通过，链独立显示未知�
 }) => {
   await openViewer(page, FIXTURES.cryptoSigned, { waitForRender: false });
   await expect.poll(() => overall(page)).toBe('valid');
-  await page.locator('[data-ofd-control="verification"]').click();
+  // 顶部不再有“验证”按钮：验证结果与签章列表点击、印章详情统一，文档级
+  // 完整结果通过验证面板 API 打开（与详情/印章浮层里的入口等价）。
+  await page.evaluate(() => window.__viewer!.openVerificationPanel());
   const panel = page.locator('.ofd-verification-panel');
   await expect(panel).toBeVisible();
   await expect(panel).toContainText('总体状态：有效');
@@ -378,10 +380,14 @@ test('验证面板与印章浮层：完整性/签名/链/时间戳信息完整�
   expect(report.integrity).toBeNull();
   expect(report.signatures[0]!.timestamp.status).toBe('parsed-not-verified');
 
+  // 顶部不再有“验证”按钮：验证结果入口统一为签章列表点击/印章详情。
+  await expect(page.locator('[data-ofd-control="verification"]')).toHaveCount(0);
   const summary = page.locator('.ofd-signature-summary-item').first();
   await expect(summary).toBeVisible();
-  await expect(summary.locator('.ofd-signature-badge')).toHaveText('验证有效');
-  await expect(summary.locator('.ofd-signature-badge')).toHaveAttribute('data-status', 'valid');
+  const statusIcon = summary.locator('.ofd-signature-status');
+  await expect(statusIcon).toHaveAttribute('data-status', 'valid');
+  await expect(statusIcon).toHaveAttribute('title', /验证有效/);
+  await expect(statusIcon).not.toHaveText(/./);
   const overlay = page.locator('.ofd-signature-box[data-signature-id]').first();
   await expect(overlay).toBeVisible();
   await expect(overlay).toHaveAttribute('aria-label', /验证有效/);
@@ -476,11 +482,19 @@ test('验证面板与印章浮层：完整性/签名/链/时间戳信息完整�
   await expect(summary).toHaveAttribute('data-selected', 'true');
   await expect(detail).toBeVisible();
   await expect(detail.locator('[data-ofd-control="signature-chain-section"]')).toBeVisible();
+  // 详情与验证面板合并：总体状态、签名校验项、时间戳与链状态同源同措辞。
+  for (const text of ['验证结果', '总体状态', 'SES 版本', 'dataHash', 'Reference', '数学签名']) {
+    await expect(detail).toContainText(text);
+  }
+  await expect(detail.locator('.ofd-dialog__title')).toHaveText('签章信息（有效）');
+  await expect(detail.locator('.ofd-signature-badge')).toHaveText('有效');
   await page.keyboard.press('Escape');
   await expect(detail).toBeHidden();
 
   // 验证面板仍由工具栏入口打开，展示签名/完整性与时间戳细节。
-  await page.locator('[data-ofd-control="verification"]').click();
+  // 顶部不再有“验证”按钮：验证结果与签章列表点击、印章详情统一，文档级
+  // 完整结果通过验证面板 API 打开（与详情/印章浮层里的入口等价）。
+  await page.evaluate(() => window.__viewer!.openVerificationPanel());
   const panel = page.locator('.ofd-verification-panel');
   await expect(panel).toBeVisible();
   for (const text of ['SES 版本', 'dataHash', 'Reference', '数学签名', '证书链', '印章']) {
@@ -504,6 +518,17 @@ test('验证面板与印章浮层：完整性/签名/链/时间戳信息完整�
   await expect(panel).not.toContainText('是否已解密');
   const panelText = await panel.textContent();
   expect(panelText).not.toMatch(/时间戳验证通过|时间戳有效/);
+  await page.keyboard.press('Escape');
+  await expect(panel).toBeHidden();
+
+  // 印章浮层的“验证结果”入口打开同一个验证面板（三处入口统一）。
+  await overlay.click();
+  await expect(popover).toBeVisible();
+  await popover.locator('[data-ofd-control="signature-popover-panel"]').click();
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText('总体状态：有效');
+  await page.keyboard.press('Escape');
+  await expect(panel).toBeHidden();
   await expectNoPageErrors(page, issues);
 });
 
@@ -516,7 +541,9 @@ test('验证面板：未验证空态、加载态、重复验证', async ({ page,
   expect(await page.evaluate(() => window.__viewer!.getVerificationReport())).toBeUndefined();
   expect(await eventCount(page, 'verificationcompleted')).toBe(0);
 
-  await page.locator('[data-ofd-control="verification"]').click();
+  // 顶部不再有“验证”按钮：验证结果与签章列表点击、印章详情统一，文档级
+  // 完整结果通过验证面板 API 打开（与详情/印章浮层里的入口等价）。
+  await page.evaluate(() => window.__viewer!.openVerificationPanel());
   const panel = page.locator('.ofd-verification-panel');
   const reverify = page.locator('[data-ofd-control="verification-reverify"]');
   await expect(panel).toBeVisible();
@@ -621,7 +648,9 @@ test('验证面板：入口失败显示 role=alert，恢复后重试验证成功
     autoVerify: false,
     waitForRender: false,
   });
-  await page.locator('[data-ofd-control="verification"]').click();
+  // 顶部不再有“验证”按钮：验证结果与签章列表点击、印章详情统一，文档级
+  // 完整结果通过验证面板 API 打开（与详情/印章浮层里的入口等价）。
+  await page.evaluate(() => window.__viewer!.openVerificationPanel());
   const panel = page.locator('.ofd-verification-panel');
   const reverify = page.locator('[data-ofd-control="verification-reverify"]');
   const error = panel.locator('.ofd-verification-error');
@@ -708,7 +737,9 @@ test('showcase：签名/完整性通过为绿色，证书链独立显示未知�
   expect(report.signatures.some((signature) => signature.signature.status === 'valid')).toBe(true);
   expect(report.signatures.some((signature) => signature.dataHash.status === 'valid')).toBe(true);
 
-  await page.locator('[data-ofd-control="verification"]').click();
+  // 顶部不再有“验证”按钮：验证结果与签章列表点击、印章详情统一，文档级
+  // 完整结果通过验证面板 API 打开（与详情/印章浮层里的入口等价）。
+  await page.evaluate(() => window.__viewer!.openVerificationPanel());
   const panel = page.locator('.ofd-verification-panel');
   await expect(panel).toBeVisible();
   await expect(panel).toContainText('总体状态：有效');
@@ -780,7 +811,9 @@ test('验证结果配色：light/dark 的 valid/unknown/invalid 以颜色+文字
     waitForRender: false,
   });
   await expect.poll(() => overall(page)).toBe('valid');
-  await page.locator('[data-ofd-control="verification"]').click();
+  // 顶部不再有“验证”按钮：验证结果与签章列表点击、印章详情统一，文档级
+  // 完整结果通过验证面板 API 打开（与详情/印章浮层里的入口等价）。
+  await page.evaluate(() => window.__viewer!.openVerificationPanel());
   const validBadge = page.locator('.ofd-verification-badge[data-status="valid"]').first();
   await expect(validBadge).toContainText('有效');
   const lightValid = await badgeColors(page, 'valid');
@@ -801,7 +834,9 @@ test('验证结果配色：light/dark 的 valid/unknown/invalid 以颜色+文字
     waitForRender: false,
   });
   await expect.poll(() => overall(page)).toBe('valid');
-  await page.locator('[data-ofd-control="verification"]').click();
+  // 顶部不再有“验证”按钮：验证结果与签章列表点击、印章详情统一，文档级
+  // 完整结果通过验证面板 API 打开（与详情/印章浮层里的入口等价）。
+  await page.evaluate(() => window.__viewer!.openVerificationPanel());
   await page.evaluate(() => {
     const service = (
       window.__viewer as unknown as {
@@ -824,7 +859,9 @@ test('验证结果配色：light/dark 的 valid/unknown/invalid 以颜色+文字
   // invalid：签名值被篡改 → 签名数学/摘要失败。
   await openViewer(page, FIXTURES.cryptoTamperedSignature, { waitForRender: false });
   await expect.poll(() => overall(page)).toBe('invalid');
-  await page.locator('[data-ofd-control="verification"]').click();
+  // 顶部不再有“验证”按钮：验证结果与签章列表点击、印章详情统一，文档级
+  // 完整结果通过验证面板 API 打开（与详情/印章浮层里的入口等价）。
+  await page.evaluate(() => window.__viewer!.openVerificationPanel());
   const invalidBadge = page.locator('.ofd-verification-badge[data-status="invalid"]').first();
   await expect(invalidBadge).toContainText('无效');
   await expect(page.locator('.ofd-verification-guidance')).toContainText(

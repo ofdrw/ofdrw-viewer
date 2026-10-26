@@ -504,15 +504,21 @@ describe('SignatureService 侧栏列表', () => {
         (element) => element.textContent,
       );
       expect(headings).toEqual(['第 1 页', '第 2 页', '未定位页面']);
-      const badges = [...panel!.querySelectorAll('.ofd-signature-badge')].map(
-        (element) => element.textContent,
-      );
-      expect(badges).toEqual(['未验证', '未验证', '未验证', '未验证', '未验证']);
-      expect(
-        [...panel!.querySelectorAll<HTMLElement>('.ofd-signature-badge')].map(
-          (element) => element.dataset.status,
-        ),
-      ).toEqual(['not-verified', 'not-verified', 'not-verified', 'not-verified', 'not-verified']);
+      // 验证状态只用图标表达，不写文字；hover 的 title 与 aria-label 给出具体含义。
+      const statuses = [...panel!.querySelectorAll<HTMLElement>('.ofd-signature-status')];
+      expect(statuses).toHaveLength(5);
+      expect(statuses.map((element) => element.dataset.status)).toEqual([
+        'not-verified',
+        'not-verified',
+        'not-verified',
+        'not-verified',
+        'not-verified',
+      ]);
+      expect(statuses.map((element) => element.textContent)).toEqual(['', '', '', '', '']);
+      expect(statuses.every((element) => element.title === '未验证')).toBe(true);
+      expect(statuses.every((element) => element.getAttribute('role') === 'img')).toBe(true);
+      expect(statuses.every((element) => element.querySelector('.ofd-icon') !== null)).toBe(true);
+      expect(panel!.querySelectorAll('.ofd-signature-badge')).toHaveLength(0);
 
       await vi.waitFor(() => {
         expect(panel!.textContent).toContain(SEAL_NAME);

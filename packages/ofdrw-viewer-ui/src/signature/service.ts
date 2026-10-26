@@ -23,6 +23,7 @@ import type {
   CertificateChainVerification,
   CertificateSummary,
   SignatureVerification,
+  VerificationReport,
 } from '@ofdrw/ofdrw-viewer-crypto';
 import { createFeatureDisabledError, OFDViewerError } from '../errors';
 import { MM_TO_CSS_PX } from '../page-layout';
@@ -30,6 +31,8 @@ import type { PageView } from '../page-view';
 import type { ViewerWarning } from '../state';
 import type { CertificateInfo, SealInfo, SignatureDetail, SignerInfo } from '../types';
 import { getUIShell } from '../ui';
+import { createGlyph } from '../ui/glyphs';
+import type { GlyphName } from '../ui/glyphs';
 import type { OFDViewer, ViewerSignatureService } from '../viewer';
 import { certificateFileName, chainStatusText, createCryptoText, downloadCertificateDer } from '../crypto';
 import type { CryptoText } from '../crypto';
@@ -442,10 +445,15 @@ export class SignatureService implements ViewerSignatureService {
     throw new OFDViewerError('OFD_INVALID_OPTION', `未找到签章：${id}`);
   }
 
+  /** 当前验证报告；验证功能关闭时视为没有报告。 */
+  private currentReport(): VerificationReport | undefined {
+    if (!this.viewer.isFeatureEnabled('verification')) return undefined;
+    return this.viewer.getVerificationReport();
+  }
+
   /** 读取当前报告中该签名的验证结果；验证功能不可用时强制视为未验证。 */
   private findVerification(id: string): SignatureVerification | undefined {
-    if (!this.viewer.isFeatureEnabled('verification')) return undefined;
-    return this.viewer.getVerificationReport()?.signatures.find((item) => item.id === id);
+    return this.currentReport()?.signatures.find((item) => item.id === id);
   }
 
   /** 读取并解析详情。 */
@@ -524,9 +532,7 @@ export class SignatureService implements ViewerSignatureService {
    */
   private reconcileVerification(): void {
     if (this.destroyed) return;
-    const report = this.viewer.isFeatureEnabled('verification')
-      ? this.viewer.getVerificationReport()
-      : undefined;
+    const report = this.currentReport();
     for (const [id, detail] of this.details) {
       const verification = report?.signatures.find((item) => item.id === id);
       this.details.set(id, verification ? { ...detail, verification } : omitVerification(detail));
@@ -691,6 +697,22 @@ export class SignatureService implements ViewerSignatureService {
   }
 
   /**
+   * 打开验证面板；尚无报告时先触发一次验证。
+   *
+   * 与详情里的“验证结果”一致，都指向同一份报告，避免两处结论不同。
+   */
+  private readonly openVerificationPanel = (): void => {
+    if (this.viewer.getVerificationReport() === undefined) {
+      void this.viewer.verify().catch(() => undefined);
+    }
+    try {
+      this.viewer.openVerificationPanel();
+    } catch {
+      // 验证功能关闭时入口不可用，保持浮层关闭即可。
+    }
+  };
+
+  /**
    * 激活覆盖层：优先验证并打开浮层；验证能力不可用时回退详情。
    *
    * @param id 签名 ID。
@@ -735,6 +757,7 @@ export class SignatureService implements ViewerSignatureService {
             onOpenDetails: () => {
               void this.showSignature(id).catch(() => undefined);
             },
+            onOpenPanel: this.openVerificationPanel,
           });
           return;
         }
@@ -868,11 +891,18 @@ export class SignatureService implements ViewerSignatureService {
     const name = this.doc.createElement('span');
     name.className = 'ofd-signature-summary-item__name';
     name.textContent = detail?.seal?.name ?? '未命名签章';
+    // 卡片较窄时会省略，用 title 补充完整名称。
+    name.title = name.textContent;
+    // 验证状态只用图标表达：颜色区分结果，hover/读屏由 title 给出具体含义。
+    const verified = verificationInfo(this.findVerification(entry.id)?.status);
     const badge = this.doc.createElement('span');
-    badge.className = 'ofd-signature-badge';
-    const status = this.findVerification(entry.id)?.status;
-    badge.textContent = status ? verificationLabel(status) : '未验证';
-    badge.dataset.status = status ?? 'not-verified';
+    badge.className = 'ofd-signature-status';
+    badge.dataset.status = verified.key;
+    badge.dataset.ofdControl = 'signature-status-icon';
+    badge.title = verified.meaning;
+    badge.setAttribute('aria-label', verified.meaning);
+    badge.setAttribute('role', 'img');
+    badge.appendChild(createGlyph(verified.glyph, this.doc));
     title.append(name, badge);
 
     const meta = this.doc.createElement('div');
@@ -899,7 +929,7 @@ export class SignatureService implements ViewerSignatureService {
         signatureTimeText(detail, entry),
         signerText(detail),
         item.pageNumber !== undefined ? `第 ${item.pageNumber} 页` : '',
-        badge.textContent,
+        verified.meaning,
       ]
         .filter((part) => part.length > 0)
         .join('，'),
@@ -1169,7 +1199,7 @@ export class SignatureService implements ViewerSignatureService {
     const badge = this.doc.createElement('span');
     badge.className = 'ofd-signature-badge';
     const verification = detail.verification;
-    badge.textContent = verification ? verificationLabel(verification.status) : '未验证';
+    badge.textContent = verificationStatusLabel(verification?.status);
     badge.dataset.status = verification?.status ?? 'not-verified';
     const statusText = this.doc.createElement('span');
     statusText.textContent = verification
@@ -1227,6 +1257,8 @@ export class SignatureService implements ViewerSignatureService {
         ['保护范围', entry.references.map((reference) => reference.fileRef).join('、')],
       ]),
     );
+    // 以下“验证结果”区块与验证面板逐项一致，入口统一后用户不必再到工具栏核对。
+    root.appendChild(this.createVerificationCard(detail));
 
     const sealSection = this.createSection(
       '印章信息',
@@ -1261,7 +1293,7 @@ export class SignatureService implements ViewerSignatureService {
   /** 签章者可信 tag：仅链 valid 显示“可信”，其余一律显示“可信状态未知”。 */
   private createTrustTag(chain: CertificateChainVerification | undefined): HTMLElement {
     const text = createCryptoText(this.viewer.getState().ui.locale);
-    const trusted = chain?.status === 'valid';
+    const trusted = isChainTrusted(chain);
     const tag = this.doc.createElement('span');
     tag.className = 'ofd-trust-tag';
     tag.dataset.trust = trusted ? 'trusted' : 'unknown';
@@ -1414,6 +1446,103 @@ export class SignatureService implements ViewerSignatureService {
   }
 
   /** 创建“标题 + 键值表”区块。 */
+  /**
+   * 详情内的“验证结果”卡片。
+   *
+   * 字段与措辞逐项复用验证面板，保证“点印章”“点签章列表”“验证面板”三处结论一致；
+   * 这里只读展示，重新验证等操作仍留在验证面板。
+   *
+   * @param detail 已解析的签章详情。
+   * @returns 验证结果区块。
+   */
+  private createVerificationCard(detail: SignatureDetail): HTMLElement {
+    const text = createCryptoText(this.viewer.getState().ui.locale);
+    const verification = detail.verification;
+    if (!verification) {
+      return this.createSection(text.panelTitle, [
+        [text.overall, `${text.panelNotVerified}（${verificationStatusLabel(undefined)}）`],
+        ['说明', SIGNATURE_NOT_VERIFIED_NOTE],
+      ]);
+    }
+    const report = this.currentReport();
+    const rows: Array<readonly [string, string | Node | undefined]> = [
+      [text.overall, overallStatusText(text, verification.status)],
+    ];
+    rows.push(
+      [text.sesVersion, verification.version],
+      [
+        text.signingTime,
+        formatSigningTime(verification.signingTime) ?? text.signingTimeMissing,
+      ],
+      [
+        text.dataHash,
+        `${overallStatusText(text, verification.dataHash.status)}（${
+          verification.dataHash.expected ?? text.none
+        }）`,
+      ],
+      [
+        text.references,
+        `${overallStatusText(text, verification.references.status)} ${
+          verification.references.checked
+        }/${verification.references.total}`,
+      ],
+      [text.math, overallStatusText(text, verification.signature.status)],
+      // 证书链状态独立展示，不影响上面的签名/完整性总体状态。
+      [text.chainIndependent, chainStatusText(text, verification.certificate.status)],
+      [
+        text.seal,
+        verification.seal
+          ? `${verification.seal.name ?? verification.seal.esId ?? text.none}（${overallStatusText(
+              text,
+              verification.seal.status,
+            )}）`
+          : text.none,
+      ],
+      [text.timestamp, timestampText(verification, text)],
+    );
+    if (report) {
+      if (report.package.encrypted) rows.push([text.packageEncrypted, text.present]);
+      if (report.package.decrypted) rows.push([text.packageDecrypted, text.present]);
+      rows.push(
+        [text.packagePages, String(this.viewer.getState().document.pageCount)],
+        [text.packageSignatures, String(report.package.signatureCount)],
+        [
+          text.packageIntegrity,
+          report.package.integrityPresent ? text.present : text.absent,
+        ],
+      );
+      const integrity = report.integrity;
+      if (integrity) {
+        rows.push(
+          [text.integrity, overallStatusText(text, integrity.status)],
+          [text.integrityFiles, String(integrity.fileListCount)],
+          [text.integrityMissing, listText(integrity.missingFiles, text)],
+          [text.integrityExtra, listText(integrity.extraFiles, text)],
+        );
+      }
+    }
+    const section = this.createSection(text.panelTitle, rows);
+    section.classList.add('ofd-signature-verification');
+    section.dataset.ofdControl = 'signature-verification-card';
+    const issues = [...(report?.integrity?.issues ?? []), ...verification.issues];
+    if (issues.length > 0) {
+      const box = this.doc.createElement('div');
+      box.className = 'ofd-signature-verification__issues';
+      const heading = this.doc.createElement('p');
+      heading.className = 'ofd-signature-verification__issues-title';
+      heading.textContent = text.issues;
+      const list = this.doc.createElement('ul');
+      for (const issue of issues) {
+        const item = this.doc.createElement('li');
+        item.textContent = `${issue.code}：${issue.message}`;
+        list.appendChild(item);
+      }
+      box.append(heading, list);
+      section.appendChild(box);
+    }
+    return section;
+  }
+
   private createSection(
     title: string | undefined,
     rows: ReadonlyArray<readonly [string, string | Node | undefined]>,
@@ -1591,10 +1720,9 @@ function sealRows(seal: SealInfo): ReadonlyArray<readonly [string, string]> {
   ];
 }
 
-/** 详情标题：有验证结果时展示状态。 */
+/** 详情标题：与验证面板一致的状态措辞，未验证时标注“未验证”。 */
 function detailTitle(detail?: SignatureDetail): string {
-  const status = detail?.verification?.status;
-  return status ? `签章信息（${verificationLabel(status)}）` : '签章信息（未验证）';
+  return `签章信息（${verificationStatusLabel(detail?.verification?.status)}）`;
 }
 
 /** 验证状态中文文案。 */
@@ -1629,6 +1757,117 @@ function verificationNote(status: SignatureVerification['status']): string {
     default:
       return '未执行签名验证。';
   }
+}
+
+/** 是否为链验证通过（唯一允许显示“可信”分支）。 */
+function isChainTrusted(chain: CertificateChainVerification | undefined): boolean {
+  return chain?.status === 'valid';
+}
+
+/**
+ * 与验证面板完全一致的总体状态措辞。
+ *
+ * @param status 验证报告中的签名状态；未验证时省略。
+ * @returns 例如“有效”“无效”“未知”。
+ */
+function verificationStatusLabel(status: SignatureVerification['status'] | undefined): string {
+  switch (status) {
+    case 'valid':
+      return '有效';
+    case 'invalid':
+      return '无效';
+    case 'not-applicable':
+      return '不适用';
+    case 'unsupported':
+      return '不支持';
+    case 'unknown':
+      return '未知';
+    default:
+      return '未验证';
+  }
+}
+
+/**
+ * 与验证面板相同的总体状态文案（有效/无效/未知/不支持/不适用）。
+ *
+ * @param text 密码 UI 文案。
+ * @param status 验证状态；未知状态回退为原文。
+ * @returns 状态文案。
+ */
+function overallStatusText(text: CryptoText, status: string): string {
+  switch (status) {
+    case 'valid':
+      return text.overallValid;
+    case 'invalid':
+      return text.overallInvalid;
+    case 'unknown':
+      return text.overallUnknown;
+    case 'not-applicable':
+      return text.overallNotApplicable;
+    case 'unsupported':
+      return text.overallUnsupported;
+    default:
+      return status;
+  }
+}
+
+/**
+ * 验证状态信息：数据键（DOM `data-status`）、图标与 hover 含义。
+ *
+ * `data-status` 沿用验证报告的状态值；`not-verified` 表示尚未得到报告。
+ *
+ * @param status 验证报告中的签名状态；未验证时省略。
+ * @returns 状态键、图标名与含义文案。
+ */
+function verificationInfo(status: SignatureVerification['status'] | undefined): {
+  readonly key: string;
+  readonly glyph: GlyphName;
+  readonly meaning: string;
+} {
+  switch (status) {
+    case 'valid':
+      return { key: 'valid', glyph: 'status-valid', meaning: '验证有效：签名与完整性校验通过' };
+    case 'invalid':
+      return { key: 'invalid', glyph: 'status-invalid', meaning: '验证无效：存在校验失败项' };
+    case 'unknown':
+      return { key: 'unknown', glyph: 'status-unknown', meaning: '验证未知：部分校验项未确认' };
+    case 'unsupported':
+      return {
+        key: 'unsupported',
+        glyph: 'status-unsupported',
+        meaning: '不支持验证：当前环境无法验证',
+      };
+    case 'not-applicable':
+      return { key: 'not-applicable', glyph: 'status-not-applicable', meaning: '不适用验证' };
+    default:
+      return { key: 'not-verified', glyph: 'status-pending', meaning: '未验证' };
+  }
+}
+
+/**
+ * 列表文本；空列表给出“无”。
+ *
+ * @param values 取值列表。
+ * @param text 密码 UI 文案。
+ * @returns 以顿号连接的文本。
+ */
+function listText(values: readonly string[], text: CryptoText): string {
+  return values.length > 0 ? values.join('、') : text.none;
+}
+
+/**
+ * 时间戳文案：固定“已解析，未验证”，并说明不参与总体状态。
+ *
+ * @param verification 签名验证结果。
+ * @param text 密码 UI 文案。
+ * @returns 时间戳说明文本。
+ */
+function timestampText(verification: SignatureVerification, text: CryptoText): string {
+  if (verification.timestamp.status === 'parsed-not-verified') {
+    return `${text.timestampParsedNotVerified}（${text.timestampNotInOverall}）`;
+  }
+  if (verification.timestamp.status === 'parse-error') return text.timestampUnparsable;
+  return text.timestampMissing;
 }
 
 /** 签章者信息行。 */

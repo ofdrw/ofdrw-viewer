@@ -97,7 +97,9 @@ function expectSafeCertificateDer(
  * @param page 页面。
  */
 async function openPanel(page: Page): Promise<void> {
-  await page.locator('[data-ofd-control="verification"]').click();
+  // 顶部不再有“验证”按钮：验证结果与签章列表点击、印章详情统一，文档级
+  // 完整结果通过验证面板 API 打开（与详情/印章浮层里的入口等价）。
+  await page.evaluate(() => window.__viewer!.openVerificationPanel());
   await expect(page.locator('.ofd-verification-panel')).toBeVisible();
 }
 
@@ -389,6 +391,10 @@ test.describe('t3-D 浮层跳转与侧栏列表', () => {
     await expect(items.first()).toBeVisible();
     await expect(panel).not.toContainText('▣');
     await expect(panel).not.toContainText('✎');
+    // 验证状态只用图标：不同状态颜色不同，hover 由 title 给出具体含义。
+    const status = items.first().locator('.ofd-signature-status');
+    await expect(status.locator('svg')).toHaveCount(1);
+    await expect(status).toHaveAttribute('title', /.+/);
 
     const item = items.first();
     await expect(item).toHaveAttribute('aria-haspopup', 'dialog');
