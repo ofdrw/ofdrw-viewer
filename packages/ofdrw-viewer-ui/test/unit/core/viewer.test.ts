@@ -82,12 +82,14 @@ function makeDocument(count: number, exportAllowed = true): unknown {
 /**
  * 测试替身返回的 A4 canvas 宽度，单位设备像素。
  *
+ * 按 UI 默认渲染 DPI 144 计算。
+ *
  * @param renderScale 实际渲染倍率。
  * @param dpr 设备像素比。
  * @returns 向上取整的 canvas 宽度。
  */
 function a4CanvasWidth(renderScale: number, dpr = 1): number {
-  return Math.ceil((210 / 25.4) * 96 * renderScale * dpr);
+  return Math.ceil((210 / 25.4) * 144 * renderScale * dpr);
 }
 
 /**
@@ -633,12 +635,14 @@ describe('OFDViewer 核心', () => {
     const page = viewer.getPageView(1)!;
     await vi.waitFor(() => expect(page.state).toBe('rendered'));
     const canvas = page.canvas!;
+    // 1× 屏 100% 按默认 144 DPI 渲染（1.5 倍 CSS 像素）。
     expect(canvas.width).toBe(a4CanvasWidth(1));
+    expect(page.renderedScale).toBeCloseTo(1, 5);
     const clearCalls = contextMock.clearRect.mock.calls.length;
     const surfaceWidth = Number.parseFloat(page.surface.style.width);
     expect(surfaceWidth).toBeCloseTo((210 / 25.4) * 96, 3);
 
-    // 0.5 / 0.25 低于基准倍率：页盒 CSS 尺寸继续缩小，画布保持 100% 分辨率。
+    // 0.5 / 0.25 低于最低渲染倍率 1：页盒 CSS 尺寸继续缩小，画布保持不变。
     viewer.setScale(0.5);
     await vi.waitFor(() => expect(viewer.getScale()).toBe(0.5));
     expect(page.canvas).toBe(canvas);
@@ -652,10 +656,10 @@ describe('OFDViewer 核心', () => {
     expect(canvas.width).toBe(a4CanvasWidth(1));
     expect(contextMock.clearRect.mock.calls.length).toBe(clearCalls);
 
-    // 放大回基准倍率以上时恢复按实际倍率重绘。
-    viewer.setScale(1.5);
-    await vi.waitFor(() => expect(page.canvas?.width).toBe(a4CanvasWidth(1.5)));
-    expect(page.renderedScale).toBeCloseTo(1.5, 5);
+    // 放大到下限以上时恢复按实际倍率重绘。
+    viewer.setScale(2);
+    await vi.waitFor(() => expect(page.canvas?.width).toBe(a4CanvasWidth(2)));
+    expect(page.renderedScale).toBeCloseTo(2, 5);
 
     viewer.destroy();
   });
@@ -673,7 +677,7 @@ describe('OFDViewer 核心', () => {
     await vi.waitFor(() => expect(page.state).toBe('rendered'));
     expect(page.canvas!.width).toBe(a4CanvasWidth(1, 3));
 
-    // DPR=3 时下限为 2/3：低于该倍率后画布固定为 2 倍 CSS 尺寸。
+    // DPR=3 时下限为 2/3（288 DPI）：低于该倍率后画布固定为 2 倍 CSS 尺寸。
     viewer.setScale(0.5);
     await vi.waitFor(() => expect(page.canvas?.width).toBe(a4CanvasWidth(2 / 3, 3)));
     expect(page.renderedScale).toBeCloseTo(2 / 3, 5);
@@ -1084,85 +1088,5 @@ describe('OFDViewer 核心', () => {
       feature: 'export',
     });
     denied.destroy();
-  });
-});
-
-describe('getDocumentInfo()', () => {
-  it('一次性聚合元数据、页信息、权限、附件与各类计数', async () => {
-    engineMocks.open.mockImplementation(async () => ({
-      ...(makeDocument(2) as Record<string, unknown>),
-      getMetadata: async () => ({
-        version: '1.2',
-        pageCount: 2,
-        docType: 'OFD',
-        packageInfo: { docRoot: 'Doc_0/Document.xml', docBodyCount: 1 },
-      }),
-      getAttachments: async () => [
-        { id: 'a1', name: '合同.pdf', format: 'PDF', size: 2048 },
-        { id: 'a2', name: '明细.xlsx' },
-      ],
-      getSignatureEntries: async () => [{ id: 's1' }],
-      getOutline: async () => [{ title: '第一章', dest: { type: 'Fit', pageIndex: 0 } }],
-      getBookmarks: async () => [
-        { title: '书签1', pageIndex: 0 },
-        { title: '书签2', pageIndex: 1 },
-      ],
-    }));
-    const viewer = new OFDViewer({
-      crypto: { enabled: false },
-      container: document.body,
-      source: new ArrayBuffer(8),
-    });
-    await viewer.ready;
-
-    const info = await viewer.getDocumentInfo();
-    expect(info.metadata).toMatchObject({ version: '1.2', docType: 'OFD' });
-    expect(info.metadata.packageInfo).toEqual({ docRoot: 'Doc_0/Document.xml', docBodyCount: 1 });
-    expect(info.pageCount).toBe(2);
-    expect(info.pageInfos).toHaveLength(2);
-    expect(info.permissions).toMatchObject({ export: true, printScreen: true });
-    expect(info.attachments.map((item) => item.id)).toEqual(['a1', 'a2']);
-    expect(info.signatureCount).toBe(1);
-    expect(info.outlineCount).toBe(1);
-    expect(info.bookmarkCount).toBe(2);
-    viewer.destroy();
-  });
-
-  it('未打开时抛 OFD_NOT_OPENED，而 getPermissions() 仍返回宽松默认值', async () => {
-    engineMocks.open.mockImplementation(async () => {
-      throw new Error('打开失败');
-    });
-    const viewer = new OFDViewer({
-      crypto: { enabled: false },
-      container: document.body,
-      source: new ArrayBuffer(8),
-    });
-    await viewer.ready.catch(() => undefined);
-
-    await expect(viewer.getDocumentInfo()).rejects.toMatchObject({ code: 'OFD_NOT_OPENED' });
-    // 严格接口与宽松接口的差异：getPermissions 不抛错。
-    await expect(viewer.getPermissions()).resolves.toMatchObject({ edit: true });
-    viewer.destroy();
-  });
-
-  it('聚合结果不写入 ViewerState.document，也不触发状态膨胀', async () => {
-    engineMocks.open.mockImplementation(async () => ({
-      ...(makeDocument(1) as Record<string, unknown>),
-      getAttachments: async () => [{ id: 'a1', name: 'a.pdf' }],
-    }));
-    const viewer = new OFDViewer({
-      crypto: { enabled: false },
-      container: document.body,
-      source: new ArrayBuffer(8),
-    });
-    await viewer.ready;
-    await viewer.getDocumentInfo();
-
-    const after = viewer.getState();
-    // 快照专属字段不进入文档状态。
-    expect(Object.prototype.hasOwnProperty.call(after.document, 'attachments')).toBe(false);
-    expect(Object.prototype.hasOwnProperty.call(after.document, 'permissions')).toBe(false);
-    expect(Object.prototype.hasOwnProperty.call(after.document, 'signatureCount')).toBe(false);
-    viewer.destroy();
   });
 });

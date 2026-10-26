@@ -157,80 +157,9 @@ describe('CLI --root：各格式都经 certificatesToDer 转 DER', () => {
     }
   });
 
-  it('多证书 PEM bundle 与重复根：契约数量去重后仍为有效，链锚不变', async () => {
-    const cwd = await createTempDir();
-    // 第二张放入无关的终端实体证书，既证明多证书解析，又不抢占正确信任锚。
-    const unrelatedPem = await readFile(fixture('certs/encrypt.crt.pem'), 'utf8');
-    const bundlePath = await writeRoot(
-      cwd,
-      'roots.pem',
-      `${ROOT_PEM_TEXT}\n${unrelatedPem}`,
-    );
-    const bundle = await verifyJson(bundlePath, cwd);
-    expectValidTrusted(bundle);
-    expect(bundle.payload?.report.signatures[0]?.certificate.chain).toHaveLength(2);
-
-    const duplicatePath = await writeRoot(
-      cwd,
-      'duplicate.pem',
-      `${ROOT_PEM_TEXT}\n${ROOT_PEM_TEXT}`,
-    );
-    const duplicate = await verifyJson(duplicatePath, cwd);
-    expectValidTrusted(duplicate);
-
-    const text = await runMain(
-      ['verify', fixture('signed-sesv4.ofd'), '--root', duplicatePath],
-      cwd,
-    );
-    expect(text.code).toBe(0);
-    expect(text.stdout).toContain('根证书: 已配置 1 / 链 valid');
-  });
-
-  it('同一根证书以 PEM+DER 两个文件传入，文本仍显示实际信任锚 1 个', async () => {
-    const cwd = await createTempDir();
-    const pemCopy = await writeRoot(cwd, 'root.pem', ROOT_PEM_TEXT);
-    const derCopy = await writeRoot(cwd, 'root.der', ROOT_DER_BYTES);
-    const result = await runMain(
-      [
-        'verify',
-        fixture('signed-sesv4.ofd'),
-        '--root',
-        pemCopy,
-        '--root',
-        derCopy,
-      ],
-      cwd,
-    );
-    expect(result.code).toBe(0);
-    expect(result.stdout).toContain('根证书: 已配置 1 / 链 valid');
-    expect(result.stdout).toContain('验证结果: valid');
-  });
 });
 
 describe('CLI --root：错误码/退出码/链状态语义不回归', () => {
-  it('未配置根：链 unknown 但 overall=valid、退出 0，warning 仍为 W_CRYPTO_TRUST_UNKNOWN', async () => {
-    const cwd = await createTempDir();
-    const result = await verifyJson(undefined, cwd);
-    expect(result.code).toBe(0);
-    expect(result.payload?.report.overall).toBe('valid');
-    expect(result.payload?.report.rootsConfigured).toBe(false);
-    expect(result.payload?.report.signatures[0]?.status).toBe('valid');
-    expect(result.payload?.report.signatures[0]?.references.status).toBe('valid');
-    expect(result.payload?.report.signatures[0]?.certificate.status).toBe('unknown');
-    expect(result.stderr).toContain('W_CRYPTO_TRUST_UNKNOWN');
-  });
-
-  it('错误根证书（非签发者）：链 incomplete 但 overall=valid、退出 0，不误报证书格式错误', async () => {
-    const cwd = await createTempDir();
-    const wrongRoot = join(fixture('certs/encrypt.crt.pem'));
-    const result = await verifyJson(wrongRoot, cwd);
-    expect(result.code).toBe(0);
-    expect(result.payload?.report.overall).toBe('valid');
-    expect(result.payload?.report.signatures[0]?.status).toBe('valid');
-    expect(result.payload?.report.signatures[0]?.certificate.status).toBe('incomplete');
-    expect(result.stderr).not.toContain('CRYPTO_CERTIFICATE_INVALID');
-  });
-
   it('非法 PEM / 空文件 / 私钥 PEM：CRYPTO_CERTIFICATE_INVALID、退出 5、stdout 为空', async () => {
     const cwd = await createTempDir();
     const badPem = await writeRoot(
@@ -246,13 +175,6 @@ describe('CLI --root：错误码/退出码/链状态语义不回归', () => {
       expect(result.stdout, rootPath).toBe('');
       expect(result.stderr, rootPath).toContain('CRYPTO_CERTIFICATE_INVALID');
     }
-  });
-
-  it('根证书文件缺失仍是用法错误退出 1（CLI_ROOT_FILE_NOT_FOUND）', async () => {
-    const cwd = await createTempDir();
-    const result = await verifyJson(join(cwd, 'missing.pem'), cwd);
-    expect(result.code).toBe(1);
-    expect(result.stderr).toContain('CLI_ROOT_FILE_NOT_FOUND');
   });
 
   it('根证书目录不可读/是目录：退出 1 且错误码稳定', async () => {

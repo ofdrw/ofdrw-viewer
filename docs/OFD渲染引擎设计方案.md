@@ -588,7 +588,7 @@ engine 处理不可信文档，默认按“敌意输入”设计：
 
 ### 10.3 性能口径
 
-性能口径以 `test/performance/text-perf.test.ts` 与 `test/api/page-info.test.ts` 的常量/断言为准，测量 engine draw 阶段，不把 PNG 编码算入渲染耗时。普通页的 500/150/80 ms 是记录在性能测试中的目标值，不套用于 `dense-text-perf`；压力样本和 1000 页场景有独立断言：
+性能口径记录在本文与 `test/api/page-info.test.ts` 的常量中，测量 engine draw 阶段，不把 PNG 编码算入渲染耗时。普通页 500/150/80 ms 与 `dense-text-perf` 的 stress 阈值只作设计目标：常驻性能用例已按测试精简移除，需要时用 `test/golden` 的测量工具手工验证。
 
 | 场景 | 口径 | 当前目标/断言 |
 | --- | --- | --- |

@@ -110,35 +110,6 @@ function buildMissingPageOfd(): Uint8Array {
 }
 
 describe('getPageInfos', () => {
-  // 暂时跳过：1000 页样本在低内存环境（available < 3 GB）下冷启动耗时抖动大，
-  // 会误报 300 ms 阈值失败；需要时恢复为 it() 单独运行。
-  it.skip('1000 页 A4：全量、缓存与逐页 getSize 一致', async () => {
-    const doc = await openTestDocument(buildManyPageOfd(1000));
-    try {
-      const coldStart = performance.now();
-      const infos = await doc.getPageInfos();
-      const coldMs = performance.now() - coldStart;
-      expect(infos).toHaveLength(1000);
-      expect(infos[0]).toMatchObject({ index: 0, widthMm: 210, heightMm: 297, source: 'page' });
-      expect(infos[999]).toMatchObject({ index: 999, widthMm: 210, heightMm: 297 });
-
-      const warmStart = performance.now();
-      const cached = await doc.getPageInfos();
-      const warmMs = performance.now() - warmStart;
-      expect(cached).toHaveLength(1000);
-      expect(warmMs).toBeLessThan(50);
-      expect(coldMs).toBeLessThan(300);
-
-      for (const index of [0, 1, 500, 999]) {
-        const page = await doc.getPage(index);
-        expect(infos[index]?.widthMm).toBe(page.getSize().width);
-        expect(infos[index]?.heightMm).toBe(page.getSize().height);
-      }
-    } finally {
-      await doc.close();
-    }
-  }, 30_000);
-
   it('混合页尺寸与 start/count 边界', async () => {
     const warnings: string[] = [];
     const doc = await openTestDocument(buildFallbackOfd(), {

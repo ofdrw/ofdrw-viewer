@@ -314,6 +314,5 @@ pnpm -C packages/ofdrw-viewer-engine typecheck
 
 - `packages/ofdrw-viewer-engine/test/text-content/collect.test.ts`：坐标/DPI、字符映射、阅读/字符方向、缺字、近似 run、可见性、模板/页/复合/注释顺序、Pattern/Clip 排除、上限与 warning。
 - `packages/ofdrw-viewer-engine/test/api/text-content-api.test.ts`：接线、默认值、mm 缓存与 DPI 换算、同键并发、`includeChars`/`includeInvisible`、上限、取消、关闭、手工页面错误。
-- `packages/ofdrw-viewer-engine/test/acceptance/ui-api.acceptance.test.ts`：文本几何/DPI/取消/关闭，以及 1000 页文档只读取目标页 `Content.xml` 的按需加载断言。
 
-当前没有专门的文本层 bbox/黄金图测试：`test/golden` 验证渲染像素，`test/performance/text-perf.test.ts` 验证 dense-text 样本的渲染耗时和内存，不是 `getTextContent` 的几何或性能门禁。渲染黄金图入口为 `pnpm -C packages/ofdrw-viewer-engine test:golden`，其结果不能替代文本几何断言。文本层验证以几何单测和 API 行为测试为主；测试矩阵、黄金图口径和批量回归入口由 [测试方案](./测试方案.md) 维护，本文不复制。
+当前没有专门的文本层 bbox/黄金图测试：`test/golden` 验证渲染像素，`getTextContent` 的几何与性能没有独立门禁。渲染黄金图入口为 `pnpm -C packages/ofdrw-viewer-engine test:golden`，其结果不能替代文本几何断言。文本层验证以几何单测和 API 行为测试为主；测试矩阵、黄金图口径和批量回归入口由 [测试方案](./测试方案.md) 维护，本文不复制。

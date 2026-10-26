@@ -366,7 +366,7 @@ const task = page.render({ canvasContext, viewport, signal });
 
 ### 7.2 当前验证
 
-事件契约由 `packages/ofdrw-viewer-engine/test/api/events.test.ts` 和 `events-contract.test.ts` 覆盖，重点断言：
+事件契约由 `packages/ofdrw-viewer-engine/test/api/events-contract.test.ts` 覆盖，重点断言：
 
 - 14 个事件名与载荷字段、`sequence` 从 1 递增、无监听器不消耗序号。
 - `document:open` 的 `start` 同步、`end` 在 resolve 前；失败只派发 `start → error`；取消只派发 `start → abort(caller)`。

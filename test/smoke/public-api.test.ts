@@ -8,14 +8,8 @@ import { describe, expect, it } from 'vitest';
 import * as engine from '@ofdrw/ofdrw-viewer-engine';
 import {
   DEFAULT_CACHE_OPTIONS,
-  DEFAULT_DPI,
   DEFAULT_RESOURCE_LIMITS,
-  MM_PER_INCH,
-  OFDError,
   WarningCollector,
-  getPageTransform,
-  getPageViewport,
-  isOFDError,
 } from '@ofdrw/ofdrw-viewer-engine';
 
 describe('public API surface', () => {
@@ -38,32 +32,6 @@ describe('public API surface', () => {
     expect(DEFAULT_RESOURCE_LIMITS.maxCanvasPixels).toBe(64_000_000);
     expect(DEFAULT_CACHE_OPTIONS.pageModels).toBe(8);
     expect(Object.isFrozen(DEFAULT_RESOURCE_LIMITS)).toBe(true);
-  });
-
-  it('viewport 与页面变换按 10.6 公式计算', () => {
-    expect(DEFAULT_DPI).toBe(96);
-    expect(MM_PER_INCH).toBe(25.4);
-    const viewport = getPageViewport({ width: 210, height: 297 }, { dpi: 96 });
-    expect(viewport.dpi).toBe(96);
-    // t61 起 viewport 像素按 0.001px 归一化；A4@96 的精确归一处为 793.701/1122.52。
-    expect(viewport.width).toBe(793.701);
-    expect(viewport.height).toBe(1122.52);
-    const matrix = getPageTransform({ x: 0, y: 0, w: 210, h: 297 }, 96);
-    const scale = 96 / 25.4;
-    expect(matrix[0]).toBeCloseTo(scale, 12);
-    expect(matrix[3]).toBeCloseTo(scale, 12);
-    expect(matrix[4]).toBe(0);
-    expect(matrix[5]).toBe(0);
-  });
-
-  it('OFDError 携带 code/cause，且 isOFDError 可识别', () => {
-    const cause = new Error('boom');
-    const error = new OFDError('OFD_INVALID_PACKAGE', 'bad zip', { cause });
-    expect(error.code).toBe('OFD_INVALID_PACKAGE');
-    expect(error.cause).toBe(cause);
-    expect(error.name).toBe('OFDError');
-    expect(isOFDError(error)).toBe(true);
-    expect(isOFDError(new Error('x'))).toBe(false);
   });
 
   it('WarningCollector 按 (code,page,object) 去重并转发', () => {

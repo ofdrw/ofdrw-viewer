@@ -1,45 +1,12 @@
 /**
- * Viewport/页面变换数学（黄金图尺寸口径的基础）。
+ * 页面变换数学（黄金图尺寸口径的基础）。
  *
- * 96 DPI：1 mm = 96/25.4 ≈ 3.7795 px；A4 210×297 mm → 793.7×1122.52 px。
+ * getPageViewport 的精度与 DPI 语义已由 `test/api/viewport.test.ts` 覆盖，这里只保留
+ * 黄金图专用的 getPageTransform。
  */
 
 import { describe, expect, it } from 'vitest';
-import {
-  DEFAULT_DPI,
-  MM_PER_INCH,
-  getPageTransform,
-  getPageViewport,
-} from '@ofdrw/ofdrw-viewer-engine';
-import { PAPER_SIZES_MM } from '../fixtures';
-
-describe('getPageViewport', () => {
-  it('A4 @96 DPI', () => {
-    const viewport = getPageViewport({ width: 210, height: 297 });
-    expect(viewport.dpi).toBe(96);
-    // viewport 固定保留 3 位小数。
-    expect(viewport.width).toBe(793.701);
-    expect(viewport.height).toBe(1122.52);
-    expect(DEFAULT_DPI).toBe(96);
-  });
-
-  it('DPI 缩放线性（96/144/300）', () => {
-    const base = getPageViewport({ width: 100, height: 50 }, { dpi: 96 });
-    for (const dpi of [144, 300]) {
-      const viewport = getPageViewport({ width: 100, height: 50 }, { dpi });
-      expect(viewport.width).toBeCloseTo((base.width * dpi) / 96, 2);
-      expect(viewport.height).toBeCloseTo((base.height * dpi) / 96, 2);
-    }
-  });
-
-  it('纸张 fixture 与 mm→px 公式一致', () => {
-    for (const paper of PAPER_SIZES_MM) {
-      const viewport = getPageViewport({ width: paper.width, height: paper.height });
-      expect(viewport.width).toBeCloseTo((paper.width / MM_PER_INCH) * 96, 2);
-      expect(viewport.height).toBeCloseTo((paper.height / MM_PER_INCH) * 96, 2);
-    }
-  });
-});
+import { getPageTransform } from '@ofdrw/ofdrw-viewer-engine';
 
 describe('getPageTransform', () => {
   it('PhysicalBox 原点平移 + DPI 缩放', () => {

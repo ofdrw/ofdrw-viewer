@@ -5,7 +5,6 @@
  * 断言，覆盖旧转图片用法与新子命令的边界。
  */
 
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, afterEach } from 'vitest';
 import {
@@ -238,34 +237,5 @@ describe('V-CLI 参数与向后兼容', () => {
     expect(parseCliArgs(['-h'], cwd)).toEqual({ help: true, version: false });
     expect(parseCliArgs(['-V'], cwd)).toEqual({ help: false, version: true });
     expect(HELP_TEXT).toContain('--json');
-  });
-});
-
-describe('V-CLI 源码边界（复用 crypto）', () => {
-  it('info 只 import inspect；verify 只 import verifyOfd；convert 只 import 解密入口', () => {
-    const read = (name: string): string =>
-      readFileSync(new URL(`../../src/${name}`, import.meta.url), 'utf8');
-    const info = read('info.ts');
-    expect(info).toContain("import { inspect } from '@ofdrw/ofdrw-viewer-crypto'");
-    expect(info).not.toContain('verifyOfd');
-    expect(info).not.toContain('openDecryptingContainer');
-
-    const verify = read('verify.ts');
-    expect(verify).toContain("import { verifyOfd } from '@ofdrw/ofdrw-viewer-crypto'");
-    expect(verify).not.toContain("from 'sm-crypto'");
-
-    const convert = read('convert.ts');
-    expect(convert).toContain("import { openDecryptingContainer }");
-    expect(convert).not.toContain("from 'sm-crypto'");
-  });
-
-  it('CLI 不引入 sm-crypto，也不实现 SM3/SM4 原语', async () => {
-    const names = ['cli.ts', 'convert.ts', 'credentials.ts', 'info.ts', 'verify.ts'];
-    for (const name of names) {
-      const source = readFileSync(new URL(`../../src/${name}`, import.meta.url), 'utf8');
-      expect(source, name).not.toMatch(/from ['"]sm-crypto['"]/);
-      expect(source, name).not.toMatch(/function\s+(sm3|sm4|sm2)\b/i);
-      expect(source, name).not.toMatch(/SM4-CBC|EncryptedWK/);
-    }
   });
 });

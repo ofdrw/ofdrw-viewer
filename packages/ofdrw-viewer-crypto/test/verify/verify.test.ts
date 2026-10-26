@@ -343,7 +343,7 @@ describe('证书链独立于最终判定', () => {
 
   it('链 invalid（叶证书 KeyUsage 不含 digitalSignature）但签名通过 → overall=valid', async () => {
     // certificate.status=unsupported 需要非 SM3withSM2 的证书签名算法，构造可验签夹具成本高；
-    // 链状态与 overall 解耦已由本组 untrusted/incomplete/invalid 用例与 chain.test 覆盖。
+    // 链状态与 overall 解耦已由本组 untrusted/incomplete/invalid 用例覆盖。
     const leafKey = testKeyPair('encrypt');
     const leaf = makeCertificate(
       {

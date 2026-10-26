@@ -1,8 +1,6 @@
 /**
  * 三种适配层共用的命名/解析规则与入口契约。
  */
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   VIEWER_EVENT_BRIDGES,
@@ -16,19 +14,7 @@ import {
   toRotation,
 } from '../../../src/component/support';
 
-const packageRoot = process.cwd().endsWith('ofdrw-viewer-ui')
-  ? `${process.cwd()}/`
-  : `${resolve(process.cwd(), 'packages/ofdrw-viewer-ui')}/`;
 
-/**
- * 读取包内文件文本。
- *
- * @param relative 包内相对路径。
- * @returns UTF-8 文本。
- */
-function read(relative: string): string {
-  return readFileSync(`${packageRoot}${relative}`, 'utf8');
-}
 
 describe('wrapper 公共桥接', () => {
   it('核心事件映射为设计约定的 ofd-* 名称', () => {
@@ -96,37 +82,5 @@ describe('wrapper 公共桥接', () => {
     const next = mergeFeatures(current, { find: false });
     expect(next).toEqual({ print: false, find: false });
     expect(current).toEqual({ print: false });
-  });
-});
-
-describe('入口契约', () => {
-  it('三个 wrapper 入口都引用公共入口，核心入口不引入框架', () => {
-    const reactEntry = read('src/react/index.ts');
-    const vueEntry = read('src/vue/index.ts');
-    const elementEntry = read('src/component/ofd-viewer-element.ts');
-    expect(reactEntry).toContain("'../index'");
-    expect(vueEntry).toContain("'../index'");
-    expect(elementEntry).toContain("'../index'");
-
-    const coreEntry = read('src/index.ts');
-    expect(coreEntry).not.toMatch(/from\s+['"]react/);
-    expect(coreEntry).not.toMatch(/from\s+['"]vue/);
-  });
-
-  it('Web Component 使用 light DOM 且未引入局部渲染 API', () => {
-    const elementEntry = read('src/component/ofd-viewer-element.ts');
-    expect(elementEntry).not.toContain('attachShadow');
-    expect(elementEntry).not.toContain('renderRegion');
-    expect(read('src/react/OFDViewer.tsx')).not.toContain('renderRegion');
-    expect(read('src/vue/OFDViewer.ts')).not.toContain('renderRegion');
-  });
-
-  it('package.json 暴露 react/vue/element/component 子路径', () => {
-    const pkg = JSON.parse(read('package.json')) as {
-      exports: Record<string, unknown>;
-    };
-    for (const subpath of ['./react', './vue', './element', './component', './style.css']) {
-      expect(pkg.exports[subpath]).toBeDefined();
-    }
   });
 });

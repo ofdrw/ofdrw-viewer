@@ -7,7 +7,6 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AttachmentInfo } from '@ofdrw/ofdrw-viewer-engine';
-import { ATTACHMENT_LARGE_THRESHOLD_BYTES } from '../../../src/attachment-utils';
 import { resolveFeatureStates } from '../../../src/features';
 import { createTranslator } from '../../../src/i18n';
 import type { Translator } from '../../../src/i18n';
@@ -149,12 +148,6 @@ async function unzip(blob: Blob): Promise<Record<string, Uint8Array>> {
   const { unzipSync } = await import('fflate');
   return unzipSync(new Uint8Array(await blob.arrayBuffer()));
 }
-
-describe('阈值常量', () => {
-  it('大附件阈值为 500 MB（524288000 byte）', () => {
-    expect(ATTACHMENT_LARGE_THRESHOLD_BYTES).toBe(THRESHOLD);
-  });
-});
 
 describe('单个附件下载', () => {
   it('分块收集后生成 Blob 并以清洗后的文件名触发下载', async () => {

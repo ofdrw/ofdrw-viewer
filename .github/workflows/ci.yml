@@ -60,15 +60,13 @@ jobs:
       - name: 类型检查
         run: pnpm -r --if-present run typecheck
 
-      # golden/e2e/acceptance/performance 依赖参考图、系统字体与独占 CPU，
+      # golden/e2e 依赖参考图、系统字体与独占 CPU，
       # 在共享 runner 上容易抖动，留给本地或专用环境执行。
       - name: engine 单元测试
         run: |
           pnpm -C packages/ofdrw-viewer-engine exec vitest run \
             --exclude 'packages/ofdrw-viewer-engine/test/golden/**' \
-            --exclude 'packages/ofdrw-viewer-engine/test/e2e/**' \
-            --exclude 'packages/ofdrw-viewer-engine/test/acceptance/**' \
-            --exclude 'packages/ofdrw-viewer-engine/test/performance/**'
+            --exclude 'packages/ofdrw-viewer-engine/test/e2e/**'
 
       - name: crypto 单元测试
         run: pnpm -C packages/ofdrw-viewer-crypto test

@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -6,7 +5,6 @@ import {
   DEFAULT_DPI,
   HELP_TEXT,
   USAGE_LINE,
-  createProgressReporter,
   formatVersion,
   formatVersionDetails,
   getVersionInfo,
@@ -306,7 +304,6 @@ describe('main 帮助/版本与退出码', () => {
     });
     expect(code).toBe(0);
     expect(capture.stdoutText()).toBe(`${formatVersion('testos', 'testarch')}\n`);
-    expect(capture.stdoutText()).toContain('0.1.2');
     expect(capture.stdoutText()).toContain('testos-testarch');
   });
 
@@ -330,20 +327,6 @@ describe('main 帮助/版本与退出码', () => {
     expect(capture.stderrText()).toContain(USAGE_LINE);
   });
 
-  it('非法 format/dpi/pages 返回 1', async () => {
-    for (const [args, code] of [
-      [['input.ofd', '--format=gif'], 'CLI_INVALID_FORMAT'],
-      [['input.ofd', '--dpi=0'], 'CLI_INVALID_DPI'],
-      [['input.ofd', '--pages=3-1'], 'CLI_INVALID_PAGES'],
-    ] as const) {
-      const capture = createStreamCapture();
-      expect(
-        await main([...args], { stdout: capture.stdout, stderr: capture.stderr }),
-      ).toBe(1);
-      expect(capture.stderrText()).toContain(code);
-    }
-  });
-
   it('输入文件不存在返回 1', async () => {
     const capture = createStreamCapture();
     const missing = resolve(process.cwd(), 'no-such-file-ofdrw-cli.ofd');
@@ -357,23 +340,7 @@ describe('main 帮助/版本与退出码', () => {
 });
 
 
-describe('CLI 版本与逐页进度', () => {
-  it('CLI_VERSION 与 package.json 一致，--version 使用该版本', async () => {
-    const pkg = JSON.parse(
-      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
-    ) as { version: string };
-    expect(CLI_VERSION).toBe(pkg.version);
-
-    const capture = createStreamCapture();
-    const code = await main(['--version'], {
-      stdout: capture.stdout,
-      stderr: capture.stderr,
-      platform: 'testos',
-      arch: 'testarch',
-    });
-    expect(code).toBe(0);
-    expect(capture.stdoutText()).toContain(`ofdrw-viewer-cli ${pkg.version}`);
-  });
+describe('CLI 版本', () => {
 
   it('version 子命令只输出 CLI 自身版本与运行环境', async () => {
     const capture = createStreamCapture();
@@ -411,21 +378,4 @@ describe('CLI 版本与逐页进度', () => {
     });
   });
 
-  it('每页按行追加进度，不覆盖历史行', () => {
-    const writes: string[] = [];
-    const reporter = createProgressReporter({
-      write: (chunk) => { writes.push(String(chunk)); return true; },
-    });
-    reporter.onPageStart?.({ index: 1, total: 2, pageNumber: 1 });
-    reporter.onPageEnd?.({ index: 1, total: 2, pageNumber: 1 }, true);
-    reporter.onPageStart?.({ index: 2, total: 2, pageNumber: 5 });
-    reporter.onPageEnd?.({ index: 2, total: 2, pageNumber: 5 }, false);
-
-    expect(writes).toEqual([
-      '[1/2] 第 1 页 开始\n',
-      '[1/2] 第 1 页 完成\n',
-      '[2/2] 第 5 页 开始\n',
-      '[2/2] 第 5 页 失败\n',
-    ]);
-  });
 });

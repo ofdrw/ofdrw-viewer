@@ -11,7 +11,6 @@ GB/T 标准向量、OpenSSL 3 CLI、ofdrw 2.4.0 Java PoC 与仓库 fixture。
 | `sm-openssl.verify.test.ts` | SM3 标准向量 + OpenSSL；SM4-CBC/PKCS#7/no-padding + OpenSSL；KDF GB/T 32918.3（OpenSSL SM3 独立构造、Java 向量）；错误/边界 |
 | `sm2-openssl.verify.test.ts` | OpenSSL 生成 SM2 密钥；签名/验签双向互操作（默认/自定义 userId）；SM2 加解密双向互操作；SM2Cipher ASN.1/C1C3C2；曲线/结构/密钥错误 |
 | `cert-openssl.verify.test.ts` | 5 张证书字段与 OpenSSL 逐项对照；签名链；PEM/DER/CER/Base64；data/pem/der 三态 loader；URL/path/filePath 由 UI 适配；去重/限制/取消/畸形输入 |
-| `build-import.verify.test.ts` | ESM/CJS/d.ts 产物；Node import/require；包根导出与类型；`node:*` 扫描；esbuild browser bundle |
 | `support.ts` | OpenSSL 调用、临时目录、fixture 读取、证书字段解析等独立工具 |
 
 ## 验证命令与结果
@@ -22,8 +21,8 @@ pnpm -C packages/ofdrw-viewer-crypto typecheck
 
 pnpm -C packages/ofdrw-viewer-crypto exec vitest run \
   test/verification/core test/core test/cert --passWithNoTests
-# → 15 files / 151 tests 全部通过
-#   其中独立验证 4 files / 57 tests
+# → 17 files / 165 tests 全部通过
+#   其中独立验证 3 files / 32 tests
 
 pnpm -C packages/ofdrw-viewer-crypto build
 # → exit 0；dist/index.js、index.cjs、index.d.ts、index.d.cts
@@ -88,5 +87,5 @@ userId 是 `1234567812345678`。因此 SM2 签名/验签与证书链验证都必
   使用 SM2，因此本任务不作为验收失败项，建议实现方后续把空明文改为
   `CRYPTO_INVALID_ARGUMENT` 或支持空 C2 以满足自身文档。
 - 当前机器只有 Node v26.10.0，Node 22 兼容性由 t5 的 Node 22.22.0 验证与
-  `target: es2022` 保证；本目录的 ESM/CJS/browser 导入在 Node 26 与
-  HeadlessChrome 145 实际执行通过。
+  `target: es2022` 保证；ESM/CJS/browser 导入已由上面的手工浏览器验证与
+  `pnpm build`+`check-compat` 覆盖，常驻构建产物用例已按测试精简移除。

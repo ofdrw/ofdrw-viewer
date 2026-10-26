@@ -72,7 +72,7 @@ describe('图片 CLI 黑盒验收：帮助与版本', () => {
     const result = await runCli(['--version'], { cwd });
 
     expect(result.code).toBe(0);
-    expect(result.stdout).toMatch(/ofdrw-viewer-cli 0\.1\.0 \(.+\)/);
+    expect(result.stdout).toMatch(/ofdrw-viewer-cli \d+\.\d+\.\d+ \(.+\)/);
     expect(result.stdout).toContain(`${process.platform}-${process.arch}`);
   });
 });

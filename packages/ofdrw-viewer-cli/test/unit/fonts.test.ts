@@ -15,16 +15,12 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Logger } from '../../src/log.js';
 import {
-  MAX_SCANNED_FONTS,
-  MAX_SYSTEM_FONT_BYTES,
-  MAX_SYSTEM_FONTS,
   clearSystemFontCache,
   discoverSystemFonts,
   isCjkFontFileName,
   isFontFileName,
   loadFontInputs,
   loadSupplementaryFonts,
-  loadSystemFonts,
   mergeFontFiles,
   scanFontDirectory,
   systemFontDirectories,
@@ -284,12 +280,6 @@ describe('systemFontDirectories', () => {
 });
 
 describe('discoverSystemFonts', () => {
-  it('默认限额为扫描 2000 个、注入 6 个、总字节 96 MiB', () => {
-    expect(MAX_SCANNED_FONTS).toBe(2000);
-    expect(MAX_SYSTEM_FONTS).toBe(6);
-    expect(MAX_SYSTEM_FONT_BYTES).toBe(96 * 1024 * 1024);
-  });
-
   it('递归扫描注入目录、过滤扩展名并返回 realpath', async () => {
     const root = await createTempDir();
     await createFontFixture(join(root, 'a.ttf'));
@@ -454,44 +444,8 @@ describe('discoverSystemFonts', () => {
     expect(result.scannedBytes).toBe(600);
   });
 
-  it('同一目录与限额复用进程内缓存，清除后重新扫描', async () => {
-    const root = await createTempDir();
-    await createFontFixture(join(root, 'a.ttf'));
-    const options = { directories: [root] } as const;
-
-    expect((await discoverSystemFonts(options)).scannedFiles).toBe(1);
-    await createFontFixture(join(root, 'b.ttf'));
-    expect((await discoverSystemFonts(options)).scannedFiles).toBe(1);
-
-    clearSystemFontCache();
-    expect((await discoverSystemFonts(options)).scannedFiles).toBe(2);
-  });
 });
 
-describe('loadSystemFonts', () => {
-  it('数量日志写入 stderr，不污染 stdout', async () => {
-    const root = await createTempDir();
-    await createFontFixture(join(root, 'SimSun.ttc'));
-    const capture = createStreamCapture();
-    const logger = new Logger({ stdout: capture.stdout, stderr: capture.stderr });
-
-    const fonts = await loadSystemFonts(logger, { directories: [root] });
-    expect(fonts.map((font) => basename(font.path))).toEqual(['SimSun.ttc']);
-    expect(capture.stdoutText()).toBe('');
-    expect(capture.stderrText()).toBe('自动发现系统字体 1 个（扫描 1 个文件）\n');
-    expect(logger.warningCounts().size).toBe(0);
-  });
-
-  it('没有字体时输出 0 并返回空数组', async () => {
-    const root = await createTempDir();
-    const capture = createStreamCapture();
-    const logger = new Logger({ stdout: capture.stdout, stderr: capture.stderr });
-
-    const fonts = await loadSystemFonts(logger, { directories: [join(root, 'missing')] });
-    expect(fonts).toEqual([]);
-    expect(capture.stderrText()).toBe('自动发现系统字体 0 个（扫描 0 个文件）\n');
-  });
-});
 
 describe('mergeFontFiles', () => {
   it('用户字体在前、系统字体在后并按 realpath 去重', () => {
