@@ -757,6 +757,14 @@
   -webkit-user-select: none;
 }
 
+/*
+ * 手势预览中文字层被合成层拉伸，几何与屏幕像素不再对应；
+ * 暂时隐藏，避免拖选命中错位文本。提交并重绘后移除该属性。
+ */
+.ofd-page__text-layer[data-preview] {
+  visibility: hidden;
+}
+
 .ofd-text-item {
   position: absolute;
   margin: 0;

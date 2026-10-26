@@ -82,14 +82,14 @@ function makeDocument(count: number, exportAllowed = true): unknown {
 /**
  * 测试替身返回的 A4 canvas 宽度，单位设备像素。
  *
- * 按 UI 默认渲染 DPI 144 计算。
+ * 与实现一致：`DPI = 96 × 有效渲染倍率 × DPR`；默认超采样为 1，即按 DPR 1:1。
  *
- * @param renderScale 实际渲染倍率。
+ * @param renderScale 有效渲染倍率（含显示倍率、最低倍率与超采样）。
  * @param dpr 设备像素比。
  * @returns 向上取整的 canvas 宽度。
  */
 function a4CanvasWidth(renderScale: number, dpr = 1): number {
-  return Math.ceil((210 / 25.4) * 144 * renderScale * dpr);
+  return Math.ceil((210 / 25.4) * 96 * renderScale * dpr);
 }
 
 /**
@@ -635,7 +635,7 @@ describe('OFDViewer 核心', () => {
     const page = viewer.getPageView(1)!;
     await vi.waitFor(() => expect(page.state).toBe('rendered'));
     const canvas = page.canvas!;
-    // 1× 屏 100% 按默认 144 DPI 渲染（1.5 倍 CSS 像素）。
+    // 1× 屏 100%：有效渲染倍率 1（默认超采样 1，按 DPR 1:1 渲染）。
     expect(canvas.width).toBe(a4CanvasWidth(1));
     expect(page.renderedScale).toBeCloseTo(1, 5);
     const clearCalls = contextMock.clearRect.mock.calls.length;
@@ -675,9 +675,10 @@ describe('OFDViewer 核心', () => {
     await viewer.ready;
     const page = viewer.getPageView(1)!;
     await vi.waitFor(() => expect(page.state).toBe('rendered'));
+    // DPR=3 时按设备像素比渲染：显示 1× → 有效倍率 1、288 DPI。
     expect(page.canvas!.width).toBe(a4CanvasWidth(1, 3));
 
-    // DPR=3 时下限为 2/3（288 DPI）：低于该倍率后画布固定为 2 倍 CSS 尺寸。
+    // 低于下限 2/3 后画布固定为 2 倍 CSS 尺寸。
     viewer.setScale(0.5);
     await vi.waitFor(() => expect(page.canvas?.width).toBe(a4CanvasWidth(2 / 3, 3)));
     expect(page.renderedScale).toBeCloseTo(2 / 3, 5);
@@ -988,6 +989,8 @@ describe('OFDViewer 核心', () => {
     expect(
       viewer.getPageViews().some((view) => view.element.classList.contains('ofd-page--preview')),
     ).toBe(true);
+    // 预览期文字层被拉伸，几何与像素不对应，须标记 data-preview 隐藏，避免拖选错位。
+    expect(viewer.getPageView(1)?.textLayer.dataset.preview).toBe('true');
     // 等一帧确认滚动合并也不会引起重绘。
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(contextMock.clearRect.mock.calls.length).toBe(rendersBefore);
@@ -1001,6 +1004,8 @@ describe('OFDViewer 核心', () => {
         ).toBe(true),
       { timeout: 3000 },
     );
+    // 提交后文字层恢复可选中。
+    expect(viewer.getPageView(1)?.textLayer.dataset.preview).toBeUndefined();
     await vi.waitFor(() =>
       expect(contextMock.clearRect.mock.calls.length).toBeGreaterThan(rendersBefore),
     );

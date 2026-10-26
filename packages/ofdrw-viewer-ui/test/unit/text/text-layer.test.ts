@@ -3,7 +3,7 @@ import { TextLayerService } from '../../../src/text/text-layer';
 import { createViewerBridge } from '../../../src/text/viewer-bridge';
 import type { FindMatch } from '../../../src/text/types';
 import type { TextProvider } from './helpers';
-import { contentWithLines, makeFakeHost } from './helpers';
+import { contentWithLines, makeFakeHost, makePageView } from './helpers';
 import { UI_WARNING_CODES } from '../../../src/diagnostics';
 
 /** 等待 setTimeout 级异步任务。 */
@@ -54,8 +54,10 @@ describe('透明文本层服务', () => {
     });
     const layer = host.getPageView(2)!.textLayer;
     expect(layer.dataset.dpi).toBe('96');
-    expect(layer.style.transform).toBe('scale(var(--scale-factor, 1))');
+    // 布局框取“纸面尺寸 / 布局倍率”，再由显式 scale 放大回纸面，与 canvas 重合。
+    expect(layer.style.transform).toBe('scale(1)');
     expect(layer.style.width).toBe(`${(210 / 25.4) * 96}px`);
+    expect(layer.style.height).toBe(`${(297 / 25.4) * 96}px`);
     const span = layer.querySelector<HTMLElement>('.ofd-text-item')!;
     expect(span.textContent).toBe('第二页 Hello');
     expect(span.style.color).toBe('transparent');
@@ -81,8 +83,31 @@ describe('透明文本层服务', () => {
     host.setView({ scale: 2 });
     host.setView({ rotation: 90 });
     await flush();
-    expect(layer.style.transform).toBe('scale(var(--scale-factor, 1))');
+    // 缩放/旋转不重算 span 坐标：坐标始终以 96 DPI 基准存放，由图层变换承担。
     expect(layer.querySelector<HTMLElement>('.ofd-text-item')!.style.left).toBe(before);
+    service.destroy();
+  });
+
+  it('布局倍率变化后文字层布局框按纸面尺寸换算', async () => {
+    const view = makePageView(1);
+    // 纸面 800×1131（含 2 倍布局倍率）对应 96 DPI 基准 400×565.5。
+    Object.assign(view as unknown as Record<string, number>, {
+      surfaceWidth: 800,
+      surfaceHeight: 1131,
+      layoutScale: 2,
+    });
+    const host = makeFakeHost({
+      pageCount: 1,
+      contents: new Map([[1, contentWithLines(['Hello'])]]),
+      pageViews: new Map([[1, view]]),
+    });
+    const service = new TextLayerService(host, createViewerBridge(host));
+    await vi.waitFor(() => {
+      expect(view.textLayer.querySelectorAll('.ofd-text-item').length).toBe(1);
+    });
+    expect(view.textLayer.style.width).toBe('400px');
+    expect(view.textLayer.style.height).toBe('565.5px');
+    expect(view.textLayer.style.transform).toBe('scale(2)');
     service.destroy();
   });
 
@@ -208,7 +233,10 @@ describe('透明文本层服务', () => {
     const layer = surface.querySelector<HTMLElement>('.ofd-page__find-layer')!;
     expect(layer).not.toBeNull();
     expect(layer.style.pointerEvents).toBe('none');
-    expect(layer.style.transform).toBe('scale(var(--scale-factor, 1))');
+    // 高亮层与文字层共用 applyLayerScale：布局框为 96 DPI 页尺寸，按显式倍率放大。
+    expect(layer.style.transform).toBe('scale(1)');
+    expect(layer.style.width).toBe(`${(210 / 25.4) * 96}px`);
+    expect(layer.style.height).toBe(`${(297 / 25.4) * 96}px`);
     const boxes = layer.querySelectorAll<HTMLElement>('.ofd-find-highlight');
     expect(boxes).toHaveLength(2);
     expect(boxes[0]!.dataset.current).toBe('true');

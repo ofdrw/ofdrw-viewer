@@ -115,7 +115,8 @@ describe('文本模块与 OFDViewer 集成', () => {
     });
     const layer = viewer.getPageView(1)!.textLayer;
     expect(layer.dataset.dpi).toBe('96');
-    expect(layer.style.transform).toBe('scale(var(--scale-factor, 1))');
+    // 缩放倍率由图层显式 scale 表达（自动适配宽度下的初始倍率）。
+    expect(layer.style.transform).toMatch(/^scale\([\d.]+\)$/);
 
     const findEvents: string[] = [];
     viewer.on('findstart', () => findEvents.push('start'));
@@ -144,7 +145,12 @@ describe('文本模块与 OFDViewer 集成', () => {
     viewer.setRotation(90);
     expect(left).toBe(span.style.left);
     expect(viewer.getPageView(1)!.surface.style.transform).toContain('rotate(90deg)');
-    expect(layer.style.transform).toBe('scale(var(--scale-factor, 1))');
+    // 缩放提交后文字层布局框随之更新，仍与纸面尺寸一致。
+    const surface = viewer.getPageView(1)!.surface;
+    expect(parseFloat(layer.style.width)).toBeCloseTo(
+      parseFloat(surface.style.width) / 2,
+      5,
+    );
     viewer.destroy();
   });
 

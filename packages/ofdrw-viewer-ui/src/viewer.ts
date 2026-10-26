@@ -2566,6 +2566,10 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     if (anchor) {
       this.mainScrollTop = this.layout.getOffsetForAnchor(anchor);
     }
+    // 纸面尺寸与布局倍率刚写入，同步刷新文字层与查找高亮层：二者的布局框按“纸面尺寸
+    // / 布局倍率”换算、再以 scale 放大，必须与 canvas 在同一次样式计算里完成，否则
+    // 文字层会晚画布一帧，缩放提交瞬间出现文字错位闪动。
+    this.services.textLayer?.refresh?.();
     this.scheduleScrollUpdate();
   }
 
@@ -2863,9 +2867,15 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     return Math.min(1, MAX_CANVAS_BASE_DPR / this.devicePixelRatio());
   }
 
-  /** 当前有效渲染倍率：显示倍率与最低渲染倍率取大。 */
+  /**
+   * 当前有效渲染倍率：显示倍率与最低渲染倍率取大，再乘以可选的超采样倍率。
+   *
+   * 默认超采样为 1，即按设备像素比 1:1 渲染：画布后备像素与屏幕物理像素一一对应，
+   * 既最锐利也不做多余的像素填充。超采样（>1）由宿主显式开启，代价是画布像素数
+   * 按平方增长。
+   */
   private effectiveRenderScale(): number {
-    return Math.max(this.state.view.scale, this.minRenderScale());
+    return Math.max(this.state.view.scale, this.minRenderScale()) * this.options.supersample;
   }
 
   /**

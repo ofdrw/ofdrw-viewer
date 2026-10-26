@@ -229,6 +229,10 @@ export function makePageView(pageNumber: number, doc: Document = document): Page
     pageNumber,
     pageIndex: pageNumber - 1,
     isDestroyed: false,
+    // 默认按 A4、1 倍布局，与假宿主的页信息一致；用例可覆写以模拟其他倍率。
+    surfaceWidth: (210 / MM_PER_INCH) * 96,
+    surfaceHeight: (297 / MM_PER_INCH) * 96,
+    layoutScale: 1,
     setTextLayerVisible(visible: boolean): void {
       textLayer.hidden = !visible;
     },

@@ -10,7 +10,7 @@
 
 import { replaceChildren, runMicrotask } from '../compat';
 
-import type { PageInfo, TextContent } from '@ofdrw/ofdrw-viewer-engine';
+import type { TextContent } from '@ofdrw/ofdrw-viewer-engine';
 import type { PageView } from '../page-view';
 import type { ViewerState } from '../state';
 import type {
@@ -18,11 +18,7 @@ import type {
   TextLayerSpecs,
   TextSpanSpec,
 } from './geometry';
-import {
-  MAX_TEXT_LAYER_NODES,
-  buildTextLayerSpecs,
-  mmToCssPx,
-} from './geometry';
+import { MAX_TEXT_LAYER_NODES, buildTextLayerSpecs, mmToCssPx } from './geometry';
 import type { FindHighlightRenderer, FindMatch } from './types';
 import type { TextViewerHost, ViewerBridge, ViewerTextLayerServiceLike } from './viewer-bridge';
 import { textContentOptions } from './viewer-bridge';
@@ -48,6 +44,40 @@ export interface TextLayerServiceOptions {
   readonly maxNodes?: number;
   /** 可见页上下额外预取页数；默认 1。 */
   readonly overscan?: number;
+}
+
+/**
+ * 把 96 DPI 坐标系图层铺满纸面并按布局倍率缩放内容。
+ *
+ * 文本层与查找高亮层的 span 坐标都是 **96 DPI 基准**（不含布局倍率），因此图层
+ * 布局框必须等于“纸面尺寸 / 布局倍率”，再由 `--scale-factor` 放大回来，与 canvas
+ * 恰好重合。若直接把图层设成 `100%` 铺满纸面，纸面尺寸已含倍率，再接 `transform`
+ * 就会把倍率乘两次（实测 2 倍缩放时文字层宽度是画布的 2 倍）。
+ *
+ * @param layer 图层元素。
+ * @param surfaceWidth 纸面宽，单位 px（已含布局倍率）。
+ * @param surfaceHeight 纸面高，单位 px（已含布局倍率）。
+ * @param scaleFactor 布局倍率；非法或非正时按 1。
+ */
+export function applyLayerScale(
+  layer: HTMLElement,
+  surfaceWidth: number,
+  surfaceHeight: number,
+  scaleFactor: number,
+): void {
+  const factor = Number.isFinite(scaleFactor) && scaleFactor > 0 ? scaleFactor : 1;
+  const width = Number.isFinite(surfaceWidth) && surfaceWidth > 0 ? surfaceWidth : 0;
+  const height = Number.isFinite(surfaceHeight) && surfaceHeight > 0 ? surfaceHeight : 0;
+  const style = layer.style;
+  style.position = 'absolute';
+  style.left = '0';
+  style.top = '0';
+  style.width = `${width / factor}px`;
+  style.height = `${height / factor}px`;
+  style.right = 'auto';
+  style.bottom = 'auto';
+  style.transformOrigin = '0 0';
+  style.transform = `scale(${factor})`;
 }
 
 /**
@@ -172,10 +202,46 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
       const view = this.host.getPageView(pageNumber);
       if (!view || view.isDestroyed) continue;
       const pageState = this.pages.get(pageNumber);
-      if (pageState?.built || pageState?.failed) continue;
+      if (pageState?.built || pageState?.failed) {
+        // 已建好的文字层 span 坐标不变，但布局框要跟随纸面尺寸/倍率更新，
+        // 否则缩放提交后文字层与 canvas 尺寸不一致。
+        this.syncPageTextLayerGeometry(pageNumber, view);
+        continue;
+      }
       void this.loadPage(pageNumber, view);
     }
     this.renderFindHighlights();
+  }
+
+  /**
+   * 按当前布局刷新单页文字层的布局框与缩放；已建好的 span 不重建。
+   *
+   * @param pageNumber 页码，1-based。
+   * @param view 页视图。
+   */
+  private syncPageTextLayerGeometry(pageNumber: number, view: PageView): void {
+    const layer = view.textLayer;
+    if (!layer || layer.childElementCount === 0) return;
+    applyLayerScale(
+      layer,
+      this.surfaceWidthOf(pageNumber, view),
+      this.surfaceHeightOf(pageNumber, view),
+      view.layoutScale || 1,
+    );
+  }
+
+  /** 纸面宽，单位 px（含布局倍率）；页视图未布局时按 96 DPI 页宽兜底。 */
+  private surfaceWidthOf(pageNumber: number, view: PageView): number {
+    if (view.surfaceWidth > 0) return view.surfaceWidth;
+    const info = this.host.getPageInfo(pageNumber);
+    return mmToCssPx(info?.widthMm ?? 210) * (view.layoutScale || 1);
+  }
+
+  /** 纸面高，单位 px（含布局倍率）；页视图未布局时按 96 DPI 页高兜底。 */
+  private surfaceHeightOf(pageNumber: number, view: PageView): number {
+    if (view.surfaceHeight > 0) return view.surfaceHeight;
+    const info = this.host.getPageInfo(pageNumber);
+    return mmToCssPx(info?.heightMm ?? 297) * (view.layoutScale || 1);
   }
 
   /** 销毁并释放全部 DOM/监听/进行中的请求。 */
@@ -355,7 +421,7 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
       fragment.appendChild(createTextSpan(doc, spec, pageNumber, selectable));
     }
     replaceChildren(layer, fragment);
-    this.applyTextLayerGeometry(layer, specs, pageNumber);
+    this.applyTextLayerGeometry(layer, specs, pageNumber, view);
     state.built = true;
     state.nodeCount = specs.spans.length;
     state.abort = null;
@@ -368,20 +434,25 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
     }
   }
 
-  /** 设置文本层尺寸与 CSS 缩放（坐标已是 96 DPI）。 */
+  /**
+   * 设置文本层布局框与缩放。
+   *
+   * span 坐标是 96 DPI 基准，图层布局框取“纸面尺寸 / 布局倍率”，再由
+   * `--scale-factor` 放大，因此缩放时无需重算 span，且始终与 canvas 重合。
+   */
   private applyTextLayerGeometry(
     layer: HTMLElement,
     specs: TextLayerSpecs,
     pageNumber: number,
+    view: PageView,
   ): void {
-    layer.style.width = `${specs.width}px`;
-    layer.style.height = `${specs.height}px`;
-    layer.style.left = '0';
-    layer.style.top = '0';
-    layer.style.right = 'auto';
-    layer.style.bottom = 'auto';
-    layer.style.transformOrigin = '0 0';
-    layer.style.transform = 'scale(var(--scale-factor, 1))';
+    // 纸面尺寸由页布局决定（含旋转后的宽高交换）；未布局时用 96 DPI 页尺寸兜底。
+    applyLayerScale(
+      layer,
+      this.surfaceWidthOf(pageNumber, view) || specs.width,
+      this.surfaceHeightOf(pageNumber, view) || specs.height,
+      view.layoutScale || 1,
+    );
     layer.style.pointerEvents = '';
     layer.dataset.pageNumber = String(pageNumber);
     layer.dataset.dpi = String(specs.dpi);
@@ -498,34 +569,42 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
     }
   }
 
-  /** 创建页查找高亮层；坐标与文本层一致（96 DPI + `--scale-factor`）。 */
+  /** 创建页查找高亮层；坐标与文本层一致（96 DPI 基准 + 显式倍率）。 */
   private createFindLayer(view: PageView): HTMLElement {
     const doc = view.element.ownerDocument;
     const layer = doc.createElement('div');
     layer.className = 'ofd-page__find-layer';
-    const info: PageInfo | undefined = this.host.getPageInfo(view.pageNumber);
-    const width = info ? mmToCssPx(info.widthMm) : 0;
-    const height = info ? mmToCssPx(info.heightMm) : 0;
-    const style = layer.style;
-    style.position = 'absolute';
-    style.left = '0';
-    style.top = '0';
-    style.width = `${width}px`;
-    style.height = `${height}px`;
-    style.transformOrigin = '0 0';
-    style.transform = 'scale(var(--scale-factor, 1))';
-    style.pointerEvents = 'none';
-    style.overflow = 'visible';
-    style.zIndex = '3';
+    this.syncFindLayerGeometry(layer, view);
+    layer.style.pointerEvents = 'none';
+    layer.style.overflow = 'visible';
+    layer.style.zIndex = '3';
     view.surface.appendChild(layer);
     return layer;
   }
 
-  /** 获取或创建页查找高亮层。 */
+  /**
+   * 按页视图当前布局刷新查找高亮层盒子；与文字层共用同一换算。
+   *
+   * @param layer 高亮层元素。
+   * @param view 页视图。
+   */
+  private syncFindLayerGeometry(layer: HTMLElement, view: PageView): void {
+    applyLayerScale(
+      layer,
+      this.surfaceWidthOf(view.pageNumber, view),
+      this.surfaceHeightOf(view.pageNumber, view),
+      view.layoutScale || 1,
+    );
+  }
+
+  /** 获取或创建页查找高亮层；布局变化时按当前纸面尺寸重算盒子。 */
   private ensureFindLayer(pageNumber: number): HTMLElement | null {
     const existing = this.findLayers.get(pageNumber);
-    if (existing?.isConnected) return existing;
     const view = this.host.getPageView(pageNumber);
+    if (existing?.isConnected) {
+      if (view && !view.isDestroyed) this.syncFindLayerGeometry(existing, view);
+      return existing;
+    }
     if (!view || view.isDestroyed) return null;
     const layer = this.createFindLayer(view);
     this.findLayers.set(pageNumber, layer);

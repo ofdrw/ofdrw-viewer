@@ -125,6 +125,8 @@ export class PageView {
   private pendingRenderScale = 0;
   private currentRotation: Rotation = 0;
   private currentScale = 1;
+  /** 当前纸面尺寸，单位 px（已含布局倍率）；供文字层按 96 DPI 基准换算布局框。 */
+  private surfaceSizeValue = { width: 0, height: 0 };
   private destroyed = false;
   /** 是否已经完成过至少一次绘制；用于区分首次骨架与重渲染遮罩。 */
   private painted = false;
@@ -251,6 +253,21 @@ export class PageView {
     return this.renderedScaleValue;
   }
 
+  /** 当前纸面宽，单位 px（已含布局倍率）；未布局为 0。 */
+  get surfaceWidth(): number {
+    return this.surfaceSizeValue.width;
+  }
+
+  /** 当前纸面高，单位 px（已含布局倍率）；未布局为 0。 */
+  get surfaceHeight(): number {
+    return this.surfaceSizeValue.height;
+  }
+
+  /** 当前布局倍率。 */
+  get layoutScale(): number {
+    return this.currentScale;
+  }
+
   /** 当前 canvas；未创建为 null。 */
   get canvas(): HTMLCanvasElement | null {
     return this.canvasElement;
@@ -353,6 +370,10 @@ export class PageView {
     const { box, rotation, scale } = layout;
     this.currentRotation = rotation;
     this.currentScale = scale;
+    this.surfaceSizeValue = {
+      width: box.surfaceWidth,
+      height: box.surfaceHeight,
+    };
     this.element.style.top = `${box.top}px`;
     this.element.style.width = `${box.width}px`;
     this.element.style.height = `${box.height}px`;
@@ -374,6 +395,9 @@ export class PageView {
    * 只通过 CSS `transform: scale()` 缩放页盒，由合成层完成，代价接近零；
    * `scale` 为 1 时清除预览。真正的高清渲染由阅读器在手势结束后执行。
    *
+   * 预览期间文字层被拉伸，几何与屏幕像素不再对应，因此一并打上 `data-preview`
+   * 隐藏，避免拖选命中错位文本；提交重绘后恢复。
+   *
    * @param scale 预览缩放倍率（相对当前已渲染布局）。
    */
   setPreviewScale(scale: number): void {
@@ -381,10 +405,12 @@ export class PageView {
     if (scale === 1) {
       this.element.classList.remove('ofd-page--preview');
       this.element.style.removeProperty('--preview-scale');
+      this.textLayer.removeAttribute('data-preview');
       return;
     }
     this.element.classList.add('ofd-page--preview');
     this.element.style.setProperty('--preview-scale', String(scale));
+    this.textLayer.setAttribute('data-preview', 'true');
   }
 
   /**
