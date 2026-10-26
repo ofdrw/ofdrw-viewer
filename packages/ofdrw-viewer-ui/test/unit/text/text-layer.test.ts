@@ -111,6 +111,61 @@ describe('透明文本层服务', () => {
     service.destroy();
   });
 
+  it.each([0.5, 1, 1.25, 2, 4])(
+    '布局倍率 %s 下文字层布局框与纸面换算一致',
+    async (scale) => {
+      // 纸面尺寸 = 96 DPI 页尺寸 × 倍率；布局框应为其除以倍率后的 96 DPI 基准尺寸，
+      // 再由 scale(倍率) 放大回纸面。若把纸面尺寸直接当布局框（或漏乘倍率），
+      // 缩放后文字层会与 canvas 相差一个倍率。
+      const baseW = (210 / 25.4) * 96;
+      const baseH = (297 / 25.4) * 96;
+      const view = makePageView(1);
+      Object.assign(view as unknown as Record<string, number>, {
+        surfaceWidth: baseW * scale,
+        surfaceHeight: baseH * scale,
+        layoutScale: scale,
+      });
+      const host = makeFakeHost({
+        pageCount: 1,
+        contents: new Map([[1, contentWithLines(['Hello'])]]),
+        pageViews: new Map([[1, view]]),
+      });
+      const service = new TextLayerService(host, createViewerBridge(host));
+      await vi.waitFor(() => {
+        expect(view.textLayer.querySelectorAll('.ofd-text-item').length).toBe(1);
+      });
+      expect(Number.parseFloat(view.textLayer.style.width)).toBeCloseTo(baseW, 5);
+      expect(Number.parseFloat(view.textLayer.style.height)).toBeCloseTo(baseH, 5);
+      expect(view.textLayer.style.transform).toBe(`scale(${scale})`);
+      service.destroy();
+    },
+  );
+
+  it('查找高亮层与文字层共用同一布局框与倍率', async () => {
+    const scale = 2;
+    const view = makePageView(1);
+    Object.assign(view as unknown as Record<string, number>, {
+      surfaceWidth: (210 / 25.4) * 96 * scale,
+      surfaceHeight: (297 / 25.4) * 96 * scale,
+      layoutScale: scale,
+    });
+    const host = makeFakeHost({
+      pageCount: 1,
+      contents: new Map([[1, contentWithLines(['Hello'])]]),
+      pageViews: new Map([[1, view]]),
+    });
+    const service = new TextLayerService(host, createViewerBridge(host));
+    await vi.waitFor(() => {
+      expect(view.textLayer.querySelectorAll('.ofd-text-item').length).toBe(1);
+    });
+    service.setFindMatches([match(1, '1:0', 10)], 1, true);
+    const layer = view.surface.querySelector<HTMLElement>('.ofd-page__find-layer')!;
+    expect(layer.style.width).toBe(view.textLayer.style.width);
+    expect(layer.style.height).toBe(view.textLayer.style.height);
+    expect(layer.style.transform).toBe(view.textLayer.style.transform);
+    service.destroy();
+  });
+
   it('features.selection=false 时关闭 user-select', async () => {
     const host = makeFakeHost({
       pageCount: 1,
