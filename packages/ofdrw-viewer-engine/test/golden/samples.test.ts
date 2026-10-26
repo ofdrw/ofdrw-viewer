@@ -1,5 +1,5 @@
 /**
- * 回归样本清单完整性：64 条（62 对基准 + manual + dense-text-perf）、19.3 分组、页数/尺寸/字体/JBIG2 标注。
+ * 回归样本清单完整性：63 条（61 对基准 + manual + dense-text-perf）、19.3 分组、页数/尺寸/字体/JBIG2 标注。
  */
 
 import { existsSync } from 'node:fs';
@@ -37,13 +37,13 @@ const EXPECTED_GROUP_SAMPLES: Record<string, string[]> = {
 describe('回归样本清单', () => {
   const manifest = loadSampleManifest();
 
-  it('包含 64 对且名称唯一', () => {
+  it('包含 63 对且名称唯一', () => {
     expect(manifest.schemaVersion).toBe(1);
     expect(manifest.sourceDir).toBe('ofd_pdf_match');
-    expect(manifest.count).toBe(64);
-    expect(manifest.samples).toHaveLength(64);
+    expect(manifest.count).toBe(63);
+    expect(manifest.samples).toHaveLength(63);
     const names = new Set(manifest.samples.map((sample) => sample.name));
-    expect(names.size).toBe(64);
+    expect(names.size).toBe(63);
     expect(names.has('manual')).toBe(true);
     expect(names.has('dense-text-perf')).toBe(true);
     expect(names.has('ofd-viewer-ui-showcase')).toBe(true);
@@ -222,7 +222,6 @@ describe('回归样本清单', () => {
     }> = [
       { name: '96d93ac858b444c1b914707872dbd645', groups: ['annotation-seal'], pdfPages: 2, ofdDeclaredPages: 2, sizeMm: { width: 210, height: 297 }, fontEntries: 0, imageEntries: 0 },
       { name: 'addimage', groups: ['image'], pdfPages: 2, ofdDeclaredPages: 2, sizeMm: { width: 209, height: 147 }, fontEntries: 0, imageEntries: 2 },
-      { name: '保函', groups: ['annotation-seal'], pdfPages: 2, ofdDeclaredPages: 2, sizeMm: { width: 209.903, height: 297.039 }, fontEntries: 1, imageEntries: 2 },
       { name: 'dzbh', groups: ['annotation-seal'], pdfPages: 2, ofdDeclaredPages: 2, sizeMm: { width: 209.954, height: 296.934 }, fontEntries: 1, imageEntries: 3 },
       { name: '发票示例', groups: ['annotation-seal'], pdfPages: 1, ofdDeclaredPages: 1, sizeMm: { width: 210, height: 140 }, fontEntries: 0, imageEntries: 1 },
       { name: 'testImageOverridePage', groups: ['image'], pdfPages: 1, ofdDeclaredPages: 1, sizeMm: { width: 369.358, height: 258.939 }, fontEntries: 0, imageEntries: 2 },

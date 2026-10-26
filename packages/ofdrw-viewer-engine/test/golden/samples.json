@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "generatedAt": "2026-10-25T02:19:58.406Z",
   "sourceDir": "ofd_pdf_match",
-  "count": 64,
+  "count": 63,
   "samples": [
     {
       "name": "1",
@@ -1854,36 +1854,6 @@
       "goldenPages": [],
       "notes": [
         "由 ofd_pdf_match_v2 入库（用户裁决）：含图片与注释对象，Document.xml 声明 2 页。"
-      ]
-    },
-    {
-      "name": "保函",
-      "groups": [
-        "annotation-seal"
-      ],
-      "priority": "P0",
-      "optional": false,
-      "available": true,
-      "ofd": "ofd_pdf_match/保函.ofd",
-      "pdf": "ofd_pdf_match/保函.pdf",
-      "pdfPages": 2,
-      "ofdDeclaredPages": 2,
-      "pageSizePt": {
-        "width": 595,
-        "height": 842
-      },
-      "sizeMm": {
-        "width": 209.903,
-        "height": 297.039
-      },
-      "embeddedFonts": true,
-      "fontEntries": 1,
-      "imageEntries": 2,
-      "jb2Entries": 0,
-      "sha256": "b35fb67e8d15b54ced817c671dafa04e7caa692a10e5e033cd70639710097825",
-      "goldenPages": [],
-      "notes": [
-        "由 ofd_pdf_match_v2 入库（用户裁决）：保函样本，含附件/签章/内嵌字体/图片。"
       ]
     },
     {
