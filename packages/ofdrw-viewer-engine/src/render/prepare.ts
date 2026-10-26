@@ -251,6 +251,14 @@ export async function preparePage(input: PreparePageInput): Promise<PreparedPage
     try {
       signatureSources = await loader.loadSignatureStamps(page);
     } catch (error) {
+      // 取消不是绘制降级，不能上报为 W_UNSUPPORTED_PAINT，否则控制台会把正常的
+      // 取消渲染误报成“签章加载失败”。
+      if (
+        error instanceof OFDError &&
+        (error.code === 'OFD_ABORTED' || error.code === 'OFD_CLOSED')
+      ) {
+        throw error;
+      }
       warn(
         'W_UNSUPPORTED_PAINT',
         `签章加载失败：${error instanceof Error ? error.message : String(error)}`,

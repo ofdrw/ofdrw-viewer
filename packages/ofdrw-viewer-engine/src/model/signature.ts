@@ -18,6 +18,7 @@ import type {
   SignatureStamp,
 } from './types';
 import { dirnameOf, resolvePackagePath } from '../container/path';
+import { isOFDError } from '../errors';
 import { parseXml } from '../xml/parser';
 import { attr, child, childText, children, emitWarning, normalizePathSeparators, parseBox } from './decode-utils';
 import { normalizeResourceId } from './ids';
@@ -290,6 +291,9 @@ export async function decodeSignatureBundle(
         pageIds: undefined,
       });
     } catch (error) {
+      // 取消/关闭是终止性错误：若在此降级为“跳过该签章”，调用方会把缺少 Seal 的
+      // 半成品集合缓存下来，导致后续渲染永远丢失印章。
+      if (isTerminalSignatureError(error)) throw error;
       emitWarning(options, 'W_BAD_NUMBER', `Signature ${entry.id} 读取/解析失败：${String(error)}`, {
         resourceId: entry.id,
       });
@@ -324,7 +328,7 @@ export async function decodeSignatureBundle(
 }
 
 /**
- * 读取并解码一个印章来源文件；失败只 warning。
+ * 读取并解码一个印章来源文件；普通读取/结构错误只 warning，取消/关闭上抛。
  *
  * @param readFile 包内文件读取器。
  * @param file 来源文件路径。
@@ -348,9 +352,23 @@ async function readSealImage(
       resourceId,
     });
   } catch (error) {
+    if (isTerminalSignatureError(error)) throw error;
     emitWarning(options, 'W_IMAGE_DECODE', `${file} 读取失败：${String(error)}`, { resourceId });
     return undefined;
   }
+}
+
+/**
+ * 判断签章加载错误是否必须上抛（取消或文档关闭）。
+ *
+ * 单个签章/印章损坏可以跳过；但取消后继续返回不完整的签章集合，会被上层按文档
+ * 缓存，造成后续渲染永久缺章。
+ *
+ * @param error 捕获到的任意错误。
+ * @returns 是 OFD_ABORTED / OFD_CLOSED 时返回 true。
+ */
+function isTerminalSignatureError(error: unknown): boolean {
+  return isOFDError(error) && (error.code === 'OFD_ABORTED' || error.code === 'OFD_CLOSED');
 }
 
 /**

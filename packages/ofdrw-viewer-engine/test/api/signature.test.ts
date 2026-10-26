@@ -14,7 +14,7 @@ import type { OFDWarning } from '../../src/warnings';
 import type { XmlElementSpec } from '../fixtures/xml';
 import { ensureFixtures, readFixture } from '../font/fixtures';
 import { nodeImageDecoders } from '../helpers/node-image-decoder';
-import { buildFixtureOfd, openTestDocument, renderPage } from './helpers';
+import { buildFixtureOfd, createTestCanvas, openTestDocument, renderPage } from './helpers';
 
 const fixtures = ensureFixtures();
 
@@ -221,6 +221,72 @@ describe('签章 API 接线', () => {
       // h 的两个签名共享同一 Seal 内容，按 cacheKey 去重后只解码一次。
       expect(decodes).toBe(1);
     } finally {
+      await doc.close();
+    }
+  });
+
+  it('取消 Seal.esl 读取不会把缺少 Seal 的签章集合缓存下来', async () => {
+    const warnings: OFDWarning[] = [];
+    const renderer = new RecordingRenderer();
+    const original = ZipReader.prototype.readEntry;
+    let releaseSeal: (() => void) | undefined;
+    let notifySealRead: (() => void) | undefined;
+    const sealReadStarted = new Promise<void>((resolve) => {
+      notifySealRead = resolve;
+    });
+    const sealGate = new Promise<void>((resolve) => {
+      releaseSeal = resolve;
+    });
+    const readEntry = vi
+      .spyOn(ZipReader.prototype, 'readEntry')
+      .mockImplementation(async function (
+        this: ZipReader,
+        path: string,
+        options?: Parameters<ZipReader['readEntry']>[1],
+      ) {
+        if (/Seal\.esl$/i.test(path)) {
+          notifySealRead?.();
+          await sealGate;
+        }
+        return original.call(this, path, options);
+      });
+    const doc = await openTestDocument(sample('ofd-viewer-ui-showcase.ofd'), {
+      renderer,
+      onWarning: (warning) => warnings.push(warning),
+    });
+    try {
+      // 第 9 页（索引 8）带 StampAnnot s002，首次渲染会触发签章集合加载。
+      const page = await doc.getPage(8);
+      const viewport = page.getViewport({ dpi: 96 });
+      const canvas = createTestCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+      const size = {
+        width: canvas.canvas.width,
+        height: canvas.canvas.height,
+        dpi: viewport.dpi,
+      };
+      const controller = new AbortController();
+      const task = page.render({
+        canvasContext: canvas.context,
+        viewport: size,
+        signal: controller.signal,
+      });
+      await sealReadStarted;
+      // 模拟 UI 渲染队列在 Seal.esl 读取途中取消本轮渲染。
+      controller.abort();
+      releaseSeal?.();
+      await expect(task.promise).rejects.toMatchObject({ code: 'OFD_ABORTED' });
+      // 取消后的重绘不能复用缺少 Seal 的半成品签章集合，也不能把取消报成绘制降级。
+      warnings.length = 0;
+      await page.render({ canvasContext: canvas.context, viewport: size }).promise;
+      expect(warnings.some((warning) => warning.message.includes('缺少 Seal 图片'))).toBe(false);
+      expect(
+        warnings.some(
+          (warning) => warning.code === 'W_UNSUPPORTED_PAINT' && warning.message.includes('签章'),
+        ),
+      ).toBe(false);
+      expect(drawCalls(renderer)).toHaveLength(1);
+    } finally {
+      readEntry.mockRestore();
       await doc.close();
     }
   });

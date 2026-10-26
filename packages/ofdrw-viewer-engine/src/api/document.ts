@@ -3166,6 +3166,9 @@ export class OFDDocument {
           });
           return undefined;
         }),
+      // 签章集合是文档级共享数据：某一轮页面渲染取消后继续加载，避免取消途中
+      // 把缺少 Seal 的半成品集合写入缓存。
+      { abortWhenUnused: false },
     );
     this.signatureBundlePromise = load;
     return load.wait(signal);
@@ -3776,6 +3779,19 @@ function normalizeInfoCount(count: number | undefined, remaining: number): numbe
 }
 
 /**
+ * 共享加载选项。
+ */
+interface SharedLoadOptions {
+  /**
+   * 最后一个等待方取消时是否中止底层加载；默认 true。
+   *
+   * 文档级元数据（如签章集合）设为 false：调用方取消只结束本次等待，后台加载
+   * 继续完成并缓存，避免取消途中留下半成品或让下一次渲染再次失败。
+   */
+  readonly abortWhenUnused?: boolean;
+}
+
+/**
  * 共享加载：底层读取只受 close/内部 controller 控制，调用方 signal 只影响本次等待。
  *
  * 多个调用方共享同一 promise；仅当最后一个等待方取消且加载尚未完成时，才中止
@@ -3786,14 +3802,22 @@ class SharedLoad<T> {
   readonly controller = new AbortController();
   private waiters = 0;
   private settled = false;
+  /** 最后一个等待方取消时是否中止底层加载。 */
+  private readonly abortWhenUnused: boolean;
   /** 底层加载 promise（共享）。 */
   readonly promise: Promise<T>;
 
   /**
    * @param closeSignal 文档关闭信号。
    * @param start 启动底层加载；接收内部 signal，不得使用调用方 signal。
+   * @param options 共享加载选项。
    */
-  constructor(closeSignal: AbortSignal, start: (signal: AbortSignal) => Promise<T>) {
+  constructor(
+    closeSignal: AbortSignal,
+    start: (signal: AbortSignal) => Promise<T>,
+    options: SharedLoadOptions = {},
+  ) {
+    this.abortWhenUnused = options.abortWhenUnused ?? true;
     const onClose = (): void => this.controller.abort(closeSignal.reason);
     if (closeSignal.aborted) this.controller.abort(closeSignal.reason);
     else closeSignal.addEventListener('abort', onClose, { once: true });
@@ -3817,7 +3841,7 @@ class SharedLoad<T> {
       if (released) return;
       released = true;
       this.waiters -= 1;
-      if (this.waiters === 0 && !this.settled) this.controller.abort();
+      if (this.abortWhenUnused && this.waiters === 0 && !this.settled) this.controller.abort();
     };
     if (signal) {
       if (signal.aborted) {
