@@ -81,6 +81,8 @@ export interface PageViewLayout {
   readonly rotation: Rotation;
   /** 当前缩放倍率。 */
   readonly scale: number;
+  /** 内容整体居中偏移（内容窄于可视区时生效），单位 px；省略视为 0。 */
+  readonly offsetLeft?: number;
 }
 
 /** 单页视图。 */
@@ -101,6 +103,8 @@ export class PageView {
   readonly signatureLayer: HTMLElement;
 
   private readonly options: PageViewOptions;
+  /** 96 DPI 下的页面单位尺寸（不含缩放倍率），单位 px。 */
+  private unitSize = { width: 0, height: 0 };
   private readonly doc: Document;
   private readonly loading: HTMLElement;
   private readonly loadingSkeleton: HTMLElement;
@@ -125,6 +129,12 @@ export class PageView {
   private pendingRenderScale = 0;
   private currentRotation: Rotation = 0;
   private currentScale = 1;
+  /** 手势预览的视觉缩放倍率；1 表示未处于预览。 */
+  private previewScale = 1;
+  /** 手势预览的水平位移，单位 px；正数向右。 */
+  private previewOffsetX = 0;
+  /** 手势预览的竖直位移，单位 px；正数向下。 */
+  private previewOffsetY = 0;
   /** 当前纸面尺寸，单位 px（已含布局倍率）；供文字层按 96 DPI 基准换算布局框。 */
   private surfaceSizeValue = { width: 0, height: 0 };
   private destroyed = false;
@@ -155,8 +165,10 @@ export class PageView {
     this.element.dataset.pageIndex = String(this.pageIndex);
     this.element.dataset.pageState = 'empty';
     this.element.style.position = 'absolute';
-    this.element.style.left = '50%';
-    this.element.style.transform = 'translateX(-50%)';
+    // 定位从版心左边缘开始：页盒变宽时向右延伸，左侧内容始终贴着正文起点，
+    // 横向滚动范围也只有向右一侧（居中 / translateX(-50%) 会把左侧内容推到负坐标，
+    // 溢出部分不在滚动范围内，移动端向左滑动也看不到）。
+    this.element.style.left = '0';
     this.updateAccessibility(options.totalPages);
 
     this.surface = this.createElement('div', 'ofd-page__surface');
@@ -375,8 +387,16 @@ export class PageView {
       height: box.surfaceHeight,
     };
     this.element.style.top = `${box.top}px`;
-    this.element.style.width = `${box.width}px`;
-    this.element.style.height = `${box.height}px`;
+    // 页盒左缘 = 居中排版偏移（内容窄于可视区时由阅读器给出）+ 本页相对最宽页的居中量，
+    // 与 pdf.js 的 `.page { margin: 0 auto }` 等价但直接写数值，不依赖百分比/自动边距。
+    this.element.style.left = `${box.left + (layout.offsetLeft ?? 0)}px`;
+    // 与 pdf.js 的 `setLayerDimensions()` 一致：页盒尺寸 = 96 DPI 单位尺寸 × 文档级缩放
+    // 变量，缩放时只改那一个变量；canvas 只负责拉伸已画好的位图。
+    const quarter = rotation === 90 || rotation === 270;
+    this.unitSize = { width: box.unitWidth, height: box.unitHeight };
+    this.element.style.setProperty('--page-unit-width', `${box.unitWidth}px`);
+    this.element.style.setProperty('--page-unit-height', `${box.unitHeight}px`);
+    this.writePageSize();
     this.surface.style.width = `${box.surfaceWidth}px`;
     this.surface.style.height = `${box.surfaceHeight}px`;
     this.surface.style.transform = `translate(-50%, -50%) rotate(${rotation}deg)`;
@@ -387,6 +407,40 @@ export class PageView {
       this.canvasElement.style.width = '100%';
       this.canvasElement.style.height = '100%';
     }
+  }
+
+  /**
+   * 写入文档级缩放变量（与 pdf.js 的容器 `--scale-factor` 等价）。
+   *
+   * 只改这一个变量，页盒宽度/高度由 CSS `calc()` 一次算出，不触发逐页样式写入。
+   *
+   * @param scale 实际缩放倍率。
+   */
+  setScaleVariable(scale: number): void {
+    if (this.destroyed) return;
+    this.currentScale = scale;
+    this.element.style.setProperty('--ofd-scale', String(scale));
+    this.writePageSize();
+    this.surfaceSizeValue = {
+      width: this.unitSize.width * scale,
+      height: this.unitSize.height * scale,
+    };
+    this.surface.style.width = `${this.surfaceSizeValue.width}px`;
+    this.surface.style.height = `${this.surfaceSizeValue.height}px`;
+  }
+
+  /**
+   * 写入页盒宽高：未旋转为“单位尺寸 × 倍率”，旋转 90/270 时交换两者。
+   *
+   * 内联显式尺寸与 pdf.js 的 `calc()` 等价，但不依赖 CSS 变量求值，测试与截图工具也能
+   * 直接读到正确尺寸。
+   */
+  private writePageSize(): void {
+    const { width, height } = this.unitSize;
+    if (width <= 0 || height <= 0) return;
+    const quarter = this.currentRotation === 90 || this.currentRotation === 270;
+    this.element.style.width = `${(quarter ? height : width) * this.currentScale}px`;
+    this.element.style.height = `${(quarter ? width : height) * this.currentScale}px`;
   }
 
   /**
@@ -402,15 +456,55 @@ export class PageView {
    */
   setPreviewScale(scale: number): void {
     if (this.destroyed) return;
+    this.previewScale = scale;
     if (scale === 1) {
       this.element.classList.remove('ofd-page--preview');
-      this.element.style.removeProperty('--preview-scale');
+      this.element.style.removeProperty('transform');
       this.textLayer.removeAttribute('data-preview');
       return;
     }
     this.element.classList.add('ofd-page--preview');
-    this.element.style.setProperty('--preview-scale', String(scale));
     this.textLayer.setAttribute('data-preview', 'true');
+    this.applyPreviewTransform();
+  }
+
+  /** 当前预览水平位移，单位 px；正数向右。 */
+  get previewTranslateX(): number {
+    return this.previewOffsetX;
+  }
+
+  /** 当前预览竖直位移，单位 px；正数向下。 */
+  get previewTranslateY(): number {
+    return this.previewOffsetY;
+  }
+
+  /**
+   * 设置预览位移；与缩放一起参与合成层平移，不触发布局。
+   *
+   * @param offsetXPx 水平位移，单位 px；正数向右。
+   * @param offsetYPx 竖直位移，单位 px；正数向下。
+   */
+  setPreviewTranslate(offsetXPx: number, offsetYPx = 0): void {
+    if (this.destroyed) return;
+    this.previewOffsetX = offsetXPx;
+    this.previewOffsetY = offsetYPx;
+    if (this.element.classList.contains('ofd-page--preview')) this.applyPreviewTransform();
+  }
+
+  /**
+   * 写入手势预览的位移。
+   *
+   * 页面尺寸已由 `--ofd-scale` 驱动（见 {@link setScaleVariable}），预览只负责两指整体
+   * 平移产生的位移，不再做视觉缩放，避免“合成层缩放 + CSS 尺寸”两套几何错位。
+   */
+  private applyPreviewTransform(): void {
+    const offsetX = this.previewOffsetX;
+    const offsetY = this.previewOffsetY;
+    if (Math.abs(offsetX) < 0.01 && Math.abs(offsetY) < 0.01) {
+      this.element.style.removeProperty('transform');
+      return;
+    }
+    this.element.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
   }
 
   /**
@@ -622,6 +716,17 @@ export class PageView {
     this.showError(info);
     this.element.dataset.pageState = 'error';
     this.canvasWrapper.hidden = this.canvasElement === null;
+  }
+
+  /**
+   * 当前 canvas 的像素数（width × height），未渲染时为 0。
+   *
+   * 供阅读器按总像素预算裁剪缓存：高倍率下单页画布可达上百 MP，仅按页数计数会
+   * 让内存迅速膨胀。
+   */
+  get canvasPixelCount(): number {
+    const canvas = this.canvasElement;
+    return canvas ? canvas.width * canvas.height : 0;
   }
 
   /** 释放 canvas；用于 LRU 淘汰与关闭。 */

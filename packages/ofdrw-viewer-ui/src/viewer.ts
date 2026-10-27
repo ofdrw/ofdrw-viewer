@@ -59,6 +59,7 @@ import { ViewerHistory, type ViewerHashState } from './history';
 import { createTranslator, type MessageKey, type Translator } from './i18n';
 import { KeyboardController } from './keyboard';
 import {
+  CANVAS_RETRY_PIXEL_STEPS,
   DEFAULT_MOBILE_RENDER_CONCURRENCY,
   DEFAULT_RENDER_CONCURRENCY,
   MAX_CANVAS_BASE_DPR,
@@ -73,6 +74,8 @@ import {
   DEFAULT_PAGE_GAP,
   DEFAULT_PAGE_PADDING,
   PageLayout,
+  scrollTopForZoomAnchor,
+  type ContentPoint,
   type ScrollAnchor,
 } from './page-layout';
 import { PageView } from './page-view';
@@ -146,6 +149,21 @@ import {
 
 /** 手势缩放停止后提交重绘的延迟，单位毫秒；手指静止超过 180 ms 即按最终倍率重绘。 */
 const PREVIEW_COMMIT_DELAY_MS = 180;
+
+/** 缩放预览结束后等待滚动停稳的时长，单位毫秒。 */
+const PINCH_SETTLE_DELAY_MS = 120;
+
+/** 浏览器页面缩放（visualViewport）稳定后处理滚动的延迟，单位毫秒。 */
+const BROWSER_ZOOM_SETTLE_MS = 120;
+
+/** 捏合倍率与已提交倍率视为相同的容差，单位：倍。 */
+const PINCH_SCALE_EPSILON = 0.01;
+
+/** 判定双击的两点间隔上限，单位毫秒；超出即按两次单击处理。 */
+const TAP_ZOOM_INTERVAL_MS = 300;
+
+/** 判定双击的两点位置容差，单位 px。 */
+const TAP_ZOOM_SLOP_PX = 24;
 
 /** 阅读器扩展：在实例创建/注册时执行，返回清理函数。 */
 export type ViewerExtension = (viewer: OFDViewer) => void | (() => void);
@@ -526,21 +544,72 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private smoothScrollFrame: number | null = null;
   /** 触摸屏当前按下的触点；key 为 pointerId，坐标单位 px。 */
   private readonly touchPoints = new Map<number, { x: number; y: number }>();
+  /** 是否处于双指捏合；仅在捏合期间拦截双指手势。 */
+  private pinching = false;
   /** 捏合开始时的两指距离，单位 px；0 表示未开始。 */
   private pinchStartDistance = 0;
   /** 捏合开始时的缩放倍率。 */
   private pinchStartScale = 1;
+  /** 自上次确认为整帧以来，已上报新位置的触点数（0..2）。 */
+  private touchPointsChangedCount = 0;
+  /** 捏合开始时视口中心对应的内容坐标；整个手势期间固定不动。 */
+  private pinchAnchor: ContentPoint | null = null;
+  /** 捏合锚点在主区域可视范围内的纵向偏移，单位 px。 */
+  private pinchAnchorOffset = 0;
   /** 手势预览的目标倍率；null 表示当前没有进行中的预览。 */
   private previewScale: number | null = null;
+  /** 手势预览期间用户想滚到的位置（不受旧布局末尾夹取），单位 px；提交时写回。 */
   /** 手势预览的提交计时器：停止移动 180 ms 后按最终倍率重绘一次。 */
   private previewCommitTimer: ReturnType<typeof setTimeout> | null = null;
-  /** 最近一次预览时指针所在的内容坐标与偏移；提交时用来还原滚动位置。 */
-  private previewPointer: { readonly absolute: number; readonly offset: number } | null = null;
+  /** 最近一次重绘所用的有效渲染倍率；缩放结束时与当前值比较决定是否重新渲染。 */
+  private lastRenderScale = 0;
+  /** 倍率取整后未用尽的余量，结转到下一次缩放（pdf.js `_accumulateFactor` 同款）。 */
+  private unusedScaleFactor = 1;
+  /** 浏览器把滚动位置截断到整数像素时丢掉的亚像素余量，单位 px；下次写入补回。 */
+  private unusedScrollTop = 0;
+  /** 锁定式（滚轮）缩放开始时可视窗口中心的内容锚点；提交时按它精确还原。 */
+  private pinnedZoomAnchor: ContentPoint | null = null;
+  /** 锁定式缩放开始时该锚点相对主区域可视顶部的偏移，单位 px。 */
+  private pinnedZoomAnchorOffset = 0;
+  /** 本轮滚轮手势的锚点偏移（手势期间不变），单位 px。 */
+  private lockedAnchorOffset = 0;
+  /** 最近一次缩放锚点相对可视窗口左缘的偏移，单位 px。 */
+  private anchorClientX = 0;
+  /**
+   * 是否接管触摸手势（捏合缩放与双指平移）。
+   *
+   * 仅触屏主设备（手机、平板）为 true；桌面端即使带触摸屏也按“滚轮 + 滚动条”处理，
+   * 鼠标拖动不做平移。
+   */
+  private readonly touchGesturesEnabled = detectTouchPrimary();
+  /** 捏合基准倍率：最近一次手势步进时刻的布局倍率。 */
+  private pinchBaseScale = 1;
+  /** 最近一个手势步进时刻两指中点的视口 x 坐标，单位 px。 */
+  private pinchStartMidX = 0;
+  /** 最近一个手势步进时刻两指中点的视口 y 坐标，单位 px。 */
+  private pinchStartMidY = 0;
+  /** 上一帧两指中点对应的内容锚点；pdf.js 捏合以此为缩放中心。 */
+  private pinchFrameAnchor: ContentPoint | null = null;
+  /** 上一帧两指中点相对可视窗口顶部的偏移，单位 px。 */
+  private pinchFrameOffset = 0;
+  /** 预览收尾计时器：滚动停止后收起合成层并重绘。 */
+  private pinchSettleTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 浏览器可视视口；仅在支持 `visualViewport` 的环境绑定。 */
+  private visualViewport: VisualViewport | null = null;
+  /** 最近一次记录的浏览器页面缩放比例；null 表示尚未记录。 */
+  private browserScale: number | null = null;
+  /** 浏览器页面缩放前画面中心对应的内容坐标；缩放变化后据此还原滚动位置。 */
+  private browserZoomAnchor: ContentPoint | null = null;
+  /** 浏览器页面缩放稳定检查的计时器。 */
+  private browserZoomSettleTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 上一次轻点的位置、时刻与指针类型；用于判定触屏双击缩放。 */
+  private lastTap: { at: number; x: number; y: number; type: string } | null = null;
   /** 已执行 pointer capture 的触点，用于手势结束释放。 */
   private readonly capturedPointers = new Set<number>();
   /** 控制台诊断打印机；负责过滤、去重与 `console.warn`/`console.error` 输出。 */
   private readonly diagnostics: DiagnosticPrinter;
   private readonly onWheel = (event: WheelEvent): void => this.handleWheel(event);
+  private readonly onTap = (event: PointerEvent): void => this.handleTap(event);
   private readonly onPointerDown = (event: PointerEvent): void => this.handlePointerDown(event);
   private readonly onPointerMove = (event: PointerEvent): void => this.handlePointerMove(event);
   private readonly onPointerUp = (event: PointerEvent): void => this.handlePointerUp(event);
@@ -653,9 +722,12 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         ? { availability: { unsupported: { verification: true } } }
         : {}),
     });
+    const initialZoomMode: ZoomMode =
+      typeof this.options.initialScale === 'string' ? this.options.initialScale : 'page-actual';
     this.layout = new PageLayout({
       pageInfos: [],
       scale: 1,
+      zoomMode: initialZoomMode,
       rotation: this.options.rotation,
       gap: DEFAULT_PAGE_GAP,
       padding: DEFAULT_PAGE_PADDING,
@@ -663,7 +735,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.state = createInitialViewerState({
       pageNumber: this.options.initialPage,
       scale: 1,
-      zoomMode: typeof this.options.initialScale === 'string' ? this.options.initialScale : 'page-actual',
+      zoomMode: initialZoomMode,
       rotation: this.options.rotation,
       sidebarView: this.options.sidebar,
       theme: this.options.theme,
@@ -780,8 +852,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
 
   /** 当前缩放倍率。 */
   getScale(): number {
-    // 手势预览期间布局倍率尚未提交，但对调用方而言“当前倍率”应以视觉缩放为准。
-    return this.previewScale ?? this.state.view.scale;
+    return this.state.view.scale;
   }
 
   /** 当前旋转角度。 */
@@ -1034,12 +1105,13 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
               this.measureViewport(),
               initialIndex,
             );
-      this.layout.setScale(initialScale);
+      const initialMode: ZoomMode =
+        typeof this.options.initialScale === 'string' ? this.options.initialScale : 'page-actual';
+      this.layout.setZoom(initialScale, initialMode);
       this.patchView({
         pageNumber: initialIndex + 1,
         scale: initialScale,
-        zoomMode:
-          typeof this.options.initialScale === 'string' ? this.options.initialScale : 'page-actual',
+        zoomMode: initialMode,
         rotation: this.options.rotation,
       });
       this.reflow();
@@ -2577,7 +2649,38 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.pageViews.length = 0;
     this.renderOrder.length = 0;
     replaceChildren(this.pagesElement);
+    this.pagesElement.style.width = '0px';
     this.pagesElement.style.height = '0px';
+  }
+
+  /**
+   * 写入文档级缩放变量：页盒宽高由 CSS 按 96 DPI 单位尺寸换算，一次样式计算全部生效。
+   *
+   * 页面容器同时挂上该变量，兼容未使用变量、仍靠内联尺寸的旧页面实现。
+   *
+   * @param scale 实际缩放倍率。
+   */
+  private applyScaleVariable(scale: number): void {
+    this.root.style.setProperty('--ofd-scale', String(scale));
+    this.pagesElement.style.setProperty('--ofd-scale', String(scale));
+    for (const pageView of this.pageViews) pageView.setScaleVariable(scale);
+  }
+
+  /**
+   * 按锚点内容一次性重设滚动位置（纵向与横向）。
+   *
+   * 内容不足一屏时滚动位置只能是 0，页面在窗口里居中；否则让锚点内容停在原来的
+   * 可视位置。只写一次滚动位置，不再二次修正。
+   *
+   * @param point 缩放锚点内容。
+   * @param offset 锚点内容相对可视窗口顶部的偏移，单位 px。
+   */
+  private anchorScrollTo(point: ContentPoint, offset: number): void {
+    const fits = this.layout.totalHeight <= this.viewportHeight() + 1;
+    this.mainScrollTop = fits
+      ? 0
+      : this.layout.offsetForContentPoint(point) - offset + this.unusedScrollTop;
+    this.mainScrollLeftAnchored(point);
   }
 
   /** 重新排版并更新页定位；可恢复滚动锚点。 */
@@ -2586,6 +2689,14 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.cancelSmoothScroll();
     const boxes = this.layout.getBoxes();
     this.pagesElement.style.height = `${Math.max(0, this.layout.totalHeight)}px`;
+    // 内容比可视区窄时页面水平居中：偏移按当前可视宽度算出并逐页写入左缘；内容比可视区
+    // 宽时为 0，此时能看到哪一段由横向滚动位置决定。
+    const viewportWidth = this.viewportWidth();
+    const offsetLeft = this.layout.centeredOffset(viewportWidth);
+    // 页盒是绝对定位，不参与容器的尺寸计算；容器宽度必须显式写出，否则会收缩到 0，
+    // 横向滚动范围与内容宽度对不上。内容窄于可视区时取可视宽度，避免多出 15px 的
+    // 滚动条槽位撑出无意义的横向滚动。
+    this.pagesElement.style.width = `${Math.max(this.layout.totalWidth, viewportWidth)}px`;
     for (let index = 0; index < this.pageViews.length; index += 1) {
       const box = boxes[index];
       if (!box) continue;
@@ -2593,6 +2704,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         box,
         rotation: this.state.view.rotation,
         scale: this.state.view.scale,
+        offsetLeft,
       });
     }
     if (anchor) {
@@ -2612,23 +2724,59 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
 
   private set mainScrollTop(value: number) {
     // 浏览器只保留整数 scrollTop；向上取整避免小数页顶被截断后落回上一页。
-    this.elements.main.scrollTop = toIntegerScrollTop(value);
+    const applied = toIntegerScrollTop(value);
+    // 与 pdf.js `#panPosition` 同理：记录被截断的亚像素余量，下一次写入补上，避免连续
+    // 缩放/平移时内容逐帧向同一方向漂移。
+    this.unusedScrollTop = value - applied;
+    this.elements.main.scrollTop = applied;
+  }
+
+  /** 主区域横向滚动位置，单位 px。 */
+  private get mainScrollLeft(): number {
+    return this.elements.main.scrollLeft;
   }
 
   /**
-   * 应用缩放并保持滚动锚点。
+   * 页面在横向上的“居中偏移”：内容比可视区窄时，页面水平居中，左边缘的屏幕位置。
    *
-   * 传入指针坐标时按指针下的页面坐标恢复滚动位置（滚轮/捏合/双击）；
-   * 否则沿用页顶锚点（工具栏/API）。
+   * 内容坐标 = 设备像素坐标 − 居中偏移：缩放锚点按它换算，页面在窄、宽之间切换时也
+   * 不会往左上角跳。
+   *
+   * @returns 居中偏移，单位 px；内容比可视区宽时为 0。
+   */
+  private contentLeft(): number {
+    return this.layout.centeredOffset(this.viewportWidth());
+  }
+
+  /**
+   * 横向当前可滚动到的最大值，单位 px。
+   *
+   * 内容宽度按“可视宽度 × 预览倍率”估算：预览尚未提交时布局宽度仍是旧的，直接用
+   * scrollLeftMax 会把还在合成层的横向位移丢掉。
+   *
+   * @returns 可滚动最大值，单位 px。
+   */
+  private get mainScrollLeftMax(): number {
+    const main = this.elements.main;
+    return Math.max(0, main.scrollWidth - main.clientWidth);
+  }
+
+  /**
+   * 应用缩放并保持画面中心不动。
+   *
+   * 以画面中心（主区域可视区域正中）对应的内容为锚点：缩放前求出该内容在当前布局中的
+   * 坐标，缩放后按新布局换回滚动位置，使中心处的内容停在原地。画面中心本身也不会贴
+   * 近可滚动区域的上下边界，因此内容被边缘夹住、缩放时内容漂移的概率远低于页顶锚点。
    *
    * @param nextScale 目标倍率。
    * @param zoomMode 缩放模式。
-   * @param origin 指针视口坐标，单位 px；省略时锚定当前滚动位置。
+   * @param anchor 内容锚点；省略时取当前画面中心。
    */
   private applyScale(
     nextScale: number,
     zoomMode: ZoomMode,
-    origin?: { readonly clientX: number; readonly clientY: number },
+    anchor?: ContentPoint,
+    anchorOffset?: number,
   ): void {
     if (Math.abs(nextScale - this.state.view.scale) < 0.0001) {
       if (zoomMode !== this.state.view.zoomMode) {
@@ -2639,22 +2787,90 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     }
     const previous = this.state.view.scale;
     const previousRenderScale = this.effectiveRenderScale();
-    const pointerOffset = origin ? this.pointerOffsetY(origin.clientY) : 0;
-    const anchor = origin
-      ? this.layout.getAnchor(this.mainScrollTop + pointerOffset)
-      : this.captureAnchor();
-    this.layout.setScale(nextScale);
+    const viewportHeight = this.viewportHeight();
+    const locked = anchor === undefined ? this.pinnedZoomAnchor : null;
+    const point = anchor ?? locked ?? this.captureViewportCenter();
+    // 锚点内容相对可视窗口顶部的偏移：缩放前后它停在同一视觉位置。桌面端的滚轮、
+    // 按钮、双击都固定为窗口中心；移动端两指捏合固定为两指中点。
+    const offset = Math.min(
+      Math.max(0, anchorOffset ?? (locked ? this.pinnedZoomAnchorOffset : viewportHeight / 2)),
+      viewportHeight,
+    );
+    if (anchor !== undefined) this.pinnedZoomAnchor = null;
     this.patchView({ scale: nextScale, zoomMode });
-    if (origin) {
-      this.reflow();
-      this.mainScrollTop = this.layout.getOffsetForAnchor(anchor) - pointerOffset;
-    } else {
-      this.reflow(anchor);
-    }
+    this.layout.setZoom(nextScale, zoomMode);
+    // 与 pdf.js `#setScaleUpdatePages()` 同序：先改缩放变量让所有页盒在同一帧按新尺寸
+    // 排版，再按“锚点内容坐标 − 锚点偏移”一次性重设滚动位置，最后才安排重绘。
+    this.applyScaleVariable(nextScale);
+    this.reflow();
+    this.anchorScrollTo(point, offset);
+    this.updateScrollState();
     this.emit('scalechanging', { scale: nextScale, zoomMode, previous });
     this.renderAfterScaleChange(previousRenderScale);
     this.commit();
     this.syncHash();
+  }
+
+  /**
+   * 把倍率按两位小数取整，并把取整误差结转到下一次缩放（与 pdf.js `_accumulateFactor`
+   * 等价）。
+   *
+   * 连续小幅缩放时若每次都截断到两位小数，误差会逐次累积、表现为“滚很多下几乎不放大”；
+   * 这里把未用尽的余量记下来，下一格补上。
+   *
+   * @param currentScale 当前倍率。
+   * @param factor 本格缩放比。
+   * @returns 取整后的目标倍率（不夹取到上下限，由调用方决定）。
+   */
+  private accumulateScale(currentScale: number, factor: number): number {
+    if (!Number.isFinite(factor) || factor <= 0) return currentScale;
+    const target = clampScale(currentScale * factor * this.unusedScaleFactor);
+    const rounded = Math.round(target * 100) / 100;
+    this.unusedScaleFactor = rounded > 0 ? target / rounded : 1;
+    return rounded;
+  }
+
+  /**
+   * 平移画面（与 pdf.js 的 `panBy` 等价）：正数表示内容向左上移动。
+   *
+   * 纵向与横向直接写滚动位置；已被内容边界夹住的余量留在手势里，松手后不再二次补偿。
+   *
+   * @param dx 水平位移，单位 px；正数把内容向左推。
+   * @param dy 竖直位移，单位 px；正数把内容向上推。
+   */
+  private panBy(dx: number, dy: number): void {
+    if (dx === 0 && dy === 0) return;
+    this.elements.main.scrollLeft = this.mainScrollLeft + dx;
+    this.mainScrollTop = this.mainScrollTop + dy;
+    this.updateScrollState();
+  }
+
+  /**
+   * 保持锚点内容的横向位置：它相对可视窗口左缘的水平偏移在缩放前后不变。
+   *
+   * 页面水平居中（内容窄于可视区）时没有横向滚动：缩放后依然居中；内容宽于可视区时
+   * 按“锚点内容横向坐标 − 它的可视区偏移”求滚动位置。
+   *
+   * @param point 缩放锚点内容（含横向坐标）。
+   */
+  private mainScrollLeftAnchored(point: ContentPoint): void {
+    const main = this.elements.main;
+    const margin = this.layout.centeredOffset(this.viewportWidth());
+    if (this.layout.totalWidth <= this.viewportWidth()) {
+      // 内容窄于可视区：页面靠居中偏移摆放，没有横向滚动可言。
+      main.scrollLeft = 0;
+      return;
+    }
+    // 内容比可视区宽时页面左缘已经滚到可视区外（居中偏移为 0），锚点内容的屏幕位置
+    // 由“内容坐标 − 滚动位置”决定，反解出滚动位置即可让锚点内容停在原处。锚点里记录的
+    // 横向坐标是缩放前的值，先按内容宽度比换算到当前布局。
+    const anchorX = this.layout.leftForContentPoint(point);
+    const target = Math.max(0, anchorX + margin - this.anchorClientX);
+    main.scrollLeft = target;
+    if (Math.abs(main.scrollLeft - target) > 0.5) {
+      void main.offsetWidth;
+      main.scrollLeft = target;
+    }
   }
 
   /**
@@ -2690,6 +2906,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private captureAnchor(): ScrollAnchor {
     return this.layout.getAnchor(this.mainScrollTop);
   }
+
 
   /**
    * 滚动到指定页；保留页顶。
@@ -2832,9 +3049,24 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       run: async (signal) => {
         const page = await this.controller.getPage(index);
         if (signal.aborted) throw createAbortError();
-        const size = this.computeCanvasSize(page, renderScale);
-        const context = pageView.prepareCanvas(size.width, size.height, generation);
+        // 高倍率下单页画布可能大到浏览器无法分配：按 CANVAS_RETRY_PIXEL_STEPS
+        // 逐级收紧像素上限后重试，宁可牺牲清晰度也不要让整页渲染失败。
+        const budget = Math.max(1, this.options.maxCanvasPixels);
+        const { context, size, degraded } = this.prepareCanvasWithinBudget(
+          page,
+          pageView,
+          generation,
+          renderScale,
+          budget,
+        );
         if (!context) throw new OFDViewerError('OFD_UNSUPPORTED', '当前环境不支持 Canvas 2D');
+        if (degraded) {
+          this.warn(
+            UI_WARNING_CODES.W_CANVAS_LIMIT,
+            `页面像素超过上限，已降低渲染 DPI 至 ${Math.round(size.dpi)}。`,
+            index + 1,
+          );
+        }
         pageView.markRendering(generation);
         const viewport = page.getViewport({ dpi: size.dpi });
         const pending = this.trackPageRenderStart(index, 'main');
@@ -2911,18 +3143,55 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   }
 
   /**
+   * 在像素预算内为一次渲染准备 canvas；分配失败时按 {@link CANVAS_RETRY_PIXEL_STEPS}
+   * 逐级收紧预算重试。
+   *
+   * @param page 引擎页。
+   * @param pageView 页视图。
+   * @param generation 渲染代次号。
+   * @param renderScale 有效渲染倍率。
+   * @param budget 初始像素预算（width × height）。
+   * @returns 渲染上下文、最终尺寸，以及是否因超限而降级。
+   */
+  private prepareCanvasWithinBudget(
+    page: EnginePage,
+    pageView: PageView,
+    generation: number,
+    renderScale: number,
+    budget: number,
+  ): {
+    context: CanvasRenderingContext2D | null;
+    size: { width: number; height: number; dpi: number };
+    degraded: boolean;
+  } {
+    const idealDpi = 96 * renderScale * this.devicePixelRatio();
+    let size = this.computeCanvasSize(page, renderScale, budget);
+    let context = pageView.prepareCanvas(size.width, size.height, generation);
+    for (const step of CANVAS_RETRY_PIXEL_STEPS) {
+      if (context || step >= 1) break;
+      size = this.computeCanvasSize(page, renderScale, budget * step);
+      context = pageView.prepareCanvas(size.width, size.height, generation);
+    }
+    // 只有“没拿到期望 DPI”才算降级：正常页面的像素数本来就可能小于预算，
+    // 用尺寸和预算比较会误报。
+    return { context, size, degraded: size.dpi < idealDpi - 0.5 };
+  }
+
+  /**
    * 计算 canvas 设备像素与受上限约束的 DPI。
    *
    * @param page 引擎页。
    * @param renderScale 有效渲染倍率。
+   * @param maxPixelsOverride 临时像素上限（分配失败后重试时逐级收紧）；省略时取选项值。
    */
   private computeCanvasSize(
     page: EnginePage,
     renderScale: number,
+    maxPixelsOverride?: number,
   ): { width: number; height: number; dpi: number } {
     const dpr = this.devicePixelRatio();
     let dpi = 96 * renderScale * dpr;
-    const maxPixels = Math.max(1, this.options.maxCanvasPixels);
+    const maxPixels = Math.max(1, maxPixelsOverride ?? this.options.maxCanvasPixels);
     const maxSide = 32767;
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const viewport = page.getViewport({ dpi });
@@ -3065,19 +3334,55 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     return index >= this.lastVisibleRange.start && index <= this.lastVisibleRange.end;
   }
 
-  /** 释放超出缓存且不可见的 canvas。 */
+  /**
+   * 释放超出缓存数量或超出总像素预算且不可见的 canvas。
+   *
+   * 高倍率下单页画布可达上百 MP，仅按页数裁剪会让内存迅速膨胀；这里同时对已渲染
+   * 页的总像素计数，超预算时先释放离可见区最远的页。
+   */
   private trimCache(): void {
     const visible = this.lastVisibleRange;
+    const budget = Math.max(1, this.options.pageCachePixelBudget);
     while (this.renderOrder.length > this.options.pageCacheSize) {
       const index = this.renderOrder.find(
         (candidate) => candidate < visible.start || candidate > visible.end,
       );
       if (index === undefined) return;
-      const pageView = this.pageViews[index];
-      pageView?.releaseCanvas();
-      const position = this.renderOrder.indexOf(index);
-      if (position >= 0) this.renderOrder.splice(position, 1);
+      this.releaseCachedPage(index);
     }
+    let total = this.renderedPixelTotal();
+    // 只释放不可见页，可见页即使超预算也必须保留，否则滚动时会反复重绘。
+    while (total > budget) {
+      const index = this.renderOrder.find(
+        (candidate) => candidate < visible.start || candidate > visible.end,
+      );
+      if (index === undefined) return;
+      total -= this.releaseCachedPage(index);
+    }
+  }
+
+  /**
+   * 释放指定页的 canvas 并从缓存顺序中移除。
+   *
+   * @param index 页索引，0-based。
+   * @returns 该页释放的像素数（width × height）。
+   */
+  private releaseCachedPage(index: number): number {
+    const pageView = this.pageViews[index];
+    const pixels = pageView ? pageView.canvasPixelCount : 0;
+    pageView?.releaseCanvas();
+    const position = this.renderOrder.indexOf(index);
+    if (position >= 0) this.renderOrder.splice(position, 1);
+    return pixels;
+  }
+
+  /** 已渲染页 canvas 的总像素数（width × height 之和）。 */
+  private renderedPixelTotal(): number {
+    let total = 0;
+    for (const index of this.renderOrder) {
+      total += this.pageViews[index]?.canvasPixelCount ?? 0;
+    }
+    return total;
   }
 
   /** 取消全部页渲染任务。 */
@@ -3094,8 +3399,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     });
   }
 
-  /** 处理滚动。 */
-  private handleScroll(): void {
+  /** 按当前滚动位置立即更新页码/可见范围。 */
+  private updateScrollState(): void {
     if (this.pageViews.length === 0) return;
     const scrollTop = this.mainScrollTop;
     const pageIndex = this.layout.getPageAtOffset(scrollTop);
@@ -3108,17 +3413,96 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       this.patchView({ scrollTop });
     }
     this.patchView({
-      visiblePageRange: this.layout.getVisibleRange(
-        scrollTop,
-        this.measureViewport().height,
-        0,
-      ),
+      visiblePageRange: this.layout.getVisibleRange(scrollTop, this.viewportHeight(), 0),
     });
-    // 手势缩放期间不调度页面渲染：预览只做合成层缩放，此时重绘会直接拖垮帧率。
-    // 预览结束后由 commitPreviewScale 统一重绘。
-    if (this.previewScale === null) this.renderVisible();
+  }
+
+  /** 处理滚动。 */
+  private handleScroll(): void {
+    if (this.pageViews.length === 0) return;
+    // 手动写入滚动位置后浏览器（含 jsdom）会同步回抛 scroll 事件：位置与状态一致时
+    // 说明是自身写入的回声，跳过即可，否则会用手势中途的位置覆盖锚点换算结果。
+    if (Math.abs(this.mainScrollTop - this.state.view.scrollTop) < 0.5) return;
+    this.updateScrollState();
+    this.renderVisible();
     this.commit();
     this.syncHash();
+  }
+
+  /**
+   * 主区域可视宽度。
+   *
+   * @returns 宽度，单位 px。
+   */
+  private viewportWidth(): number {
+    // 取 clientWidth 而非 rect.width：后者含滚动条槽位（`scrollbar-gutter: stable` 下
+    // 即使没有滚动条也保留），用它当内容宽度会多撑出 15px 的横向滚动。
+    const width =
+      this.elements.main.clientWidth ||
+      this.elements.main.getBoundingClientRect().width;
+    return width > 0 ? width : this.measureViewport().width;
+  }
+
+  /** 主区域可视窗口左上角的视口坐标，单位 px。 */
+  private viewportTop(): number {
+    return this.elements.main.getBoundingClientRect().top;
+  }
+
+  /** 主区域可视窗口左边缘的视口坐标，单位 px。 */
+  private viewportLeft(): number {
+    return this.elements.main.getBoundingClientRect().left;
+  }
+
+  /**
+   * 预览中缩放的几何参数：内容倍率与滚动位置的部分兑现。
+   *
+   * 预览只对页盒做合成层缩放，页间距与留白不跟着变；放大后的内容在屏幕上的长度与
+   * 提交后不同，若完全不改滚动位置，下一屏内容会在预览期间铺满可视区。这里按比例
+   * 估算预览中可视内容的长度，滚动位置在预览里就兑现到目标位置，提交时画面连续。
+   *
+   * @param base 未缩放的布局倍率。
+   * @returns 预览几何。
+   */
+  private previewGeometry(base: number): { ratio: number; scale: number } {
+    const scale = this.state.view.scale;
+    return { ratio: scale / base, scale };
+  }
+
+  /**
+   * 视口坐标在“预览画面”里对应的内容坐标。
+   *
+   * 预览中页盒有合成层缩放与位移，直接用滚动位置换算会偏；这里先扣掉页盒在屏幕上的
+   * 缩放/位移，换算回布局坐标，再定位到内容。
+   *
+   * @param clientX 视口 x 坐标，单位 px。
+   * @param clientY 视口 y 坐标，单位 px。
+   * @param geometry 当前预览几何。
+   * @returns 内容锚点。
+   */
+  private contentPointAtPreviewOffset(
+    clientX: number,
+    clientY: number,
+    geometry: { ratio: number },
+  ): ContentPoint {
+    void clientX;
+    const offsetY = this.pointerOffsetY(clientY);
+    const box = this.layout.getBox(this.layout.getPageAtOffset(this.mainScrollTop + offsetY));
+    if (!box || box.height <= 0 || geometry.ratio === 1) {
+      return this.layout.contentPointAt(this.mainScrollTop + offsetY);
+    }
+    // 页盒以自身中心为原点缩放到 ratio：屏幕上的点先还原到未缩放布局坐标。
+    const center = box.top + box.height / 2;
+    const layoutY = center + (this.mainScrollTop + offsetY - center) / geometry.ratio;
+    return this.layout.contentPointAt(layoutY);
+  }
+
+  /**
+   * 按预览几何写到页盒上：缩放倍率 + 位移（让其与滚动位置一致）。
+   *
+   * @param geometry 预览几何：页盒缩放比例。
+   */
+  private applyPreviewToPages(geometry: { ratio: number }): void {
+    for (const pageView of this.pageViews) pageView.setPreviewScale(geometry.ratio);
   }
 
   /** 断点/尺寸变化：更新根节点属性并重排。 */
@@ -3194,28 +3578,89 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   }
 
   /**
-   * 绑定滚轮/触摸捏合/双击缩放手势。
+   * 绑定滚轮/触摸平移/双指捏合/双击缩放手势。
    *
-   * `touch-action: pan-x pan-y` 关闭浏览器自身的捏合与双击缩放，同时保留单指
-   * 平移；滚轮监听必须非 passive 才能在 Ctrl/Cmd+滚轮时 `preventDefault`。
+   * 移动端主区域用 `touch-action: pan-x pan-y`：单指平移完全交给浏览器（纵向与横向都能
+   * 自由滑动），浏览器自身的捏合与双击缩放被关闭。桌面端只保留滚轮与滚动条，触摸手势
+   * 一律不接管。只有开启 zoom 功能时才注册 `pointerdown`，把触摸触点纳入 pointer
+   * capture，保证双指捏合期间事件不丢失；滚轮监听必须非 passive 才能在 Ctrl/Cmd+滚轮时
+   * `preventDefault`。
    */
   private bindGestureListeners(): void {
     const main = this.elements.main;
-    main.style.touchAction = 'pan-x pan-y';
+    main.style.touchAction = this.touchGesturesEnabled ? 'pan-x pan-y' : 'auto';
     main.addEventListener('wheel', this.onWheel, { passive: false });
-    main.addEventListener('pointerdown', this.onPointerDown);
+    if (this.featureGate.isEnabled('zoom')) {
+      main.addEventListener('pointerdown', this.onTap);
+      main.addEventListener('pointerdown', this.onPointerDown);
+    }
     main.addEventListener('pointermove', this.onPointerMove);
     main.addEventListener('pointerup', this.onPointerUp);
     main.addEventListener('pointercancel', this.onPointerUp);
     main.addEventListener('dblclick', this.onDoubleClick);
+    const view = this.ownerDocument.defaultView;
+    if (typeof view?.visualViewport?.addEventListener === 'function') {
+      this.visualViewport = view.visualViewport;
+      view.visualViewport.addEventListener('resize', this.onVisualViewportChange);
+      // 部分浏览器缩放完成后还会触发一次 visualViewport 滚动（视口被顶到边缘），一并处理。
+      view.visualViewport.addEventListener('scroll', this.onVisualViewportChange);
+    }
   }
+
+  /**
+   * 浏览器自身的页面缩放变化（移动端双指、模拟器的 Shift+拖动、桌面端 Ctrl+滚轮）时的
+   * 布局保持。
+   *
+   * `visualViewport.resize` 在缩放过程中持续触发，此时读到的滚动位置仍是旧缩放下的
+   * 文档像素值；等缩放稳定后再按缩放前后记录的画面中心内容还原滚动位置，缩放过程中
+   * 画面不会先滑走再被拉回。
+   */
+  private readonly onVisualViewportChange = (): void => {
+    const viewport = this.visualViewport;
+    if (!viewport) return;
+    const scale = viewport.scale;
+    if (this.browserScale === null) {
+      this.browserScale = scale;
+      return;
+    }
+    if (scale === this.browserScale) return;
+    // 缩放开始时记下画面中心的内容；缩放结束后据此整页跟随，避免页面滑出可视区域。
+    this.browserZoomAnchor ??= this.pageViews.length > 0 ? this.captureViewportCenter() : null;
+    const anchor = this.browserZoomAnchor;
+    this.browserZoomSettleTimer = this.cancelTimer(this.browserZoomSettleTimer);
+    this.browserZoomSettleTimer = setTimeout(() => {
+      this.browserZoomSettleTimer = null;
+      const previous = this.browserScale;
+      this.browserScale = scale;
+      this.browserZoomAnchor = null;
+      if (!anchor || this.pageViews.length === 0 || previous === null) return;
+      // 滚动位置与页盒偏移都按文档像素保存：浏览器缩放变化后，页面内容在屏幕上的尺寸
+      // 变了，但相对滚动位置的布局坐标没变，保持“画面中心的内容”即可。
+      this.mainScrollTop = this.layout.offsetForContentPoint(anchor) - this.viewportHeight() / 2;
+      this.updateScrollState();
+      this.renderVisible();
+      this.commit();
+    }, BROWSER_ZOOM_SETTLE_MS);
+  };
 
   /** 解绑手势监听并释放残留的 pointer capture。 */
   private unbindGestureListeners(): void {
     const main = this.elements.main;
     this.releaseTouchPointers();
     this.touchPoints.clear();
+    this.pinching = false;
+    this.pinchAnchor = null;
+    this.lastTap = null;
     main.removeEventListener('wheel', this.onWheel);
+    if (this.visualViewport) {
+      this.visualViewport.removeEventListener('resize', this.onVisualViewportChange);
+      this.visualViewport.removeEventListener('scroll', this.onVisualViewportChange);
+      this.visualViewport = null;
+    }
+    this.browserScale = null;
+    this.browserZoomAnchor = null;
+    this.browserZoomSettleTimer = this.cancelTimer(this.browserZoomSettleTimer);
+    main.removeEventListener('pointerdown', this.onTap);
     main.removeEventListener('pointerdown', this.onPointerDown);
     main.removeEventListener('pointermove', this.onPointerMove);
     main.removeEventListener('pointerup', this.onPointerUp);
@@ -3226,7 +3671,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /**
    * Ctrl/Cmd+滚轮缩放；触控板双指捏合通常也以 `ctrlKey=true` 的 wheel 到达。
    *
-   * 只有 zoom 功能可用时才拦截浏览器默认缩放；步进 1.1/0.9，以指针为锚点。
+   * 只有 zoom 功能可用时才拦截浏览器默认缩放；步进 1.1/0.9，按画面中心缩放，
+   * 连续滚轮只在停止 {@link PREVIEW_COMMIT_DELAY_MS} 后提交一次。
    *
    * @param event 滚轮事件；clientX/clientY 单位 px。
    */
@@ -3240,177 +3686,250 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     event.preventDefault();
     if (Math.abs(event.deltaY) < 1e-6) return;
     const factor = event.deltaY < 0 ? 1.1 : 0.9;
-    const base = this.previewScale ?? this.state.view.scale;
-    const next = clampScale(base * factor);
-    // 与捏合手势共用预览机制：连续滚轮只在停止后按最终倍率重绘一次。
-    this.previewZoom(next, { clientX: event.clientX, clientY: event.clientY });
+    this.scheduleZoom(this.getScale() * factor);
   }
 
   /**
    * 记录触摸触点；第二个触点按下时开始捏合。
    *
+   * `touch-action: pan-x pan-y` 下浏览器可能在第二根手指落下时取消第一根手指的指针，
+   * 因此在 `pointerdown` 时就做 pointer capture，保证随后的平移与捏合事件仍派发到主区域。
+   *
    * @param event 指针事件；坐标单位 px。
    */
   private handlePointerDown(event: PointerEvent): void {
     this.cancelSmoothScroll();
+    // 桌面端（有精确指针的设备）只接受滚轮与滚动条：鼠标按下不做拖拽平移，触摸事件
+    // 也不接管，避免把触摸屏笔记本/触控笔当作移动端处理。
+    if (!this.touchGesturesEnabled) return;
     if (event.pointerType !== 'touch') return;
     this.touchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    this.captureTouchPointers();
     if (this.touchPoints.size > 2) {
-      this.pinchStartDistance = 0;
-      this.releaseTouchPointers();
+      this.endPinch();
       return;
     }
-    if (this.touchPoints.size !== 2 || !this.featureGate.isEnabled('zoom')) return;
+    if (this.touchPoints.size === 1) {
+      // 先把滚轮留下的延迟重绘落地，保证捏合起点是一份已定稿的画面。
+      if (this.previewCommitTimer !== null) this.finishScaleGesture();
+      return;
+    }
+    if (!this.featureGate.isEnabled('zoom')) return;
+    // 第二根手指落下后浏览器不再派发单击/双击，清除待触发的双击缩放以免误触发。
+    this.lastTap = null;
     const points = [...this.touchPoints.values()];
-    const first = points[0]!;
-    const second = points[1]!;
-    this.pinchStartDistance = Math.max(
-      1,
-      Math.hypot(first.x - second.x, first.y - second.y),
-    );
+    const midX = (points[0]!.x + points[1]!.x) / 2;
+    const midY = (points[0]!.y + points[1]!.y) / 2;
+    this.pinching = true;
     this.pinchStartScale = this.state.view.scale;
-    this.captureTouchPointers();
+    this.pinchBaseScale = this.state.view.scale;
+    this.pinchStartDistance = this.pinchSpan(this.touchPoints);
+    this.touchPointsChangedCount = 0;
+    // 移动端以两指中点为缩放中心：中点下的内容在整个手势期间停在手指处。
+    this.pinchAnchor = this.contentPointAtViewport(midX, midY);
+    this.pinchAnchorOffset = this.pointerOffsetY(midY);
+    this.pinchStartMidX = midX;
+    this.pinchStartMidY = midY;
+    this.pinchFrameAnchor = this.exactContentPointAtViewport(midX, midY);
+    this.pinchFrameOffset = this.pointerOffsetY(midY);
     event.preventDefault();
   }
 
   /**
-   * 双指捏合缩放；以两指中点对应的页面坐标为锚点。
+   * 双指捏合：按画面中心缩放，两指整体横移时同步横向平移，两指中点纵移交给原生滚动。
+   *
+   * 纵向平移与单指滚动继续交给浏览器原生滚动；横向在“不换行”的单列排版里没有可滚动的
+   * 原生内容，因此捏合期间由这里直接映射到横向滚动位置。
    *
    * @param event 指针事件；坐标单位 px。
    */
   private handlePointerMove(event: PointerEvent): void {
     if (event.pointerType !== 'touch' || !this.touchPoints.has(event.pointerId)) return;
     this.touchPoints.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    if (this.pinchStartDistance <= 0 || this.touchPoints.size !== 2) return;
+    this.touchPointsChangedCount = Math.min(2, this.touchPointsChangedCount + 1);
+    if (!this.pinching || this.touchPoints.size !== 2 || !this.pinchAnchor) return;
     event.preventDefault();
-    const points = [...this.touchPoints.values()];
-    const first = points[0]!;
-    const second = points[1]!;
-    const distance = Math.hypot(first.x - second.x, first.y - second.y);
-    const next = clampScale(this.pinchStartScale * (distance / this.pinchStartDistance));
-    // 手势期间只做合成层缩放，不重排、不重绘：每次移动都重绘 canvas 会让帧率降到个位数，
-    // 表现为“不跟手”。停止移动 PREVIEW_COMMIT_DELAY_MS 后按最终倍率一次性重绘。
-    this.previewZoom(next, {
-      clientX: (first.x + second.x) / 2,
-      clientY: (first.y + second.y) / 2,
-    });
+    const [first, second] = [...this.touchPoints.values()];
+    if (!first || !second) return;
+    const midX = (first.x + second.x) / 2;
+    const midY = (first.y + second.y) / 2;
+    // 一帧内两个触点都上报过新位置时，两指距离才是整帧的真实距离；逐点上报的中间帧不算
+    // 缩放，否则整体平移也会被当成缩小（真实触摸的指针事件按触点依次到达）。
+    const distance = Math.max(1, this.pinchSpan(this.touchPoints));
+    const framing = this.touchPointsChangedCount >= 2;
+    // 与 pdf.js 一致：倍率按两位小数取整并结转余量，连续捏合不会因截断而丢失缩放量。
+    const spanScale = this.accumulateScale(
+      this.pinchBaseScale,
+      distance / this.pinchStartDistance,
+    );
+    const nextScale = framing ? spanScale : this.pinchBaseScale;
+    this.pinchBaseScale = spanScale;
+    this.pinchStartDistance = distance;
+    this.touchPointsChangedCount = 0;
+    // 与 pdf.js `panBy` 一致：先按两指整体移动改滚动位置（锚点内容随之留在手指处），
+    // 再以“两指中点下的内容”为新锚点做本帧缩放。
+    this.panBy(this.pinchStartMidX - midX, this.pinchStartMidY - midY);
+    this.pinchStartMidX = midX;
+    this.pinchStartMidY = midY;
+    // 与 pdf.js 一致：以“上一帧两指中点”为锚点（当前中点会把 (ratio−1)×位移 一起算进去）。
+    // 锚点内容坐标按页顶 + 页内像素精确求解，避免页边界 1px 容差逐帧放大成可见漂移。
+    const anchor =
+      this.pinchFrameAnchor ?? this.exactContentPointAtViewport(midX, midY);
+    const anchorOffset = this.pinchFrameOffset;
+    this.pinchAnchorOffset = anchorOffset;
+    this.previewPinch(nextScale, anchor, anchorOffset);
+    // 锚点必须在本帧缩放“之后”重新取：它存的是当前布局下的 CSS 像素坐标，若沿用缩放前
+    // 的坐标，下一帧按新旧宽度比换算就会把上一帧的缩放量重复计入，表现为逐帧漂移。
+    this.pinchFrameAnchor = this.exactContentPointAtViewport(midX, midY);
+    this.pinchFrameOffset = this.pointerOffsetY(midY);
   }
 
   /**
-   * 手势缩放预览：只改视觉缩放并保持指针锚点，不触发页面重排/重绘。
-   *
-   * 目标倍率记录在 `previewScale`，由 {@link schedulePreviewCommit} 在停止移动后提交为
-   * 真正的布局倍率，届时才重新渲染 canvas。
+   * 捏合/滚轮的单步缩放：直接按新倍率排版并按锚点重设滚动位置（与 pdf.js 的
+   * `updateScale()` 等价），重绘由 {@link scheduleRenderAfterScale} 节流。
    *
    * @param nextScale 目标倍率。
-   * @param origin 指针视口坐标，单位 px。
+   * @param anchor 缩放中心对应的内容坐标。
+   * @param anchorOffset 锚点内容相对可视窗口顶部的偏移，单位 px。
    */
-  private previewZoom(
+  private previewPinch(
     nextScale: number,
-    origin?: { readonly clientX: number; readonly clientY: number },
+    anchor: ContentPoint,
+    anchorOffset: number,
   ): void {
-    const baseScale = this.state.view.scale;
-    if (Math.abs(nextScale - baseScale) < 0.0001) {
-      // 回到已提交倍率：撤销预览，不做任何重绘。
-      if (this.previewScale !== null) {
-        this.previewScale = null;
-        for (const pageView of this.pageViews) pageView.setPreviewScale(1);
-      }
-      return;
-    }
-    this.previewScale = nextScale;
-    const ratio = nextScale / baseScale;
-    // scale 以页盒中心为原点：越靠上的页，其视觉位移越小。按指针所在的“页面坐标”
-    // 反算滚动补偿，保证缩放过程中指针下的内容不跑掉。
-    if (origin) this.keepPointerAnchor(origin, ratio);
-    for (const pageView of this.pageViews) pageView.setPreviewScale(ratio);
-    this.schedulePreviewCommit();
+    const target = clampScale(nextScale);
+    if (Math.abs(target - this.state.view.scale) < PINCH_SCALE_EPSILON) return;
+    this.previewScale = target;
+    this.applyScaleStep(target, anchor, anchorOffset);
   }
 
   /**
-   * 手势预览锚定：让指针下的页面坐标在视觉缩放后仍处于指针位置。
+   * 锁定式缩放（Ctrl/Cmd+滚轮）：以本轮手势开始时的可视窗口中心为锚点。
    *
-   * 预览只对页盒做 CSS `scale()`（原点为页盒中心），页间间距与页盒偏移不参与缩放，
-   * 因此不能把滚动位置整体线性折算；这里按几何关系精确求解：设某页中心在滚动内容中的
-   * 坐标为 `c`，指针相对视口顶部的偏移为 `offset`，内容坐标 `y` 的视觉位置为
-   * `c + (y - c) * r - scrollTop`；令其仍等于 `offset` 即可解出新的滚动位置。
-   *
-   * @param origin 指针视口坐标，单位 px。
-   * @param ratio 预览倍率相对当前布局倍率的比例。
+   * @param nextScale 目标倍率。
    */
-  private keepPointerAnchor(
-    origin: { readonly clientX: number; readonly clientY: number },
-    ratio: number,
-  ): void {
-    const offset = this.pointerOffsetY(origin.clientY);
-    const absolute = this.mainScrollTop + offset;
-    this.previewPointer = { absolute, offset };
-    const boxes = this.layout.getBoxes();
-    // 锚点所在页：其内容在缩放后需与指针重合。
-    const anchor = this.layout.getAnchor(absolute);
-    const box = boxes[anchor.pageIndex];
-    if (!box || box.height <= 0) {
-      this.mainScrollTop = absolute * ratio - offset;
-      return;
+  private scheduleZoom(nextScale: number): void {
+    const current = this.state.view.scale;
+    const target = this.accumulateScale(current, nextScale / current);
+    if (Math.abs(target - current) < 1e-6) return;
+    // 连续滚轮是一次手势：锚点固定在开始时的窗口中心，避免每格都重新取点产生漂移。
+    if (this.pinnedZoomAnchor === null) {
+      this.pinnedZoomAnchor = this.captureViewportCenter();
+      this.pinnedZoomAnchorOffset = this.viewportHeight() / 2;
     }
-    const center = box.top + box.height / 2;
-    // 指针相对滚动视口顶部的偏移固定为 offset；内容坐标 y 的视觉位置为
-    // center + (y - center) * ratio - scrollTop，令其等于 offset 反解 scrollTop。
-    const desiredScrollTop = center + (absolute - center) * ratio - offset;
-    this.mainScrollTop = desiredScrollTop;
+    this.previewScale = target;
+    this.applyScaleStep(target, this.pinnedZoomAnchor, this.pinnedZoomAnchorOffset);
   }
 
   /**
-   * 安排一次预览提交：停止移动 {@link PREVIEW_COMMIT_DELAY_MS} 后按最终倍率重绘。
+   * 按“新倍率 + 锚点”更新布局与滚动位置，并安排一次延迟重绘。
+   *
+   * 这一帧里只有一次几何变更：写缩放变量 → 页盒按 CSS 尺寸重排 → 按锚点重设滚动，
+   * 不会出现“先视觉缩放、再恢复 CSS”导致的跳动。
+   *
+   * @param nextScale 目标倍率。
+   * @param anchor 缩放中心对应的内容坐标。
+   * @param anchorOffset 锚点内容相对可视窗口顶部的偏移，单位 px。
    */
-  private schedulePreviewCommit(): void {
-    if (this.previewCommitTimer !== null) clearTimeout(this.previewCommitTimer);
+  private applyScaleStep(nextScale: number, anchor: ContentPoint, anchorOffset: number): void {
+    const previous = this.state.view.scale;
+    if (Math.abs(nextScale - previous) < 1e-6) return;
+    this.layout.setZoom(nextScale, 'page-actual');
+    this.patchView({ scale: nextScale, zoomMode: 'page-actual' });
+    this.applyScaleVariable(nextScale);
+    this.reflow();
+    this.anchorScrollTo(anchor, anchorOffset);
+    this.updateScrollState();
+    this.scheduleRenderAfterScale();
+    this.commit();
+    this.emit('scalechanging', { scale: nextScale, zoomMode: 'page-actual', previous });
+    this.syncHash();
+  }
+
+  /**
+   * 缩放期间的延迟重绘：手势停顿 {@link PREVIEW_COMMIT_DELAY_MS} 后按最终倍率重绘一次。
+   *
+   * 与 pdf.js 的 `drawingDelay` 一致：手势进行中只拉伸旧位图，不逐帧重绘 canvas。
+   */
+  private scheduleRenderAfterScale(): void {
+    this.previewCommitTimer = this.cancelTimer(this.previewCommitTimer);
     this.previewCommitTimer = setTimeout(() => {
       this.previewCommitTimer = null;
-      this.commitPreviewScale();
+      this.finishScaleGesture();
     }, PREVIEW_COMMIT_DELAY_MS);
   }
 
-  /**
-   * 提交预览缩放：以最终倍率执行一次完整缩放（重排 + 重绘）。
-   */
-  private commitPreviewScale(): void {
-    const target = this.previewScale;
+  /** 结束一轮缩放手势：按当前倍率重绘可见页并收起预览状态。 */
+  private finishScaleGesture(): void {
+    const previousRenderScale = this.lastRenderScale;
+    this.lastRenderScale = this.effectiveRenderScale();
     this.previewScale = null;
-    if (this.previewCommitTimer !== null) {
-      clearTimeout(this.previewCommitTimer);
-      this.previewCommitTimer = null;
+    this.pinnedZoomAnchor = null;
+    for (const pageView of this.pageViews) {
+      pageView.setPreviewScale(1);
+      pageView.setPreviewTranslate(0);
     }
-    for (const pageView of this.pageViews) pageView.setPreviewScale(1);
-    if (target === null) return;
-    const previous = this.state.view.scale;
-    const previousRenderScale = this.effectiveRenderScale();
-    // 预览阶段已把指针下的内容锚定在原位；提交时须按“指针下的页面内容”恢复滚动位置，
-    // 否则 applyScale 的默认页顶锚点会把内容整体推移。
-    const pointer = this.previewPointer;
-    this.previewPointer = null;
-    if (pointer) {
-      // 提交时保持“指针下的页内比例”不变：先在旧布局中求出指针所在页与该页内比例，
-      // 再按新布局换算滚动位置。页面坐标不能按倍率线性折算——页顶偏移与间距不随缩放变化。
-      const offset = pointer.offset;
-      const anchor = this.layout.getAnchor(pointer.absolute);
-      this.layout.setScale(target);
-      this.patchView({ scale: target, zoomMode: this.state.view.zoomMode });
-      this.reflow();
-      this.mainScrollTop = this.layout.getOffsetForAnchor(anchor) - offset;
-    } else {
-      this.layout.setScale(target);
-      this.patchView({ scale: target, zoomMode: this.state.view.zoomMode });
-      this.reflow(this.captureAnchor());
-    }
-    this.emit('scalechanging', {
-      scale: target,
-      zoomMode: this.state.view.zoomMode,
-      previous,
-    });
-    this.renderAfterScaleChange(previousRenderScale);
-    this.commit();
-    this.syncHash();
+    if (Math.abs(this.lastRenderScale - previousRenderScale) > 1e-4) this.cancelAllPageTasks();
+    this.renderVisible(true);
+  }
+
+  /**
+   * 结束捏合并释放 pointer capture；剩余单指回归原生滚动。
+   */
+  private endPinch(): void {
+    this.pinching = false;
+    this.pinchStartDistance = 0;
+    this.releaseTouchPointers();
+    // 松手立即按最终倍率重绘，不必等待延迟计时器。
+    if (this.previewScale !== null) this.finishScaleGesture();
+    this.pinchAnchor = null;
+  }
+
+  /**
+   * 视口坐标下的内容位置；用于两指中点 / 指针命中。
+   *
+   * @param clientX 视口 x 坐标，单位 px。
+   * @param clientY 视口 y 坐标，单位 px。
+   * @returns 内容锚点。
+   */
+  /**
+   * 视口坐标映射到“精确页内位置”：页顶按布局坐标取、页内比例不做容差。
+   *
+   * 横向同样记录两指中点下的内容坐标，保证放大后手指下的内容停在原处。
+   *
+   * @param clientX 视口 x 坐标，单位 px。
+   * @param clientY 视口 y 坐标，单位 px。
+   * @returns 页索引与页内比例；页内比例已换算为绝对内容坐标 `offset`。
+   */
+  private exactContentPointAtViewport(clientX: number, clientY: number): ContentPoint {
+    const absolute = this.mainScrollTop + this.pointerOffsetY(clientY);
+    this.anchorClientX = clientX - this.viewportLeft();
+    return this.layout.contentPointAt(
+      absolute,
+      clientX - this.viewportLeft() + this.mainScrollLeft - this.contentLeft(),
+    );
+  }
+
+  private contentPointAtViewport(clientX: number, clientY: number): ContentPoint {
+    // 内容横向坐标 = 视口 x − 主区域左缘 + 滚动位置 − 居中偏移（内容窄于可视区时非 0）。
+    const contentX = clientX - this.viewportLeft() + this.mainScrollLeft - this.contentLeft();
+    this.anchorClientX = clientX - this.viewportLeft();
+    return this.layout.contentPointAt(
+      this.mainScrollTop + this.pointerOffsetY(clientY),
+      contentX,
+    );
+  }
+
+  /**
+   * 前两个触点的距离。
+   *
+   * @param points 全部触点；坐标单位 px。
+   * @returns 距离，单位 px；不足两个时返回 0。
+   */
+  private pinchSpan(points: ReadonlyMap<number, { x: number; y: number }>): number {
+    const [first, second] = [...points.values()];
+    if (!first || !second) return 0;
+    return Math.hypot(first.x - second.x, first.y - second.y);
   }
 
   /**
@@ -3419,21 +3938,27 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
    * @param event 指针事件。
    */
   private handlePointerUp(event: PointerEvent): void {
+    if (event.pointerType === 'mouse') return;
     if (!this.touchPoints.has(event.pointerId)) return;
     this.touchPoints.delete(event.pointerId);
-    if (this.touchPoints.size < 2) {
-      this.pinchStartDistance = 0;
-      this.releaseTouchPointers();
-      // 松手立即按最终倍率重绘，不必等待预览提交计时器。
-      if (this.previewScale !== null) this.commitPreviewScale();
-    }
+    // 任一手指抬起即结束捏合，避免两指一前一后抬起时有一次事件被漏掉。
+    this.releaseTouchPointer(event.pointerId);
+    if (this.touchPoints.size === 0) this.releaseTouchPointers();
+    if (this.touchPoints.size >= 2) return;
+    const wasPinching = this.pinching;
+    this.pinching = false;
+    this.pinchStartDistance = 0;
+    // 抬指时按整段触摸手势是否属于捏合（即使已缩小回原倍率、比例锁已撤销）收尾。
+    if (wasPinching) this.endPinch();
+    this.pinchAnchor = null;
   }
 
-  /** 对两个触摸触点执行 pointer capture；合成事件无活动指针时忽略。 */
+  /** 对全部触摸触点执行 pointer capture；合成事件无活动指针时忽略。 */
   private captureTouchPointers(): void {
     const main = this.elements.main;
     if (typeof main.setPointerCapture !== 'function') return;
     for (const pointerId of this.touchPoints.keys()) {
+      if (this.capturedPointers.has(pointerId)) continue;
       try {
         main.setPointerCapture(pointerId);
         this.capturedPointers.add(pointerId);
@@ -3443,28 +3968,40 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     }
   }
 
+  /**
+   * 释放单个触点的 pointer capture。
+   *
+   * @param pointerId 触点 id。
+   */
+  private releaseTouchPointer(pointerId: number): void {
+    if (!this.capturedPointers.delete(pointerId)) return;
+    const main = this.elements.main;
+    try {
+      if (typeof main.hasPointerCapture !== 'function' || main.hasPointerCapture(pointerId)) {
+        main.releasePointerCapture(pointerId);
+      }
+    } catch {
+      // 指针已失效或从未捕获。
+    }
+  }
+
   /** 释放全部触摸 pointer capture。 */
   private releaseTouchPointers(): void {
-    const main = this.elements.main;
-    for (const pointerId of this.capturedPointers) {
-      try {
-        if (typeof main.hasPointerCapture !== 'function' || main.hasPointerCapture(pointerId)) {
-          main.releasePointerCapture(pointerId);
-        }
-      } catch {
-        // 指针已失效或从未捕获。
-      }
-    }
-    this.capturedPointers.clear();
+    for (const pointerId of [...this.capturedPointers]) this.releaseTouchPointer(pointerId);
   }
 
   /**
-   * 双击在适合宽度与 100% 之间切换；以指针为锚点并清除双击文本选区。
+   * 双击在适合宽度与 100% 之间切换并清除双击文本选区；鼠标以指针为锚点。
+   *
+   * 触屏双击由 {@link handleTap} 判定：触摸事件也会带出 `dblclick`，这里统一忽略
+   * 触屏与合成触摸事件，避免一次双击缩放两次。
    *
    * @param event 双击事件；clientX/clientY 单位 px。
    */
   private handleDoubleClick(event: MouseEvent): void {
     if (!this.featureGate.isEnabled('zoom')) return;
+    if ((event as MouseEvent & { readonly pointerType?: string }).pointerType === 'touch') return;
+    if (isSyntheticTouchClick(event)) return;
     const target = event.target;
     if (
       target instanceof Element &&
@@ -3473,13 +4010,50 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       return;
     }
     event.preventDefault();
-    const selection = this.ownerDocument.getSelection?.();
-    if (selection && !selection.isCollapsed) {
-      const anchor = selection.anchorNode;
-      if (anchor && (anchor === this.elements.main || this.elements.main.contains(anchor))) {
-        selection.removeAllRanges();
-      }
+    this.clearTextSelection();
+    this.toggleZoomAt(event.clientX, event.clientY);
+  }
+
+  /**
+   * 双击缩放命中检测：按两次轻点派发的指针事件判定。
+   *
+   * 触屏浏览器以 `pointerdown` 派发触摸点击；判定失败时不做任何处理，不影响
+   * 单击选中文本与链接跳转。
+   *
+   * @param event 指针按下事件；坐标单位 px。
+   */
+  private handleTap(event: PointerEvent): void {
+    if (event.button !== 0 || !this.featureGate.isEnabled('zoom')) return;
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest('a,button,input,select,textarea,[contenteditable="true"]')
+    ) {
+      return;
     }
+    const now = Date.now();
+    const last = this.lastTap;
+    const doubled =
+      last !== null &&
+      last.type === event.pointerType &&
+      now - last.at <= TAP_ZOOM_INTERVAL_MS &&
+      Math.abs(last.x - event.clientX) <= TAP_ZOOM_SLOP_PX &&
+      Math.abs(last.y - event.clientY) <= TAP_ZOOM_SLOP_PX &&
+      this.touchPoints.size <= 1;
+    this.lastTap = { at: now, x: event.clientX, y: event.clientY, type: event.pointerType };
+    if (!doubled) return;
+    this.lastTap = null;
+    this.clearTextSelection();
+    this.toggleZoomAt(event.clientX, event.clientY);
+  }
+
+  /**
+   * 在适合宽度与 100% 之间切换，以给定视口坐标下的内容为锚点。
+   *
+   * @param clientX 锚点视口 x 坐标，单位 px。
+   * @param clientY 锚点视口 y 坐标，单位 px。
+   */
+  private toggleZoomAt(clientX: number, clientY: number): void {
     const mode: ZoomMode = this.state.view.zoomMode === 'auto' ? 'page-actual' : 'auto';
     const next =
       mode === 'page-actual'
@@ -3489,7 +4063,77 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
             this.measureViewport(),
             this.toIndex(this.state.view.pageNumber),
           );
-    this.applyScale(next, mode, { clientX: event.clientX, clientY: event.clientY });
+    // 与滚轮一致：以“当前可视窗口中心”为缩放中心；移动端双击按两指点按位置保持。
+    const anchor =
+      this.viewportMode === 'desktop'
+        ? this.captureViewportCenter()
+        : this.contentPointAtViewport(clientX, clientY);
+    const anchorOffset =
+      this.viewportMode === 'desktop'
+        ? this.viewportHeight() / 2
+        : this.pointerOffsetY(clientY);
+    this.pinnedZoomAnchor = anchor;
+    this.pinnedZoomAnchorOffset = anchorOffset;
+    this.applyScale(next, mode, anchor);
+  }
+
+  /** 清除主区域内正在进行中的文本选区。 */
+  private clearTextSelection(): void {
+    const selection = this.ownerDocument.getSelection?.();
+    if (!selection || selection.isCollapsed) return;
+    const anchor = selection.anchorNode;
+    if (anchor && (anchor === this.elements.main || this.elements.main.contains(anchor))) {
+      selection.removeAllRanges();
+    }
+  }
+
+  /**
+   * 画面中心对应的内容坐标。
+   *
+   * 横向同时记录窗口中心的内容坐标与它在可视区内的偏移：桌面端滚轮、按钮、双击都以
+   * 画面中心为缩放中心，放大后窗口中心处的文字必须停在原处。
+   *
+   * @returns 内容坐标锚点。
+   */
+  private captureViewportCenter(): ContentPoint {
+    const centerX = this.viewportWidth() / 2;
+    this.anchorClientX = centerX;
+    return this.layout.contentPointAt(
+      this.mainScrollTop + this.viewportHeight() / 2,
+      centerX + this.mainScrollLeft - this.contentLeft(),
+    );
+  }
+
+  /**
+   * 由内容锚点计算滚动位置。
+   *
+   * @param anchor 内容锚点。
+   * @param offset 锚点在主区域可视范围内的纵向偏移，单位 px。
+   * @returns 滚动位置，单位 px。
+   */
+  private scrollTopForAnchor(anchor: ContentPoint, offset: number): number {
+    return this.layout.offsetForContentPoint(anchor) - offset;
+  }
+
+  /**
+   * 主区域可视高度。
+   *
+   * @returns 高度，单位 px。
+   */
+  private viewportHeight(): number {
+    const rect = this.elements.main.getBoundingClientRect();
+    return rect.height > 0 ? rect.height : this.measureViewport().height;
+  }
+
+  /**
+   * 清除计时器并返回 null，便于 `field = this.cancelTimer(field)`。
+   *
+   * @param timer 计时器句柄。
+   * @returns 恒为 null。
+   */
+  private cancelTimer(timer: ReturnType<typeof setTimeout> | null): null {
+    if (timer !== null) clearTimeout(timer);
+    return null;
   }
 
   /**
@@ -3536,6 +4180,13 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       pageView.textLayer.dataset.selectable = states.selection.enabled ? 'true' : 'false';
     }
     this.keyboard.setEnabled(states.keyboardShortcuts.enabled);
+    // 关闭缩放功能时不再接管双指手势：改用浏览器自带的页面缩放（与移动端两指缩放、
+    // 模拟器的 Shift+拖动一致），页面会自然滚动到手指附近。触摸手势本身只在触屏主设备
+    // 上接管，桌面端始终保留浏览器原生行为，缩放交给滚轮。
+    const zoomEnabled = states.zoom.enabled;
+    this.root.dataset.browserZoom = zoomEnabled ? 'none' : 'pinch';
+    this.elements.main.style.touchAction =
+      zoomEnabled && this.touchGesturesEnabled ? 'pan-x pan-y' : 'auto';
     this.updateSidebarVisibility();
   }
 
@@ -3918,6 +4569,22 @@ function clampScale(value: number): number {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, value));
 }
 
+/**
+ * 判断点击事件是否由触摸合成而来。
+ *
+ * 触屏浏览器在触摸轻点后会补发 `click`/`dblclick`，其 `sourceCapabilities` 带有
+ * `firesTouchEvents`；不支持该属性时按环境是否同时支持触摸判定。
+ *
+ * @param event 鼠标/点击事件。
+ * @returns 由触摸合成时 true。
+ */
+function isSyntheticTouchClick(event: MouseEvent): boolean {
+  const capabilities = (
+    event as MouseEvent & { readonly sourceCapabilities?: { readonly firesTouchEvents?: boolean } }
+  ).sourceCapabilities;
+  return capabilities?.firesTouchEvents === true;
+}
+
 /** 规范化旋转角度。 */
 function normalizeRotation(value: number): Rotation {
   const normalized = ((Math.trunc(value / 90) * 90) % 360 + 360) % 360;
@@ -3928,6 +4595,23 @@ function normalizeRotation(value: number): Rotation {
 function detectMobile(): boolean {
   if (typeof window === 'undefined') return false;
   return window.matchMedia?.('(max-width: 767px)').matches ?? window.innerWidth < 768;
+}
+
+/**
+ * 判断当前是否为“触屏主设备”（手机、平板），决定是否接管触摸手势。
+ *
+ * 以指针精度为准而不是窗口宽度：桌面浏览器即使带触摸屏，`(pointer: fine)` 也成立，
+ * 仍按滚轮 + 滚动条的桌面交互处理。媒体查询不可用时退回窗口宽度判定。
+ *
+ * @returns 触屏主设备返回 true。
+ */
+function detectTouchPrimary(): boolean {
+  if (typeof window === 'undefined') return false;
+  const coarse = window.matchMedia?.('(pointer: coarse)');
+  if (coarse?.matches) return true;
+  const fine = window.matchMedia?.('(pointer: fine)');
+  if (fine?.matches) return false;
+  return detectMobile();
 }
 
 /** 解析容器；字符串按 CSS 选择器处理。 */
@@ -4414,7 +5098,7 @@ function createStructure(root: HTMLElement, doc: Document): UIShellElements {
   const dialogLayer = create('ofd-viewer__dialog-layer');
   const toastLayer = create('ofd-viewer__toast-layer');
   pages.style.position = 'relative';
-  pages.style.width = '100%';
+  // 宽度在每次 reflow 里按内容宽度显式写入（页盒绝对定位，撑不开容器）。
   pages.style.height = '0px';
   main.appendChild(pages);
   body.append(sidebar, sidebarMask, main);

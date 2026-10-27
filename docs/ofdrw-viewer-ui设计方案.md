@@ -76,7 +76,8 @@ URL 字符串和 `{ url, headers }` 由 UI 的 `HttpByteSource` 读取：先探�
 | `initialScale` | `auto`（适合宽度）；数字倍率限制在 `0.1..25` |
 | `rotation` | `0`，只接受 0/90/180/270 |
 | `theme` / `locale` | `auto` / `zh-CN` |
-| `maxCanvasPixels` | `32_000_000` 像素 |
+| `maxCanvasPixels` | 桌面 `256_000_000`、移动 `32_000_000` 像素 |
+| `pageCachePixelBudget` | `512_000_000` 像素（已渲染页 canvas 总预算） |
 | `pageCacheSize` | 桌面 `10`，移动 `4` |
 | `renderConcurrency` | 桌面 `2`，移动 `1` |
 | `thumbnailCacheSize` | 默认 `100`；当前缩略图实现固定使用 100，见“当前缺口” |

@@ -25,8 +25,45 @@ import {
 } from './state';
 import type { ViewerSource } from './types';
 
-/** 单页 canvas 像素上限（width × height），默认 32MP。 */
-export const DEFAULT_MAX_CANVAS_PIXELS = 32_000_000;
+/**
+ * 桌面端单页 canvas 像素上限（width × height），默认 256MP。
+ *
+ * A4 纸在 DPR=1 下的画布像素数随倍率平方增长：800% 约 57MP、1600% 约 228MP、
+ * 2500% 约 557MP。256MP 让 A4 在 DPR=1 下到约 1700%（DPR=2 下约 850%）按屏幕像素
+ * 1:1 渲染；2500% 时为 0.56 个后备像素/CSS 像素（相比 32MP 的 0.24 提升 2.4 倍）。
+ * 要做到 2500% 完全 1:1 需要 557MP、单页约 2.2GB 显存，超出浏览器可稳定分配的
+ * 范围，宿主确需时可经 {@link OFDViewerOptions.maxCanvasPixels} 显式提高。
+ *
+ * 分配失败时由渲染层按 {@link CANVAS_RETRY_PIXEL_STEPS} 逐级收紧重试，不会直接报错。
+ */
+export const DEFAULT_MAX_CANVAS_PIXELS = 256_000_000;
+
+/**
+ * 已渲染页 canvas 的总像素预算，默认 512MP。
+ *
+ * 单页上限很高时，缓存里若留着多张高倍率画布会迅速耗尽内存；可见页始终保留，
+ * 其余缓存页按预算裁剪。
+ */
+export const DEFAULT_PAGE_CACHE_PIXEL_BUDGET = 512_000_000;
+
+/**
+ * 画布尺寸超限或分配失败时的回退比例序列。
+ *
+ * 与 pdf.js 逐级降低 DPI 的做法一致：先尝试按原始倍率渲染，失败后按 0.75 逐级
+ * 回退，直到成功或走完序列。
+ */
+export const CANVAS_RETRY_PIXEL_STEPS: readonly number[] = Object.freeze([
+  1, 0.75, 0.5625, 0.421875, 0.31640625, 0.2373046875, 0.177978515625,
+  0.13348388671875,
+]);
+
+/**
+ * 移动端单页 canvas 像素上限（width × height），默认 32MP。
+ *
+ * 移动设备的显存与内存都更紧，高倍率下用 32MP 换稳定性；宿主可经
+ * `ViewerOptions.maxCanvasPixels` 显式覆盖。
+ */
+export const DEFAULT_MOBILE_MAX_CANVAS_PIXELS = 32_000_000;
 
 /** 桌面端已渲染页 canvas 缓存数量。 */
 export const DEFAULT_PAGE_CACHE_SIZE = 10;
@@ -191,7 +228,12 @@ export interface OFDViewerOptions {
   readonly theme?: Theme;
   /** 语言；默认 `zh-CN`，内置 `zh-CN`/`en-US`。 */
   readonly locale?: string;
-  /** 单页 canvas 像素上限，默认 32,000,000。 */
+  /**
+   * 单页 canvas 像素上限。
+   *
+   * 省略时桌面端 256,000,000、移动端 32,000,000。上限决定高倍率下画面是否按屏幕
+   * 像素 1:1 渲染：超出后按 0.75 逐级回退 DPI，画面由浏览器放大并出现锯齿。
+   */
   readonly maxCanvasPixels?: number;
   /**
    * 画布超采样倍率，默认 1（不超采样，按设备像素比 1:1 渲染）。
@@ -203,6 +245,13 @@ export interface OFDViewerOptions {
   readonly supersample?: number;
   /** 已渲染页 canvas 缓存数量；默认桌面 10、移动 4。 */
   readonly pageCacheSize?: number;
+  /**
+   * 已渲染页 canvas 的总像素预算，默认 512,000,000。
+   *
+   * 缓存页的 `width × height` 之和超过该值时会提前释放离可见区最远的页；可见页始终
+   * 保留。高倍率下这是防止内存膨胀的主要手段。
+   */
+  readonly pageCachePixelBudget?: number;
   /** 缩略图缓存数量，默认 100。 */
   readonly thumbnailCacheSize?: number;
   /** 同时渲染页数；默认桌面 2、移动 1。 */
@@ -249,6 +298,8 @@ export interface ResolvedViewerOptions {
   /** 已规范化到 1..4 的超采样倍率。 */
   readonly supersample: number;
   readonly pageCacheSize: number;
+  /** 已渲染页 canvas 的总像素预算。 */
+  readonly pageCachePixelBudget: number;
   readonly thumbnailCacheSize: number;
   readonly renderConcurrency: number;
   readonly updateHash: boolean;
@@ -300,11 +351,15 @@ export function resolveViewerOptions(
     featureDisplay,
     theme: options.theme ?? DEFAULT_THEME,
     locale: options.locale ?? DEFAULT_LOCALE,
-    maxCanvasPixels: options.maxCanvasPixels ?? DEFAULT_MAX_CANVAS_PIXELS,
+    maxCanvasPixels:
+      options.maxCanvasPixels ??
+      (mobile ? DEFAULT_MOBILE_MAX_CANVAS_PIXELS : DEFAULT_MAX_CANVAS_PIXELS),
     supersample: normalizeSupersample(options.supersample),
     pageCacheSize:
       options.pageCacheSize ??
       (mobile ? DEFAULT_MOBILE_PAGE_CACHE_SIZE : DEFAULT_PAGE_CACHE_SIZE),
+    pageCachePixelBudget:
+      options.pageCachePixelBudget ?? DEFAULT_PAGE_CACHE_PIXEL_BUDGET,
     thumbnailCacheSize: options.thumbnailCacheSize ?? DEFAULT_THUMBNAIL_CACHE_SIZE,
     renderConcurrency:
       options.renderConcurrency ??

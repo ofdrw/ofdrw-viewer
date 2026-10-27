@@ -697,11 +697,29 @@
   overscroll-behavior: contain;
   padding: var(--ofd-page-margin) 0;
   scroll-behavior: auto;
+  /* 滚动条始终预留槽位：放大时页面出现横向滚动，若滚动条挤占宽度，页面宽度会
+   * 反复“出现滚动条→变窄→回流”，横向滑动时整页抖动。 */
+  scrollbar-gutter: stable;
+}
+
+.ofd-viewer {
+  /*
+   * 文档级缩放变量（与 pdf.js 的 `--scale-factor` 等价）：页盒宽高由它乘以 96 DPI 单位
+   * 尺寸算出，缩放时只改这一个变量，所有页在同一次样式计算里更新。
+   */
+  --ofd-scale: 1;
 }
 
 .ofd-page {
   position: relative;
-  margin: 0 auto var(--ofd-page-gap);
+  /*
+   * 与 pdf.js 的 `.page { margin: 0 auto }` 一致：页面始终在可视区里水平居中。
+   * 内容比可视区宽时，两侧各留一半负偏移、由主区域横向滚动查看，缩放锚点的横向位置
+   * 因此可以精确保持；不再使用 translateX(-50%)，避免左半边落到不可滚动的负坐标。
+   */
+  margin-left: auto;
+  margin-right: auto;
+  margin-bottom: var(--ofd-page-gap);
   background: var(--ofd-page-bg);
   box-shadow: var(--ofd-page-shadow);
   border-radius: var(--ofd-radius);
@@ -717,10 +735,12 @@
  * 手势缩放预览：只做合成层缩放，不触发重排与重绘。
  * 布局尺寸保持不变（滚动条不跳动），视觉上跟随手指而无需重新渲染 canvas；
  * 手势结束后阅读器按最终倍率重绘一次并移除本类。
+ * 以页盒中心为原点缩放与横移（chrome67 不支持 scale 属性，故用 transform）；
+ * 页盒的居中位移与预览 transform 必须写在同一条声明里，否则会互相覆盖，
+ * 实际值由 page-view 内联设置。
  */
 .ofd-page--preview {
-  scale: var(--preview-scale, 1);
-  will-change: scale;
+  will-change: transform;
 }
 
 .ofd-page__canvas-wrapper {

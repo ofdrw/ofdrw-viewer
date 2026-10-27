@@ -363,6 +363,8 @@ describe('内置 UI 接线', () => {
         ...host.getState().view,
         pageNumber: 5,
         scale: 2,
+        // 缩放模式由核心维护：用户指定倍率时是 `page-actual`，自适应时是具体模式。
+        zoomMode: 'page-actual' as const,
         rotation: 90,
         sidebarView: 'outline',
       },
@@ -371,9 +373,9 @@ describe('内置 UI 接线', () => {
     host.emit('statechange');
     expect(pageInput.value).toBe('5');
     expect(pageInput.max).toBe('20');
-    expect((shell.toolbar.getControl('zoomMode') as HTMLSelectElement).value).toBe(
-      'scale:2',
-    );
+    const zoomSelect = shell.toolbar.getControl('zoomMode') as HTMLSelectElement;
+    expect(zoomSelect.options[0]?.textContent).toBe('200%');
+    expect(zoomSelect.value).toBe('scale:2');
     expect(print.disabled).toBe(false);
     expect(shell.toolbar.getSidebarButton().getAttribute('aria-expanded')).toBe('true');
     expect(shell.sidebar.currentView).toBe('outline');

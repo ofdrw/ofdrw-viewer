@@ -13,7 +13,7 @@
 
 import type { PageInfo } from '@ofdrw/ofdrw-viewer-engine';
 import { MAX_SCALE, MIN_SCALE } from './options';
-import type { Rotation, VisiblePageRange } from './state';
+import type { Rotation, VisiblePageRange, ZoomMode } from './state';
 
 /** 毫米到 96 DPI CSS 像素的换算系数（1 mm = 96 / 25.4 px）。 */
 export const MM_TO_CSS_PX = 96 / 25.4;
@@ -49,6 +49,8 @@ export interface PageBox {
   readonly pageNumber: number;
   /** 页盒顶部相对滚动内容顶部的偏移，单位 px。 */
   readonly top: number;
+  /** 页盒左缘相对滚动内容左缘的偏移（居中排版时按最宽页对齐），单位 px。 */
+  left: number;
   /** 旋转后的外框宽，单位 px。 */
   readonly width: number;
   /** 旋转后的外框高，单位 px。 */
@@ -61,6 +63,10 @@ export interface PageBox {
   readonly widthMm: number;
   /** 页高，mm。 */
   readonly heightMm: number;
+  /** 96 DPI 下的页宽（不含缩放倍率），单位 px；与 pdf.js 的 `pageWidth` 对应。 */
+  readonly unitWidth: number;
+  /** 96 DPI 下的页高（不含缩放倍率），单位 px；与 pdf.js 的 `pageHeight` 对应。 */
+  readonly unitHeight: number;
 }
 
 /** 滚动锚点。 */
@@ -77,6 +83,8 @@ export interface PageLayoutOptions {
   readonly pageInfos: readonly PageInfo[];
   /** 初始缩放倍率，默认 1。 */
   readonly scale?: number;
+  /** 初始缩放模式，默认 `auto`。 */
+  readonly zoomMode?: ZoomMode;
   /** 初始旋转，默认 0。 */
   readonly rotation?: Rotation;
   /** 页间距，单位 px；默认 8。 */
@@ -110,6 +118,8 @@ export class PageLayout {
   private infos: readonly PageInfo[];
   /** 当前缩放倍率。 */
   private currentScale: number;
+  /** 当前缩放模式；倍率由用户指定时固定为 `page-actual`。 */
+  private currentZoomMode: ZoomMode = 'auto';
   /** 当前旋转角度。 */
   private currentRotation: Rotation;
   /** 页间距，单位 px。 */
@@ -120,6 +130,14 @@ export class PageLayout {
   private boxes: PageBox[] = [];
   /** 累计总高度，单位 px。 */
   private height = 0;
+  /** 单列排版的内容宽度（取最宽页），单位 px。 */
+  private width = 0;
+  /** 96 DPI 下最宽页的宽度（不含倍率），单位 px。 */
+  private unitWidth = 0;
+  /** 上一次重建时各页的高度，单位 px；用于把“页内像素”按页高等比换算。 */
+  private previousHeights: number[] = [];
+  /** 上一次重建时的内容宽度，单位 px；用于把横向锚点按宽度等比换算。 */
+  private previousWidth = 0;
 
   /**
    * @param options 页信息与初始缩放/旋转。
@@ -127,6 +145,7 @@ export class PageLayout {
   constructor(options: PageLayoutOptions) {
     this.infos = options.pageInfos;
     this.currentScale = sanitizeScale(options.scale ?? 1);
+    this.currentZoomMode = options.zoomMode ?? 'auto';
     this.currentRotation = options.rotation ?? 0;
     this.gapPx = Math.max(0, options.gap ?? DEFAULT_PAGE_GAP);
     this.paddingPx = Math.max(0, options.padding ?? DEFAULT_PAGE_PADDING);
@@ -141,6 +160,11 @@ export class PageLayout {
   /** 当前缩放倍率。 */
   get scale(): number {
     return this.currentScale;
+  }
+
+  /** 当前缩放模式。 */
+  get zoomMode(): ZoomMode {
+    return this.currentZoomMode;
   }
 
   /** 当前旋转角度。 */
@@ -163,9 +187,31 @@ export class PageLayout {
     return this.height;
   }
 
+  /** 单列排版的滚动内容宽度（最宽页），单位 px。 */
+  get totalWidth(): number {
+    return this.width;
+  }
+
+  /** 96 DPI 下最宽页的宽度（不含倍率），单位 px。 */
+  get maxUnitWidth(): number {
+    return this.unitWidth;
+  }
+
   /** 全部排版盒（只读）。 */
   getBoxes(): readonly PageBox[] {
     return this.boxes;
+  }
+
+  /**
+   * 内容比可视区窄时的横向居中偏移（与 pdf.js 的 `.page { margin: 0 auto }` 等价）。
+   *
+   * 内容比可视区宽时返回 0：此时两侧留白由滚动位置承担，页面左缘可以滚到可视区左缘。
+   *
+   * @param viewportWidth 主区域可视宽度（不含滚动条），单位 px。
+   * @returns 内容左缘相对可视区左缘的偏移，单位 px；不小于 0。
+   */
+  centeredOffset(viewportWidth: number): number {
+    return Math.max(0, (viewportWidth - this.width) / 2);
   }
 
   /**
@@ -184,9 +230,20 @@ export class PageLayout {
    * @param scale 缩放倍率；非法值按 1 处理。
    */
   setScale(scale: number): void {
+    this.setZoom(scale, 'page-actual');
+  }
+
+  /**
+   * 同时设置缩放倍率与缩放模式；倍率与模式都未变时不做任何事。
+   *
+   * @param scale 缩放倍率；非法值按 1 处理。
+   * @param mode 缩放模式。
+   */
+  setZoom(scale: number, mode: ZoomMode): void {
     const next = sanitizeScale(scale);
-    if (next === this.currentScale) return;
+    if (next === this.currentScale && mode === this.currentZoomMode) return;
     this.currentScale = next;
+    this.currentZoomMode = mode;
     this.rebuild();
   }
 
@@ -349,6 +406,60 @@ export class PageLayout {
   }
 
   /**
+   * 由滚动内容坐标生成缩放锚点；与 {@link getAnchor} 不同，页间留白也保留真实坐标。
+   *
+   * @param offset 滚动内容坐标，单位 px。
+   * @param offsetX 内容的横向偏移，相对滚动内容左边缘，单位 px。
+   * @returns 缩放锚点。
+   */
+  contentPointAt(offset: number, offsetX = 0): ContentPoint {
+    // `offset` 原样保留、不做页边夹取：连续多帧捏合时，若每帧都把落在页间留白上的
+    // 坐标压回页顶/页底，换算误差会逐帧累加，表现为画面缓慢漂移。这里只额外给出
+    // “页索引 + 页内像素”，供需要在布局变化后还原同一视觉位置的地方使用。
+    const pageIndex = this.getPageAtOffset(offset);
+    const box = this.boxes[pageIndex];
+    return {
+      offset,
+      offsetX,
+      pageIndex,
+      pageOffset: box ? offset - box.top : offset,
+      ratio: box && box.height > 0 ? clamp((offset - box.top) / box.height, 0, 1) : 0,
+    };
+  }
+
+  /**
+   * 把缩放锚点换回当前布局下的滚动内容坐标。
+   *
+   * 用“页索引 + 页内像素”表达而非页内比例：比例在多帧缩放里会被页间留白与 1px 容差
+   * 反复夹取、逐帧累积误差；页内像素只与倍率线性相关，换算是一次乘法。
+   *
+   * @param point 缩放锚点。
+   * @returns 滚动内容坐标，单位 px。
+   */
+  offsetForContentPoint(point: ContentPoint): number {
+    if (this.boxes.length === 0) return point.offset;
+    const box = this.boxes[Math.min(Math.max(0, point.pageIndex), this.boxes.length - 1)]!;
+    // 页内像素按页高等比换算：缩放与旋转都会改变页高，用页高比一次覆盖两种情形。
+    const previousHeight = this.previousHeights[point.pageIndex] ?? 0;
+    const factor = previousHeight > 0 ? box.height / previousHeight : 1;
+    return box.top + point.pageOffset * factor;
+  }
+
+  /**
+   * 把缩放锚点的横向内容坐标换回当前布局下的值。
+   *
+   * 锚点记录的 `offsetX` 是缩放前的内容坐标；内容以左缘为原点整体等比缩放，因此乘上
+   * 新旧内容宽度之比即可，不做比例夹取，避免连续缩放逐帧累积误差。
+   *
+   * @param point 缩放锚点。
+   * @returns 当前布局下的横向内容坐标，单位 px。
+   */
+  leftForContentPoint(point: ContentPoint): number {
+    if (this.previousWidth <= 0 || this.width <= 0) return point.offsetX;
+    return (point.offsetX * this.width) / this.previousWidth;
+  }
+
+  /**
    * 由锚点计算滚动位置。
    *
    * @param anchor 锚点。
@@ -377,24 +488,40 @@ export class PageLayout {
     const boxes: PageBox[] = [];
     let top = this.paddingPx;
     const scale = this.currentScale;
+    // 记录重建前的页高：锚点里的“页内像素”是按旧布局量的，换回坐标时要按页高
+    // 等比换算（见 {@link offsetForContentPoint}）。
+    this.previousHeights = this.boxes.map((box) => box.height);
+    this.previousWidth = this.width;
     const quarter = isQuarterTurn(this.currentRotation);
+    // 内容宽度取最宽页，窄页相对它居中（混排不同尺寸的页时不贴左边）。
+    let widest = 0;
+    let widestUnit = 0;
     for (let index = 0; index < this.infos.length; index += 1) {
       const info = this.infos[index]!;
       const { widthMm, heightMm } = normalizePageSize(info);
-      const surfaceWidth = widthMm * MM_TO_CSS_PX * scale;
-      const surfaceHeight = heightMm * MM_TO_CSS_PX * scale;
+      // 与 pdf.js 一致：页宽高以 96 DPI 的“单位尺寸”为准，实际尺寸 = 单位尺寸 × 倍率；
+      // 缩放只改倍率，尺寸在每次取值时按倍率推导，避免“布局尺寸/视觉尺寸”两套坐标。
+      const unitWidth = widthMm * MM_TO_CSS_PX;
+      const unitHeight = heightMm * MM_TO_CSS_PX;
+      const surfaceWidth = unitWidth * scale;
+      const surfaceHeight = unitHeight * scale;
       const width = quarter ? surfaceHeight : surfaceWidth;
       const height = quarter ? surfaceWidth : surfaceHeight;
+      widest = Math.max(widest, width);
+      widestUnit = Math.max(widestUnit, unitWidth);
       boxes.push({
         index,
         pageNumber: index + 1,
         top,
+        left: width,
         width,
         height,
         surfaceWidth,
         surfaceHeight,
         widthMm,
         heightMm,
+        unitWidth,
+        unitHeight,
       });
       top += height + this.gapPx;
     }
@@ -402,9 +529,71 @@ export class PageLayout {
       boxes.length === 0
         ? this.paddingPx * 2
         : top - this.gapPx + this.paddingPx;
-    this.boxes = boxes;
     this.height = Math.max(total, this.paddingPx * 2);
+    this.width = widest;
+    this.unitWidth = widestUnit;
+    // 与 pdf.js 的 `.page { margin: 0 auto }` 等价：每页相对内容左缘居中；内容整体比可视区
+    // 窄时的偏移由 {@link centeredOffset} 补。
+    for (const box of boxes) box.left = (widest - box.width) / 2;
+    this.boxes = boxes;
   }
+
+  /**
+   * 指定倍率下的排版盒，不修改当前布局（用于预计算锚点落位）。
+   *
+   * @param scale 目标缩放倍率。
+   * @returns 新倍率下的页盒列表。
+   */
+  boxesAt(scale: number): PageBox[] {
+    const layout = new PageLayout({
+      pageInfos: this.infos,
+      scale,
+      rotation: this.currentRotation,
+      gap: this.gapPx,
+      padding: this.paddingPx,
+    });
+    return [...layout.getBoxes()];
+  }
+}
+
+/**
+ * 滚动内容中的任意一点（不再局限于“页索引 + 页内比例”）。
+ *
+ * 用于缩放锚点：不论锚点落在页面上还是页间留白里，都能在缩放前后按内容坐标还原。
+ */
+export interface ContentPoint {
+  /** 内容坐标，相对滚动内容顶部的偏移，单位 px；不做页边夹取，是精确值。 */
+  readonly offset: number;
+  /** 内容的横向偏移，相对滚动内容左边缘，单位 px。 */
+  readonly offsetX: number;
+  /** 所在页索引，0-based。 */
+  readonly pageIndex: number;
+  /** 距所在页顶的像素距离，单位 px；可为负（页间留白）或大于页高，与倍率线性相关。 */
+  readonly pageOffset: number;
+  /** 在该页内的高度比例，0..1；供按比例表达的调用方使用。 */
+  readonly ratio: number;
+}
+
+/**
+ * 计算以指定点为中心缩放后的滚动位置。
+ *
+ * 固定的是「视口中心」下的内容：设视口中心的内容坐标为 `c`，滚动位置为 `s`，
+ * 缩放前后该点相对视口中心的内容偏移按 `r` 缩放，于是
+ * `s' = offset' - (c - s) * r`。
+ *
+ * @param offsetBefore 视口中心当前的滚动内容坐标，单位 px。
+ * @param scrollTop 当前滚动位置，单位 px。
+ * @param ratio 新倍率与旧倍率之比。
+ * @param nextOffset 视口中心在新布局中的滚动内容坐标，单位 px。
+ * @returns 缩放后的滚动位置，单位 px；未夹取到滚动范围内。
+ */
+export function scrollTopForZoomAnchor(
+  offsetBefore: number,
+  scrollTop: number,
+  ratio: number,
+  nextOffset: number,
+): number {
+  return nextOffset - (offsetBefore - scrollTop) * ratio;
 }
 
 /**

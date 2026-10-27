@@ -30,7 +30,10 @@ import type {
 } from './types';
 
 /** 下拉中预置的百分比档位。 */
-const ZOOM_PRESETS: readonly number[] = Object.freeze([0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4]);
+const ZOOM_PRESETS: readonly number[] = Object.freeze([0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 8]);
+
+/** 下拉中“当前缩放”项的取值前缀；与 {@link ZOOM_PRESETS} 的 `scale:` 前缀区分。 */
+const CURRENT_ZOOM_PREFIX = 'current:';
 
 /** 缩放模式与文案键。 */
 const ZOOM_MODE_OPTIONS: readonly (readonly [ZoomMode, MessageKey])[] = Object.freeze([
@@ -172,7 +175,7 @@ export class Toolbar {
       });
     }
 
-    this.zoomSelect.value = this.resolveZoomSelectValue(scale, zoomMode);
+    this.syncZoomSelect(scale, zoomMode);
     this.refreshDisabled();
     this.moreMenu.update(state);
   }
@@ -516,7 +519,6 @@ export class Toolbar {
   /** 构建缩放下拉选项。 */
   private buildZoomOptions(): void {
     const doc = this.element.ownerDocument;
-    const previousValue = this.zoomSelect.value;
     replaceChildren(this.zoomSelect);
     for (const [mode, key] of ZOOM_MODE_OPTIONS) {
       const option = doc.createElement('option');
@@ -527,21 +529,48 @@ export class Toolbar {
     for (const level of ZOOM_PRESETS) {
       const option = doc.createElement('option');
       option.value = `scale:${level}`;
-      option.textContent = this.translator.t('toolbar.zoomPercent', {
-        value: this.translator.formatNumber(level * 100, {
-          maximumFractionDigits: 0,
-        }),
-      });
+      option.textContent = this.zoomLabel(level);
       this.zoomSelect.appendChild(option);
     }
-    if (previousValue) this.zoomSelect.value = previousValue;
+    this.syncZoomSelect(this.viewState.scale, this.viewState.zoomMode);
   }
 
-  /** 根据当前缩放选择下拉值。 */
-  private resolveZoomSelectValue(scale: number, mode: ZoomMode): string {
-    if (mode !== 'auto') return mode;
+  /**
+   * 同步缩放下拉与读数。
+   *
+   * 下拉始终第一项显示当前倍率的数值（随缩放实时变化，不受列表限制），其余为固定
+   * 模式与百分比档位。当前倍率恰好与某个固定项一致、且缩放模式也是“用户指定倍率”
+   * 时直接选中该项，避免同一倍率出现两次。
+   */
+  private syncZoomSelect(scale: number, mode: ZoomMode): void {
+    const doc = this.element.ownerDocument;
     const preset = ZOOM_PRESETS.find((level) => Math.abs(level - scale) < 0.005);
-    return preset === undefined ? 'auto' : `scale:${preset}`;
+    const current = this.zoomSelect.querySelector<HTMLOptionElement>(
+      `option[value^="${CURRENT_ZOOM_PREFIX}"]`,
+    );
+    const currentOption = current ?? doc.createElement('option');
+    currentOption.value = `${CURRENT_ZOOM_PREFIX}${scale}`;
+    currentOption.textContent = this.zoomLabel(scale);
+    if (!current) this.zoomSelect.insertBefore(currentOption, this.zoomSelect.firstChild);
+    // 自适应模式（适合宽度/页面）优先显示模式名；用户指定倍率时才落到档位。
+    let value: string = mode;
+    if (mode === 'page-actual') value = preset === undefined ? currentOption.value : `scale:${preset}`;
+    this.zoomSelect.value = value;
+    this.zoomSelect.title = this.zoomLabel(scale);
+  }
+
+  /**
+   * 缩放倍率的展示文案。
+   *
+   * @param scale 实际倍率（1 表示 100%）。
+   * @returns 百分比文案，最多保留一位小数。
+   */
+  private zoomLabel(scale: number): string {
+    return this.translator.t('toolbar.zoomPercent', {
+      value: this.translator.formatNumber(Number((scale * 100).toFixed(1)), {
+        maximumFractionDigits: 1,
+      }),
+    });
   }
 
   /** 应用功能门控。 */
@@ -623,6 +652,11 @@ export class Toolbar {
   /** 缩放下拉变化。 */
   private readonly handleZoomChange = (): void => {
     const value = this.zoomSelect.value;
+    if (value.startsWith(CURRENT_ZOOM_PREFIX)) {
+      // “当前倍率”只是读数，不参与选择。
+      this.syncZoomSelect(this.viewState.scale, this.viewState.zoomMode);
+      return;
+    }
     if (value.startsWith('scale:')) {
       const scale = Number.parseFloat(value.slice('scale:'.length));
       if (Number.isFinite(scale)) {

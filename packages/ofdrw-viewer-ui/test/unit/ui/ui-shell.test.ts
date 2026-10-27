@@ -76,6 +76,7 @@ describe('状态同步', () => {
     expect(input.max).toBe('10');
     expect(shell.elements.toolbar.textContent).toContain('/ 10');
 
+    // 自适应模式下下拉显示具体模式；用户指定倍率时（`page-actual`）显示当前百分比。
     shell.update({ pageNumber: 5, scale: 2, zoomMode: 'auto', rotation: 90, fullscreen: true });
     expect(input.value).toBe('5');
     const fullscreen = shell.toolbar.getControl('fullscreen') as HTMLButtonElement;
@@ -84,7 +85,16 @@ describe('状态同步', () => {
     const rotate = shell.toolbar.getControl('rotate') as HTMLButtonElement;
     expect(rotate.title).toContain('90');
     const zoom = shell.toolbar.getControl('zoomMode') as HTMLSelectElement;
+    // 下拉首项始终显示当前倍率（随缩放实时变化）。
+    expect(zoom.options[0]?.textContent).toBe('200%');
+    expect(zoom.value).toBe('auto');
+
+    // 用户指定倍率后下拉跟随缩放值变化，并与固定档位一一对应。
+    shell.update({ scale: 2, zoomMode: 'page-actual' });
     expect(zoom.value).toBe('scale:2');
+    shell.update({ scale: 1.37, zoomMode: 'page-actual' });
+    expect(zoom.options[0]?.textContent).toBe('137%');
+    expect(zoom.value).toMatch(/^current:/);
 
     shell.update({ pageNumber: 1, pageCount: 10 });
     const previous = shell.toolbar.getControl('previousPage') as HTMLButtonElement;
