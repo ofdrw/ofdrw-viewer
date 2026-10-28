@@ -1,7 +1,7 @@
 ---
 name: ofdrw-viewer-ui
 description: >-
-  Embed the framework-agnostic OFD reader UI from @ofdrw/ofdrw-viewer-ui in web apps. Use this skill whenever a task involves a complete OFD reading interface, including continuous scrolling, zoom/rotation, thumbnails, outline/bookmarks, attachments sidebar with per-file download and ZIP export of embedded files, text selection and search, printing, PNG/JPEG/WebP and original OFD export, document info snapshot via getDocumentInfo, encrypted-document credentials, signature overlays and verification panels, or the Web Component/React/Vue adapters. Covers installation, style import, container sizing, OFDViewer options/methods/events, feature gates, crypto configuration, framework wrappers, and known boundaries. Also covers URL loading in the UI layer: HttpByteSource, HTTP Range/CORS, request headers, cancellation, shared byte sources (engine does not fetch), host-controlled font bytes, and URI parameter preview: ?file= URLs, ?base64= values, base64 预览, encoding, priority and security. Use for OFD 阅读器、OFD 在线预览、URI 参数预览、?file=、?base64=、base64 预览、Vue/React OFD 组件、URL 跨域/Range 排障, or when embedding @ofdrw/ofdrw-viewer-ui.
+  Embed the framework-agnostic OFD reader UI from @ofdrw/ofdrw-viewer-ui in web apps. Use this skill whenever a task involves a complete OFD reading interface, including continuous scrolling, zoom/rotation, thumbnails, outline/bookmarks, attachments sidebar with per-file download and ZIP export of embedded files, text selection and search, printing, PNG/JPEG/WebP and original OFD export, document info snapshot via getDocumentInfo, encrypted-document credentials, signature overlays and verification panels, or the Web Component/React/Vue adapters. Covers installation, style import, container sizing, OFDViewer options/methods/events, feature gates, crypto configuration, framework wrappers, canvas sharpness and the supersample presets (off/auto/high/max), and known boundaries. Also covers URL loading in the UI layer: HttpByteSource, HTTP Range/CORS, request headers, cancellation, shared byte sources (engine does not fetch), host-controlled font bytes, and URI parameter preview: ?file= URLs, ?base64= values, base64 预览, encoding, priority and security. Use for OFD 阅读器、OFD 在线预览、URI 参数预览、?file=、?base64=、base64 预览、Vue/React OFD 组件、URL 跨域/Range 排障、文字模糊/渲染清晰度/超采样, or when embedding @ofdrw/ofdrw-viewer-ui.
 ---
 
 # OFD 阅读器 UI（@ofdrw/ofdrw-viewer-ui）
@@ -59,6 +59,42 @@ import '@ofdrw/ofdrw-viewer-ui/style.css';
 挂载点必须自备确定高度，`OFDViewer` 不会修改宿主样式；它在挂载点内创建 `display: grid` 的 `.ofd-viewer` 根节点，并通过 `width/height: 100%` 撑满挂载点。`<ofd-viewer>` 自身是宿主：只有内联 `display`/`height`/`min-height` 未设置时，`connectedCallback` 才补 `display: block; height: 100%; min-height: 0`；父容器仍需提供高度，组件不会替父容器撑高。
 
 弹出层（对话框、印章浮层、更多菜单、查找栏、侧栏 overlay/drawer、Toast）默认使用 `180ms ease-out` 的淡入 + 轻位移打开动画，关闭即时。可通过 `--ofd-motion-duration` 调整，建议 `160–200ms`；`prefers-reduced-motion: reduce` 下自动关闭。动画不影响定位、焦点和键盘操作。
+
+## 渲染清晰度与超采样
+
+文字走字形轮廓填充（不是 `fillText`），没有 hinting 与次像素渲染，所以低倍率下的观感主要取决于
+画布采样密度。默认渲染口径是 **画布位图对齐设备像素 + 按倍率自适应超采样**：页盒尺寸对齐到
+`1/DPR` 网格，避免整页落在半像素上被重采样而均匀发虚。
+
+`supersample` 控制后备像素密度：
+
+| 取值 | 行为 | 后备/CSS 像素比 |
+| --- | --- | --- |
+| `'auto'`（默认） | 按页面设备像素面积分档 | 低倍率 2.0 → 中 1.5 → 大 1.0 |
+| `'off'` | 固定 1 倍 | 1.0 |
+| `'high'` | 每档再加 1 倍 | 3.0 / 2.5 / 2.0 |
+| `'max'` | 固定 3 倍 | 3.0 |
+| `1..4` | 固定倍率 | 该值 |
+
+```ts
+// 默认即可；文字仍偏软时提高一档。
+const viewer = new OFDViewer({ container: '#viewer', source: file, supersample: 'high' });
+```
+
+原则与代价：
+
+- **只在构造时生效**。改采样密度需要重建 canvas，因此没有运行时 setter；`<ofd-viewer>` 对应
+  `supersample` 属性，变更后重建实例并重新打开文档。
+- **移动端默认 1**（优先保流畅），显式传 `'high'` / `'max'` / 数字时以传入值为准；DPR ≥ 2 时
+  `auto` 实际不额外放大，因为已有 2 倍后备像素。
+- **像素数按倍率平方增长**，受 `maxCanvasPixels`（桌面 256MP / 移动 32MP）约束，超限会降级并
+  产生 `W_CANVAS_LIMIT`。高倍率下超采样自动回落到 1:1，属于预期行为。
+- **极限倍率受浏览器限制**：A4 在 2500% 需要约 557MP / 2.2GB 显存，超出可稳定分配范围，此时
+  画布会被降级，观感回到较软；这是物理上限，不是配置遗漏。
+
+排障：文字模糊先确认 `devicePixelRatio`（缩放 125%/150% 或 Retina 下应 ≥ 1.25）、再确认是否
+命中了 `W_CANVAS_LIMIT`；缺字体 `W_FONT_MISSING` 会让回退字形观感变差，两者要分开判断。
+设计细节见 [手势缩放性能设计](../../../docs/手势缩放性能设计.md) §5.3–5.4。
 
 ## 5 分钟跑通
 
@@ -385,7 +421,7 @@ const viewer = new OFDViewer({ container: '#viewer', source: '/api/doc.ofd' });
 </script>
 ```
 
-标签默认是 `ofd-viewer`，采用 light DOM，不创建 Shadow DOM。基础属性为 `src`、`page`、`scale`、`rotation`、`theme`、`locale`、`sidebar`、`font-default`、`font-supplementary`；复杂配置用 `features`、`crypto`、`fonts`、`source` property。`font-default`/`font-supplementary` 是逗号分隔的字体 URL 简写，变更时销毁并按新属性重建实例。省略 `src` 时仍会创建实例并读取查询参数；断开连接销毁实例，重新连接按当前属性重建。事件名为 `ofd-*`，`event.detail` 为对应载荷，`reader.viewer` 是底层只读实例。本机字体能力可直接调用 `reader.getLocalFontsStatus()`、`reader.setLocalFontsEnabled(enabled)`、`reader.onLocalFontsStatusChange(handler)`（未创建实例时分别返回默认状态、抛 `Error('阅读器尚未创建')`、返回空退订函数），状态变化同时派发 `ofd-local-fonts-change`。`sidebar` 属性只接受 `thumbnails`/`outline`/`bookmarks`/`signatures`（空、`none`、`off` 关闭），暂不接受 `attachments`；要打开附件侧栏，用 `reader.viewer.openSidebar('attachments')`。
+标签默认是 `ofd-viewer`，采用 light DOM，不创建 Shadow DOM。基础属性为 `src`、`page`、`scale`、`rotation`、`theme`、`locale`、`sidebar`、`font-default`、`font-supplementary`、`supersample`；复杂配置用 `features`、`crypto`、`fonts`、`source` property。`font-default`/`font-supplementary` 是逗号分隔的字体 URL 简写；它们与 `supersample` 都只在创建实例时生效，变更时销毁并按新属性重建实例（文档会重新打开）。省略 `src` 时仍会创建实例并读取查询参数；断开连接销毁实例，重新连接按当前属性重建。事件名为 `ofd-*`，`event.detail` 为对应载荷，`reader.viewer` 是底层只读实例。本机字体能力可直接调用 `reader.getLocalFontsStatus()`、`reader.setLocalFontsEnabled(enabled)`、`reader.onLocalFontsStatusChange(handler)`（未创建实例时分别返回默认状态、抛 `Error('阅读器尚未创建')`、返回空退订函数），状态变化同时派发 `ofd-local-fonts-change`。`sidebar` 属性接受 `thumbnails`/`outline`/`bookmarks`/`signatures`/`attachments`（空、`none`、`off` 关闭），与核心共用 `SIDEBAR_VIEWS` 单一清单。
 
 完整属性/property/方法/事件见 [API.md Web Component](./API.md#web-component)。
 
@@ -412,7 +448,7 @@ export function Reader() {
 }
 ```
 
-`source`/`features` 等 prop 变化只调用核心方法，不会重建实例；卸载时销毁。`page` 为 1-based 受控页码，`scale` 可传数字或缩放模式，`sidebar` 传 `null` 关闭。ref 暴露 `getInstance`、`open`、`goToPage`、`setScale`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage`、`exportOfd`、`verify`、`getLocalFontsStatus`、`setLocalFontsEnabled`、`onLocalFontsStatusChange` 等薄方法；本机字体状态变化还可通过 `onLocalFontsChange` 回调接收。外层容器默认 `width/height: 100%`。
+`source`/`features` 等 prop 变化只调用核心方法，不会重建实例；卸载时销毁。`supersample` 属构造选项，**变更会重建实例并重新打开文档**（采样密度无法原地调整）。`page` 为 1-based 受控页码，`scale` 可传数字或缩放模式，`sidebar` 传 `null` 关闭。ref 暴露 `getInstance`、`open`、`goToPage`、`setScale`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage`、`exportOfd`、`verify`、`getLocalFontsStatus`、`setLocalFontsEnabled`、`onLocalFontsStatusChange` 等薄方法；本机字体状态变化还可通过 `onLocalFontsChange` 回调接收。外层容器默认 `width/height: 100%`。
 
 完整 props、事件回调和句柄见 [API.md React](./API.md#react)。
 
@@ -591,10 +627,27 @@ console.log(report.overall);
 - **附件内容不渲染**：附件只做下载，不预览、不插入 DOM、不执行；未知格式没有内置查看器。
 - **附件读取不是流式**：引擎先整块读入内存再分块回调，UI 也会先把附件拼成完整 `Blob` 再下载；下载超大附件会占用等量内存，受引擎单附件上限（`maxAttachmentBytes`，未配置回退 `maxEntryBytes` 默认 64 MiB）约束。
 - **大附件阈值不可配置**：`524288000` 是源码常量，没有 `options` 入口；需要不同阈值时只能改用引擎接口自行实现下载。
-- **`<ofd-viewer sidebar="attachments">` 当前不生效**：HTML 属性只识别 `thumbnails`/`outline`/`bookmarks`/`signatures`，其余值被忽略；需要附件侧栏时用 `reader.viewer.openSidebar('attachments')`（或 `sidebar` property / React、Vue 的 `sidebar` prop）。
+- **`<ofd-viewer sidebar="attachments">` 已支持**：适配层与核心共用 `SIDEBAR_VIEWS` 清单，`attachments` 可直接写在属性上；未知取值仍被忽略。
+
+## 新增或修改 UI API 时的同步清单
+
+核心选项、方法、事件、类型发生变化时，四个入口必须一起走完；漏掉 element 层是最常见的疏漏，
+因为它维护了一张硬编码的属性白名单，没有列进去的属性等同于不存在。
+
+| 入口 | 需要同步的位置 |
+| --- | --- |
+| 核心 `@ofdrw/ofdrw-viewer-ui` | `src/options.ts`（选项与默认值）→ `src/viewer.ts`（实现）→ `src/index.ts`（类型导出） |
+| React `./react` | props 自动透传，通常无需改动；**新增类型需在 `src/react/index.ts` 再导出** |
+| Vue `./vue` | 同 React，类型再导出在 `src/vue/index.ts` |
+| Web Component `./element` | `OBSERVED_ATTRIBUTES` 加入属性名 → `ensureViewer()` 读取并传入构造选项 → `attributeChangedCallback` 处理变更（运行时生效则调用核心方法，仅构造时生效则重建）→ `src/component/support.ts` 增加解析函数 |
+| 文档 | `skills/API.md` 的构造选项表与 Web Component 属性表、`skills/SKILL.md` 相关章节 |
+
+判断「能否运行时修改」再决定 element 的处理方式：能运行时生效的走 setter（如 `scale`、`theme`）；
+只能构造时生效的（如 `fonts`、`supersample`）走销毁重建，并在文档里写清会重新打开文档。
 
 ## 参考
 
 - [API.md](./API.md)：完整构造选项、功能开关、事件、方法、类型与适配器参考。
 - [渲染引擎 SKILL](../../ofdrw-viewer-engine/skills/SKILL.md)：页面渲染、文本层、字体与引擎类型。
 - [密码能力 API](../../ofdrw-viewer-crypto/skills/API.md)：解密、验签、证书链与报告细节。
+- [手势缩放性能设计](../../../docs/手势缩放性能设计.md)：缩放锚点、重绘时机、超采样分档与高倍率画布预算。

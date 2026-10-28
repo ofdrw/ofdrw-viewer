@@ -78,6 +78,7 @@ URL 字符串和 `{ url, headers }` 由 UI 的 `HttpByteSource` 读取：先探�
 | `theme` / `locale` | `auto` / `zh-CN` |
 | `maxCanvasPixels` | 桌面 `256_000_000`、移动 `32_000_000` 像素 |
 | `pageCachePixelBudget` | `512_000_000` 像素（已渲染页 canvas 总预算） |
+| `supersample` | `'auto'`（按页面面积分档 2 / 1.5 / 1）；可选 `'off'` / `'high'` / `'max'` / `1..4` |
 | `pageCacheSize` | 桌面 `10`，移动 `4` |
 | `renderConcurrency` | 桌面 `2`，移动 `1` |
 | `thumbnailCacheSize` | 默认 `100`；当前缩略图实现固定使用 100，见“当前缺口” |
@@ -145,7 +146,7 @@ UI 对 `error` 事件与错误卡只展示 `code`/`message`，需要定位时读
 
 ### 框架适配
 
-`<ofd-viewer>` 使用 light DOM，保持打印、选区、全屏和读屏行为；观察 `src`、`page`、`scale`、`rotation`、`theme`、`locale`、`sidebar` 属性，复杂来源和 `features` 走 property。React 通过 `forwardRef` 暴露命令句柄，Vue 通过 props/emits/expose 桥接。三者共用同一核心，组件卸载调用 `destroy()`。
+`<ofd-viewer>` 使用 light DOM，保持打印、选区、全屏和读屏行为；观察 `src`、`page`、`scale`、`rotation`、`theme`、`locale`、`sidebar`、`font-default`、`font-supplementary`、`supersample` 属性，复杂来源和 `features` 走 property。其中 `font-*` 与 `supersample` 只在创建实例时生效，变更后按新值重建。React 通过 `forwardRef` 暴露命令句柄，Vue 通过 props/emits/expose 桥接。三者共用同一核心，组件卸载调用 `destroy()`。
 
 适配器的完整属性、事件和句柄见 [UI API Web Component](../packages/ofdrw-viewer-ui/skills/API.md#web-component)、[React](../packages/ofdrw-viewer-ui/skills/API.md#react) 和 [Vue](../packages/ofdrw-viewer-ui/skills/API.md#vue)。核心按 SPA 设计，不承诺 SSR 渲染。宿主需要自定义工具栏或面板时，可通过公共入口的 `registerViewerExtension()` 注册扩展；内置 UI 自身也通过同一扩展机制安装，扩展失败/卸载会在实例销毁时清理。
 

@@ -72,7 +72,9 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 | `featureDisplay` | `FeatureDisplay` | `'hide'` | 被关闭功能的展示方式 |
 | `theme` | `'light' / 'dark' / 'auto'` | `'auto'` | `auto` 跟随 `prefers-color-scheme` |
 | `locale` | `string` | `'zh-CN'` | 内置 `zh-CN`/`en-US`；翻译层不可识别时回落到 `zh-CN` |
-| `maxCanvasPixels` | `number` | `32_000_000` | 单页 canvas 像素上限（width × height） |
+| `maxCanvasPixels` | `number` | 桌面 `256_000_000`，移动 `32_000_000` | 单页 canvas 像素上限（width × height） |
+| `pageCachePixelBudget` | `number` | `512_000_000` | 已渲染页 canvas 总像素预算；超预算时释放离可见区最远的页 |
+| `supersample` | `SupersamplePreset / number` | `'auto'` | 画布超采样：`'off'` 固定 1 倍、`'auto'` 按页面面积分档、`'high'` 每档加 1 倍、`'max'` 固定 3 倍、`1..4` 固定倍率；移动端默认 1，显式传值可覆盖 |
 | `pageCacheSize` | `number` | 桌面 `10`，移动 `4` | 已渲染页 canvas 缓存数量 |
 | `thumbnailCacheSize` | `number` | `100` | 缩略图缓存数量；当前版本尚未接入实现，见下 |
 | `renderConcurrency` | `number` | 桌面 `2`，移动 `1` | 同时渲染页数 |
@@ -100,6 +102,7 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 - `locale` 会设置根节点 `lang` 并写入 `state.ui.locale`；翻译器会把 `zh`/`en` 等别名归一，未注册语言回落到 `zh-CN`，但 `state.ui.locale` 保留传入值。
 - `maxCanvasPixels` 超限时通常静默降低该页渲染 DPI；只有连续降档仍失败时才产生 `W_CANVAS_LIMIT` warning，不能用它判断每一次降档。
 - 主画布分辨率有下限：不低于页面 100% CSS 尺寸的 `min(devicePixelRatio, 2)` 倍。缩放低于对应倍率（`min(1, 2 / dpr)`）时不再重绘 canvas、也不改变 canvas 尺寸，只由 CSS 缩小显示；因此缩小/放大到下限以下不会触发重绘或页面 loading。下限只由 DPR 决定，窗口尺寸变化不影响它。
+- `supersample` 在移动端默认固定 1（优先保流畅）；显式传 `'high'`、`'max'` 或数字时以传入值为准。DPR ≥ 2 时 `'auto'` 不额外放大，因为后备像素已足够。该选项只在构造时生效。
 - `thumbnailCacheSize` 当前只被解析，未接入缩略图缓存实现，实际缓存数量固定；不要依赖该选项控制缩略图内存。
 - `updateHash` 默认关闭，避免嵌入场景污染宿主地址。启用后 hash 形如 `#page=3&zoom=page-width&rotation=90&sidebar=outline`，未知参数会保留；监听 `hashchange`/`popstate` 恢复视图，非法字段忽略。查询串 `?file=`/`?base64=` 与 hash 互不覆盖。
 
@@ -426,7 +429,7 @@ viewer.setFeatureDisplay({ export: 'disable' });
 | `error` | `ErrorEvent` | `ofd-error` | `onError` | `error` |
 | `featureschange` | `FeaturesChangeEvent` | `ofd-features-change` | `onFeaturesChange` | `features-change` |
 | `statechange` | `StateChangeEvent` | `ofd-state-change` | `onStateChange` | `state-change` |
-| `local-fonts:change` | `LocalFontsChangeEvent`（等同 `LocalFontsStatus`） | 当前版本未桥接 | 当前版本未桥接 | 当前版本未桥接 |
+| `local-fonts:change` | `LocalFontsChangeEvent`（等同 `LocalFontsStatus`） | `ofd-local-fonts-change` | `onLocalFontsChange` | `local-fonts-change` |
 
 `signatureclick` 在类型和适配器桥接表中存在，但当前版本没有实际触发点；需要处理签章交互时，使用 `getSignatures()`/`showSignature()` 或内置侧栏的现有入口。
 
@@ -1209,13 +1212,38 @@ type CertificateInputLoader = (
 | `rotation` | 数字 | 规范为 0/90/180/270 |
 | `theme` | `light`/`dark`/`auto` | 仅合法值生效 |
 | `locale` | 字符串 | 非空时生效 |
-| `sidebar` | 侧栏名 / 空 / `none` / `off` | 空、`none`、`off` 关闭侧栏；非法值忽略 |
+| `sidebar` | `thumbnails`/`outline`/`bookmarks`/`signatures`/`attachments` / 空 / `none` / `off` | 空、`none`、`off` 关闭侧栏；非法值忽略 |
 | `font-default` | 逗号分隔 URL | 默认字体简写，映射为 `fonts.default: [{ url }]` |
 | `font-supplementary` | 逗号分隔 URL | 补充字体简写，映射为 `fonts.supplementary: [{ url }]` |
+| `supersample` | 预设名 / 数字 | 超采样：`off`/`auto`/`high`/`max` 或 1..4 的固定倍率；非法值忽略 |
 
 `src` 变化会重新打开文档；设置空 `src` 会关闭文档但保留元素。未连接 DOM 时设置属性不会创建实例，连接后按当前属性创建。
 
 `font-default`/`font-supplementary` 按英文逗号切分，逐项去除首尾空白并丢弃空项；属性缺失、空值或全部为空项时不传对应字段。两者都是 `observedAttributes`：值变化时**销毁并按当前属性重建**实例（与 `src` 的解绑重建语义一致），因此已加载的文档需要重新打开；属性是更具体的配置入口，设置时覆盖 `fonts` property 的同名字段，`loader`/`aliases` 仍来自 property。
+
+`supersample` 同样是 `observedAttributes` 且只在构造时生效，值变化时按新值重建实例。改动画布渲染参数一律需要重建：已有 canvas 的像素密度无法原地调整。
+
+### 构造时生效的属性
+
+以下属性不会在实例上调用 setter，而是**销毁并按当前属性重建实例**；重建会重新打开文档，页码/缩放/旋转按当前属性恢复：
+
+| 属性 | 原因 |
+| --- | --- |
+| `font-default` | 字体来源在引擎侧与文档解析绑定，无法热替换 |
+| `font-supplementary` | 同上 |
+| `supersample` | 画布后备像素密度在创建 canvas 时确定，无法原地调整 |
+
+### 四入口同步约定
+
+核心 `./`、React `./react`、Vue `./vue`、Web Component `./element` 共享同一套构造选项。新增选项时：
+
+1. 核心：`options.ts` 定义 → `viewer.ts` 实现 → `index.ts` 导出类型；
+2. React / Vue：props 自动透传，只需在各自的 `index.ts` 再导出新增的**类型**；
+3. Web Component：必须显式加入 `OBSERVED_ATTRIBUTES`、在 `ensureViewer()` 读取、在 `attributeChangedCallback`
+   处理变更，并在 `component/support.ts` 增加解析函数；
+4. 本文档与 [SKILL.md](./SKILL.md) 同步更新选项表与属性表。
+
+`SupersamplePreset` 等核心类型在四个入口均可导入：`@ofdrw/ofdrw-viewer-ui`、`/react`、`/vue`、`/element`。
 
 ### Property
 
@@ -1257,7 +1285,7 @@ Web Component 转发本机字体方法：`el.getLocalFontsStatus()`（未创建�
 - 无来源时 `ready` 会拒绝，组件内部已 catch，不会产生未处理 rejection。
 - 默认样式：仅当宿主内联 `display`/`height`/`min-height` 未设置时，`connectedCallback` 才补 `display: block; height: 100%; min-height: 0`；父容器仍需提供确定高度，组件不会替父容器撑高。
 
-`OFDViewerElement`、`OFD_VIEWER_TAG`、`defineOFDViewerElement(tagName = 'ofd-viewer')` 从 `/element` 导出；该入口还导出 `FeatureDisplay`、`SidebarView`、`ViewerFeatures`、`ViewerSource` 类型。导入 `/element` 会自动注册一次，重复调用安全。
+`OFDViewerElement`、`OFD_VIEWER_TAG`、`defineOFDViewerElement(tagName = 'ofd-viewer')` 从 `/element` 导出；该入口还导出 `FeatureDisplay`、`SidebarView`、`SupersamplePreset`、`ViewerFeatures`、`ViewerSource` 类型。导入 `/element` 会自动注册一次，重复调用安全。
 
 ## React
 
@@ -1275,7 +1303,7 @@ Web Component 转发本机字体方法：`el.getLocalFontsStatus()`（未创建�
 | `className` | `string` | 外层容器 class |
 | `style` | `CSSProperties` | 外层容器样式；默认 `width/height: 100%` |
 
-`rotation`、`theme`、`locale`、`features`、`featureDisplay`、`crypto` 等其他构造选项通过继承直接传入。`onWarning`/`onError` 由 `ViewerEventHandlers` 提供，作为事件回调使用，不再作为构造选项。
+`rotation`、`theme`、`locale`、`features`、`featureDisplay`、`crypto`、`fonts`、`supersample` 等其他构造选项通过继承直接传入。`onWarning`/`onError` 由 `ViewerEventHandlers` 提供，作为事件回调使用，不再作为构造选项。仅在构造时生效的选项（`crypto`、`fonts`、`supersample`）变化时会重建实例并重新打开文档。
 
 ### 事件回调
 
@@ -1304,7 +1332,7 @@ Web Component 转发本机字体方法：`el.getLocalFontsStatus()`（未创建�
 - 卸载时解绑事件并 `destroy()`。
 - 外层只创建一个 `div`；阅读器在其内部建立 DOM。
 
-`/react` 额外导出 `Rotation`、`ScaleValue`、`SidebarView`、`ViewerEventHandlers`、`ViewerFeatures`、`FeatureDisplay`、`Theme`、`OFDViewerHandle`、`OFDViewerProps`。
+`/react` 额外导出 `Rotation`、`ScaleValue`、`SidebarView`、`ViewerEventHandlers`、`ViewerFeatures`、`FeatureDisplay`、`Theme`、`OFDViewerHandle`、`OFDViewerProps`、`OFDViewerOptions`、`SupersamplePreset`。
 
 ## Vue
 
@@ -1323,7 +1351,7 @@ Web Component 转发本机字体方法：`el.getLocalFontsStatus()`（未创建�
 | `featureDisplay` | `FeatureDisplay` | 功能展示 |
 | `options` | `AdvancedOptions` | 高级构造选项；公共 props 优先 |
 
-`AdvancedOptions = Omit<OFDViewerOptions, 'container' | 'source'>`。`options` 可传 `crypto`、缓存、并发、`updateHash`、`onWarning`/`onError` 等；与顶层 props 同名时顶层优先。
+`AdvancedOptions = Omit<OFDViewerOptions, 'container' | 'source'>`。`options` 可传 `crypto`、`fonts`、`supersample`、缓存、并发、`updateHash`、`onWarning`/`onError` 等；与顶层 props 同名时顶层优先。仅在构造时生效的选项（`crypto`、`fonts`、`supersample`）变化时会重建实例并重新打开文档。
 
 ### Emits
 
@@ -1341,7 +1369,7 @@ Web Component 转发本机字体方法：`el.getLocalFontsStatus()`（未创建�
 - `source` 变化调用 `open`，值未变化时跳过；打开失败由核心 `error` 事件报告。
 - `features` 深度监听，变化时调用 `setFeatures`。
 - 卸载时 `destroy()`；组件实例用 `shallowRef`/`markRaw` 持有，不进入响应式代理。
-- `/vue` 额外导出 `FeatureDisplay`、`Rotation`、`ScaleValue`、`SidebarView`、`Theme`、`ViewerFeatures`。
+- `/vue` 额外导出 `FeatureDisplay`、`Rotation`、`ScaleValue`、`SidebarView`、`Theme`、`ViewerFeatures`、`OFDViewerOptions`、`SupersamplePreset`。
 
 ## 错误
 
@@ -1409,6 +1437,8 @@ interface ViewerErrorOptions {
 **核心与扩展**：`OFDViewer`、`registerViewerExtension`、`ViewerExtension`、`VERSION`、`getVersions`、`ViewerVersions`。
 
 **构造与 crypto 选项**：`OFDViewerOptions`、`ResolvedViewerOptions`、`CryptoViewerOptions`、`CryptoOptions`、`CertificateSource`、`CertificateInputLoader`。
+
+**渲染清晰度**：`SupersamplePreset`（`'off' | 'auto' | 'high' | 'max'`，`./`、`/react`、`/vue`、`/element` 均可导入）。
 
 **功能**：`ViewerFeature`、`ViewerFeatures`、`ViewerFeatureStates`、`FeatureState`、`FeatureReason`、`FeatureDisplay`、`FeatureDisplayMode`、`FeatureAvailability`。
 
