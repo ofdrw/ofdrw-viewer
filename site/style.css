@@ -14,7 +14,7 @@
   --muted: #5b616b;
   --accent: #2563eb;
   --accent-hover: #1d4ed8;
-  --dock-bg: rgb(255 255 255 / 88%);
+  --dock-bg: #ffffff;
   --toast-bg: rgb(17 24 39 / 90%);
   font-family:
     system-ui,
@@ -36,7 +36,7 @@
   --muted: #9aa4b2;
   --accent: #58a6ff;
   --accent-hover: #79c0ff;
-  --dock-bg: rgb(29 33 39 / 88%);
+  --dock-bg: #1d2127;
   --toast-bg: rgb(230 237 243 / 92%);
 }
 
@@ -68,14 +68,16 @@ ofd-viewer {
 
 /* 底部悬浮控件 ---------------------------------------------------------- */
 
+/* 常显在视口底部中央，没有感应区与自动隐藏：不覆盖滚动条以外的交互区域，
+ * 滚动条从控件两侧露出，始终可用。 */
 .dock {
   position: fixed;
   left: 50%;
-  /* 显式声明，避免同文件内的 .dock-hover-zone 块级样式影响 dock 布局。 */
   display: flex;
-  /* chrome67: max()/env() 需 Chrome 79+/69+，回退固定 14px。 */
-  bottom: 14px;
-  bottom: max(14px, env(safe-area-inset-bottom));
+  /* 与视口底部保持距离，避免贴着横向滚动条造成误触。
+   * chrome67: max()/env() 需 Chrome 79+/69+，回退固定 22px。 */
+  bottom: 22px;
+  bottom: max(22px, env(safe-area-inset-bottom));
   z-index: 20;
   flex-wrap: wrap;
   gap: 6px 10px;
@@ -84,55 +86,12 @@ ofd-viewer {
   width: max-content;
   max-width: calc(100vw - 24px);
   padding: 8px 12px;
-  background: var(--dock-bg);
   border: 1px solid var(--border);
   border-radius: 999px;
   box-shadow: 0 6px 24px rgb(15 23 42 / 12%);
-  -webkit-backdrop-filter: blur(12px); /* chrome67: 尝试 -webkit 前缀，不支持时忽略 */
-  backdrop-filter: blur(12px);
+  /* 不透明背景，保证控件文字在任何文档内容上都清晰可读。 */
+  background: var(--dock-bg);
   transform: translateX(-50%);
-  transition:
-    opacity 0.25s ease,
-    transform 0.25s ease;
-}
-
-/* 自动隐藏 ---------------------------------------------------------------
- * dock=on（默认）时进入页面先显示 3 秒，随后淡出隐藏；鼠标靠近视口底部
- * （感应区）或悬停在控件上时唤出，离开后延时淡出；控件内有键盘焦点时保持可见。
- * 隐藏态只降低不透明度并轻微下移，仍占布局、仍可命中，鼠标从任何方向
- * 移向控件都能触发唤出，不会因控件“消失”导致悬停中断而闪烁。
- * data-autohide="off" 表示禁用自动隐藏，控件常显。
- */
-
-/* 仅在启用自动隐藏时才允许隐藏；脚本未就绪（无 data-autohide）时保持常显。 */
-.dock[data-autohide='on']:not([data-visible='true']) {
-  opacity: 0;
-  transform: translate(-50%, 8px);
-}
-
-/* 用键盘 Tab 聚焦控件内部任意元素时保持可见，避免焦点落在隐形控件上。 */
-.dock:focus-within {
-  opacity: 1;
-  transform: translateX(-50%);
-}
-
-/* 视口底部感应区：控件隐藏时的唤出入口，不占用阅读器可见区域。 */
-.dock-hover-zone {
-  position: fixed;
-  left: 0;
-  /* chrome67: inset 简写需 Chrome 87+，展开左右。 */
-  right: 0;
-  bottom: 0;
-  z-index: 19;
-  width: 100vw;
-  height: 72px;
-  /* 默认穿透：脚本未运行（aria-hidden 未设置）时不影响页面交互。 */
-  pointer-events: none;
-}
-
-/* 脚本就绪后才开启感应区，监听悬停事件；先按住鼠标再划入也能正常触发。 */
-.dock-hover-zone[aria-hidden='false'] {
-  pointer-events: auto;
 }
 
 .file-button {
@@ -213,7 +172,8 @@ ofd-viewer {
   font-size: 11px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  /* 文案变为 “OFDRW-Viewer UI 0.1.4” 后在窄 dock 内允许自然换行，避免撑破布局。 */
+  white-space: normal;
 }
 
 .repo-link {
@@ -236,7 +196,8 @@ ofd-viewer {
 .toast {
   position: fixed;
   left: 50%;
-  bottom: 82px;
+  /* dock 上沿留出间距，避免遮挡常显的演示控件。 */
+  bottom: 90px;
   z-index: 19;
   /* chrome67: min() 回退；窄视口切换见文末。 */
   max-width: 560px;
@@ -273,8 +234,8 @@ ofd-viewer {
     padding: 8px;
     border-radius: 16px;
     /* chrome67: max()/env() 回退。 */
-    bottom: 10px;
-    bottom: max(10px, env(safe-area-inset-bottom));
+    bottom: 18px;
+    bottom: max(18px, env(safe-area-inset-bottom));
   }
 
   .field > span,
@@ -283,7 +244,7 @@ ofd-viewer {
   }
 
   .toast {
-    bottom: 118px;
+    bottom: 126px;
   }
 }
 

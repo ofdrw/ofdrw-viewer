@@ -22,9 +22,7 @@
   <body>
     <ofd-viewer id="viewer" theme="light" locale="zh-CN"></ofd-viewer>
 
-    <!-- 鼠标感应区：靠近视口底部时唤出演示控件，脚本就绪后开启，见 style.css。 -->
-    <div class="dock-hover-zone" id="dock-hover-zone"></div>
-
+    <!-- 常显在底部的演示控件；地址参数 ?dock=off 时由脚本移除，见 main.ts。 -->
     <div class="dock" id="dock" role="toolbar" aria-label="演示控件">
       <label class="file-button">
         <input id="file" type="file" accept=".ofd,application/ofd" />
