@@ -1452,7 +1452,7 @@ describe('t5 签章/验证 UI 修复', () => {
     }
   });
 
-  it('验证面板根证书可下载为 .der，且不把链失败写进总体状态', async () => {
+  it('验证面板根证书可下载为 .cer，且不把链失败写进总体状态', async () => {
     cryptoMocks.inspect.mockResolvedValue(signedInspection());
     engineMocks.open.mockResolvedValue(createMockDocument({ pageCount: 1 }));
     cryptoMocks.verify.mockResolvedValue(report('valid'));
@@ -1478,7 +1478,7 @@ describe('t5 签章/验证 UI 修复', () => {
     try {
       button.click();
       await vi.waitFor(() => expect(capture.downloads).toHaveLength(1));
-      expect(capture.downloads[0]!.filename).toMatch(/\.der$/);
+      expect(capture.downloads[0]!.filename).toMatch(/\.cer$/);
       expect(capture.downloads[0]!.blob?.type).toBe('application/pkix-cert');
       expect(new Uint8Array(await capture.downloads[0]!.blob!.arrayBuffer())).toEqual(
         new Uint8Array([1, 2, 3]),

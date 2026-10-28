@@ -389,7 +389,7 @@ describe('SignatureService 覆盖层与详情', () => {
       expect(download).not.toBeNull();
       download!.click();
       await vi.waitFor(() => expect(capture.downloads).toHaveLength(1));
-      expect(capture.downloads[0]!.filename).toMatch(/\.der$/);
+      expect(capture.downloads[0]!.filename).toMatch(/\.cer$/);
       // 文件名按签章者证书（夹具叶证书）CN 生成，而非报告中回显的 subject。
       expect(capture.downloads[0]!.filename).toContain(SIGNER_CN);
       expect(capture.downloads[0]!.blob?.type).toBe('application/pkix-cert');

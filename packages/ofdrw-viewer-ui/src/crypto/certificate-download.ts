@@ -1,7 +1,8 @@
 /**
- * 证书 DER 下载。
+ * 证书下载。
  *
  * 只接受证书 DER 字节；不接受 PEM 文本或私钥，避免把私钥写入下载文件。
+ * 文件内容为 DER 编码，扩展名使用 Windows 可识别的 `.cer`。
  */
 
 import { downloadBlob, sanitizeFileName } from '../export/filename';
@@ -26,7 +27,7 @@ function subjectCN(subject: string | undefined): string | undefined {
  *
  * @param summary 证书摘要；用于取 CN/序列号。
  * @param fallback 无 CN 时的基础名。
- * @returns 经过清理的 `.der` 文件名。
+ * @returns 经过清理的 `.cer` 文件名。
  */
 export function certificateFileName(
   summary: DownloadableCertificateSummary | undefined,
@@ -37,7 +38,7 @@ export function certificateFileName(
   const serial = summary?.serialNumber
     ? sanitizeFileName(summary.serialNumber).slice(0, 32)
     : '';
-  return `${base}${serial ? `-${serial}` : ''}.der`;
+  return `${base}${serial ? `-${serial}` : ''}.cer`;
 }
 
 /**

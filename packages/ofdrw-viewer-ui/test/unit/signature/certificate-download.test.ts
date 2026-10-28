@@ -24,15 +24,15 @@ describe('certificateFileName', () => {
         subject: 'C=CN,O=ofdrw,CN=Test Certificate',
         serialNumber: '3e9',
       }),
-    ).toBe('Test Certificate-3e9.der');
+    ).toBe('Test Certificate-3e9.cer');
     expect(
       certificateFileName({ subject: 'CN=合同/签章:2026', serialNumber: '01/02' }),
-    ).toBe('合同_签章_2026-01_02.der');
+    ).toBe('合同_签章_2026-01_02.cer');
   });
 
   it('无 CN 时使用回退名，无序列号时只保留基础名', () => {
-    expect(certificateFileName({ subject: 'O=ofdrw' }, 'signer')).toBe('signer.der');
-    expect(certificateFileName(undefined, 'root')).toBe('root.der');
+    expect(certificateFileName({ subject: 'O=ofdrw' }, 'signer')).toBe('signer.cer');
+    expect(certificateFileName(undefined, 'root')).toBe('root.cer');
   });
 });
 
@@ -50,7 +50,7 @@ describe('downloadCertificateDer', () => {
       ),
     ).toBe(true);
     expect(capture.downloads).toHaveLength(1);
-    expect(capture.downloads[0]!.filename).toBe('Signer-01.der');
+    expect(capture.downloads[0]!.filename).toBe('Signer-01.cer');
     expect(capture.downloads[0]!.blob?.type).toBe('application/pkix-cert');
     expect(capture.downloads[0]!.blob?.size).toBe(der.byteLength);
     vi.advanceTimersByTime(1001);
