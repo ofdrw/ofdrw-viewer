@@ -10,6 +10,20 @@
 
 > OFDRW-Viewer 作为OFDRW系列项目为开发者补齐 OFD 生态链路的最后一环
 
+## 📦 安装与下载
+
+需 Node.js ≥ 22：
+
+```bash
+npm install @ofdrw/ofdrw-viewer-engine     # 渲染引擎（浏览器 / Node.js / 小程序）
+npm install @ofdrw/ofdrw-viewer-crypto     # 密码工具（解密、签章与完整性验证）
+npm install @ofdrw/ofdrw-viewer-ui         # HTML5 OFD 阅读器
+npm install -g @ofdrw/ofdrw-viewer-cli     # 终端图片转换命令
+```
+
+无需 Node.js 可使用二进制：从 [GitHub Releases](https://github.com/ofdrw/ofdrw-viewer/releases/latest) 下载 CLI 压缩包（Linux / macOS / Windows），解压即可运行；同页还有演示站静态包。
+
+国内访问 Gitee 镜像：<https://gitee.com/ofdrw/ofdrw-viewer>
 
 ## 🧩 应用生态
 
