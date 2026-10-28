@@ -720,7 +720,11 @@
   margin-left: auto;
   margin-right: auto;
   margin-bottom: var(--ofd-page-gap);
-  background: var(--ofd-page-bg);
+  /*
+   * 页面底色固定为纸张白：画布本身透明，页面内容依赖这层底色呈现纸面，
+   * 深色主题下若随主题变暗，文字与插图会落在深色纸面上。
+   */
+  background: #ffffff;
   box-shadow: var(--ofd-page-shadow);
   border-radius: var(--ofd-radius);
   transform-origin: center center;
