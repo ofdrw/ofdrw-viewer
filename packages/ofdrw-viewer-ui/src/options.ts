@@ -121,7 +121,24 @@ export const MAX_CANVAS_BASE_DPR = 2;
  * 宿主若需要更高抗锯齿过渡（例如投影/截图场景），可显式传入 1.5 或 2；上限由
  * `ViewerOptions.maxCanvasPixels` 约束，超限时按 0.75 逐级回退 DPI。
  */
-export const DEFAULT_SUPERSAMPLE = 1;
+/**
+ * 自动超采样的面积分档，单位 设备像素²（px²）。
+ *
+ * 页面设备像素面积不超过第一档时取 2 倍超采样（默认倍率约 2.3M px²，最需要清晰度）；
+ * 超出后依次降到 1.5 倍、1 倍，避免高倍率下画布像素数爆炸。
+ */
+export const SUPERSAMPLE_FULL_AREA = 4_000_000;
+
+/** 超采样降到 1.5 倍的面积上限，单位 设备像素²（px²）。 */
+export const SUPERSAMPLE_HALF_AREA = 10_000_000;
+
+/** 自动超采样在低倍率下使用的最大倍率。 */
+export const SUPERSAMPLE_MAX = 2;
+
+/** 自动超采样在中等倍率下使用的倍率。 */
+export const SUPERSAMPLE_MID = 1.5;
+
+export const DEFAULT_SUPERSAMPLE: number | 'auto' = 'auto';
 
 /** 预置缩放档位；UI 的 +/- 与下拉菜单共用，最低档与 {@link MIN_SCALE} 一致。 */
 export const ZOOM_LEVELS: readonly number[] = Object.freeze([
@@ -236,13 +253,13 @@ export interface OFDViewerOptions {
    */
   readonly maxCanvasPixels?: number;
   /**
-   * 画布超采样倍率，默认 1（不超采样，按设备像素比 1:1 渲染）。
+   * 画布超采样倍率，默认 `auto`。
    *
-   * 取值 1 时渲染 DPI = 显示倍率 × DPR，与屏幕物理像素一一对应，流畅且锐利；
-   * 大于 1 时按更高分辨率渲染再由 CSS 缩小（像素数按平方增长，会明显增加渲染
-   * 耗时与内存，仅在确有需要时开启）。范围 1..4，非法值回退默认。
+   * `auto` 按当前倍率下页面的设备像素面积自适应：低倍率（文字小、最需要清晰度）取 2，
+   * 面积增大后依次降到 1.5、1，避免高倍率下像素爆炸。显式传 1..4 时固定该值。
+   * 超采样按更高分辨率渲染再由 CSS 缩小，边缘更平滑，代价是像素数按倍率平方增长。
    */
-  readonly supersample?: number;
+  readonly supersample?: number | 'auto';
   /** 已渲染页 canvas 缓存数量；默认桌面 10、移动 4。 */
   readonly pageCacheSize?: number;
   /**
@@ -295,8 +312,8 @@ export interface ResolvedViewerOptions {
   readonly theme: Theme;
   readonly locale: string;
   readonly maxCanvasPixels: number;
-  /** 已规范化到 1..4 的超采样倍率。 */
-  readonly supersample: number;
+  /** 已规范化的超采样倍率：固定值 1..4，或按页面面积自适应的 `auto`。 */
+  readonly supersample: number | 'auto';
   readonly pageCacheSize: number;
   /** 已渲染页 canvas 的总像素预算。 */
   readonly pageCachePixelBudget: number;
@@ -391,7 +408,8 @@ function normalizePageNumber(value: number): number {
  * @param value 调用方传入的倍率。
  * @returns 合法倍率。
  */
-function normalizeSupersample(value: number | undefined): number {
+function normalizeSupersample(value: number | 'auto' | undefined): number | 'auto' {
+  if (value === 'auto') return 'auto';
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
     return DEFAULT_SUPERSAMPLE;
   }

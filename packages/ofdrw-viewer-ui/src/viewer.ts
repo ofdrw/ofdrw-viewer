@@ -65,6 +65,10 @@ import {
   MAX_CANVAS_BASE_DPR,
   MAX_SCALE,
   MIN_SCALE,
+  SUPERSAMPLE_FULL_AREA,
+  SUPERSAMPLE_HALF_AREA,
+  SUPERSAMPLE_MAX,
+  SUPERSAMPLE_MID,
   resolveViewerOptions,
   ZOOM_LEVELS,
   type OFDViewerOptions,
@@ -582,6 +586,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
    * 鼠标拖动不做平移。
    */
   private readonly touchGesturesEnabled = detectTouchPrimary();
+  /** 是否按移动端默认值处理（自适应超采样在移动端固定为 1）。 */
+  private readonly mobileDevice = detectMobile();
   /** 捏合基准倍率：最近一次手势步进时刻的布局倍率。 */
   private pinchBaseScale = 1;
   /** 最近一个手势步进时刻两指中点的视口 x 坐标，单位 px。 */
@@ -731,6 +737,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       rotation: this.options.rotation,
       gap: DEFAULT_PAGE_GAP,
       padding: DEFAULT_PAGE_PADDING,
+      devicePixelRatio: this.devicePixelRatio(),
     });
     this.state = createInitialViewerState({
       pageNumber: this.options.initialPage,
@@ -2696,7 +2703,10 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     // 页盒是绝对定位，不参与容器的尺寸计算；容器宽度必须显式写出，否则会收缩到 0，
     // 横向滚动范围与内容宽度对不上。内容窄于可视区时取可视宽度，避免多出 15px 的
     // 滚动条槽位撑出无意义的横向滚动。
-    this.pagesElement.style.width = `${Math.max(this.layout.totalWidth, viewportWidth)}px`;
+    this.pagesElement.style.width = `${this.layout.snapToDevicePixel(
+      Math.max(this.layout.totalWidth, viewportWidth),
+    )}px`;
+    const devicePixelRatio = this.devicePixelRatio();
     for (let index = 0; index < this.pageViews.length; index += 1) {
       const box = boxes[index];
       if (!box) continue;
@@ -2705,6 +2715,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         rotation: this.state.view.rotation,
         scale: this.state.view.scale,
         offsetLeft,
+        devicePixelRatio,
       });
     }
     if (anchor) {
@@ -3139,7 +3150,38 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
    * 按平方增长。
    */
   private effectiveRenderScale(): number {
-    return Math.max(this.state.view.scale, this.minRenderScale()) * this.options.supersample;
+    return Math.max(this.state.view.scale, this.minRenderScale()) * this.supersampleFactor();
+  }
+
+  /**
+   * 当前超采样倍率。
+   *
+   * 显式配置时直接使用；`auto` 时按最大页在屏幕上的设备像素面积分档——低倍率文字小、
+   * 最需要清晰度，取 2 倍超采样；面积变大后依次降到 1.5 与 1 倍，避免高倍率下画布像素
+   * 数按倍率平方膨胀。移动端固定 1，优先保流畅。
+   *
+   * @returns 超采样倍率，取值 1..4。
+   */
+  private supersampleFactor(): number {
+    const configured = this.options.supersample;
+    if (configured !== 'auto') return configured;
+    if (this.mobileDevice) return 1;
+    const dpr = this.devicePixelRatio();
+    const scale = this.state.view.scale;
+    // 不超采样时的后备比例 = 基础渲染倍率 × DPR ÷ 显示倍率（每 CSS 像素的后备像素数）。
+    const base = Math.max(scale, this.minRenderScale());
+    const currentRatio = (base * dpr) / scale;
+    // 目标比例按页面设备像素面积分档：面积小（文字小）时补到 2 倍，面积大时逐步回落到 1。
+    const deviceScale = base * dpr;
+    const area = this.layout.maxPageUnitArea * deviceScale * deviceScale;
+    const targetRatio =
+      area <= SUPERSAMPLE_FULL_AREA
+        ? SUPERSAMPLE_MAX
+        : area <= SUPERSAMPLE_HALF_AREA
+          ? SUPERSAMPLE_MID
+          : 1;
+    // 已有后备比例够用时不再额外超采样，避免低倍率下把下限倍率再乘一遍。
+    return Math.min(4, Math.max(1, targetRatio / currentRatio));
   }
 
   /**
@@ -3201,6 +3243,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         viewport.width * viewport.height <= maxPixels
       ) {
         return {
+          // 必须向上取整：引擎要求画布不小于 viewport，少 1px 会直接报
+          // OFD_CANVAS_SIZE_MISMATCH。多出的不足 1px 由 CSS 缩放吸收，不影响清晰度。
           width: Math.max(1, Math.ceil(viewport.width)),
           height: Math.max(1, Math.ceil(viewport.height)),
           dpi,

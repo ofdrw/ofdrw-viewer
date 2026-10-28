@@ -675,29 +675,29 @@ describe('OFDViewer 核心', () => {
     const page = viewer.getPageView(1)!;
     await vi.waitFor(() => expect(page.state).toBe('rendered'));
     const canvas = page.canvas!;
-    // 1× 屏 100%：有效渲染倍率 1（默认超采样 1，按 DPR 1:1 渲染）。
-    expect(canvas.width).toBe(a4CanvasWidth(1));
-    expect(page.renderedScale).toBeCloseTo(1, 5);
+    // 1× 屏 100%：默认自适应超采样在此面积下取 2 倍，有效渲染倍率 2。
+    expect(canvas.width).toBe(a4CanvasWidth(2));
+    expect(page.renderedScale).toBeCloseTo(2, 5);
     const clearCalls = contextMock.clearRect.mock.calls.length;
     // 纸面尺寸由“96 DPI 单位尺寸 × 文档级缩放变量”推出（pdf.js 同款机制）。
     const surfaceWidth = Number.parseFloat(page.surface.style.width);
-    expect(surfaceWidth).toBeCloseTo((210 / 25.4) * 96, 3);
+    expect(Math.abs(surfaceWidth - (210 / 25.4) * 96)).toBeLessThan(0.5);
 
     // 0.5 / 0.25 低于最低渲染倍率 1：页盒 CSS 尺寸继续缩小，画布保持不变。
     viewer.setScale(0.5);
     await vi.waitFor(() => expect(viewer.getScale()).toBe(0.5));
     expect(page.canvas).toBe(canvas);
-    expect(canvas.width).toBe(a4CanvasWidth(1));
+    expect(canvas.width).toBe(a4CanvasWidth(2));
     expect(contextMock.clearRect.mock.calls.length).toBe(clearCalls);
-    expect(Number.parseFloat(page.surface.style.width)).toBeCloseTo(surfaceWidth * 0.5, 3);
+    expect(Math.abs(Number.parseFloat(page.surface.style.width) - surfaceWidth * 0.5)).toBeLessThan(0.5);
 
     viewer.setScale(0.25);
     await vi.waitFor(() => expect(viewer.getScale()).toBe(0.25));
     expect(page.canvas).toBe(canvas);
-    expect(canvas.width).toBe(a4CanvasWidth(1));
+    expect(canvas.width).toBe(a4CanvasWidth(2));
     expect(contextMock.clearRect.mock.calls.length).toBe(clearCalls);
 
-    // 放大到下限以上时恢复按实际倍率重绘。
+    // 放大到下限以上时恢复按实际倍率重绘（该面积下超采样回落到 1）。
     viewer.setScale(2);
     await vi.waitFor(() => expect(page.canvas?.width).toBe(a4CanvasWidth(2)));
     expect(page.renderedScale).toBeCloseTo(2, 5);
@@ -814,14 +814,19 @@ describe('OFDViewer 核心', () => {
       },
     });
 
-    // 复现 t11 的 A4 五页小数页顶（scale=1）。
-    expect(pageTop(viewer, 3)).toBeCloseTo(2285.0393700787404, 6);
-    expect(pageTop(viewer, 5)).toBeCloseTo(4546.078740157481, 6);
+    // 页顶对齐设备像素网格后为整数，滚动位置不再需要按小数截断补偿。
+    const top3 = pageTop(viewer, 3);
+    const top5 = pageTop(viewer, 5);
+    expect(top3).toBeCloseTo(2286, 6);
+    // 页高已对齐设备像素，每页步进（页高 + 间距）都相同，页顶均为整数。
+    const step = pageTop(viewer, 2) - pageTop(viewer, 1);
+    expect(top3).toBeCloseTo(pageTop(viewer, 1) + step * 2, 6);
+    expect(top5).toBeCloseTo(pageTop(viewer, 1) + step * 4, 6);
 
     viewer.goToPage(3);
     await vi.waitFor(() => {
       expect(viewer.getPageNumber()).toBe(3);
-      expect(viewer.getState().view.scrollTop).toBe(2286);
+      expect(viewer.getState().view.scrollTop).toBe(Math.trunc(top3));
     });
     expect(viewer.getPageView(3)?.element.dataset.current).toBe('true');
     expect(viewer.getPageView(4)?.element.dataset.current).toBeUndefined();
@@ -829,7 +834,7 @@ describe('OFDViewer 核心', () => {
     viewer.goToPage(5);
     await vi.waitFor(() => {
       expect(viewer.getPageNumber()).toBe(5);
-      expect(viewer.getState().view.scrollTop).toBe(4547);
+      expect(viewer.getState().view.scrollTop).toBe(Math.trunc(top5));
     });
     expect(viewer.getPageView(4)?.element.dataset.current).toBeUndefined();
     expect(viewer.getPageView(5)?.element.dataset.current).toBe('true');
@@ -839,7 +844,7 @@ describe('OFDViewer 核心', () => {
     viewer.lastPage();
     await vi.waitFor(() => {
       expect(viewer.getPageNumber()).toBe(5);
-      expect(viewer.getState().view.scrollTop).toBe(4547);
+      expect(viewer.getState().view.scrollTop).toBe(Math.trunc(top5));
     });
 
     // 缩放/旋转按锚点恢复，整数化后仍应停在第 5 页而不是落回第 4 页。
@@ -1059,10 +1064,13 @@ describe('OFDViewer 核心', () => {
     const inPage = point.pageOffset;
     expect(inPage).toBeCloseTo(300 - box.top, 6);
     for (const factor of [2, 2, 2]) {
+      const previousHeight = layout.getBox(point.pageIndex)!.height;
       layout.setZoom(layout.scale * factor, 'page-actual');
       const mapped = layout.offsetForContentPoint(point);
       const scaled = layout.getBox(point.pageIndex)!;
-      expect(mapped - scaled.top).toBeCloseTo(inPage * factor, 6);
+      // 页高对齐设备像素网格后与“倍率整数倍”相差不到半个像素，换算按实际页高比进行。
+      expect(Math.abs(mapped - scaled.top - inPage * (scaled.height / previousHeight))).toBeLessThan(1e-6);
+      expect(Math.abs(mapped - scaled.top - inPage * factor)).toBeLessThan(1);
     }
     expect(layout.scale).toBeCloseTo(startScale * 8, 6);
     viewer.destroy();
@@ -1223,12 +1231,13 @@ describe('OFDViewer 核心', () => {
     });
     await viewer.ready;
     const pageView = viewer.getPageView(1)!;
-    // 页面实际尺寸 = 96 DPI 单位尺寸 × 缩放变量（与 pdf.js 的 setLayerDimensions 等价）。
+    // 页面实际尺寸 = 96 DPI 单位尺寸 × 缩放变量（与 pdf.js 的 setLayerDimensions 等价），
+    // 并对齐到设备像素网格，误差不超过半个像素。
     const unit = Number.parseFloat(pageView.element.style.getPropertyValue('--page-unit-width'));
-    expect(Number.parseFloat(pageView.element.style.width)).toBeCloseTo(unit * viewer.getScale(), 3);
+    expect(Math.abs(Number.parseFloat(pageView.element.style.width) - unit * viewer.getScale())).toBeLessThan(0.5);
     pageView.setScaleVariable(1.5);
-    expect(Number.parseFloat(pageView.element.style.width)).toBeCloseTo(unit * 1.5, 3);
-    expect(Number.parseFloat(pageView.surface.style.width)).toBeCloseTo(unit * 1.5, 3);
+    expect(Math.abs(Number.parseFloat(pageView.element.style.width) - unit * 1.5)).toBeLessThan(0.5);
+    expect(Math.abs(Number.parseFloat(pageView.surface.style.width) - unit * 1.5)).toBeLessThan(0.5);
     // 平移位移只在预览态写入合成层；页面尺寸本身已由倍率变量决定。
     pageView.setPreviewScale(1.02);
     pageView.setPreviewTranslate(30, -12);
@@ -1276,10 +1285,12 @@ describe('OFDViewer 核心', () => {
     for (let index = 0; index < 8; index += 1) main.dispatchEvent(wheel());
     const scaleDuringGesture = viewer.getScale();
     expect(scaleDuringGesture).toBeGreaterThan(1);
-    expect(Number.parseFloat(viewer.getPageView(1)!.element.style.width)).toBeCloseTo(
-      (210 / 25.4) * 96 * scaleDuringGesture,
-      3,
-    );
+    expect(
+      Math.abs(
+        Number.parseFloat(viewer.getPageView(1)!.element.style.width) -
+          (210 / 25.4) * 96 * scaleDuringGesture,
+      ),
+    ).toBeLessThan(0.5);
     // 等一帧确认滚动合并也不会引起逐帧重绘。
     const duringGesture = contextMock.clearRect.mock.calls.length;
     await new Promise((resolve) => setTimeout(resolve, 30));

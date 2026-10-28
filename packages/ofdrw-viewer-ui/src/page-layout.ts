@@ -91,6 +91,13 @@ export interface PageLayoutOptions {
   readonly gap?: number;
   /** 首尾留白，单位 px；默认 24。 */
   readonly padding?: number;
+  /**
+   * 设备像素比，默认 1。
+   *
+   * 页盒尺寸会取整到该比率的整数倍，使幅面在屏幕上恰好覆盖整数个物理像素：
+   * 画布位图与设备像素一一对应，避免整页落在半像素上导致的均匀发虚。
+   */
+  readonly devicePixelRatio?: number;
 }
 
 /** 旋转后是否交换宽高。 */
@@ -134,10 +141,14 @@ export class PageLayout {
   private width = 0;
   /** 96 DPI 下最宽页的宽度（不含倍率），单位 px。 */
   private unitWidth = 0;
+  /** 面积最大的页在 96 DPI 下的单位面积，单位 px²；用于自适应渲染预算。 */
+  private maxUnitArea = 0;
   /** 上一次重建时各页的高度，单位 px；用于把“页内像素”按页高等比换算。 */
   private previousHeights: number[] = [];
   /** 上一次重建时的内容宽度，单位 px；用于把横向锚点按宽度等比换算。 */
   private previousWidth = 0;
+  /** 设备像素比；页盒尺寸按它取整到设备像素网格。 */
+  private devicePixelRatio = 1;
 
   /**
    * @param options 页信息与初始缩放/旋转。
@@ -149,6 +160,7 @@ export class PageLayout {
     this.currentRotation = options.rotation ?? 0;
     this.gapPx = Math.max(0, options.gap ?? DEFAULT_PAGE_GAP);
     this.paddingPx = Math.max(0, options.padding ?? DEFAULT_PAGE_PADDING);
+    this.devicePixelRatio = normalizeDevicePixelRatio(options.devicePixelRatio);
     this.rebuild();
   }
 
@@ -197,6 +209,11 @@ export class PageLayout {
     return this.unitWidth;
   }
 
+  /** 96 DPI 下面积最大的页的单位面积（不含倍率），单位 px²。 */
+  get maxPageUnitArea(): number {
+    return this.maxUnitArea;
+  }
+
   /** 全部排版盒（只读）。 */
   getBoxes(): readonly PageBox[] {
     return this.boxes;
@@ -211,7 +228,40 @@ export class PageLayout {
    * @returns 内容左缘相对可视区左缘的偏移，单位 px；不小于 0。
    */
   centeredOffset(viewportWidth: number): number {
-    return Math.max(0, (viewportWidth - this.width) / 2);
+    return this.snapToDevicePixel(Math.max(0, (viewportWidth - this.width) / 2));
+  }
+
+  /**
+   * 把长度对齐到设备像素网格。
+   *
+   * 对齐后的长度在屏幕上恰好覆盖整数个物理像素，画布位图与设备像素一一对应；不对齐时
+   * 整页会落在半像素上，浏览器需重采样，表现为全页（尤其文字）均匀发虚。
+   *
+   * @param value 长度，单位 px。
+   * @returns 对齐后的长度，单位 px。
+   */
+  snapToDevicePixel(value: number): number {
+    const ratio = this.devicePixelRatio;
+    return Math.round(value * ratio) / ratio;
+  }
+
+  /**
+   * 设置设备像素比并重建布局。
+   *
+   * 显示器切换或页面缩放到不同缩放比时，设备像素比会变化，需要按新比率重新对齐。
+   *
+   * @param devicePixelRatio 设备像素比。
+   */
+  setDevicePixelRatio(devicePixelRatio: number): void {
+    const next = normalizeDevicePixelRatio(devicePixelRatio);
+    if (next === this.devicePixelRatio) return;
+    this.devicePixelRatio = next;
+    this.rebuild();
+  }
+
+  /** 当前设备像素比。 */
+  get devicePixelRatioValue(): number {
+    return this.devicePixelRatio;
   }
 
   /**
@@ -503,10 +553,12 @@ export class PageLayout {
       // 缩放只改倍率，尺寸在每次取值时按倍率推导，避免“布局尺寸/视觉尺寸”两套坐标。
       const unitWidth = widthMm * MM_TO_CSS_PX;
       const unitHeight = heightMm * MM_TO_CSS_PX;
-      const surfaceWidth = unitWidth * scale;
-      const surfaceHeight = unitHeight * scale;
-      const width = quarter ? surfaceHeight : surfaceWidth;
-      const height = quarter ? surfaceWidth : surfaceHeight;
+      // 尺寸取整到设备像素网格：幅面恰好覆盖整数个物理像素，画布位图与屏幕像素一一对应，
+      // 整页不再落在半像素上（否则全页包括文字都会被重采样而均匀发虚）。
+      const width = this.snapToDevicePixel(quarter ? unitHeight * scale : unitWidth * scale);
+      const height = this.snapToDevicePixel(quarter ? unitWidth * scale : unitHeight * scale);
+      const surfaceWidth = quarter ? height : width;
+      const surfaceHeight = quarter ? width : height;
       widest = Math.max(widest, width);
       widestUnit = Math.max(widestUnit, unitWidth);
       boxes.push({
@@ -523,6 +575,7 @@ export class PageLayout {
         unitWidth,
         unitHeight,
       });
+      // 页高已对齐设备像素，页间距与留白为整数 px，纵向累加不会产生小数偏移。
       top += height + this.gapPx;
     }
     const total =
@@ -532,9 +585,14 @@ export class PageLayout {
     this.height = Math.max(total, this.paddingPx * 2);
     this.width = widest;
     this.unitWidth = widestUnit;
+    this.maxUnitArea = boxes.reduce((area, box) => {
+      return Math.max(area, box.unitWidth * box.unitHeight);
+    }, 0);
     // 与 pdf.js 的 `.page { margin: 0 auto }` 等价：每页相对内容左缘居中；内容整体比可视区
     // 窄时的偏移由 {@link centeredOffset} 补。
-    for (const box of boxes) box.left = (widest - box.width) / 2;
+    for (const box of boxes) {
+      box.left = this.snapToDevicePixel((widest - box.width) / 2);
+    }
     this.boxes = boxes;
   }
 
@@ -604,6 +662,16 @@ export function scrollTopForZoomAnchor(
  */
 function sanitizeScale(value: number): number {
   return Number.isFinite(value) && value > 0 ? value : 1;
+}
+
+/**
+ * 限制设备像素比到合法范围。
+ *
+ * @param value 原始设备像素比。
+ * @returns 有限且 > 0 的比率；非法时回退 1。
+ */
+function normalizeDevicePixelRatio(value: number | undefined): number {
+  return value !== undefined && Number.isFinite(value) && value > 0 ? value : 1;
 }
 
 /**

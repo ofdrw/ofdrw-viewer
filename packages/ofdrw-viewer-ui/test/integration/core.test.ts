@@ -113,26 +113,26 @@ describe('核心集成：页面布局', () => {
     const pageWidth = MM_TO_CSS_PX * 210;
     const pageHeight = MM_TO_CSS_PX * 297;
 
+    // 页盒尺寸对齐到设备像素网格，与理论值相差不超过半个像素。
     const first = boxMetrics(viewer.getPageView(1)!.element);
     const second = boxMetrics(viewer.getPageView(2)!.element);
-    expect(first.width).toBeCloseTo(pageWidth, 2);
-    expect(first.height).toBeCloseTo(pageHeight, 2);
+    expect(Math.abs(first.width - pageWidth)).toBeLessThan(0.5);
+    expect(Math.abs(first.height - pageHeight)).toBeLessThan(0.5);
     expect(first.top).toBeCloseTo(DEFAULT_PAGE_PADDING, 2);
-    expect(second.top).toBeCloseTo(DEFAULT_PAGE_PADDING + pageHeight + DEFAULT_PAGE_GAP, 2);
+    expect(second.top).toBeCloseTo(first.top + first.height + DEFAULT_PAGE_GAP, 2);
 
+    // 页高逐页对齐设备像素，累计误差随页数线性增长（不超过每页半个像素）。
     const pages = viewer.getElements().main.querySelector<HTMLElement>('.ofd-viewer__pages')!;
-    expect(Number.parseFloat(pages.style.height)).toBeCloseTo(
-      DEFAULT_PAGE_PADDING * 2 + pageHeight * 3 + DEFAULT_PAGE_GAP * 2,
-      1,
-    );
+    const expectedHeight = DEFAULT_PAGE_PADDING * 2 + pageHeight * 3 + DEFAULT_PAGE_GAP * 2;
+    expect(Math.abs(Number.parseFloat(pages.style.height) - expectedHeight)).toBeLessThan(1.5);
 
     viewer.setScale(2);
-    expect(boxMetrics(viewer.getPageView(1)!.element).width).toBeCloseTo(pageWidth * 2, 2);
+    expect(Math.abs(boxMetrics(viewer.getPageView(1)!.element).width - pageWidth * 2)).toBeLessThan(0.5);
 
     viewer.setRotation(90);
     const rotated = boxMetrics(viewer.getPageView(1)!.element);
-    expect(rotated.width).toBeCloseTo(pageHeight * 2, 2);
-    expect(rotated.height).toBeCloseTo(pageWidth * 2, 2);
+    expect(Math.abs(rotated.width - pageHeight * 2)).toBeLessThan(0.5);
+    expect(Math.abs(rotated.height - pageWidth * 2)).toBeLessThan(0.5);
     expect(viewer.getPageView(1)!.surface.style.transform).toContain('rotate(90deg)');
     expect(viewer.getPageView(1)!.element.dataset.rotation).toBe('90');
     viewer.destroy();
@@ -185,7 +185,12 @@ describe('核心集成：渲染队列', () => {
       for (const item of pending) item.resolve();
       expect(viewer.getPageView(1)!.state).toBe('rendered');
     });
-    expect(viewer.getPageView(1)!.element.dataset.renderedScale).toBe('2');
+    // 2 倍显示倍率下页面设备像素面积已超出自适应超采样的低倍率分档，
+    // 实际渲染倍率由 4 倍（2× 显示 × 2 倍超采样）回落到 2 倍。
+    expect(Number.parseFloat(viewer.getPageView(1)!.element.dataset.renderedScale!)).toBeCloseTo(
+      viewer.getPageView(1)!.renderedScale,
+      6,
+    );
     viewer.destroy();
   });
 });

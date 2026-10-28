@@ -83,6 +83,8 @@ export interface PageViewLayout {
   readonly scale: number;
   /** 内容整体居中偏移（内容窄于可视区时生效），单位 px；省略视为 0。 */
   readonly offsetLeft?: number;
+  /** 设备像素比，用于把页盒与画布尺寸对齐到设备像素网格；省略视为 1。 */
+  readonly devicePixelRatio?: number;
 }
 
 /** 单页视图。 */
@@ -137,6 +139,8 @@ export class PageView {
   private previewOffsetY = 0;
   /** 当前纸面尺寸，单位 px（已含布局倍率）；供文字层按 96 DPI 基准换算布局框。 */
   private surfaceSizeValue = { width: 0, height: 0 };
+  /** 设备像素比；页盒与画布尺寸按它取整到设备像素网格。 */
+  private devicePixelRatio = 1;
   private destroyed = false;
   /** 是否已经完成过至少一次绘制；用于区分首次骨架与重渲染遮罩。 */
   private painted = false;
@@ -394,6 +398,10 @@ export class PageView {
     // 变量，缩放时只改那一个变量；canvas 只负责拉伸已画好的位图。
     const quarter = rotation === 90 || rotation === 270;
     this.unitSize = { width: box.unitWidth, height: box.unitHeight };
+    this.devicePixelRatio =
+      layout.devicePixelRatio !== undefined && layout.devicePixelRatio > 0
+        ? layout.devicePixelRatio
+        : 1;
     this.element.style.setProperty('--page-unit-width', `${box.unitWidth}px`);
     this.element.style.setProperty('--page-unit-height', `${box.unitHeight}px`);
     this.writePageSize();
@@ -421,9 +429,10 @@ export class PageView {
     this.currentScale = scale;
     this.element.style.setProperty('--ofd-scale', String(scale));
     this.writePageSize();
+    // 画布尺寸与页盒同源取整，避免小数尺寸让位图被浏览器重采样。
     this.surfaceSizeValue = {
-      width: this.unitSize.width * scale,
-      height: this.unitSize.height * scale,
+      width: this.snapToDevicePixel(this.unitSize.width * scale),
+      height: this.snapToDevicePixel(this.unitSize.height * scale),
     };
     this.surface.style.width = `${this.surfaceSizeValue.width}px`;
     this.surface.style.height = `${this.surfaceSizeValue.height}px`;
@@ -439,8 +448,22 @@ export class PageView {
     const { width, height } = this.unitSize;
     if (width <= 0 || height <= 0) return;
     const quarter = this.currentRotation === 90 || this.currentRotation === 270;
-    this.element.style.width = `${(quarter ? height : width) * this.currentScale}px`;
-    this.element.style.height = `${(quarter ? width : height) * this.currentScale}px`;
+    this.element.style.width = `${this.snapToDevicePixel((quarter ? height : width) * this.currentScale)}px`;
+    this.element.style.height = `${this.snapToDevicePixel((quarter ? width : height) * this.currentScale)}px`;
+  }
+
+  /**
+   * 把长度对齐到设备像素网格。
+   *
+   * 页盒恰好覆盖整数个物理像素时，画布位图与设备像素一一对应；否则整页落在半像素上，
+   * 浏览器重采样会让全页（尤其文字）均匀发虚。
+   *
+   * @param value 长度，单位 px。
+   * @returns 对齐后的长度，单位 px。
+   */
+  private snapToDevicePixel(value: number): number {
+    const ratio = this.devicePixelRatio;
+    return Math.round(value * ratio) / ratio;
   }
 
   /**
