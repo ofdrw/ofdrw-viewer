@@ -10,6 +10,7 @@ import {
   mergeFeatures,
   readScaleAttribute,
   readSidebarAttribute,
+  readSupersampleAttribute,
   toDomEventName,
   toRotation,
 } from '../../../src/component/support';
@@ -66,6 +67,40 @@ describe('wrapper 公共桥接', () => {
     element.setAttribute('sidebar', '');
     expect(readSidebarAttribute(element)).toBeNull();
     element.removeAttribute('sidebar');
+    expect(readSidebarAttribute(element)).toBeUndefined();
+  });
+
+  it('读取 supersample 属性：接受预设名与 1..4 倍率，拒绝其他值', () => {
+    const element = document.createElement('div');
+    // 未配置时交给核心取默认预设。
+    expect(readSupersampleAttribute(element)).toBeUndefined();
+
+    for (const preset of ['off', 'auto', 'high', 'max']) {
+      element.setAttribute('supersample', preset);
+      expect(readSupersampleAttribute(element)).toBe(preset);
+    }
+
+    element.setAttribute('supersample', ' high ');
+    expect(readSupersampleAttribute(element)).toBe('high');
+
+    element.setAttribute('supersample', '2');
+    expect(readSupersampleAttribute(element)).toBe(2);
+
+    // 超出 1..4 或无法解析时不下发，避免把非法值传给核心。
+    for (const invalid of ['0', '5', '1.5x', '', 'ultra']) {
+      element.setAttribute('supersample', invalid);
+      expect(readSupersampleAttribute(element)).toBeUndefined();
+    }
+  });
+
+  it('sidebar 属性接受 attachments，与核心视图清单保持一致', () => {
+    const element = document.createElement('div');
+    element.setAttribute('sidebar', 'attachments');
+    // 适配层复用 state.ts 的 SIDEBAR_VIEWS，不再维护第二份白名单。
+    expect(readSidebarAttribute(element)).toBe('attachments');
+    element.setAttribute('sidebar', 'none');
+    expect(readSidebarAttribute(element)).toBeNull();
+    element.setAttribute('sidebar', 'unknown-view');
     expect(readSidebarAttribute(element)).toBeUndefined();
   });
 

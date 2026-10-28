@@ -14,5 +14,7 @@ export type {
   Theme,
   ViewerFeatures,
 } from '../component/support';
+// 构造选项随 props 透传给核心，超采样预设类型一并再导出，避免使用方回到核心入口取。
+export type { OFDViewerOptions, SupersamplePreset } from '../options';
 // 显式引用公共入口，保持与 React/Web Component 一致的注册触发方式。
 import '../index';

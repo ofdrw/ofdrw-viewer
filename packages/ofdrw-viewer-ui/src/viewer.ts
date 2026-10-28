@@ -67,7 +67,9 @@ import {
   MIN_SCALE,
   SUPERSAMPLE_FULL_AREA,
   SUPERSAMPLE_HALF_AREA,
+  SUPERSAMPLE_HIGH_BOOST,
   SUPERSAMPLE_MAX,
+  SUPERSAMPLE_MAX_FACTOR,
   SUPERSAMPLE_MID,
   resolveViewerOptions,
   ZOOM_LEVELS,
@@ -3156,30 +3158,34 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /**
    * 当前超采样倍率。
    *
-   * 显式配置时直接使用；`auto` 时按最大页在屏幕上的设备像素面积分档——低倍率文字小、
-   * 最需要清晰度，取 2 倍超采样；面积变大后依次降到 1.5 与 1 倍，避免高倍率下画布像素
-   * 数按倍率平方膨胀。移动端固定 1，优先保流畅。
+   * 固定倍率直接使用；`auto` / `high` 按最大页在屏幕上的设备像素面积分档——低倍率文字
+   * 小、最需要清晰度，取 2 倍（`high` 为 3 倍），面积变大后依次降到 1.5 与 1 倍，避免
+   * 高倍率下画布像素数按倍率平方膨胀。移动端未显式配置时固定 1，优先保流畅。
    *
    * @returns 超采样倍率，取值 1..4。
    */
   private supersampleFactor(): number {
     const configured = this.options.supersample;
-    if (configured !== 'auto') return configured;
-    if (this.mobileDevice) return 1;
+    if (typeof configured === 'number') return configured;
+    if (configured === 'off') return 1;
+    if (configured === 'max') return SUPERSAMPLE_MAX_FACTOR;
+    // `auto` / `high`：移动端未显式要求更高清晰度时保持 1。
+    if (this.mobileDevice && configured === 'auto') return 1;
+    const boost = configured === 'high' ? SUPERSAMPLE_HIGH_BOOST : 0;
     const dpr = this.devicePixelRatio();
     const scale = this.state.view.scale;
     // 不超采样时的后备比例 = 基础渲染倍率 × DPR ÷ 显示倍率（每 CSS 像素的后备像素数）。
     const base = Math.max(scale, this.minRenderScale());
     const currentRatio = (base * dpr) / scale;
-    // 目标比例按页面设备像素面积分档：面积小（文字小）时补到 2 倍，面积大时逐步回落到 1。
+    // 目标比例按页面设备像素面积分档：面积小（文字小）时补到目标档位，面积大时回落到 1。
     const deviceScale = base * dpr;
     const area = this.layout.maxPageUnitArea * deviceScale * deviceScale;
     const targetRatio =
-      area <= SUPERSAMPLE_FULL_AREA
+      (area <= SUPERSAMPLE_FULL_AREA
         ? SUPERSAMPLE_MAX
         : area <= SUPERSAMPLE_HALF_AREA
           ? SUPERSAMPLE_MID
-          : 1;
+          : 1) + boost;
     // 已有后备比例够用时不再额外超采样，避免低倍率下把下限倍率再乘一遍。
     return Math.min(4, Math.max(1, targetRatio / currentRatio));
   }

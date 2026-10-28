@@ -44,6 +44,7 @@ export type {
   DebugViewerOptions,
   OFDViewerOptions,
   ResolvedViewerOptions,
+  SupersamplePreset,
 } from './options';
 export type {
   CertificateSummary,

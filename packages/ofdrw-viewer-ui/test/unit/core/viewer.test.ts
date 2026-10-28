@@ -793,6 +793,34 @@ describe('OFDViewer 核心', () => {
     expect(removeSpy.mock.contexts[scrollRemoveIndex]).toBe(main);
   });
 
+  it('超采样预设：off 固定 1 倍、high 在 auto 档位上再加 1 倍、max 固定 3 倍', async () => {
+    const make = async (supersample?: 'off' | 'auto' | 'high' | 'max' | number) => {
+      const viewer = new OFDViewer({
+        crypto: { enabled: false },
+        container: document.body,
+        source: new ArrayBuffer(8),
+        initialScale: 1,
+        ...(supersample === undefined ? {} : { supersample }),
+      });
+      await viewer.ready;
+      const page = viewer.getPageView(1)!;
+      await vi.waitFor(() => expect(page.state).toBe('rendered'));
+      const width = page.canvas!.width;
+      viewer.destroy();
+      return width;
+    };
+
+    // 1× 屏 100% 属于低倍率档：auto 取 2 倍、high 取 3 倍（可用像素上限内）。
+    const auto = await make();
+    const off = await make('off');
+    const high = await make('high');
+    // 超采样会随 maxCanvasPixels 降级，因此按“不小于”比较相对关系。
+    expect(auto).toBeGreaterThan(off);
+    expect(high).toBeGreaterThanOrEqual(auto);
+    // max 固定 3 倍，与 high 在低倍率档下同档。
+    expect(await make('max')).toBe(high);
+  });
+
   it('A4 小数页高下 goToPage/lastPage 不因整数 scrollTop 落回上一页', async () => {
     engineMocks.open.mockImplementation(async () => makeDocument(5));
     const viewer = new OFDViewer({

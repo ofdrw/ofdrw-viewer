@@ -65,6 +65,28 @@ describe('<ofd-viewer>', () => {
     expect((await element.exportOfd())?.filename).toBe('fake.ofd');
   });
 
+  it('supersample 属性在构造时下发给核心，变更后按新值重建实例', async () => {
+    const element = document.createElement(OFD_VIEWER_TAG) as OFDViewerElement;
+    element.setAttribute('src', 'a.ofd');
+    element.setAttribute('supersample', 'high');
+    document.body.append(element);
+
+    const first = FakeViewer.instances[0]!;
+    // 该属性只在创建实例时生效：与字体简写属性一样走构造选项。
+    expect(first.options.supersample).toBe('high');
+
+    element.setAttribute('supersample', '3');
+    await tick();
+    const second = FakeViewer.instances.at(-1)!;
+    expect(second).not.toBe(first);
+    expect(second.options.supersample).toBe(3);
+
+    // 非法值不下发，核心按默认预设处理。
+    element.setAttribute('supersample', 'ultra');
+    await tick();
+    expect(FakeViewer.instances.at(-1)!.options.supersample).toBeUndefined();
+  });
+
   it('sidebar="attachments" 传递给核心而不被静默忽略', async () => {
     const element = document.createElement(OFD_VIEWER_TAG) as OFDViewerElement;
     element.setAttribute('src', 'a.ofd');

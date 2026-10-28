@@ -17,6 +17,7 @@ import {
   readRotationAttribute,
   readScaleAttribute,
   readSidebarAttribute,
+  readSupersampleAttribute,
   toDomEventName,
   toRotation,
   type FeatureDisplay,
@@ -27,6 +28,7 @@ import type {
   CertificateSource,
   CertificateSummary,
   CryptoViewerOptions,
+  SupersamplePreset,
   ExportOfdOptions,
   ExportOfdResult,
   FontSource,
@@ -47,6 +49,7 @@ const OBSERVED_ATTRIBUTES = [
   'sidebar',
   'font-default',
   'font-supplementary',
+  'supersample',
 ] as const;
 
 /** 自定义元素标签名。 */
@@ -187,8 +190,8 @@ export class OFDViewerElement extends HTMLElement {
     newValue: string | null,
   ): void {
     if (oldValue === newValue) return;
-    // 字体简写属性只在创建实例时生效：变更后销毁并按新属性重建（与 src 行为一致）。
-    if (name === 'font-default' || name === 'font-supplementary') {
+    // 只在创建实例时生效的属性：变更后销毁并按新属性重建（与 src 行为一致）。
+    if (name === 'font-default' || name === 'font-supplementary' || name === 'supersample') {
       this.destroyViewer();
       this.ensureViewer();
       return;
@@ -381,6 +384,7 @@ export class OFDViewerElement extends HTMLElement {
     const locale = this.getAttribute('locale');
     const sidebar = readSidebarAttribute(this);
     const fonts = this.resolveFonts();
+    const supersample = readSupersampleAttribute(this);
     this.instance = new OFDViewer({
       container: this,
       ...(source === null ? {} : { source }),
@@ -394,6 +398,7 @@ export class OFDViewerElement extends HTMLElement {
       ...(this.display === undefined ? {} : { featureDisplay: this.display }),
       ...(this.cryptoValue === undefined ? {} : { crypto: this.cryptoValue }),
       ...(fonts === undefined ? {} : { fonts }),
+      ...(supersample === undefined ? {} : { supersample }),
     });
     // 省略来源且页面无查询参数时 ready 会拒绝；错误卡已由核心展示，这里避免
     // 未处理的 Promise rejection。
@@ -471,4 +476,10 @@ export function defineOFDViewerElement(tagName = OFD_VIEWER_TAG): void {
 // 作为 `./element` 入口时自动注册；核心入口不引用本模块。
 defineOFDViewerElement();
 
-export type { FeatureDisplay, SidebarView, ViewerFeatures, ViewerSource };
+export type {
+  FeatureDisplay,
+  SidebarView,
+  SupersamplePreset,
+  ViewerFeatures,
+  ViewerSource,
+};

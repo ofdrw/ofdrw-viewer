@@ -138,7 +138,24 @@ export const SUPERSAMPLE_MAX = 2;
 /** 自动超采样在中等倍率下使用的倍率。 */
 export const SUPERSAMPLE_MID = 1.5;
 
-export const DEFAULT_SUPERSAMPLE: number | 'auto' = 'auto';
+/**
+ * 超采样预设名。
+ *
+ * - `off`：固定 1 倍；
+ * - `auto`：按页面设备像素面积自适应（默认）；
+ * - `high`：在 `auto` 的每个档位上再加 1 倍；
+ * - `max`：固定 3 倍。
+ */
+export type SupersamplePreset = 'off' | 'auto' | 'high' | 'max';
+
+/** 默认超采样预设。 */
+export const DEFAULT_SUPERSAMPLE: SupersamplePreset | number = 'auto';
+
+/** `high` 预设相对 `auto` 每个档位额外增加的倍数。 */
+export const SUPERSAMPLE_HIGH_BOOST = 1;
+
+/** `max` 预设的固定倍率。 */
+export const SUPERSAMPLE_MAX_FACTOR = 3;
 
 /** 预置缩放档位；UI 的 +/- 与下拉菜单共用，最低档与 {@link MIN_SCALE} 一致。 */
 export const ZOOM_LEVELS: readonly number[] = Object.freeze([
@@ -255,11 +272,16 @@ export interface OFDViewerOptions {
   /**
    * 画布超采样倍率，默认 `auto`。
    *
-   * `auto` 按当前倍率下页面的设备像素面积自适应：低倍率（文字小、最需要清晰度）取 2，
-   * 面积增大后依次降到 1.5、1，避免高倍率下像素爆炸。显式传 1..4 时固定该值。
+   * - `'off'`：固定 1 倍，按设备像素 1:1 渲染，最省内存；
+   * - `'auto'`：按页面设备像素面积自适应，低倍率取 2、面积变大后降到 1.5、1；
+   * - `'high'`：在 `auto` 的每个档位上额外加 1 倍（2→3、1.5→2.5），文字更平滑；
+   * - `'max'`：固定 3 倍，极限清晰度，代价是像素数约 9 倍；
+   * - 数字：固定该倍率，范围 1..4，非法值回退 `auto`。
+   *
    * 超采样按更高分辨率渲染再由 CSS 缩小，边缘更平滑，代价是像素数按倍率平方增长。
+   * 移动端默认固定 1；显式传入 `'high'`、`'max'` 或数字时以传入值为准。
    */
-  readonly supersample?: number | 'auto';
+  readonly supersample?: SupersamplePreset | number;
   /** 已渲染页 canvas 缓存数量；默认桌面 10、移动 4。 */
   readonly pageCacheSize?: number;
   /**
@@ -312,8 +334,8 @@ export interface ResolvedViewerOptions {
   readonly theme: Theme;
   readonly locale: string;
   readonly maxCanvasPixels: number;
-  /** 已规范化的超采样倍率：固定值 1..4，或按页面面积自适应的 `auto`。 */
-  readonly supersample: number | 'auto';
+  /** 已规范化的超采样设置：预设名或固定倍率。 */
+  readonly supersample: SupersamplePreset | number;
   readonly pageCacheSize: number;
   /** 已渲染页 canvas 的总像素预算。 */
   readonly pageCachePixelBudget: number;
@@ -408,8 +430,12 @@ function normalizePageNumber(value: number): number {
  * @param value 调用方传入的倍率。
  * @returns 合法倍率。
  */
-function normalizeSupersample(value: number | 'auto' | undefined): number | 'auto' {
-  if (value === 'auto') return 'auto';
+function normalizeSupersample(
+  value: SupersamplePreset | number | undefined,
+): SupersamplePreset | number {
+  if (value === 'auto' || value === 'off' || value === 'high' || value === 'max') {
+    return value;
+  }
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
     return DEFAULT_SUPERSAMPLE;
   }

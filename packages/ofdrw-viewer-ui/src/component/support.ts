@@ -7,6 +7,7 @@
 import type {
   FontSource,
   OFDViewer,
+  SupersamplePreset,
   ViewerEventMap,
   ViewerEventName,
   ViewerSource,
@@ -278,6 +279,28 @@ export function toRotation(value: unknown): Rotation | undefined {
  */
 export function readRotationAttribute(element: HTMLElement): Rotation | undefined {
   return toRotation(readNumber(element.getAttribute('rotation')));
+}
+
+/**
+ * 读取超采样属性。
+ *
+ * 接受预设名（`off` / `auto` / `high` / `max`）或 1..4 的固定倍率；非法值返回 undefined，
+ * 交由核心回退到默认预设。
+ *
+ * @param element 自定义元素。
+ * @returns 超采样预设或固定倍率；未配置或非法时返回 undefined。
+ */
+export function readSupersampleAttribute(
+  element: HTMLElement,
+): SupersamplePreset | number | undefined {
+  const raw = element.getAttribute('supersample');
+  if (raw === null) return undefined;
+  const normalized = raw.trim();
+  if (normalized === 'off' || normalized === 'auto' || normalized === 'high' || normalized === 'max') {
+    return normalized;
+  }
+  const value = Number(normalized);
+  return Number.isFinite(value) && value >= 1 && value <= 4 ? value : undefined;
 }
 
 /**
