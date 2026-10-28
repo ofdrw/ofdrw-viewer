@@ -24,6 +24,7 @@ site-dist/
 # 发布工作流在本地运行时生成的中间产物
 release-assets/
 release-notes.md
+release-notes-*.md
 
 # 本地参考源码与素材，不纳入版本管理
 /references/
