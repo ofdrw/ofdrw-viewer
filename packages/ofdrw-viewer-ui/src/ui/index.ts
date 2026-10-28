@@ -911,6 +911,9 @@ function openExportDialog(viewer: UIShellHost, shell: UIShell): void {
   quality.step = '0.01';
   quality.value = '0.92';
   quality.className = 'ofd-output-quality';
+  // 实时百分比：仅 JPEG/WebP 生效，PNG 无损固定为 100%。
+  const qualityValue = doc.createElement('output');
+  qualityValue.className = 'ofd-output-quality__value';
 
   const background = doc.createElement('select');
   background.className = 'ofd-select';
@@ -939,7 +942,12 @@ function openExportDialog(viewer: UIShellHost, shell: UIShell): void {
   }
 
   const dpiField = createOutputField(doc, translator.t('output.dpi'), dpi);
-  const qualityField = createOutputField(doc, translator.t('output.quality'), quality);
+  const qualityRow = doc.createElement('div');
+  qualityRow.className = 'ofd-output-quality-row';
+  qualityRow.append(quality, qualityValue);
+  const qualityField = createOutputField(doc, translator.t('output.quality'), qualityRow);
+  // label 关联的是行容器而非滑块，滑块需显式指向质量字段的 label 才能获得可访问名称。
+  quality.setAttribute('aria-labelledby', qualityField.querySelector('label')!.id);
   const backgroundField = createOutputField(doc, translator.t('output.background'), background);
   const rotationField = createOutputField(doc, translator.t('output.rotation'), rotation);
   const imageFields = [range.field, dpiField, qualityField, backgroundField, rotationField];
@@ -948,6 +956,12 @@ function openExportDialog(viewer: UIShellHost, shell: UIShell): void {
   ofdNote.dataset.ofdControl = 'output-ofd-note';
   ofdNote.hidden = true;
   ofdNote.textContent = translator.t('output.ofdHint');
+
+  /** 同步质量百分比数值：仅 JPEG/WebP 可调，其余格式显示无损。 */
+  const updateQualityValue = (): void => {
+    qualityValue.value = `${Math.round(Number(quality.value) * 100)}%`;
+  };
+  quality.addEventListener('input', updateQualityValue);
 
   const updateFormat = (): void => {
     const ofd = format.value === 'ofd';
@@ -959,10 +973,16 @@ function openExportDialog(viewer: UIShellHost, shell: UIShell): void {
     }
     ofdNote.hidden = !ofd;
     if (ofd) return;
+    // 仅 PNG 支持透明背景；JPEG/WebP 有损压缩，质量可调。
     const supportsAlpha = format.value === 'png';
+    const lossy = !supportsAlpha;
     background.disabled = !supportsAlpha;
     if (!supportsAlpha) background.value = 'white';
-    quality.disabled = supportsAlpha;
+    // 质量字段只对 JPEG/WebP 生效：PNG 无损、引擎忽略质量参数，直接隐藏避免误设。
+    qualityField.hidden = !lossy;
+    quality.disabled = !lossy;
+    qualityField.querySelector<HTMLLabelElement>('label')!.hidden = !lossy;
+    updateQualityValue();
   };
   format.addEventListener('change', updateFormat);
 

@@ -138,8 +138,8 @@ function createFakeHost(width = 1280): FakeHost {
       record('print');
       return Promise.resolve();
     },
-    exportImage() {
-      record('exportImage');
+    exportImage(options) {
+      record(`exportImage:${options?.format}:${options?.quality}`);
       return Promise.resolve();
     },
     exportImages() {
@@ -259,6 +259,58 @@ describe('内置 UI 接线', () => {
     dispose();
   });
 
+  it('图片质量只在有损格式下显示且可滑动，并传给导出', () => {
+    const host = createFakeHost();
+    const dispose = attachUIShell(host);
+    const shell = getUIShell(host)!;
+
+    (shell.toolbar.getControl('export') as HTMLButtonElement).click();
+    const dialog = document.querySelector<HTMLElement>('.ofd-dialog')!;
+    const form = dialog.querySelector<HTMLFormElement>('form')!;
+    const format = [...form.querySelectorAll<HTMLSelectElement>('select')].find((select) =>
+      [...select.options].some((option) => option.value === 'webp'),
+    )!;
+    const qualityField = [...form.querySelectorAll<HTMLElement>('.ofd-output-field')].find(
+      (field) => field.querySelector('input.ofd-output-quality') !== null,
+    )!;
+    const quality = qualityField.querySelector<HTMLInputElement>('input.ofd-output-quality')!;
+    const qualityValue = qualityField.querySelector<HTMLOutputElement>(
+      'output.ofd-output-quality__value',
+    )!;
+    expect(qualityField.querySelector('label')!.htmlFor).toBe(
+      qualityField.querySelector<HTMLElement>('.ofd-output-quality-row')!.id,
+    );
+
+    // 默认 PNG 无损：整行隐藏且滑块禁用，不能误设。
+    expect(qualityField.hidden).toBe(true);
+    expect(quality.disabled).toBe(true);
+
+    // JPEG/WebP 有损：显示滑块、可操作并实时显示百分比。
+    for (const lossy of ['jpeg', 'webp'] as const) {
+      format.value = lossy;
+      format.dispatchEvent(new Event('change'));
+      expect(qualityField.hidden).toBe(false);
+      expect(quality.disabled).toBe(false);
+      expect(qualityValue.value).toBe('92%');
+    }
+
+    quality.value = '0.5';
+    quality.dispatchEvent(new Event('input'));
+    expect(qualityValue.value).toBe('50%');
+
+    // 切回 PNG 再次隐藏；提交值仍取当前滑块。
+    format.value = 'png';
+    format.dispatchEvent(new Event('change'));
+    expect(qualityField.hidden).toBe(true);
+    format.value = 'jpeg';
+    format.dispatchEvent(new Event('change'));
+    const submit = new Event('submit', { bubbles: true, cancelable: true });
+    form.dispatchEvent(submit);
+    expect(document.querySelector('.ofd-dialog')).toBeNull();
+    expect(host.calls).toContain('exportImage:jpeg:0.5');
+    dispose();
+  });
+
   it('导出对话框选择 OFD 后提交 exportOfd 且不读取图片范围', () => {
     const host = createFakeHost();
     const dispose = attachUIShell(host);
@@ -307,7 +359,7 @@ describe('内置 UI 接线', () => {
     (shell!.toolbar.getControl('export') as HTMLButtonElement).click();
     expect(document.querySelector('.ofd-dialog')).not.toBeNull();
     (document.querySelector('.ofd-dialog__action--primary') as HTMLButtonElement).click();
-    expect(host.calls).toContain('exportImage');
+    expect(host.calls).toContain('exportImage:png:0.92');
     (shell!.toolbar.getControl('signatures') as HTMLButtonElement).click();
     expect(host.calls).toContain('openSidebar:signatures');
 

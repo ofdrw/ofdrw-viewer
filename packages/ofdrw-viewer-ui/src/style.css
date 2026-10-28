@@ -2002,6 +2002,7 @@
 }
 
 .ofd-output-quality {
+  flex: 1;
   width: 100%;
   height: 24px;
   margin: 0;
@@ -2022,6 +2023,21 @@
 .ofd-output-quality:focus-visible {
   outline: 2px solid var(--ofd-accent);
   outline-offset: 2px;
+}
+
+/* 质量百分比数值：与滑块同行、右对齐 */
+.ofd-output-quality-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ofd-output-quality__value {
+  min-width: 40px;
+  color: var(--ofd-text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 /* 下拉可选值显式着色：dark 主题下浏览器默认弹层可能沿用白底导致文字不可读。 */
