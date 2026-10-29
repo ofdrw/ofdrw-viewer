@@ -172,7 +172,7 @@ ofd-viewer {
   font-size: 11px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-  /* 文案变为 “OFDRW-Viewer UI 0.1.4” 后在窄 dock 内允许自然换行，避免撑破布局。 */
+  /* 文案变为 “OFDRW-Viewer UI 0.1.5” 后在窄 dock 内允许自然换行，避免撑破布局。 */
   white-space: normal;
 }
 

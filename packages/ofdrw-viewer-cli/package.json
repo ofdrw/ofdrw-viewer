@@ -1,6 +1,6 @@
 {
   "name": "@ofdrw/ofdrw-viewer-cli",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "OFD 转图片命令行工具（@ofdrw/ofdrw-viewer-engine 的 Node 子包）",
   "license": "MIT",
   "type": "module",

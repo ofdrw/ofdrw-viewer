@@ -1,6 +1,6 @@
 {
   "name": "@ofdrw/ofdrw-viewer-ui",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "框架无关的 OFD 阅读器 UI（核心 + Web Component/React/Vue 薄适配）",
   "license": "MIT",
   "type": "module",

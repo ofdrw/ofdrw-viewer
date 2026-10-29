@@ -30,7 +30,7 @@ npm install @ofdrw/ofdrw-viewer-engine
 若您处于浏览器H5开发环境，我们建议您采用cdn 或 release预发布的离线安装，并使用标签引用：
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@ofdrw/ofdrw-viewer-engine@0.1.4/dist/ofdrw-viewer-engine.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@ofdrw/ofdrw-viewer-engine@0.1.5/dist/ofdrw-viewer-engine.min.js"></script>
 ```
 
 脚本加载成功后，引擎注册全局变量 `window.OFDRWViewer`。
