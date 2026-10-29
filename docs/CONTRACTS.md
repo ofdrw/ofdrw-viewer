@@ -48,7 +48,7 @@
 | --- | --- | --- | --- |
 | engine | `pnpm -C packages/ofdrw-viewer-engine build`（tsup + CDN） | `pnpm -C packages/ofdrw-viewer-engine test` | `test:golden`、`test:audit`、`typecheck` |
 | crypto | `pnpm -C packages/ofdrw-viewer-crypto build`（tsup + CDN） | `pnpm -C packages/ofdrw-viewer-crypto test` | `typecheck` |
-| UI | `pnpm -C packages/ofdrw-viewer-ui build` | `pnpm -C packages/ofdrw-viewer-ui test` | `typecheck`；Playwright 用包内 `playwright test` |
+| UI | `pnpm -C packages/ofdrw-viewer-ui build` | `pnpm -C packages/ofdrw-viewer-ui test` | `typecheck` |
 | CLI | `pnpm -C packages/ofdrw-viewer-cli build` | `pnpm -C packages/ofdrw-viewer-cli test` | `test:acceptance`、`build:sea`、`package:sea` |
 
 构建产物入口：engine、crypto 只有包根 ESM/CJS/类型入口；UI 另有 `./react`、`./vue`、`./element`、`./component`、`./style.css`；CLI 只有 `bin`，不作为库导入。各包 `tsconfig` 均开启 `strict`、`isolatedModules`、`verbatimModuleSyntax`；engine、crypto、CLI 的编译目标为 ES2022，UI 为 ES2020。
@@ -406,8 +406,6 @@ CLI 进程退出码：`0` 成功；`1` 用法/参数/路径/页码错误；`2` �
 | `packages/ofdrw-viewer-crypto/test/verification` | OpenSSL/Java 向量、证书 DER 边界、Node/browser 来源 |
 | `packages/ofdrw-viewer-crypto/test/fixtures/crypto` | 受保护 OFD、证书/私钥、manifest 与 SHA-256 |
 | `packages/ofdrw-viewer-ui/test/{unit,integration,verification}` | UI jsdom 单元、集成、独立验证 |
-| `packages/ofdrw-viewer-ui/test/e2e` | Playwright 真实 Chrome 端到端 |
-| `packages/ofdrw-viewer-ui/test/acceptance` | E2E fixture 生成与 Playwright 产物 |
 | `packages/ofdrw-viewer-cli/test/{unit,e2e,verification}` | CLI 单元、端到端、独立验证 |
 | `packages/ofdrw-viewer-cli/test/acceptance` | 构建后 CLI 与 SEA 黑盒验收 |
 | `packages/ofdrw-viewer-cli/test/fixtures` | CLI 字体/文档夹具 |

@@ -327,7 +327,7 @@ UI 依赖引擎提供：明文/容器打开、`pageCount`、`getPageInfos`、`ge
 
 构建目标是 ES2020。运行时依赖现代浏览器的 DOM、Canvas 2D、`AbortController`、`ResizeObserver`、Pointer Events 和 Fullscreen API；缺少 Fullscreen API 时使用沉浸式回退，缺少 `IntersectionObserver` 时缩略图改用滚动扫描，`requestIdleCallback` 缺失时用定时器回退。
 
-当前不附带 polyfill，也不承诺旧版 IE 或早期 WebView。桌面 Chromium/Edge、Android Chromium、iOS Safari 和信创 Chromium 的具体最低版本以实际验收环境为准；触摸缩放、打印分页和混合页尺寸打印需要在目标内核上回归。现有 Playwright 配置使用系统 Chrome，桌面视口 1440×900、移动视口 390×844，并覆盖 1024/768/480 断点；信创内核没有独立 CI 矩阵，发布前应在目标环境执行同一套打开、滚动、缩放、打印用例。跨域 URL 来源要求服务端允许 CORS、`Range` 并暴露 `Content-Range`；字体、图片和证书的读取同样受浏览器安全策略约束。
+当前不附带 polyfill，也不承诺旧版 IE 或早期 WebView。桌面 Chromium/Edge、Android Chromium、iOS Safari 和信创 Chromium 的具体最低版本以实际验收环境为准；触摸缩放、打印分页和混合页尺寸打印需要在目标内核上回归。浏览器验收使用桌面视口 1440×900、移动视口 390×844，并覆盖 1024/768/480 断点；信创内核没有独立 CI 矩阵，发布前应在目标环境执行同一套打开、滚动、缩放、打印用例。跨域 URL 来源要求服务端允许 CORS、`Range` 并暴露 `Content-Range`；字体、图片和证书的读取同样受浏览器安全策略约束。
 
 ## 安全、隐私与许可
 
@@ -341,6 +341,6 @@ UI 依赖引擎提供：明文/容器打开、`pageCount`、`getPageInfos`、`ge
 
 - 单元/集成测试：`pnpm -C packages/ofdrw-viewer-ui test`（Vitest，jsdom；覆盖源码别名，不依赖构建产物）。
 - 类型检查：`pnpm -C packages/ofdrw-viewer-ui typecheck`。
-- 浏览器验收：先 `pnpm -C packages/ofdrw-viewer-ui build`，再 `pnpm -C packages/ofdrw-viewer-ui exec playwright test`；使用系统 Chrome 和 `test/e2e` 真实 OFD 夹具，包含打开、翻页、缩放、旋转、布局、查找、输出、签章、验证、加载态、可访问性和 1000 页性能用例。
-- 夹具生成：`node test/acceptance/generate-fixtures.mjs`；Playwright `globalSetup` 会自动生成派生夹具。
+- 单元与集成测试：`pnpm -C packages/ofdrw-viewer-ui test`，覆盖打开、翻页、缩放、旋转、布局、查找、输出、签章、验证、加载态、可访问性与文本层选区。
+- 浏览器验收：仓库不保留 Playwright 测试。需要真实浏览器确认的交互（点击、拖选、双击缩放等）在本地临时用 Playwright 验证，取得证据后删除测试文件，结论写入提交说明或设计文档。约束见 [测试方案 §1.4](./测试方案.md)。
 - 跨模块测试矩阵和验收口径见 [测试方案](./测试方案.md)，不在本文重复。

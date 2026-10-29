@@ -17,7 +17,7 @@ const packageEntry = fileURLToPath(new URL('./src/index.ts', import.meta.url));
  * - 包内单测/集成测试：`packages/ofdrw-viewer-ui/test/`；
  * - 跨包集成测试：根目录 `test/ui/`。
  *
- * Playwright E2E（`test/e2e/`）不走 vitest，由独立脚本执行。
+ * 仓库不保留 Playwright 测试；浏览器交互验收在本地临时进行，见 docs/测试方案.md §1.4。
  * 源码统一通过包名别名引入，避免测试依赖尚未构建的 `dist`。
  */
 export default defineConfig({
