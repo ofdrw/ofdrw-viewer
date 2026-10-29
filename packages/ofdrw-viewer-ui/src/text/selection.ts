@@ -183,6 +183,8 @@ export class SelectionManager {
   private lastSnapshot: SelectionSnapshot | null = null;
   /** 本模块主动改 DOM 的抑制计数；仅在微任务窗口内非 0。 */
   private suppressDepth = 0;
+  /** 跨多帧抑制窗口的截止时刻，`performance.now()` 口径，单位毫秒；0 表示无。 */
+  private suppressUntil = 0;
   /** 快照版本号；每次建立或清空递增。 */
   private snapshotVersion = 0;
   /** 是否已销毁；阻止排队中的微任务在销毁后重建快照。 */
@@ -301,15 +303,37 @@ export class SelectionManager {
    * 标记本模块即将改动选区所在页的 DOM。
    *
    * 仅用于淘汰页、整页重建等会移除 span 的操作；抑制窗口在当前微任务结束时关闭。
-   * 用户显式取消（pointerdown/Escape/键盘）不经过该标志，永远优先。
+   * 窗口内只丢弃“与快照完全一致”的选区事件（DOM 副作用），用户真实的选区变化照常处理。
+   *
+   * @param untilReady 期望构建完成的时刻（`performance.now()` 口径，单位毫秒）；
+   * 默认在当前微任务末尾结束。分帧构建跨越多帧，传入后到该时刻为止都处于抑制窗口内。
    */
-  suppressSelectionChangeForDomMutation(): void {
+  suppressSelectionChangeForDomMutation(untilReady = 0): void {
     if (this.suppressDepth === 0) {
+      const deadline = Number.isFinite(untilReady) ? untilReady : 0;
+      const openedAt = nowMs();
       runMicrotask(() => {
+        if (deadline > openedAt) {
+          this.suppressUntil = deadline;
+          setTimeout(() => this.closeSuppressionWindow(deadline), Math.ceil(deadline - openedAt));
+          return;
+        }
         this.suppressDepth = 0;
       });
     }
     this.suppressDepth += 1;
+  }
+
+  /**
+   * 关闭跨多帧的抑制窗口；期间若发生构建重排（窗口已被替换）则忽略。
+   *
+   * @param deadline 该窗口的截止时刻，`performance.now()` 口径，单位毫秒。
+   */
+  private closeSuppressionWindow(deadline: number): void {
+    if (this.suppressUntil !== deadline) return;
+    this.suppressUntil = 0;
+    // 窗口可能因 DOM 副作用未派发 selectionchange 而错过真实变化：关闭时重算一次。
+    this.publishSelectionChange();
   }
 
   /**
@@ -463,9 +487,18 @@ export class SelectionManager {
       if (this.lastSnapshot) this.clearSnapshot('feature');
       return;
     }
-    // 本模块改 DOM 的微任务窗口内，事件可能只是 DOM 副作用，不重算旧快照。
-    if (this.suppressDepth > 0) return;
     const selection = this.doc?.getSelection?.() ?? null;
+    // 本模块改 DOM 的窗口内，与快照一致的选区变化只是 DOM 副作用（浏览器拆分/合并 span），
+    // 直接丢弃；不一致说明用户真的改了选区，必须立即按正常流程重建。
+    if (this.isSuppressionWindowOpen()) {
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+        if (this.lastSnapshot) return;
+      } else if (this.lastSnapshot && this.isSameSelectionAsSnapshot(selection)) {
+        return;
+      } else if (this.lastSnapshot && this.isSelectionDetached(selection)) {
+        return;
+      }
+    }
     if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
       // 折叠/无 Range 可能由淘汰页、append 构建或浏览器归一化造成，不据此清空。
       if (this.lastSnapshot) return;
@@ -667,6 +700,11 @@ export class SelectionManager {
     return fragments;
   }
 
+  /** 本模块是否正处于主动改 DOM 的抑制窗口内（微任务窗口或跨帧构建窗口）。 */
+  private isSuppressionWindowOpen(): boolean {
+    return this.suppressDepth > 0 || (this.suppressUntil > 0 && nowMs() < this.suppressUntil);
+  }
+
   /** 选区功能是否开启；关闭时快照必须失效。 */
   private selectionAvailable(): boolean {
     return (
@@ -788,6 +826,9 @@ export class SelectionManager {
     this.lastSnapshot = null;
     this.snapshotClearedReason = reason;
     this.snapshotVersion += 1;
+    // 跨帧抑制窗口只服务于仍然有效的快照；快照清空（用户取消或生命周期事件）后立即关闭，
+    // 否则用户马上建立的新选区会被窗口误判为 DOM 副作用。
+    this.suppressUntil = 0;
     if (removeNative) {
       const selection = this.doc?.getSelection?.() ?? null;
       if (selection?.rangeCount) selection.removeAllRanges();
@@ -1357,4 +1398,9 @@ function copyWithExecCommand(doc: Document, text: string): boolean {
   } finally {
     textarea.remove();
   }
+}
+
+/** 单调时钟，单位毫秒；无 performance 时回退 Date.now。 */
+function nowMs(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
 }

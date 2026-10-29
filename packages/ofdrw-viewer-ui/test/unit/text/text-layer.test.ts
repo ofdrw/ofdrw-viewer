@@ -1293,6 +1293,43 @@ describe('构建性能与分帧（t10）', () => {
     service.destroy();
   });
 
+  it('分帧构建期间推迟 pin 变更通知，构建收尾后统一通知一次（跨页选区滚动性能）', async () => {
+    const total = 2000;
+    const items = Array.from({ length: total }, (_, index) =>
+      makeItem({ text: 'a', x: 10, y: 100 + index * 2, size: 16, order: index }),
+    );
+    const content = makeContent(items);
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.stubGlobal('cancelAnimationFrame', () => undefined);
+    vi.spyOn(performance, 'now').mockReturnValue(0);
+    const host = makeFakeHost({ pageCount: 1, contents: new Map([[1, content]]) });
+    const pinsChanged = vi.fn();
+    Object.assign(host, { textLayerPinsChanged: pinsChanged });
+    const service = new TextLayerService(host, createViewerBridge(host));
+    const layer = host.getPageView(1)!.textLayer;
+    await vi.waitFor(() => expect(layer.childElementCount).toBe(700));
+    // 构建中：pin 页 span 增长不再逐帧通知核心，避免每帧触发淘汰、清空正在构建的页。
+    service.setPinnedPages([1]);
+    expect(service.isPageBuilding(1)).toBe(true);
+    expect(service.hasBuildingPage()).toBe(true);
+    expect(service.hasDeferredPinsNotification()).toBe(true);
+    expect(pinsChanged).not.toHaveBeenCalled();
+    while (layer.childElementCount < total) {
+      const frame = frames.shift();
+      expect(frame).toBeDefined();
+      frame!(performance.now());
+    }
+    // 构建结束后补发一次，核心据此按新的 span 数重新裁剪缓存。
+    expect(service.isPageBuilding(1)).toBe(false);
+    expect(service.hasDeferredPinsNotification()).toBe(false);
+    expect(pinsChanged).toHaveBeenCalledTimes(1);
+    service.destroy();
+  });
+
   it('释放页会取消未完成分帧并清理悬挂帧', async () => {
     const total = 2000;
     const items = Array.from({ length: total }, (_, index) =>

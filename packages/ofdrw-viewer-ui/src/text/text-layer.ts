@@ -145,8 +145,11 @@ export interface TextLayerServiceOptions {
    * 本服务即将改动选区所在页 DOM 前的回调；用于开启 selectionchange 抑制窗口。
    *
    * 只在淘汰页、整页重建等会移除 span 的操作前调用。
+   *
+   * @param untilReady 期望构建完成的时刻（`performance.now()` 口径，单位毫秒）；
+   * 0 表示本服务即将移除 span，抑制窗口只需覆盖当前微任务。
    */
-  readonly onDomMutation?: () => void;
+  readonly onDomMutation?: (untilReady: number) => void;
 }
 
 /** 滚动容器识别结果；`element` 为 null 时退化为窗口可视区。 */
@@ -286,7 +289,7 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
   /** 单页 span 上限；0 表示不限。 */
   private readonly maxSpans: number;
   /** DOM 变更前的选区抑制回调。 */
-  private readonly onDomMutation: (() => void) | null;
+  private readonly onDomMutation: ((untilReady: number) => void) | null;
   /** 当前 pin 的端点页（1-based）。 */
   private pinnedPages = new Set<number>();
   /** 当前 pin 页持有的 span 数。 */
@@ -303,6 +306,8 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
   private lastRotation = -1;
   /** 上一次可见页范围与当前页，用于识别跳页。 */
   private lastVisibleKey = '';
+  /** 分帧构建期间被推迟的 pin 变更通知。 */
+  private pinsNotificationDeferred = false;
 
   /**
    * @param host 阅读器能力集合。
@@ -523,6 +528,7 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
   destroy(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.pinsNotificationDeferred = false;
     for (const cleanup of this.cleanups.splice(0)) cleanup();
     for (const state of this.pages.values()) {
       this.cancelPageBuild(state);
@@ -1122,7 +1128,9 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
     if (state.domBuilt || !state.rows || state.build) return;
     const layer = view.textLayer;
     if (!layer) return;
-    this.onDomMutation?.();
+    // 分帧构建会跨多帧不断提交新 span；按“剩余 span 数 × 单帧预算”估算完成时刻，
+    // 让选区模块在整段构建期间都认为这些 DOM 变更是程序副作用。
+    this.onDomMutation?.(this.estimateBuildEndAt(state));
     replaceChildren(layer);
     state.spanCount = 0;
     state.domBuilt = false;
@@ -1178,7 +1186,9 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
     }
     if (appended > 0) layer.appendChild(fragment);
     state.spanCount = task.spanCount;
-    if (this.pinnedPages.has(pageNumber)) this.refreshPinnedSpanCount();
+    // 构建期间 pin 的 span 数持续变化；此时通知核心会立即触发缓存淘汰，可能把正在构建的
+    // 可见页文本层清空并取消构建，所以推迟到全部构建结束再统一通知。
+    if (this.pinnedPages.has(pageNumber)) this.refreshPinnedSpanCount(false);
     if (task.rowIndex < rows.length) {
       task.frame = requestFrame(() => {
         task.frame = null;
@@ -1208,7 +1218,7 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
     state.spanCount = task.spanCount;
     const layer = view.textLayer;
     if (layer) this.applyTextLayerGeometry(layer, pageNumber, view, state.content?.dpi ?? 96);
-    if (this.pinnedPages.has(pageNumber)) this.refreshPinnedSpanCount();
+    if (this.pinnedPages.has(pageNumber)) this.refreshPinnedSpanCount(false);
     if (task.truncated) {
       this.bridge.warn(
         W_TEXT_LAYER_CAP,
@@ -1217,9 +1227,39 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
       );
     }
     this.host.textLayerPageBuilt?.(pageNumber);
-    this.host.textLayerPinsChanged?.();
+    this.notifyPinsChanged();
     // 页可能从 LRU 淘汰后重建；缓存模型仍有效时把该页高亮补回来。
     if (this.lastSelectionModel) this.renderSelectionFromModel();
+  }
+
+  /**
+   * 通知核心 pin 集合或 pin 页 span 数变化，使页级缓存重新裁剪。
+   *
+   * 分帧构建期间只记为待通知，等所有页构建结束、取消或服务销毁时统一发送；
+   * 否则每次提交新 span 都会触发一次淘汰，可能清空正在构建页的文本层。
+   */
+  private notifyPinsChanged(): void {
+    if (this.hasBuildingPage()) {
+      this.pinsNotificationDeferred = true;
+      return;
+    }
+    this.pinsNotificationDeferred = false;
+    this.host.textLayerPinsChanged?.();
+  }
+
+  /**
+   * 估算该页分帧构建的完成时刻。
+   *
+   * 单帧最多提交 {@link BUILD_FRAME_SPAN_COUNT} 个 span 且不超过 {@link BUILD_FRAME_BUDGET_MS}，
+   * 帧间隔与提交耗时同量级，因此按“span 数 / 每帧 span 数 + 1”帧 × 单帧预算估算。
+   *
+   * @param state 页文字层状态。
+   * @returns 预计完成时刻，`performance.now()` 口径，单位毫秒。
+   */
+  private estimateBuildEndAt(state: PageTextState): number {
+    const spanCount = state.rows?.reduce((total, row) => total + row.spans.length, 0) ?? 0;
+    const frames = Math.ceil(spanCount / BUILD_FRAME_SPAN_COUNT) + 1;
+    return nowMs() + frames * BUILD_FRAME_BUDGET_MS * 2;
   }
 
   /** 判断分帧任务是否仍属于当前页与当前代次。 */
@@ -1239,6 +1279,11 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
     if (state.build.frame !== null) cancelFrame(state.build.frame);
     state.build.frame = null;
     state.build = null;
+    // 构建被取消后推迟的 pin 通知可能已无后续收尾，这里补发一次。
+    if (this.pinsNotificationDeferred && !this.hasBuildingPage()) {
+      this.pinsNotificationDeferred = false;
+      this.host.textLayerPinsChanged?.();
+    }
   }
 
   /**
@@ -1378,6 +1423,29 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
     );
   }
 
+  /** 是否存在正在分帧构建的页。 */
+  hasBuildingPage(): boolean {
+    for (const state of this.pages.values()) {
+      if (state.build) return true;
+    }
+    return false;
+  }
+
+  /** 是否存在被推迟的 pin 变更通知；供核心在淘汰前补发。 */
+  hasDeferredPinsNotification(): boolean {
+    return this.pinsNotificationDeferred;
+  }
+
+  /**
+   * 指定页是否正在分帧构建；核心淘汰时据此跳过其文字层。
+   *
+   * @param pageNumber 页码，1-based。
+   * @returns 构建中为 true。
+   */
+  isPageBuilding(pageNumber: number): boolean {
+    return this.pages.get(pageNumber)?.build != null;
+  }
+
   /** 读取当前 pin 端点页（1-based），供核心淘汰时跳过。 */
   getPinnedPages(): readonly number[] {
     return [...this.pinnedPages].sort((a, b) => a - b);
@@ -1403,9 +1471,10 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
     if (spanCount > this.selectionPinSpanBudget) {
       return false;
     }
+    const changed = !samePageSet(this.pinnedPages, next) || this.pinnedSpans !== spanCount;
     this.pinnedPages = next;
     this.pinnedSpans = spanCount;
-    this.host.textLayerPinsChanged?.();
+    if (changed) this.notifyPinsChanged();
     return true;
   }
 
@@ -1416,10 +1485,14 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
     return total;
   }
 
-  /** pin 页的 span 数变化后重算；超预算则解除 pin 并通知选区清空。 */
-  private refreshPinnedSpanCount(): void {
+  /**
+   * pin 页的 span 数变化后重算；超预算则解除 pin 并通知选区清空。
+   *
+   * @param notify 是否立即通知核心重新裁剪；分帧构建期间传 false，由收尾统一通知。
+   */
+  private refreshPinnedSpanCount(notify = true): void {
     this.pinnedSpans = this.pinnedSpanCountOf(this.pinnedPages);
-    this.host.textLayerPinsChanged?.();
+    if (notify) this.notifyPinsChanged();
     if (this.pinnedSpans > this.selectionPinSpanBudget) {
       this.discardPinnedSelection();
     }
@@ -1435,7 +1508,7 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
     if (this.pinnedPages.size === 0) return;
     this.pinnedPages.clear();
     this.pinnedSpans = 0;
-    this.host.textLayerPinsChanged?.();
+    this.notifyPinsChanged();
     this.bridge.warn(
       W_SELECTION_UNPINNABLE,
       '选区端点页文本量在构建中超过 pin 预算，已清空选区，请缩小选择范围。',
@@ -1451,7 +1524,8 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
    * @param preserveSelectionLayer 是否保留选区层（快照仍覆盖该页时）。
    */
   private clearPageTextLayer(pageNumber: number, preserveSelectionLayer = false): void {
-    this.onDomMutation?.();
+    // 这里只是移除 span，抑制窗口只需覆盖当前微任务。
+    this.onDomMutation?.(0);
     const state = this.pages.get(pageNumber);
     if (state) {
       this.cancelPageBuild(state);
@@ -1616,6 +1690,15 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
     layer?.remove();
     this.findLayers.delete(pageNumber);
   }
+}
+
+/** 判断两个页码集合是否相同。 */
+function samePageSet(first: ReadonlySet<number>, second: ReadonlySet<number>): boolean {
+  if (first.size !== second.size) return false;
+  for (const pageNumber of first) {
+    if (!second.has(pageNumber)) return false;
+  }
+  return true;
 }
 
 /** 选区模型的首尾页（1-based）；空模型返回空数组。 */

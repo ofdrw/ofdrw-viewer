@@ -799,7 +799,7 @@ describe('SelectionSnapshot 复制与高亮不依赖 DOM 存活性（t14）', ()
     let manager: SelectionManager | null = null;
     const textLayer = new TextLayerService(host, createViewerBridge(host), {
       settleMs: 0,
-      onDomMutation: () => manager?.suppressSelectionChangeForDomMutation(),
+      onDomMutation: (untilReady) => manager?.suppressSelectionChangeForDomMutation(untilReady),
     });
     manager = new SelectionManager(host, createViewerBridge(host), textLayer);
     await vi.waitFor(() => {
@@ -1068,6 +1068,37 @@ describe('SelectionSnapshot 复制与高亮不依赖 DOM 存活性（t14）', ()
     document.body.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }));
     expect(manager.getSelectionSnapshot()).toBeNull();
     expect(document.getSelection()?.rangeCount ?? 0).toBe(0);
+    manager.destroy();
+    textLayer.destroy();
+  });
+
+  it('抑制窗口内用户新选区仍生效；与快照一致的 DOM 副作用事件被丢弃（跨页选区性能）', async () => {
+    const { host, manager, textLayer } = await setupSnapshot();
+    const pageOne = textNodeOf(host, 1, 0);
+    select(pageOne, 0, pageOne, 2);
+    document.dispatchEvent(new Event('selectionchange'));
+    await flushSelection();
+    const first = manager.getSelectionSnapshot()!;
+    expect(first.text.length).toBeGreaterThan(0);
+
+    // 跨帧抑制窗口（分帧构建期间）打开后，用户真实的新选区必须立即生效。
+    manager.suppressSelectionChangeForDomMutation(performance.now() + 1000);
+    select(pageOne, 2, pageOne, 5);
+    document.dispatchEvent(new Event('selectionchange'));
+    await flushSelection();
+    const second = manager.getSelectionSnapshot()!;
+    expect(second).not.toBe(first);
+    expect(second.version).toBeGreaterThan(first.version);
+
+    // 与快照完全一致的选区事件只是程序改 DOM 的副作用：不得重复重建快照。
+    document.dispatchEvent(new Event('selectionchange'));
+    await flushSelection();
+    expect(manager.getSelectionSnapshot()).toBe(second);
+
+    // 用户在抑制窗口内点击空白：显式意图优先，选区与块状高亮立即清空。
+    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+    expect(manager.getSelectionSnapshot()).toBeNull();
+    expect(document.querySelectorAll('.ofd-selection-rect')).toHaveLength(0);
     manager.destroy();
     textLayer.destroy();
   });

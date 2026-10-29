@@ -204,6 +204,12 @@ export interface ViewerTextLayerService {
   getPinnedPages?(): readonly number[];
   /** 指定页是否仍持有文本数据；页级 LRU 的淘汰候选。 */
   hasTextData?(pageNumber: number): boolean;
+  /** 指定页是否正在分帧构建文字层；构建中的页不参与文本层淘汰。 */
+  isPageBuilding?(pageNumber: number): boolean;
+  /** 是否存在正在分帧构建的页。 */
+  hasBuildingPage?(): boolean;
+  /** 是否存在被推迟的 pin 变更通知。 */
+  hasDeferredPinsNotification?(): boolean;
 }
 
 /** 签章服务；由签章模块实现。 */
@@ -538,6 +544,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private scrollFrame: number | null = null;
   private reflowFrame: number | null = null;
   private lastVisibleRange = { start: 0, end: -1 };
+  /** 文字层分帧构建期间被推迟的缓存裁剪；构建结束时补执行一次。 */
+  private trimDeferred = false;
   private scrollListenerBound = false;
   /** 主区域滚动回调；只做 rAF 合并，实际更新在 `handleScroll` 中完成。 */
   private readonly onScroll = (): void => this.scheduleScrollUpdate();
@@ -2591,12 +2599,46 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /** 文本层整页构建完成：把它纳入页级缓存并裁剪。 */
   textLayerPageBuilt(pageNumber: number): void {
     void pageNumber;
+    // 最后一个构建页结束（含 build 状态已被清空）时，之前被推迟的裁剪在这里补执行。
+    if (this.deferTrimWhileBuilding()) return;
     this.trimCache();
   }
 
-  /** 选区 pin 集合变化：重新裁剪，释放不再 pin 的页。 */
+  /**
+   * 选区 pin 集合变化：重新裁剪，释放不再 pin 的页。
+   *
+   * 分帧构建期间只标记待裁剪，等构建结束再执行：此时淘汰可能清空正在构建页的
+   * 文字层并取消构建，使构建永远无法完成，滚动期每帧重建 DOM。
+   */
   textLayerPinsChanged(): void {
+    if (this.deferTrimWhileBuilding()) return;
     this.trimCache();
+  }
+
+  /**
+   * 文字层仍在构建时推迟缓存裁剪。
+   *
+   * 需要同时看“当前是否仍有构建中的页”和“是否有被推迟的通知”：最后一个构建页结束的那一刻
+   * 构建标记已清除，但此前推迟的裁剪还没执行，两者缺一都会漏掉补裁剪。
+   *
+   * @returns 已推迟时 true，调用方不得继续裁剪。
+   */
+  private deferTrimWhileBuilding(): boolean {
+    if (this.isTextLayerBuilding()) {
+      this.trimDeferred = true;
+      return true;
+    }
+    this.trimDeferred = false;
+    return false;
+  }
+
+  /** 文字层是否仍有构建中的页，或还有被推迟的 pin 变更通知。 */
+  private isTextLayerBuilding(): boolean {
+    const service = this.services.textLayer;
+    return (
+      service?.hasBuildingPage?.() === true ||
+      service?.hasDeferredPinsNotification?.() === true
+    );
   }
 
   /** 选区 pin 在分帧构建中超出预算：文本层已解 pin 并告警，这里清空选区。 */
@@ -3439,6 +3481,17 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       if (position >= 0) this.renderOrder.splice(position, 1);
     }
 
+    // 文字层仍在分帧构建时，页数与 span 两类淘汰会清空构建中的可见页、永久打断构建；
+    // 这两类淘汰只涉及不可见页，推迟到构建结束不会超预算，因此本轮只处理 canvas 像素。
+    if (this.isTextLayerBuilding()) {
+      // 仍推迟页数与 span 两类淘汰；canvas 像素预算照常执行，避免像素无限增长。
+      this.trimDeferred = true;
+      this.trimCanvasOverBudget(visible, pinned);
+      this.releaseBuildingPageCanvases(visible, pinned);
+      return;
+    }
+    this.trimDeferred = false;
+
     let cached = this.cachedPageIndices();
     const visibleCount = Math.max(1, visible.end - visible.start + 1);
     const baseLimit = Math.max(1, this.options.pageCacheSize, visibleCount * 2 + 1);
@@ -3467,11 +3520,59 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     }
 
     // canvas 像素预算：只释放不可见、未 pin 的页；可见页即使超预算也保留。
+    this.trimCanvasOverBudget(visible, pinned);
+  }
+
+  /**
+   * 释放超出像素预算的不可见页。
+   *
+   * @param visible 当前可见页范围（0-based，含端点）。
+   * @param pinned 选区端点 pin 的页索引集合。
+   */
+  private trimCanvasOverBudget(
+    visible: { readonly start: number; readonly end: number },
+    pinned: ReadonlySet<number>,
+  ): void {
     let total = this.renderedPixelTotal();
     while (total > this.options.pageCachePixelBudget) {
       const index = this.evictCandidate(this.renderOrder, visible, pinned);
       if (index === undefined) return;
       total -= this.releaseCachedPage(index);
+    }
+  }
+
+  /**
+   * 释放构建中页的 canvas，但保留其文字层与构建进度。
+   *
+   * 推迟裁剪期间这类页无法整页淘汰，若不单独释放画布，像素预算会被持续占用。
+   *
+   * @param visible 当前可见页范围（0-based，含端点）。
+   * @param pinned 选区端点 pin 的页索引集合。
+   */
+  private releaseBuildingPageCanvases(
+    visible: { readonly start: number; readonly end: number },
+    pinned: ReadonlySet<number>,
+  ): void {
+    const service = this.services.textLayer;
+    let total = this.renderedPixelTotal();
+    while (total > this.options.pageCachePixelBudget) {
+      let index: number | undefined;
+      let bestDistance = -1;
+      for (const candidate of this.renderOrder) {
+        if (candidate >= visible.start && candidate <= visible.end) continue;
+        if (pinned.has(candidate)) continue;
+        if (service?.isPageBuilding?.(candidate + 1) !== true) continue;
+        const distance =
+          candidate < visible.start ? visible.start - candidate : candidate - visible.end;
+        if (distance > bestDistance) {
+          bestDistance = distance;
+          index = candidate;
+        }
+      }
+      if (index === undefined) return;
+      const pixels = this.pageViews[index]?.canvasPixelCount ?? 0;
+      this.pageViews[index]?.releaseCanvas();
+      total -= pixels;
     }
   }
 
@@ -3511,11 +3612,14 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     visible: { readonly start: number; readonly end: number },
     pinned: ReadonlySet<number>,
   ): number | undefined {
+    const service = this.services.textLayer;
     let selected: number | undefined;
     let bestDistance = -1;
     for (const index of candidates) {
       if (index >= visible.start && index <= visible.end) continue;
       if (pinned.has(index)) continue;
+      // 构建中的页一旦释放文字层就会丢失构建进度，不参与淘汰。
+      if (service?.isPageBuilding?.(index + 1) === true) continue;
       const distance = index < visible.start ? visible.start - index : index - visible.end;
       if (distance > bestDistance) {
         bestDistance = distance;

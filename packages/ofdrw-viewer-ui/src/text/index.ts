@@ -38,7 +38,7 @@ export function attachTextModule(viewer: OFDViewer): () => void {
   const textLayer = new TextLayerService(host, bridge, {
     ...viewer.getTextLayerOptions(),
     // 淘汰页/整页重建前开启抑制窗口，避免 DOM 副作用清空快照。
-    onDomMutation: () => selection?.suppressSelectionChangeForDomMutation(),
+    onDomMutation: (untilReady) => selection?.suppressSelectionChangeForDomMutation(untilReady),
   });
   selection = new SelectionManager(host, bridge, textLayer);
   const find = new FindController(host, bridge, textLayer);
