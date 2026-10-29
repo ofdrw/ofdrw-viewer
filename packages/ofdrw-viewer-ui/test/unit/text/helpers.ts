@@ -27,8 +27,17 @@ import {
   type VisiblePageRange,
 } from '../../../src/state';
 import type { ViewerEventMap, ViewerEventHandler, ViewerEventName } from '../../../src/types';
-import type { TextViewerHost } from '../../../src/text/viewer-bridge';
-import { MM_PER_INCH } from '../../../src/text/geometry';
+import type {
+  TextViewerHost,
+  ViewerTextLayerServiceLike,
+} from '../../../src/text/viewer-bridge';
+import type { CharRef, TextRow } from '../../../src/text/geometry';
+import {
+  buildTextRows,
+  cssScaleForDpi,
+  MM_PER_INCH,
+  rowIdOfRef,
+} from '../../../src/text/geometry';
 
 /** 生成单个字符的文本内容。 */
 export function makeChar(
@@ -451,4 +460,70 @@ export function makeFakeHost(options: FakeHostOptions = {}): FakeHost {
 /** 构造可见页范围。 */
 export function range(start: number, end: number): VisiblePageRange {
   return { start, end };
+}
+
+/** 文本层查询替身的页缓存。 */
+interface QueryPageState {
+  /** item 列表。 */
+  readonly items: TextContent['items'];
+  /** 行划分。 */
+  readonly rows: readonly TextRow[];
+  /** 主轴方向，单位弧度。 */
+  readonly axisRowRad: number;
+  /** 引擎 px → 96 DPI CSS px 的换算系数。 */
+  readonly scale: number;
+}
+
+/**
+ * 构造文本层查询替身（`getCharQuads` / `getRowIdOf` / `getAxisRowRad`）。
+ *
+ * 与 `TextLayerService` 共用 `buildTextRows()` 与 `rowIdOfRef()`，语义一致；供需要
+ * 同步读取选区模型的用例使用，真实服务的查询行为另由 text-layer 用例覆盖。
+ *
+ * @param contents 按页提供的文本内容（页码 1-based）。
+ * @returns 文本层查询服务替身。
+ */
+export function makeTextLayerQuery(
+  contents: ReadonlyMap<number, TextContent>,
+): ViewerTextLayerServiceLike {
+  const cache = new Map<number, QueryPageState | null>();
+  const stateOf = (pageNumber: number): QueryPageState | null => {
+    if (!cache.has(pageNumber)) {
+      const content = contents.get(pageNumber);
+      if (!content) {
+        cache.set(pageNumber, null);
+      } else {
+        const layout = buildTextRows(content);
+        cache.set(pageNumber, {
+          items: content.items ?? [],
+          rows: layout.rows,
+          axisRowRad: layout.axisRowRad,
+          scale: cssScaleForDpi(content.dpi),
+        });
+      }
+    }
+    return cache.get(pageNumber) ?? null;
+  };
+  return {
+    refresh: () => undefined,
+    destroy: () => undefined,
+    getAxisRowRad(pageNumber: number): number | null {
+      return stateOf(pageNumber)?.axisRowRad ?? null;
+    },
+    getRowIdOf(pageNumber: number, ref: CharRef): string | null {
+      const state = stateOf(pageNumber);
+      return state ? rowIdOfRef(state.rows, ref) : null;
+    },
+    getCharQuads(pageNumber: number, refs: readonly CharRef[]) {
+      const state = stateOf(pageNumber);
+      return refs.map((ref) => {
+        const char = state?.items[ref.itemIndex]?.chars?.[ref.charIndex];
+        if (!state || !char) return null;
+        return char.quad.map((point) => ({
+          x: point.x * state.scale,
+          y: point.y * state.scale,
+        })) as unknown as TextQuad;
+      });
+    },
+  };
 }

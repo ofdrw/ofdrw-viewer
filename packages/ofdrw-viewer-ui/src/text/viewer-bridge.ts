@@ -14,9 +14,16 @@
 
 import type { EnginePage } from '../document-controller';
 import type { ViewerFeature, ViewerFeatureStates } from '../features';
-import type { PageInfo, TextContent, TextContentOptions } from '@ofdrw/ofdrw-viewer-engine';
+import type {
+  PageInfo,
+  TextContent,
+  TextContentOptions,
+  TextQuad,
+} from '@ofdrw/ofdrw-viewer-engine';
 import type { PageView } from '../page-view';
 import type { FindState, Rotation, ViewerState } from '../state';
+import type { CharRef } from './geometry';
+import type { SelectionModel } from './selection';
 import type {
   SelectionChangeEvent,
   ViewerEventMap,
@@ -54,6 +61,17 @@ export interface TextViewerHost {
   goToPage(pageNumber: number, options?: { readonly smooth?: boolean }): void;
   /** 阅读器根节点；用于监听原生选区。 */
   getRoot?(): HTMLElement;
+  /** 页文本层构建完成后通知核心更新页级缓存（可选）。 */
+  textLayerPageBuilt?(pageNumber: number): void;
+  /** 选区 pin 集合变化后通知核心重新裁剪缓存（可选）。 */
+  textLayerPinsChanged?(): void;
+  /**
+   * 分帧构建中选区 pin 的 span 数超出预算时通知核心清空选区（可选）。
+   *
+   * 文本层会先解除 pin 并发出 `W_SELECTION_UNPINNABLE`；若宿主持有选区快照，
+   * 应在此清空，避免用户看到已失效的高亮。
+   */
+  textLayerPinBudgetExceeded?(): void;
 }
 
 /** 核心内部可用的写入口；仅做“存在即使用”的运行时探测。 */
@@ -70,6 +88,48 @@ export interface ViewerTextLayerServiceLike {
   refresh(): void;
   /** 销毁。 */
   destroy(): void;
+  /**
+   * 返回指定字符在 96 DPI 文本层坐标系中的四边形。
+   *
+   * @param pageNumber 页码，1-based。
+   * @param refs 字符引用。
+   * @returns 与 `refs` 等长的四边形数组；字符缺失或页文本未就绪时为 null。
+   */
+  getCharQuads(pageNumber: number, refs: readonly CharRef[]): (TextQuad | null)[];
+  /**
+   * 返回指定字符所属行的稳定标识。
+   *
+   * @param pageNumber 页码，1-based。
+   * @param ref 字符引用。
+   * @returns 行标识；无法判定时返回 null。
+   */
+  getRowIdOf(pageNumber: number, ref: CharRef): string | null;
+  /**
+   * 返回指定页的行主轴方向。
+   *
+   * @param pageNumber 页码，1-based。
+   * @returns 主轴方向，单位弧度；页文本未就绪时返回 null。
+   */
+  getAxisRowRad(pageNumber: number): number | null;
+  /**
+   * 按选区模型/快照重绘块状选区层；`legacy` 模式恢复浏览器原生高亮。
+   *
+   * 查询替身可省略该能力；省略时不产生块状高亮，不影响选区文本抽取。
+   *
+   * @param model 统一选区模型或完整快照；空片段表示清空。
+   */
+  renderSelection?(model: SelectionModel): void;
+  /**
+   * 更新选区端点页 pin 集合。
+   *
+   * @param pages 端点页页码（1-based）；空数组表示释放全部 pin。
+   * @returns pinned span 是否在上限内；false 表示调用方应清空选区。
+   */
+  setPinnedPages?(pages: readonly number[]): boolean;
+  /** 读取当前 pin 页集合（1-based）。 */
+  getPinnedPages?(): readonly number[];
+  /** 释放指定页的文本层 DOM 与页数据；由核心缓存淘汰调用。 */
+  releasePage?(pageNumber: number): void;
 }
 
 /** 文本模块使用的核心状态/事件桥。 */

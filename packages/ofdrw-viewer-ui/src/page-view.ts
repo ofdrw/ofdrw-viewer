@@ -787,6 +787,23 @@ export class PageView {
     this.textLayer.hidden = !visible;
   }
 
+  /** 当前文本层中的 span 数量；页级缓存据此核算 span 预算。 */
+  get textSpanCount(): number {
+    return this.textLayer.childElementCount;
+  }
+
+  /**
+   * 释放本页文本层 DOM；页被缓存淘汰时调用。
+   *
+   * 只清 DOM 与可选属性，不销毁页视图；再次进入可见集时由文本层服务重建。
+   */
+  releaseTextLayer(): void {
+    replaceChildren(this.textLayer);
+    this.textLayer.removeAttribute('data-dpi');
+    this.textLayer.removeAttribute('data-selectable');
+    this.textLayer.style.pointerEvents = 'none';
+  }
+
   /**
    * 显示/隐藏签章覆盖层；features.signatures=false 时隐藏。
    *

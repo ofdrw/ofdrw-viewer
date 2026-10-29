@@ -34,8 +34,13 @@ export interface TextViewerAttachHost extends TextViewerHost {
 export function attachTextModule(viewer: OFDViewer): () => void {
   const host = viewer as unknown as TextViewerAttachHost;
   const bridge = createViewerBridge(host);
-  const textLayer = new TextLayerService(host, bridge);
-  const selection = new SelectionManager(host, bridge);
+  let selection: SelectionManager | null = null;
+  const textLayer = new TextLayerService(host, bridge, {
+    ...viewer.getTextLayerOptions(),
+    // 淘汰页/整页重建前开启抑制窗口，避免 DOM 副作用清空快照。
+    onDomMutation: () => selection?.suppressSelectionChangeForDomMutation(),
+  });
+  selection = new SelectionManager(host, bridge, textLayer);
   const find = new FindController(host, bridge, textLayer);
 
   // 核心只有一个 find 服务槽：查找与选区方法统一在这层对象上转发。
@@ -78,6 +83,11 @@ installTextModule(registerViewerExtension);
 export { FindController } from './find-controller';
 export type { FindControllerOptions } from './find-controller';
 export { SelectionManager } from './selection';
+export type {
+  SelectionFragment,
+  SelectionModel,
+  SelectionSnapshot,
+} from './selection';
 export { TextLayerService, createTextSpan } from './text-layer';
 export type { TextLayerServiceOptions } from './text-layer';
 export { createViewerBridge, textContentOptions } from './viewer-bridge';
@@ -86,11 +96,19 @@ export type {
   ViewerBridge,
   ViewerTextLayerServiceLike,
 } from './viewer-bridge';
-export { MAX_TEXT_LAYER_NODES, TEXT_LAYER_DPI, buildTextLayerSpecs } from './geometry';
+export {
+  MAX_TEXT_LAYER_NODES,
+  TEXT_LAYER_DPI,
+  buildTextLayerSpecs,
+  buildTextRows,
+  buildTextRowsFromSpecs,
+} from './geometry';
 export type {
   BuildTextLayerOptions,
   HighlightBox,
   TextLayerSpecs,
+  TextRow,
+  TextRowLayout,
   TextSpanSpec,
 } from './geometry';
 export type { FindHighlightRenderer, FindMatch, SliceScheduler } from './types';

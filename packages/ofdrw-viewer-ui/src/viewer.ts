@@ -198,6 +198,12 @@ export interface ViewerTextLayerService {
   refresh?(): void;
   /** 销毁。 */
   destroy?(): void;
+  /** 释放指定页文本层；页缓存淘汰时调用。 */
+  releasePage?(pageNumber: number): void;
+  /** 读取选区端点页 pin 集合（1-based）。 */
+  getPinnedPages?(): readonly number[];
+  /** 指定页是否仍持有文本数据；页级 LRU 的淘汰候选。 */
+  hasTextData?(pageNumber: number): boolean;
 }
 
 /** 签章服务；由签章模块实现。 */
@@ -837,6 +843,21 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /** 核心创建的结构元素；供 UI/扩展模块挂载。 */
   getElements(): UIShellElements {
     return this.elements;
+  }
+
+  /**
+   * 文本层服务选项；把构造选项解析后的预算传给文本模块。
+   *
+   * @returns 选区 pin 预算与单页 span 上限。
+   */
+  getTextLayerOptions(): {
+    selectionPinSpanBudget: number;
+    textLayerMaxSpans: number;
+  } {
+    return {
+      selectionPinSpanBudget: this.options.selectionPinSpanBudget,
+      textLayerMaxSpans: this.options.textLayerMaxSpans,
+    };
   }
 
   /** 当前总页数。 */
@@ -2567,6 +2588,23 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     return this.attachService('textLayer', service);
   }
 
+  /** 文本层整页构建完成：把它纳入页级缓存并裁剪。 */
+  textLayerPageBuilt(pageNumber: number): void {
+    void pageNumber;
+    this.trimCache();
+  }
+
+  /** 选区 pin 集合变化：重新裁剪，释放不再 pin 的页。 */
+  textLayerPinsChanged(): void {
+    this.trimCache();
+  }
+
+  /** 选区 pin 在分帧构建中超出预算：文本层已解 pin 并告警，这里清空选区。 */
+  textLayerPinBudgetExceeded(): void {
+    if (!this.state.ui.features.selection?.enabled) return;
+    this.services.find?.clearSelection?.();
+  }
+
   /**
    * 挂载签章服务。
    *
@@ -3385,34 +3423,110 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   }
 
   /**
-   * 释放超出缓存数量或超出总像素预算且不可见的 canvas。
+   * 释放超出页数、文本 span 或 canvas 像素预算且不可见的页。
    *
-   * 高倍率下单页画布可达上百 MP，仅按页数裁剪会让内存迅速膨胀；这里同时对已渲染
-   * 页的总像素计数，超预算时先释放离可见区最远的页。
+   * 文本层与 canvas 共用同一页级缓存：淘汰一页时同时释放两种产物；可见页与选区
+   * 端点 pin 页永不淘汰。pin 页不可见时只释放 canvas，保留 span 供选区高亮/复制。
    */
   private trimCache(): void {
     const visible = this.lastVisibleRange;
-    const budget = Math.max(1, this.options.pageCachePixelBudget);
-    while (this.renderOrder.length > this.options.pageCacheSize) {
-      const index = this.renderOrder.find(
-        (candidate) => candidate < visible.start || candidate > visible.end,
-      );
-      if (index === undefined) return;
-      this.releaseCachedPage(index);
+    const pinned = this.pinnedPageIndices();
+    // pin 页不可见时释放 canvas，避免其像素继续占用预算；文本 span 保留。
+    for (const index of pinned) {
+      if (index >= visible.start && index <= visible.end) continue;
+      this.pageViews[index]?.releaseCanvas();
+      const position = this.renderOrder.indexOf(index);
+      if (position >= 0) this.renderOrder.splice(position, 1);
     }
+
+    let cached = this.cachedPageIndices();
+    const visibleCount = Math.max(1, visible.end - visible.start + 1);
+    const baseLimit = Math.max(1, this.options.pageCacheSize, visibleCount * 2 + 1);
+    const pageLimit = baseLimit + pinned.size;
+    while (cached.length > pageLimit) {
+      const index = this.evictCandidate(cached, visible, pinned);
+      if (index === undefined) break;
+      this.releaseCachedPage(index);
+      cached = this.cachedPageIndices();
+    }
+
+    // 文本 span 预算与 pin 分账：pin 页的 span 不占用滚动预算。
+    let spanTotal = 0;
+    for (const index of cached) {
+      if (pinned.has(index)) continue;
+      spanTotal += this.pageViews[index]?.textSpanCount ?? 0;
+    }
+    const spanBudget = this.textSpanBudget();
+    while (spanBudget > 0 && spanTotal > spanBudget) {
+      const index = this.evictCandidate(cached, visible, pinned);
+      if (index === undefined) break;
+      const released = this.pageViews[index]?.textSpanCount ?? 0;
+      this.releaseCachedPage(index);
+      spanTotal -= released;
+      cached = this.cachedPageIndices();
+    }
+
+    // canvas 像素预算：只释放不可见、未 pin 的页；可见页即使超预算也保留。
     let total = this.renderedPixelTotal();
-    // 只释放不可见页，可见页即使超预算也必须保留，否则滚动时会反复重绘。
-    while (total > budget) {
-      const index = this.renderOrder.find(
-        (candidate) => candidate < visible.start || candidate > visible.end,
-      );
+    while (total > this.options.pageCachePixelBudget) {
+      const index = this.evictCandidate(this.renderOrder, visible, pinned);
       if (index === undefined) return;
       total -= this.releaseCachedPage(index);
     }
   }
 
+  /** 当前文本层滚动预算；构造选项已按桌面/移动端解析。 */
+  private textSpanBudget(): number {
+    return this.options.textSpanBudget;
+  }
+
+  /** 当前选区端点 pin 的页索引集合（0-based）。 */
+  private pinnedPageIndices(): Set<number> {
+    const pinned = new Set<number>();
+    const pages = this.services.textLayer?.getPinnedPages?.() ?? [];
+    for (const pageNumber of pages) {
+      const index = pageNumber - 1;
+      if (index >= 0 && index < this.pageViews.length) pinned.add(index);
+    }
+    return pinned;
+  }
+
+  /** 页级缓存中的页索引：已渲染 canvas、已有 span 或仍持有文本数据的页。 */
+  private cachedPageIndices(): number[] {
+    const cached = new Set<number>(this.renderOrder);
+    const service = this.services.textLayer;
+    for (let index = 0; index < this.pageViews.length; index += 1) {
+      if ((this.pageViews[index]?.textSpanCount ?? 0) > 0) {
+        cached.add(index);
+        continue;
+      }
+      if (service?.hasTextData?.(index + 1)) cached.add(index);
+    }
+    return [...cached].sort((a, b) => a - b);
+  }
+
+  /** 在候选页中挑选离可见区最远的页；全部可见/已 pin 时返回 undefined。 */
+  private evictCandidate(
+    candidates: readonly number[],
+    visible: { readonly start: number; readonly end: number },
+    pinned: ReadonlySet<number>,
+  ): number | undefined {
+    let selected: number | undefined;
+    let bestDistance = -1;
+    for (const index of candidates) {
+      if (index >= visible.start && index <= visible.end) continue;
+      if (pinned.has(index)) continue;
+      const distance = index < visible.start ? visible.start - index : index - visible.end;
+      if (distance > bestDistance) {
+        bestDistance = distance;
+        selected = index;
+      }
+    }
+    return selected;
+  }
+
   /**
-   * 释放指定页的 canvas 并从缓存顺序中移除。
+   * 释放指定页的 canvas 与文本层，并从缓存顺序中移除。
    *
    * @param index 页索引，0-based。
    * @returns 该页释放的像素数（width × height）。
@@ -3421,6 +3535,9 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     const pageView = this.pageViews[index];
     const pixels = pageView ? pageView.canvasPixelCount : 0;
     pageView?.releaseCanvas();
+    pageView?.releaseTextLayer();
+    const service = this.services.textLayer;
+    service?.releasePage?.(index + 1);
     const position = this.renderOrder.indexOf(index);
     if (position >= 0) this.renderOrder.splice(position, 1);
     return pixels;
@@ -4073,6 +4190,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
    * @param event 指针按下事件；坐标单位 px。
    */
   private handleTap(event: PointerEvent): void {
+    // 鼠标双击由 dblclick 处理；这里只负责触摸双击，避免两条路径各切换一次。
+    if (event.pointerType !== 'touch') return;
     if (event.button !== 0 || !this.featureGate.isEnabled('zoom')) return;
     const target = event.target;
     if (

@@ -789,28 +789,50 @@
   visibility: hidden;
 }
 
-.ofd-text-item {
+.ofd-text-item,
+.ofd-text-char {
   position: absolute;
   margin: 0;
   padding: 0;
+  border: 0;
   color: transparent;
+  caret-color: transparent;
   white-space: pre;
   transform-origin: 0 0;
   cursor: text;
-  -webkit-user-select: text;
-  user-select: text;
 }
 
 .ofd-text-item::selection,
 .ofd-text-char::selection {
   color: transparent;
+  /* 块状高亮层负责视觉；原生选区只保留选择/复制行为。 */
+  background: transparent;
+}
+
+/* 回退模式：字符几何不可用时不画块，恢复浏览器原生选择高亮。 */
+.ofd-page[data-selection-mode='native'] .ofd-text-item::selection,
+.ofd-page[data-selection-mode='native'] .ofd-text-char::selection {
   background: var(--ofd-selection);
 }
 
 .ofd-text-char {
   display: inline-block;
-  color: transparent;
-  transform-origin: 0 0;
+}
+
+.ofd-page__selection-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.ofd-selection-rect {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 1px;
+  background: var(--ofd-selection);
 }
 
 .ofd-page__signature-layer {

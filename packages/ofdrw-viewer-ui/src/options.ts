@@ -71,6 +71,21 @@ export const DEFAULT_PAGE_CACHE_SIZE = 10;
 /** 移动端已渲染页 canvas 缓存数量。 */
 export const DEFAULT_MOBILE_PAGE_CACHE_SIZE = 4;
 
+/** 桌面端文本层滚动 span 总预算（不含 pin 页）。 */
+export const DEFAULT_TEXT_SPAN_BUDGET = 30_000;
+
+/** 移动端文本层滚动 span 总预算（不含 pin 页）。 */
+export const DEFAULT_MOBILE_TEXT_SPAN_BUDGET = 12_000;
+
+/** 桌面端选区端点页 pin 的 span 预算。 */
+export const DEFAULT_SELECTION_PIN_SPAN_BUDGET = 50_000;
+
+/** 移动端选区端点页 pin 的 span 预算。 */
+export const DEFAULT_MOBILE_SELECTION_PIN_SPAN_BUDGET = 20_000;
+
+/** 单页文本层 span 上限；超限先降级 item 级，仍超限则截断。 */
+export const DEFAULT_TEXT_LAYER_MAX_SPANS = 100_000;
+
 /** 缩略图缓存数量。 */
 export const DEFAULT_THUMBNAIL_CACHE_SIZE = 100;
 
@@ -293,6 +308,26 @@ export interface OFDViewerOptions {
   readonly pageCachePixelBudget?: number;
   /** 缩略图缓存数量，默认 100。 */
   readonly thumbnailCacheSize?: number;
+  /**
+   * 文本层滚动 span 总预算（不含选区 pin 页），默认桌面 30,000、移动 12,000。
+   *
+   * 缓存页的 span 总数超过该值时会淘汰离可见区最远的页；可见页与选区 pin 页
+   * 永不淘汰。`0` 表示不限制。
+   */
+  readonly textSpanBudget?: number;
+  /**
+   * 选区端点页 pin 的 span 预算，默认桌面 50,000、移动 20,000。
+   *
+   * 选区 pin 页的 span 不计入 {@link textSpanBudget}；超过该预算时清空选区并
+   * 告警，避免为了保住高亮而无限占用 DOM。
+   */
+  readonly selectionPinSpanBudget?: number;
+  /**
+   * 单页文本层 span 上限，默认 100,000；`0` 表示不限制。
+   *
+   * 超限时先降级为 item 级 span，仍超限则截断并发出文字层告警，不崩溃。
+   */
+  readonly textLayerMaxSpans?: number;
   /** 同时渲染页数；默认桌面 2、移动 1。 */
   readonly renderConcurrency?: number;
   /** 是否把页码/缩放/旋转写入 URL hash；默认 false。 */
@@ -340,6 +375,12 @@ export interface ResolvedViewerOptions {
   /** 已渲染页 canvas 的总像素预算。 */
   readonly pageCachePixelBudget: number;
   readonly thumbnailCacheSize: number;
+  /** 文本层滚动 span 总预算（不含 pin 页）。 */
+  readonly textSpanBudget: number;
+  /** 选区端点页 pin 的 span 预算。 */
+  readonly selectionPinSpanBudget: number;
+  /** 单页文本层 span 上限；0 表示不限。 */
+  readonly textLayerMaxSpans: number;
   readonly renderConcurrency: number;
   readonly updateHash: boolean;
   readonly requestInit?: RequestInit;
@@ -400,6 +441,22 @@ export function resolveViewerOptions(
     pageCachePixelBudget:
       options.pageCachePixelBudget ?? DEFAULT_PAGE_CACHE_PIXEL_BUDGET,
     thumbnailCacheSize: options.thumbnailCacheSize ?? DEFAULT_THUMBNAIL_CACHE_SIZE,
+    textSpanBudget:
+      Math.max(
+        0,
+        options.textSpanBudget ??
+          (mobile ? DEFAULT_MOBILE_TEXT_SPAN_BUDGET : DEFAULT_TEXT_SPAN_BUDGET),
+      ),
+    selectionPinSpanBudget:
+      Math.max(
+        0,
+        options.selectionPinSpanBudget ??
+          (mobile ? DEFAULT_MOBILE_SELECTION_PIN_SPAN_BUDGET : DEFAULT_SELECTION_PIN_SPAN_BUDGET),
+      ),
+    textLayerMaxSpans: Math.max(
+      0,
+      options.textLayerMaxSpans ?? DEFAULT_TEXT_LAYER_MAX_SPANS,
+    ),
     renderConcurrency:
       options.renderConcurrency ??
       (mobile ? DEFAULT_MOBILE_RENDER_CONCURRENCY : DEFAULT_RENDER_CONCURRENCY),
