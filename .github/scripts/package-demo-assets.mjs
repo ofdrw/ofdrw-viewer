@@ -5,7 +5,7 @@
  * 产物：`release-assets/ofdrw-viewer-ui-demo-<version>.zip`，压缩包内为站点根目录内容
  * （`index.html`、`assets/`、`samples/` 等），解压后直接作为静态站点根目录托管。
  *
- * 前置条件：已执行 `BASE_PATH=/ pnpm -C site build`（默认站点基路径为根路径），
+ * 前置条件：已执行 `BASE_PATH=/ pnpm -C demo build`（默认站点基路径为根路径），
  * 且 engine → crypto → ui 已按拓扑顺序构建。
  */
 
@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /** 站点构建输出目录（相对仓库根）。 */
-const SITE_DIST = 'site-dist';
+const SITE_DIST = 'demo-dist';
 
 /** 发布附件压缩包的文件名前缀，压缩包内顶层目录同名。 */
 const ARCHIVE_STEM = 'ofdrw-viewer-ui-demo';
@@ -51,7 +51,7 @@ async function assertArtifacts() {
     }
   }
   if (missing.length > 0) {
-    throw new Error(`缺少演示站构建产物，请先执行 BASE_PATH=/ pnpm -C site build：\n${missing.join('\n')}`);
+    throw new Error(`缺少演示站构建产物，请先执行 BASE_PATH=/ pnpm -C demo build：\n${missing.join('\n')}`);
   }
 }
 
@@ -98,7 +98,7 @@ async function main() {
   const archiveName = `${ARCHIVE_STEM}-${version}`;
   const archivePath = join(releaseDir, `${archiveName}.zip`);
   const topDir = archiveName;
-  const stagingRoot = join(REPO_ROOT, '.site-package');
+  const stagingRoot = join(REPO_ROOT, '.demo-package');
   const stagingDir = join(stagingRoot, topDir);
 
   await mkdir(releaseDir, { recursive: true });

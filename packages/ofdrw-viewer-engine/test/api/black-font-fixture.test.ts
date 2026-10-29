@@ -3,7 +3,7 @@
  *
  * 夹具由 scripts/make-black-font-fixture.mjs 生成（恒定字节，可提交）；
  * 仓库中的真实样本虽声明黑体但页面未引用，无法覆盖本场景。
- * 字体取自 site/public/fonts（随站点分发的本地兜底字体）。
+ * 字体取自 demo/public/fonts（随站点分发的本地兜底字体）。
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -15,9 +15,9 @@ import { openTestDocument, renderPage } from './helpers';
 /** 仓库根目录。 */
 const REPO = join(__dirname, '../../../..');
 /** 黑体夹具（由 scripts/make-black-font-fixture.mjs 生成）。 */
-const FIXTURE = join(REPO, 'site/test/fixtures/black-font-only.ofd');
+const FIXTURE = join(REPO, 'demo/test/fixtures/black-font-only.ofd');
 /** 站点字体目录。 */
-const FONT_DIR = join(REPO, 'site/public/fonts');
+const FONT_DIR = join(REPO, 'demo/public/fonts');
 
 /**
  * 按主干名查找站点分发的带哈希字体文件。
@@ -31,7 +31,7 @@ const FONT_DIR = join(REPO, 'site/public/fonts');
 function siteFont(stem: string): string {
   const pattern = new RegExp(`^${stem}\\.[0-9a-f]{8}\\.woff2$`);
   const match = readdirSync(FONT_DIR).find((name) => pattern.test(name));
-  if (!match) throw new Error(`站点字体缺失：${stem}.*.woff2（请运行 scripts/build-site-fonts.py）`);
+  if (!match) throw new Error(`站点字体缺失：${stem}.*.woff2（请运行 scripts/build-demo-fonts.py）`);
   return join(FONT_DIR, match);
 }
 
@@ -63,7 +63,7 @@ async function darkPixels(fonts: Record<string, unknown>, label: string) {
   }
 }
 
-describe('黑体兜底夹具（site/test/fixtures/black-font-only.ofd）', () => {
+describe('黑体兜底夹具（demo/test/fixtures/black-font-only.ofd）', () => {
   it('无字体时空白；思源黑体与思源宋体都能兜底', async () => {
     const sans = readFileSync(siteFont('source-han-sans-sc'));
     const serif = readFileSync(siteFont('source-han-serif-sc'));

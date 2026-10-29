@@ -27,7 +27,7 @@ const SAMPLES = [
  * @param path 相对 `public/` 目录的路径，例如 `fonts/source-han-sans-sc.woff2`
  * @returns 去掉多余斜杠后的站点绝对路径
  */
-function siteAsset(path: string): string {
+function demoAsset(path: string): string {
   return `${import.meta.env.BASE_URL.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`;
 }
 
@@ -40,7 +40,7 @@ function siteAsset(path: string): string {
  * UI 的 `fonts.aliases` 是追加语义（引擎内置别名组 + 本数组），因此不会丢失内置的
  * 仿宋/楷体/等线等映射；引擎会把同名归一化名扩散到同组内所有名称。
  */
-const SITE_FONT_ALIASES: readonly (readonly string[])[] = [
+const DEMO_FONT_ALIASES: readonly (readonly string[])[] = [
   ['宋体', 'simsun', 'nsimsun', '新宋体', 'notoserifcjksc', 'notoserifsc', 'sourcehanserifsc', '思源宋体'],
   [
     '黑体',
@@ -59,7 +59,7 @@ const SITE_FONT_ALIASES: readonly (readonly string[])[] = [
  * 本地兜底字体的文件名（含内容哈希）。
  *
  * 文件名内嵌 `sha256` 前 8 位：字体内容一变文件名就变，浏览器可长期强缓存旧版本而不必
- * 担心读到过期字体。改动字体后须同步更新此处，`scripts/build-site-fonts.py` 会打印新名字。
+ * 担心读到过期字体。改动字体后须同步更新此处，`scripts/build-demo-fonts.py` 会打印新名字。
  */
 const LOCAL_SERIF_FILE = 'fonts/source-han-serif-sc.6d1b245b.woff2';
 /** 本地无衬线兜底字体文件名；哈希规则同上。 */
@@ -74,10 +74,10 @@ const LOCAL_SANS_FILE = 'fonts/source-han-sans-sc.d006e954.woff2';
  *
  * 两个文件都同时覆盖基本拉丁与常用标点，因此不再需要额外的西文补字来源。
  */
-const SITE_FONTS: ViewerFontOptions = {
-  default: [{ url: siteAsset(LOCAL_SERIF_FILE), family: 'Noto Serif CJK SC' }],
-  supplementary: [{ url: siteAsset(LOCAL_SANS_FILE), family: 'Noto Sans CJK SC' }],
-  aliases: SITE_FONT_ALIASES,
+const DEMO_FONTS: ViewerFontOptions = {
+  default: [{ url: demoAsset(LOCAL_SERIF_FILE), family: 'Noto Serif CJK SC' }],
+  supplementary: [{ url: demoAsset(LOCAL_SANS_FILE), family: 'Noto Sans CJK SC' }],
+  aliases: DEMO_FONT_ALIASES,
 };
 
 /**
@@ -272,8 +272,8 @@ function applyFontPreset(preset: FontPreset): OFDViewerElement {
     preset === 'off'
       ? undefined
       : preset === 'local'
-        ? { ...SITE_FONTS, localFonts: { enabled: true, defaultEnabled: true } }
-        : SITE_FONTS;
+        ? { ...DEMO_FONTS, localFonts: { enabled: true, defaultEnabled: true } }
+        : DEMO_FONTS;
   placeholder.replaceWith(next);
   fontSelect.value = preset;
   bindViewerEvents(next);

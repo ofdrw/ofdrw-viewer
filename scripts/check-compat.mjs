@@ -3,7 +3,7 @@
  * Chrome 67 产物兼容卡口（零依赖，仅使用 Node.js 内置模块）。
  *
  * 用途：扫描 engine / crypto / ui 的 `dist` 产物（ESM、CJS、CDN IIFE）与
- * `site-dist` 的构建产物，阻止 Chrome 67 无法解析的语法、以及未被兼容层
+ * `demo-dist` 的构建产物，阻止 Chrome 67 无法解析的语法、以及未被兼容层
  * 覆盖的“Chrome 67 缺失 API”调用进入发布产物。
  *
  * 设计约定：
@@ -51,7 +51,7 @@ const HELP_TEXT = `Chrome 67 产物兼容卡口
 
 选项：
   --root <dir>          仓库根目录（默认：脚本上一级）
-  --site-dir <dir>      站点产物目录（默认：site-dist/assets）
+  --demo-dir <dir>      站点产物目录（默认：demo-dist/assets）
   --scan <path>         扫描指定文件或目录（可重复；用于验证违规/合规样例）
   --fixture <bad|good>  扫描内置违规/合规样例（bad 退出 1，good 退出 0）
   --self-test           运行内置违规/合规样例，不扫描真实产物
@@ -60,8 +60,8 @@ const HELP_TEXT = `Chrome 67 产物兼容卡口
   --strict-bigint       BigInt 字面量也作为阻塞违规（默认仅统计）
   --show-covered        输出已被 compat 覆盖的 API 调用明细
   --json                以 JSON 输出扫描结果（便于机器消费）
-  --no-site             跳过站点产物扫描
-  --only <ids>          只扫描指定产物集合（engine,crypto,ui,site，逗号分隔）
+  --no-demo             跳过站点产物扫描
+  --only <ids>          只扫描指定产物集合（engine,crypto,ui,demo，逗号分隔）
   --allow <glob>        额外放行文件（可重复；放行 API 规则，语法仍检查）
   --help                打印本帮助
 
@@ -402,9 +402,9 @@ const PRODUCTS = [
     required: true,
   },
   {
-    id: 'site',
-    title: 'site 演示站',
-    dir: 'site-dist/assets',
+    id: 'demo',
+    title: 'demo 演示站',
+    dir: 'demo-dist/assets',
     required: false,
   },
 ];
@@ -446,7 +446,7 @@ function parseArgs(argv) {
       case '--root':
         options.root = path.resolve(readValue(arg));
         break;
-      case '--site-dir':
+      case '--demo-dir':
         options.siteDir = path.resolve(readValue(arg));
         break;
       case '--scan':
@@ -473,7 +473,7 @@ function parseArgs(argv) {
       case '--json':
         options.json = true;
         break;
-      case '--no-site':
+      case '--no-demo':
         options.noSite = true;
         break;
       case '--only':
@@ -1047,7 +1047,7 @@ function discoverProducts(options) {
   const only = options.only ? new Set(options.only) : null;
   for (const product of PRODUCTS) {
     if (only && !only.has(product.id)) continue;
-    if (product.id === 'site') {
+    if (product.id === 'demo') {
       if (options.noSite) continue;
       const siteDir = options.siteDir || path.join(options.root, product.dir);
       const fileList = listJsFiles(siteDir);
@@ -1419,7 +1419,7 @@ function main(argv) {
     if (missing.length > 0) {
       process.stdout.write(`[compat] 缺少目录：${missing.join('、')}\n`);
     }
-    process.stdout.write('[compat] 请先运行 `pnpm build`（站点：`pnpm -C site build`）后重试。\n');
+    process.stdout.write('[compat] 请先运行 `pnpm build`（站点：`pnpm -C demo build`）后重试。\n');
     if (options.requireDist) {
       process.stderr.write('[compat] --require-dist 要求产物存在，按失败处理。\n');
       return 2;

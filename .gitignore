@@ -15,9 +15,9 @@ coverage/
 **/test/.fixtures/
 examples/*/dist/
 # 在线演示站构建产物（由 CI 构建并部署到 GitHub Pages）
-site-dist/
+demo-dist/
 
-# 字体处理临时工作目录（scripts/build-site-fonts.py 的中间产物，不入库）
+# 字体处理临时工作目录（scripts/build-demo-fonts.py 的中间产物，不入库）
 .fontcheck/
 .venv-fonts/
 

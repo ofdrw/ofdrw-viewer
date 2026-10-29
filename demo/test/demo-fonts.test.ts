@@ -1,14 +1,14 @@
 /**
  * 演示站字体配置单元测试：本地思源宋体/思源黑体兜底、别名衔接与资源路径。
  *
- * 直接读取 `site/main.ts` 源码做静态断言，并单独校验别名追加语义；不启动浏览器，
+ * 直接读取 `demo/main.ts` 源码做静态断言，并单独校验别名追加语义；不启动浏览器，
  * 避免测试依赖 DOM/网络。
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-// 引擎包只经 UI 的工作区依赖解析（site 包本身不声明该依赖），这里显式走同一份 workspace 链接。
+// 引擎包只经 UI 的工作区依赖解析（demo 包本身不声明该依赖），这里显式走同一份 workspace 链接。
 import { composeFontAliases } from '../../packages/ofdrw-viewer-ui/src/font';
 import { DEFAULT_FONT_ALIASES } from '../../packages/ofdrw-viewer-ui/node_modules/@ofdrw/ofdrw-viewer-engine';
 
@@ -36,13 +36,13 @@ function findHashedFont(stem: string): string {
 const LOCAL_FONT_NOTICE = fileURLToPath(new URL('../public/fonts/NOTICE.md', import.meta.url));
 
 /**
- * 读取 `site/main.ts` 中 `SITE_FONT_ALIASES` 的字符串字面量组。
+ * 读取 `demo/main.ts` 中 `DEMO_FONT_ALIASES` 的字符串字面量组。
  *
  * @returns 每一组别名的字符串列表
  */
 function readSiteAliasGroups(): string[][] {
   const source = readFileSync(MAIN_TS, 'utf8');
-  const start = source.indexOf('const SITE_FONT_ALIASES');
+  const start = source.indexOf('const DEMO_FONT_ALIASES');
   expect(start).toBeGreaterThanOrEqual(0);
   const end = source.indexOf('];', start);
   const block = source.slice(start, end);
@@ -52,7 +52,7 @@ function readSiteAliasGroups(): string[][] {
 }
 
 /**
- * 读取 `site/main.ts` 中默认字体来源的 URL 表达式。
+ * 读取 `demo/main.ts` 中默认字体来源的 URL 表达式。
  *
  * @returns 以源码文本表示的 URL 表达式列表
  */
@@ -74,7 +74,7 @@ describe('演示站字体配置', () => {
     expect(notice).toContain('Noto Serif CJK SC');
     expect(notice).toContain('Noto Sans CJK SC');
     expect(notice).toContain('SIL Open Font License');
-    expect(notice).toContain('scripts/build-site-fonts.py');
+    expect(notice).toContain('scripts/build-demo-fonts.py');
   });
 
   it('字体文件名带内容哈希，并配置长期强缓存头', () => {
@@ -83,7 +83,7 @@ describe('演示站字体配置', () => {
       const path = findHashedFont(stem);
       expect(path).toMatch(new RegExp(`${stem}\\.[0-9a-f]{8}\\.woff2$`));
     }
-    // site/main.ts 必须引用文件常量，而不是把哈希写死在 URL 里，避免两处不一致。
+    // demo/main.ts 必须引用文件常量，而不是把哈希写死在 URL 里，避免两处不一致。
     const source = readFileSync(MAIN_TS, 'utf8');
     for (const constant of ['LOCAL_SERIF_FILE', 'LOCAL_SANS_FILE']) {
       const match = new RegExp(`const ${constant} = '([^']+)'`).exec(source);
@@ -103,13 +103,13 @@ describe('演示站字体配置', () => {
     // 只保留一个本地来源：不再配置 CDN 回落。
     expect(urls).toHaveLength(1);
     // 本地路径必须经 import.meta.env.BASE_URL 拼接，不能硬编码以 `/` 开头的绝对路径。
-    expect(urls[0]).toContain('siteAsset(LOCAL_SERIF_FILE)');
+    expect(urls[0]).toContain('demoAsset(LOCAL_SERIF_FILE)');
     expect(urls[0]).not.toMatch(/url:\s*['"]\//);
     expect(source).toContain('import.meta.env.BASE_URL');
 
     const supplementary = source.slice(source.indexOf('supplementary: ['));
     const block = supplementary.slice(0, supplementary.indexOf('],'));
-    expect(block).toContain('siteAsset(LOCAL_SANS_FILE)');
+    expect(block).toContain('demoAsset(LOCAL_SANS_FILE)');
     // 字体来源全部是本地文件。
     expect(block).not.toContain('https://');
 

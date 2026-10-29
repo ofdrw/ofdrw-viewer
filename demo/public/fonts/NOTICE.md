@@ -1,7 +1,7 @@
 # 站点内置字体说明
 
 本目录下的字体文件随演示站分发，用于在 OFD 文档没有内嵌字体时兜底显示中文。
-两个文件都不依赖外部 CDN，构建时由 Vite 从 `site/public/` 原样复制到产物根目录。
+两个文件都不依赖外部 CDN，构建时由 Vite 从 `demo/public/` 原样复制到产物根目录。
 
 ## 字体清单
 
@@ -11,8 +11,8 @@
 | `source-han-sans-sc.<hash>.woff2` | 思源黑体（Noto Sans CJK SC） | `Noto Sans CJK SC` | SIL Open Font License 1.1 | 7 817 104 B（约 7.5 MiB） |
 
 文件名中的 8 位十六进制是该文件 `sha256` 的前缀：内容一变文件名就变，因此可以设置
-`Cache-Control: immutable` 长期缓存（见 `site/public/_headers`）。修改字体后需同步更新
-`site/main.ts` 的 `LOCAL_SERIF_FILE` / `LOCAL_SANS_FILE` 常量。
+`Cache-Control: immutable` 长期缓存（见 `demo/public/_headers`）。修改字体后需同步更新
+`demo/main.ts` 的 `LOCAL_SERIF_FILE` / `LOCAL_SANS_FILE` 常量。
 
 ## 子集范围
 
@@ -51,10 +51,10 @@
 ```bash
 # 需要 Python 3.10+、fonttools 与 brotli：
 #   python3 -m venv .venv-fonts && .venv-fonts/bin/pip install fonttools brotli
-.venv-fonts/bin/python scripts/build-site-fonts.py
+.venv-fonts/bin/python scripts/build-demo-fonts.py
 ```
 
-脚本会打印新的哈希文件名；请同步更新 `site/main.ts` 的常量与
-`site/test/site-fonts.test.ts` 中的体积断言。
+脚本会打印新的哈希文件名；请同步更新 `demo/main.ts` 的常量与
+`demo/test/demo-fonts.test.ts` 中的体积断言。
 
 输出体积明显小于原字体，是因为只保留了上述区块，并非压缩了字库质量。

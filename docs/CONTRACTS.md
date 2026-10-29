@@ -18,7 +18,7 @@
 | `packages/ofdrw-viewer-crypto` | 加密检测/解密、签章与完整性校验、证书/SM 基础能力 | 是 |
 | `packages/ofdrw-viewer-ui` | 浏览器阅读器、文本层、打印/导出、签章展示、Web Component 与框架适配 | 是 |
 | `packages/ofdrw-viewer-cli` | 本地文件转图片、`info`、`verify`、SEA 可执行文件 | 是 |
-| `site` | 演示站，消费已构建的包 | 是 |
+| `demo` | 演示站，消费已构建的包 | 是 |
 | `examples` | 独立示例工程，各自安装依赖 | 否 |
 | `ofd_pdf_match` | 回归样本与 PDF 参考 | 否，样本资产 |
 | `test/smoke` | 跨包架构与公共 API 文档同步检查 | 根级测试目录 |
@@ -127,7 +127,7 @@
 2. crypto 只依赖 engine 的包根公共入口，不得依赖 UI/CLI，不得导入 engine 的 `src/*` 内部路径。
 3. UI 只依赖 engine、crypto 的包根公共入口，不得依赖 CLI；不得直接实现 SM2/SM3/SM4、ASN.1 或加解密。
 4. CLI 只依赖 engine、crypto 的包根公共入口与 Node/原生 Canvas；不得依赖 UI；不得直接依赖 `sm-crypto` 或自实现密码算法。
-5. UI 与 CLI 互不依赖；`site` 只消费已发布的公共入口，不能反向成为库依赖。
+5. UI 与 CLI 互不依赖；`demo` 只消费已发布的公共入口，不能反向成为库依赖。
 6. 包外消费者只能导入包根（UI 可用其声明的子路径）；任何 `@ofdrw/*/src/...` 深导入都不属于公共契约。
 7. engine 核心模块不得依赖 DOM、Node 内置模块或原生 Canvas；`container` 与 `platform` 是实现宿主适配的边界层，不得把宿主 I/O 扩散进 `model`/`render`/`api`。
 8. engine 内部方向由根级 `test/smoke/import-boundaries.test.ts` 强制：`common`/`model`/`resource`/`style`/`render`/`renderer`/`font`/`image`/`xml`/`api` 不导入 DOM/Node/原生 Canvas；`renderer` 只依赖 `common`/`renderer`；`render` 只通过 `renderer/types` 使用渲染器；`common` 对 `model`/`style` 只允许 type-only 前向引用；`model` 不产生对 `render`/`renderer`/`api` 的运行时依赖。

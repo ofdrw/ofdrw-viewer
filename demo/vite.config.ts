@@ -10,15 +10,15 @@ import { defineConfig } from 'vite';
  * 构建目标为 Chrome 67：Vite 会在 renderChunk 阶段对最终 chunk 跑 esbuild 降级，
  * 从而同时覆盖 UI 源码、engine/crypto 的 dist 与 external 依赖。
  */
-const siteRoot = fileURLToPath(new URL('.', import.meta.url));
+const demoRoot = fileURLToPath(new URL('.', import.meta.url));
 /** 仓库根目录；仅在本地开发时用于提供 `ofd_pdf_match/` 下的真实样本。 */
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
 export default defineConfig({
-  root: siteRoot,
+  root: demoRoot,
   base: process.env.BASE_PATH || '/',
   build: {
-    outDir: fileURLToPath(new URL('../site-dist', import.meta.url)),
+    outDir: fileURLToPath(new URL('../demo-dist', import.meta.url)),
     emptyOutDir: true,
     target: 'chrome67',
     sourcemap: false,
@@ -29,7 +29,7 @@ export default defineConfig({
     strictPort: true,
     // 本地开发直接打开仓库内的真实 OFD 样本（如 ofd_pdf_match/拿来主义_page6.ofd）；
     // 只放宽到本机回环地址，构建产物不包含这些文件。
-    fs: { allow: [siteRoot, repoRoot] },
+    fs: { allow: [demoRoot, repoRoot] },
   },
   preview: {
     port: 5183,

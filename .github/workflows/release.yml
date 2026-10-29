@@ -84,7 +84,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # crypto 通过包名引入 engine（node_modules 解析到 engine/dist 的类型声明），
-      # ui/site 的 tsconfig paths 也直接指向 dist/index.d.ts。
+      # ui/demo 的 tsconfig paths 也直接指向 dist/index.d.ts。
       # 干净检出时 dist 不存在，必须先按拓扑构建，否则类型检查报 TS2307
       # 找不到 @ofdrw/ofdrw-viewer-engine。与 ci.yml 的“先构建再类型检查”保持一致。
       - name: 构建全部包
@@ -276,7 +276,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  site:
+  demo:
     name: 构建演示站并打包
     needs: verify
     runs-on: ubuntu-24.04
@@ -313,10 +313,10 @@ jobs:
       - name: 构建演示站（根路径，用于 Release 附件）
         env:
           BASE_PATH: /
-        run: pnpm -C site build
+        run: pnpm -C demo build
 
       - name: 打包演示站附件
-        run: node .github/scripts/package-site-assets.mjs
+        run: node .github/scripts/package-demo-assets.mjs
 
       - name: 构建演示站（Pages 子路径）
         run: |
@@ -327,12 +327,12 @@ jobs:
             base="/${GITHUB_REPOSITORY#*/}/"
           fi
           echo "Pages 路径：$base"
-          BASE_PATH="$base" pnpm -C site build
+          BASE_PATH="$base" pnpm -C demo build
 
       - name: 上传站点产物（Release 附件）
         uses: actions/upload-artifact@v7
         with:
-          name: site
+          name: demo
           path: release-assets/ofdrw-viewer-ui-demo-*.zip
           if-no-files-found: error
           retention-days: 7
@@ -343,11 +343,11 @@ jobs:
       - name: 上传站点产物（Pages）
         uses: actions/upload-pages-artifact@v5
         with:
-          path: site-dist
+          path: demo-dist
 
   deploy-pages:
     name: 部署演示站到 GitHub Pages
-    needs: [verify, site]
+    needs: [verify, demo]
     if: startsWith(github.ref, 'refs/tags/v') || inputs.publish == true
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -361,7 +361,7 @@ jobs:
 
   release:
     name: 创建 GitHub Release
-    needs: [verify, build-cli, cdn, site]
+    needs: [verify, build-cli, cdn, demo]
     if: startsWith(github.ref, 'refs/tags/v') || inputs.publish == true
     runs-on: ubuntu-24.04
     timeout-minutes: 20

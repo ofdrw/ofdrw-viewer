@@ -19,7 +19,7 @@ https://ofdrw.github.io/ofdrw-viewer/?file=samples/doc1File.ofd
 https://ofdrw.github.io/ofdrw-viewer/?file=https%3A%2F%2Fexample.com%2Fdemo.ofd
 ```
 
-本目录是独立的 pnpm workspace 包 `@ofdrw/ofdrw-viewer-site`，不属于 UI 包：它直接引用
+本目录是独立的 pnpm workspace 包 `@ofdrw/ofdrw-viewer-demo`，不属于 UI 包：它直接引用
 `packages/ofdrw-viewer-ui/src` 源码构建，不经过 UI 包的 `dist`。
 
 ## 底部演示控件
@@ -53,8 +53,8 @@ OFD 文档普遍只声明 `FontName="宋体"`/`"黑体"` 而不内嵌字体，�
 | 思源黑体（Noto Sans CJK SC） | `public/fonts/source-han-sans-sc.woff2` | 7 817 104 B（约 7.5 MiB） | 黑体 / SimHei / 微软雅黑等无衬线声明 | SIL Open Font License 1.1 |
 
 来源、子集范围（仅 CJK 基本区 `U+4E00–9FFF` + 标点/全角/基本拉丁/常用符号）与重新生成命令见
-[`site/public/fonts/NOTICE.md`](./public/fonts/NOTICE.md)。构建时 `public/` 原样复制到
-`site-dist/fonts/`；字体不进入任何 npm 包。
+[`demo/public/fonts/NOTICE.md`](./public/fonts/NOTICE.md)。构建时 `public/` 原样复制到
+`demo-dist/fonts/`；字体不进入任何 npm 包。
 
 ### 档位与加载优先级
 
@@ -63,7 +63,7 @@ OFD 文档普遍只声明 `FontName="宋体"`/`"黑体"` 而不内嵌字体，�
 | `auto`（默认） | 见下 | 仅本地双字体 |
 | `off` | `fonts: undefined` | 不加载任何字体，用于对比缺字现象 |
 
-`site/main.ts` 的 `SITE_FONTS`：
+`demo/main.ts` 的 `DEMO_FONTS`：
 
 - `default`：本地 `source-han-serif-sc.woff2`（唯一来源）；
 - `supplementary`：本地 `source-han-sans-sc.woff2`（唯一来源）；
@@ -73,7 +73,7 @@ OFD 文档普遍只声明 `FontName="宋体"`/`"黑体"` 而不内嵌字体，�
   无衬线组 `黑体/simhei/heiti/微软雅黑/microsoftyahei/notosanscjksc/notosanssc/sourcehansanssc/思源黑体`。
   UI 的 `fonts.aliases` 是「引擎内置组 + 追加」语义，不会丢内置的仿宋/楷体等映射。
 
-本地路径用 `import.meta.env.BASE_URL` 拼接（`siteAsset()`），部署到 GitHub Pages 子路径
+本地路径用 `import.meta.env.BASE_URL` 拼接（`demoAsset()`），部署到 GitHub Pages 子路径
 （`BASE_PATH=/ofdrw-viewer/`）时仍能取到 `fonts/...`。
 
 **降级**：本地文件 404 或读取失败只产生一次 `W_FONT_MISSING`（状态栏提示、控制台
@@ -84,11 +84,11 @@ OFD 文档普遍只声明 `FontName="宋体"`/`"黑体"` 而不内嵌字体，�
 
 ### 替换与裁剪
 
-- 只需要一种字体：删除对应 `.woff2` 并去掉 `SITE_FONTS` 中的条目（缺失文件只产生 warning）。
-- 需要更小体积：缩小 `scripts/build-site-fonts.py` 的 `SUBSET_UNICODES`（例如只保留应用常用字），
-  重新生成后同步 `NOTICE.md` 与 `site/test/site-fonts.test.ts` 中的体积断言。
+- 只需要一种字体：删除对应 `.woff2` 并去掉 `DEMO_FONTS` 中的条目（缺失文件只产生 warning）。
+- 需要更小体积：缩小 `scripts/build-demo-fonts.py` 的 `SUBSET_UNICODES`（例如只保留应用常用字），
+  重新生成后同步 `NOTICE.md` 与 `demo/test/demo-fonts.test.ts` 中的体积断言。
 - 重新生成：`python3 -m venv .venv-fonts && .venv-fonts/bin/pip install "fonttools[woff]" brotli`，
-  然后 `FONTSUBSET=.venv-fonts/bin/pyftsubset python3 scripts/build-site-fonts.py`。
+  然后 `FONTSUBSET=.venv-fonts/bin/pyftsubset python3 scripts/build-demo-fonts.py`。
 
 ### 核验样本
 
@@ -97,7 +97,7 @@ OFD 文档普遍只声明 `FontName="宋体"`/`"黑体"` 而不内嵌字体，�
 黑体场景可用把 TextObject 字体改成黑体、删除内嵌字体的样本验证（本仓库任务记录中使用了以
 `透明度文字.ofd` 为底的临时样本，不入库）。
 
-样本不复制进 `site/public/samples`（避免站点体积），只用于本地核验。开发服务器已把仓库根目录加入
+样本不复制进 `demo/public/samples`（避免站点体积），只用于本地核验。开发服务器已把仓库根目录加入
 `server.fs.allow`，可直接打开：
 
 ```text
@@ -115,36 +115,36 @@ pnpm --filter @ofdrw/ofdrw-viewer-engine build
 pnpm --filter @ofdrw/ofdrw-viewer-crypto build
 pnpm --filter @ofdrw/ofdrw-viewer-ui build
 
-pnpm -C site dev
+pnpm -C demo dev
 ```
 
-打开 <http://127.0.0.1:5183/> 即可。修改 `site/` 或 `packages/ofdrw-viewer-ui/src/` 下的代码会热更新。
+打开 <http://127.0.0.1:5183/> 即可。修改 `demo/` 或 `packages/ofdrw-viewer-ui/src/` 下的代码会热更新。
 
 ## 构建产物
 
 ```bash
-pnpm -C site build
+pnpm -C demo build
 ```
 
-产物输出到仓库根目录 `site-dist/`（已在 `.gitignore` 中忽略），可直接交给任意静态服务器托管：
+产物输出到仓库根目录 `demo-dist/`（已在 `.gitignore` 中忽略），可直接交给任意静态服务器托管：
 
 ```bash
-python3 -m http.server 8080 -d site-dist
+python3 -m http.server 8080 -d demo-dist
 ```
 
 > `vite preview` 会对 Range 请求的响应一并压缩，导致浏览器打开 `.ofd` 时报
-> `ERR_CONTENT_DECODING_FAILED`；预览构建产物请使用静态服务器，开发调试用 `pnpm -C site dev`。
+> `ERR_CONTENT_DECODING_FAILED`；预览构建产物请使用静态服务器，开发调试用 `pnpm -C demo dev`。
 
 部署到子路径时需要注入 `BASE_PATH`，例如 GitHub Pages 项目站点：
 
 ```bash
-BASE_PATH=/ofdrw-viewer/ pnpm -C site build
+BASE_PATH=/ofdrw-viewer/ pnpm -C demo build
 ```
 
 ## 目录结构
 
 ```
-site/
+demo/
 ├── index.html        # 页面骨架：阅读器、底部演示控件与状态提示
 ├── main.ts           # 交互逻辑：打开文件/样例、主题/语言、版本与 dock 开关
 ├── style.css         # 页面外壳样式（不覆盖阅读器内部样式）

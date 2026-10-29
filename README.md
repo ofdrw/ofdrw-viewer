@@ -86,6 +86,10 @@ ofdrw-viewer 提供了系列智能体协作指南（SKILL），若你是智能�
 
 若您需要生成、编辑 OFD，请使用 [https://github.com/ofdrw/ofdrw](https://github.com/ofdrw/ofdrw)。
 
+## 🤝 参与贡献
+
+开发环境、提交前检查与必须遵守的规则见 [参与贡献指南](CONTRIBUTING.md)。本地构建、安装、测试与各模块开发环境的详细步骤见 [本地开发与构建指南](docs/本地开发与构建指南.md)。其中兼容性要求（不删除已公开的 API 与码值、过时接口用 `@deprecated` 标记并给出替代）见 [开发与兼容性规则](docs/开发与兼容性规则.md)。
+
 ## ⚖️ 免责声明 / Disclaimer
 
 使用本项目前请阅读：[免责声明（中英双语）](DISCLAIMER.md)。

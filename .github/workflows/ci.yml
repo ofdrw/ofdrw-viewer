@@ -52,7 +52,7 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
-      # ui/site 的类型检查通过 paths 引用 engine/crypto 的 dist 类型声明，
+      # ui/demo 的类型检查通过 paths 引用 engine/crypto 的 dist 类型声明，
       # 干净检出后必须先构建依赖包，否则 tsc 找不到模块。
       - name: 构建全部包
         run: pnpm build
@@ -82,10 +82,10 @@ jobs:
       - name: 构建演示站
         env:
           BASE_PATH: /
-        run: pnpm -C site build
+        run: pnpm -C demo build
 
       # Chrome 67 兼容卡口：先自检脚本（内置违规样例必须失败、合规样例必须通过），
-      # 再扫描 engine/crypto/ui 的 dist 与 site-dist 产物；产物缺失时 --require-dist 直接失败。
+      # 再扫描 engine/crypto/ui 的 dist 与 demo-dist 产物；产物缺失时 --require-dist 直接失败。
       # 只追加在全部构建之后，不改变原有构建/测试顺序与 Node/pnpm 版本固定。
       - name: Chrome 67 兼容卡口
         run: |

@@ -5,7 +5,7 @@
  * `Font` 指向宋体/楷体），无法验证「黑体类文档的字体兜底」。本脚本生成一份恒定
  * 夹具：PublicRes 只声明黑体且无 FontFile，页面正文全部使用 Font="5"。
  *
- * 输出：site/test/fixtures/black-font-only.ofd
+ * 输出：demo/test/fixtures/black-font-only.ofd
  * 运行：node scripts/make-black-font-fixture.mjs
  */
 import { writeFileSync, mkdirSync } from 'node:fs';
@@ -32,7 +32,7 @@ const { zipSync, strToU8 } = await loadFflate();
 /** 仓库根目录。 */
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /** 输出路径。 */
-const OUT = resolve(REPO_ROOT, 'site/test/fixtures/black-font-only.ofd');
+const OUT = resolve(REPO_ROOT, 'demo/test/fixtures/black-font-only.ofd');
 
 const NS = 'xmlns:ofd="http://www.ofdspec.org/2016"';
 const HEADER = '<?xml version="1.0" encoding="UTF-8"?>';
@@ -58,8 +58,8 @@ function textObject(id, x, y, size, text) {
 const files = {
   'OFD.xml': strToU8(
     `${HEADER}<ofd:OFD ${NS} Version="1.0" DocType="OFD"><ofd:DocBody><ofd:DocInfo>` +
-      `<ofd:DocID>site-black-font-fixture</ofd:DocID><ofd:CreationDate>2026-01-01</ofd:CreationDate>` +
-      `<ofd:Creator>ofdrw-viewer site fixture</ofd:Creator></ofd:DocInfo>` +
+      `<ofd:DocID>demo-black-font-fixture</ofd:DocID><ofd:CreationDate>2026-01-01</ofd:CreationDate>` +
+      `<ofd:Creator>ofdrw-viewer demo fixture</ofd:Creator></ofd:DocInfo>` +
       `<ofd:DocRoot>Doc_0/Document.xml</ofd:DocRoot></ofd:DocBody></ofd:OFD>`,
   ),
   'Doc_0/Document.xml': strToU8(

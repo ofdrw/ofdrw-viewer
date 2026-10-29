@@ -75,7 +75,10 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 | `maxCanvasPixels` | `number` | 桌面 `256_000_000`，移动 `32_000_000` | 单页 canvas 像素上限（width × height） |
 | `pageCachePixelBudget` | `number` | `512_000_000` | 已渲染页 canvas 总像素预算；超预算时释放离可见区最远的页 |
 | `supersample` | `SupersamplePreset / number` | `'auto'` | 画布超采样：`'off'` 固定 1 倍、`'auto'` 按页面面积分档、`'high'` 每档加 1 倍、`'max'` 固定 3 倍、`1..4` 固定倍率；移动端默认 1，显式传值可覆盖 |
-| `pageCacheSize` | `number` | 桌面 `10`，移动 `4` | 已渲染页 canvas 缓存数量 |
+| `pageCacheSize` | `number` | 桌面 `10`，移动 `4` | 页级缓存基数；最终页数上限为 `max(1, pageCacheSize, 2 × 可见页数 + 1) + pin 页数` |
+| `textSpanBudget` | `number` | 桌面 `30_000`，移动 `12_000` | 滚动页文本 span 总预算（不含 pin 页）；超预算淘汰不可见、未 pin 页 |
+| `selectionPinSpanBudget` | `number` | 桌面 `50_000`，移动 `20_000` | 选区端点 pin 的 span 预算；构建中增长超限时清空选区并告警 `W_SELECTION_UNPINNABLE` |
+| `textLayerMaxSpans` | `number` | `100_000` | 单页 span 上限；超限先降级 item 级，仍超限截断并告警 `W_TEXT_LAYER_CAP` |
 | `thumbnailCacheSize` | `number` | `100` | 缩略图缓存数量；当前版本尚未接入实现，见下 |
 | `renderConcurrency` | `number` | 桌面 `2`，移动 `1` | 同时渲染页数 |
 | `updateHash` | `boolean` | `false` | 把页码/缩放/旋转/侧栏写入 URL hash |
@@ -119,7 +122,8 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 | 文档信息 | `W_METADATA`、`W_OUTLINE`、`W_BOOKMARKS` | 元数据/大纲/书签读取失败 |
 | 导航 | `W_NAV_DEST`、`W_NAV_JUMP`、`W_NAV_ZOOM` | 跳转目标无效、跳页/缩放失败 |
 | 缩略图 | `W_THUMBNAIL`、`W_THUMBNAIL_JUMP` | 缩略图渲染/跳转失败 |
-| 文本 | `W_TEXT_LOAD`、`W_TEXT_EMPTY`、`W_TEXT_UNSUPPORTED`、`W_TEXT_LAYER_LIMIT` | 文本层加载、空文本、不支持、超限 |
+| 文本 | `W_TEXT_LOAD`、`W_TEXT_EMPTY`、`W_TEXT_UNSUPPORTED`、`W_TEXT_LAYER_CAP` | 文本层加载失败、无可提取文字、引擎页无 `getTextContent`、单页 span 超限截断 |
+| 选区 | `W_SELECTION_RENDER`、`W_SELECTION_EVICTED`、`W_SELECTION_UNPINNABLE` | 高亮绘制异常回退 native、选区页数据缺失、pin 预算超限 |
 | 查找 | `W_FIND_FAILED`、`W_FIND_LIMIT`、`W_FIND_PAGE`、`W_FIND_PAGE_LIMIT` | 查找失败/超限/翻页 |
 | 导出打印 | `W_EXPORT_PARTIAL`、`W_EXPORT_PAGE`、`W_OUTPUT_LARGE_TASK`、`W_OUTPUT_DPI_REDUCED` | 部分导出、单页失败、大任务、DPI 降档 |
 | 签名与附件 | `W_SIGNATURE_ASN1`、`W_SIGNATURE_RESOURCE`、`W_SIGNATURE_TIMESTAMP`、`W_SIGNATURE_ENTRIES`、`W_ATTACHMENT_RESOURCE` | ASN.1、资源、时间戳、条目读取、附件资源 |
@@ -346,6 +350,8 @@ interface LocalFontDeclaration {
 | `keyboardShortcuts` | 键盘快捷键 | — |
 
 依赖不满足时，被依赖功能以 `reason: 'dependency'` 关闭，并可能继续级联（例如 `sidebar` 关闭会关闭缩略图/大纲/书签/附件）。`toolbar`/`sidebar` 关闭时，其内部控件即使自身开启也不可见。
+
+文字层按**页**构建：滚动停止 150 ms 后为可见页建满整页 span，页离开可见集合后由页级 LRU 与页数/span 预算决定保留或整页释放，不再按行裁剪。普通文本不再因滚动增删 span；旋转 90°/270° 与竖排页同样整页构建，行主轴由文字方向决定。`selection` 与 `find` 的可用性不依赖文字层 DOM 是否仍存活：选区快照保存完整文本与每页矩形，中间页被淘汰后复制与高亮仍完整；端点页 pin 只保原生 Shift 扩选。见 [页面缓存与文本层生命周期设计](../../../docs/页面缓存与文本层生命周期设计.md)。 内部桥 `TextViewerHost` 另有三个可选回调：`textLayerPageBuilt(pageNumber)` 在页构建完成后通知核心更新页级缓存，`textLayerPinsChanged()` 在 pin 集合变化后触发重新裁剪，`textLayerPinBudgetExceeded()` 在分帧构建中 pin span 超预算时通知核心清空选区快照（文本层会先解除 pin 并上报 `W_SELECTION_UNPINNABLE`）。普通宿主无需实现。
 
 ### 有效状态与原因
 
@@ -978,6 +984,8 @@ interface HttpByteSourceOptions {
 | `fromCurrentPage` | `boolean` | `true` | 是否从当前页开始搜索 |
 
 `FindState` 为 `{ query, current, total, searching, caseSensitive, wholeWord, highlightAll }`；`current` 为 1-based，无匹配为 0。查找文本会归一化空白；空查询会清空状态而不是抛错。
+
+查找基于引擎的逐页文本读取（与文字层各自独立读取，命中源按页缓存并在换文档时清空），**不依赖文字层 DOM 是否已构建**；定位不再查找目标 span，而是把命中框包围盒中心按页坐标换算成屏幕纵向位置后滚动滚动容器（页与容器不可测量时回退为高亮层的 `scrollIntoView({ block: 'center' })`），高亮绘制在独立的 `.ofd-page__find-layer`。因此定位到匹配项时，即使目标页尚未构建可视区文字层也能正确定位。设计见 [页面缓存与文本层生命周期设计](../../../docs/页面缓存与文本层生命周期设计.md)。
 
 ### `PageRange`
 

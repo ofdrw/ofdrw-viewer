@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""生成在线演示站（site/public/fonts）的本地兜底字体。
+"""生成在线演示站（demo/public/fonts）的本地兜底字体。
 
-产物（写入 site/public/fonts/）：
+产物（写入 demo/public/fonts/）：
 - source-han-serif-sc.woff2：思源宋体（Noto Serif CJK SC），对应文档声明的「宋体/SimSun」等衬线字体；
 - source-han-sans-sc.woff2：思源黑体（Noto Sans CJK SC），对应文档声明的「黑体/SimHei/微软雅黑」等无衬线字体。
 
@@ -17,7 +17,7 @@
 
 用法（在仓库根目录执行）：
 
-    python3 scripts/build-site-fonts.py
+    python3 scripts/build-demo-fonts.py
 
 输入文件默认取系统字体路径，可用 --serif-ttc / --sans-ttc 覆盖；
 环境变量 FONTSUBSET 可指定 pyftsubset 可执行文件（默认使用 PATH 中的 pyftsubset）。
@@ -165,15 +165,15 @@ def main() -> int:
     parser.add_argument("--sans-ttc", default=DEFAULT_SANS_TTC, help="思源黑体 TTC 路径")
     parser.add_argument(
         "--out-dir",
-        default=str(Path(__file__).resolve().parent.parent / "site" / "public" / "fonts"),
-        help="输出目录（默认 site/public/fonts）",
+        default=str(Path(__file__).resolve().parent.parent / "demo" / "public" / "fonts"),
+        help="输出目录（默认 demo/public/fonts）",
     )
     args = parser.parse_args()
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     generated: list[Path] = []
-    with tempfile.TemporaryDirectory(prefix="site-fonts-") as work:
+    with tempfile.TemporaryDirectory(prefix="demo-fonts-") as work:
         work_dir = Path(work)
         noto_serif_face = work_dir / "NotoSerifCJK-SC.otf"
         noto_sans_face = work_dir / "NotoSansCJK-SC.otf"
@@ -188,7 +188,7 @@ def main() -> int:
     for path in generated:
         print(f"{path}: {path.stat().st_size} bytes")
     print()
-    print("字体文件名含内容哈希；如哈希有变化，请同步更新 site/main.ts 的")
+    print("字体文件名含内容哈希；如哈希有变化，请同步更新 demo/main.ts 的")
     print("LOCAL_SERIF_FILE / LOCAL_SANS_FILE 常量。")
     return 0
 
