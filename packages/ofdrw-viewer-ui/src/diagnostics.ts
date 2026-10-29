@@ -33,6 +33,13 @@ export const UI_WARNING_CODES = Object.freeze({
   W_TEXT_EMPTY: 'W_TEXT_EMPTY',
   W_TEXT_UNSUPPORTED: 'W_TEXT_UNSUPPORTED',
   W_TEXT_LAYER_CAP: 'W_TEXT_LAYER_CAP',
+  /**
+   * @deprecated 单页文本层节点上限的旧码，已改名为 {@link UI_WARNING_CODES.W_TEXT_LAYER_CAP}。
+   *
+   * 保留该成员仅为兼容按旧码过滤告警的调用方：两者取值不同，因此旧码不会再由
+   * 文本层发出。需要按码判断时请改用 `W_TEXT_LAYER_CAP`；计划在 1.0.0 移除。
+   */
+  W_TEXT_LAYER_LIMIT: 'W_TEXT_LAYER_LIMIT',
   W_SELECTION_RENDER: 'W_SELECTION_RENDER',
   W_SELECTION_EVICTED: 'W_SELECTION_EVICTED',
   W_SELECTION_UNPINNABLE: 'W_SELECTION_UNPINNABLE',
