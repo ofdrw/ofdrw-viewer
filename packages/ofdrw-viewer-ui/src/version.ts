@@ -8,7 +8,7 @@ import { VERSION as ENGINE_VERSION } from '@ofdrw/ofdrw-viewer-engine';
 import { VERSION as CRYPTO_VERSION } from '@ofdrw/ofdrw-viewer-crypto';
 
 /** 阅读器 UI 版本。 */
-export const VERSION = '0.1.5';
+export const VERSION = '0.1.6';
 
 /** 阅读器各组成包的版本集合。 */
 export interface ViewerVersions {

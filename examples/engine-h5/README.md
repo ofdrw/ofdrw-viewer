@@ -6,7 +6,7 @@
 引擎通过 jsDelivr CDN 引用 IIFE 压缩产物，加载成功后注册全局变量 `window.OFDRWViewer`：
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@ofdrw/ofdrw-viewer-engine@0.1.5/dist/ofdrw-viewer-engine.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@ofdrw/ofdrw-viewer-engine@0.1.6/dist/ofdrw-viewer-engine.min.js"></script>
 ```
 
 升级引擎时只需把 URL 中的版本号改成目标版本，然后刷新页面。

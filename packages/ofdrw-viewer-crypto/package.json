@@ -1,6 +1,6 @@
 {
   "name": "@ofdrw/ofdrw-viewer-crypto",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "OFD 密码能力：加密文档检测/解密、电子印章与签名验证、防夹带完整性、时间戳解析",
   "license": "MIT",
   "type": "module",
