@@ -1,7 +1,7 @@
 ---
 name: ofdrw-viewer-ui
 description: >-
-  Embed the framework-agnostic OFD reader UI from @ofdrw/ofdrw-viewer-ui in web apps. Use this skill whenever a task involves a complete OFD reading interface, including continuous scrolling, zoom/rotation, thumbnails, outline/bookmarks, attachments sidebar with per-file download and ZIP export of embedded files, text selection and search, printing, PNG/JPEG/WebP and original OFD export, document info snapshot via getDocumentInfo, encrypted-document credentials, signature overlays and verification panels, or the Web Component/React/Vue adapters. Covers installation, style import, container sizing, OFDViewer options/methods/events, feature gates, crypto configuration, framework wrappers, canvas sharpness and the supersample presets (off/auto/high/max), and known boundaries. Also covers URL loading in the UI layer: HttpByteSource, HTTP Range/CORS, request headers, cancellation, shared byte sources (engine does not fetch), host-controlled font bytes, and URI parameter preview: ?file= URLs, ?base64= values, base64 预览, encoding, priority and security. Use for OFD 阅读器、OFD 在线预览、URI 参数预览、?file=、?base64=、base64 预览、Vue/React OFD 组件、URL 跨域/Range 排障、文字模糊/渲染清晰度/超采样, or when embedding @ofdrw/ofdrw-viewer-ui.
+  Embed the framework-agnostic OFD reader UI from @ofdrw/ofdrw-viewer-ui in web apps. Use this skill whenever a task involves a complete OFD reading interface, including continuous scrolling, zoom/rotation, thumbnails, outline/bookmarks, attachments sidebar with per-file download and ZIP export of embedded files, text selection and search, printing, PNG/JPEG/WebP and original OFD export, document info snapshot via getDocumentInfo, encrypted-document credentials, signature overlays and verification panels, per-page layer visibility via the layerPanel option (six content layers plus annotation-type filtering and sidebar tab icons), or the Web Component/React/Vue adapters. Covers installation, style import, container sizing, OFDViewer options/methods/events, feature gates, crypto configuration, framework wrappers, canvas sharpness and the supersample presets (off/auto/high/max), and known boundaries. Also covers URL loading in the UI layer: HttpByteSource, HTTP Range/CORS, request headers, cancellation, shared byte sources (engine does not fetch), host-controlled font bytes, and URI parameter preview: ?file= URLs, ?base64= values, base64 预览, encoding, priority and security. Use for OFD 阅读器、OFD 在线预览、URI 参数预览、?file=、?base64=、base64 预览、Vue/React OFD 组件、URL 跨域/Range 排障、文字模糊/渲染清晰度/超采样、图层显示控制/layerPanel/注释类型过滤, or when embedding @ofdrw/ofdrw-viewer-ui.
 ---
 
 # OFD 阅读器 UI（@ofdrw/ofdrw-viewer-ui）
@@ -421,7 +421,7 @@ const viewer = new OFDViewer({ container: '#viewer', source: '/api/doc.ofd' });
 </script>
 ```
 
-标签默认是 `ofd-viewer`，采用 light DOM，不创建 Shadow DOM。基础属性为 `src`、`page`、`scale`、`rotation`、`theme`、`locale`、`sidebar`、`font-default`、`font-supplementary`、`supersample`；复杂配置用 `features`、`crypto`、`fonts`、`source` property。`font-default`/`font-supplementary` 是逗号分隔的字体 URL 简写；它们与 `supersample` 都只在创建实例时生效，变更时销毁并按新属性重建实例（文档会重新打开）。省略 `src` 时仍会创建实例并读取查询参数；断开连接销毁实例，重新连接按当前属性重建。事件名为 `ofd-*`，`event.detail` 为对应载荷，`reader.viewer` 是底层只读实例。本机字体能力可直接调用 `reader.getLocalFontsStatus()`、`reader.setLocalFontsEnabled(enabled)`、`reader.onLocalFontsStatusChange(handler)`（未创建实例时分别返回默认状态、抛 `Error('阅读器尚未创建')`、返回空退订函数），状态变化同时派发 `ofd-local-fonts-change`。`sidebar` 属性接受 `thumbnails`/`outline`/`bookmarks`/`signatures`/`attachments`（空、`none`、`off` 关闭），与核心共用 `SIDEBAR_VIEWS` 单一清单。
+标签默认是 `ofd-viewer`，采用 light DOM，不创建 Shadow DOM。基础属性为 `src`、`page`、`scale`、`rotation`、`theme`、`locale`、`sidebar`、`font-default`、`font-supplementary`、`supersample`、`layer-panel`；复杂配置用 `features`、`crypto`、`fonts`、`source` property。`font-default`/`font-supplementary` 是逗号分隔的字体 URL 简写；它们与 `supersample`、`layer-panel` 都只在创建实例时生效，变更时销毁并按新属性重建实例（文档会重新打开）。省略 `src` 时仍会创建实例并读取查询参数；断开连接销毁实例，重新连接按当前属性重建。事件名为 `ofd-*`，`event.detail` 为对应载荷，`reader.viewer` 是底层只读实例。本机字体能力可直接调用 `reader.getLocalFontsStatus()`、`reader.setLocalFontsEnabled(enabled)`、`reader.onLocalFontsStatusChange(handler)`（未创建实例时分别返回默认状态、抛 `Error('阅读器尚未创建')`、返回空退订函数），状态变化同时派发 `ofd-local-fonts-change`。`sidebar` 属性接受 `thumbnails`/`outline`/`bookmarks`/`signatures`/`attachments`/`layers`（空、`none`、`off` 关闭），与核心共用 `SIDEBAR_VIEWS` 单一清单；`layer-panel` 属性可配置图层 tab（见[图层显示控制](#图层显示控制layerpanel)）。
 
 完整属性/property/方法/事件见 [API.md Web Component](./API.md#web-component)。
 
@@ -514,11 +514,74 @@ viewer.setFeatures({ print: true });
 viewer.setFeatureDisplay({ export: 'disable' });
 ```
 
-`features` 是补丁对象，未出现的键默认开启；非法键/值被忽略。共 20 个功能键：`toolbar`、`sidebar`、`thumbnails`、`outline`、`bookmarks`、`attachments`、`pageNavigation`、`pageNumberInput`、`zoom`、`rotate`、`fullscreen`、`textLayer`、`selection`、`find`、`print`、`export`、`signatures`、`verification`、`documentProperties`、`keyboardShortcuts`。关闭 `textLayer` 会级联关闭 `selection` 和 `find`，关闭 `sidebar` 会级联关闭 `thumbnails`/`outline`/`bookmarks`/`attachments`。受功能守卫的方法在功能禁用时抛 `OFD_FEATURE_DISABLED`，可用 `isFeatureDisabledError(error, 'print')` 判断；`closeSidebar()` 等清理方法不设守卫。
+`features` 是补丁对象，未出现的键默认开启；非法键/值被忽略。共 20 个功能键：`toolbar`、`sidebar`、`thumbnails`、`outline`、`bookmarks`、`attachments`、`pageNavigation`、`pageNumberInput`、`zoom`、`rotate`、`fullscreen`、`textLayer`、`selection`、`find`、`print`、`export`、`signatures`、`verification`、`documentProperties`、`keyboardShortcuts`。关闭 `textLayer` 会级联关闭 `selection` 和 `find`，关闭 `sidebar` 会级联关闭 `thumbnails`/`outline`/`bookmarks`/`attachments`（“图层”不是功能键，由 `layerPanel` 控制，`sidebar` 关闭时同样不可用，见[图层显示控制](#图层显示控制layerpanel)）。受功能守卫的方法在功能禁用时抛 `OFD_FEATURE_DISABLED`，可用 `isFeatureDisabledError(error, 'print')` 判断；`closeSidebar()` 等清理方法不设守卫。
 
 `attachments` 依赖 `sidebar`，另有两种由实现状态决定的关闭原因，宿主无法用 `features: true` 打开：引擎文档没有 `saveAttachment()`（旧引擎）时为 `unsupported`；引擎支持但 `getAttachments()` 为空或读取失败时为 `document`。两种情况下侧栏不渲染附件 tab，`openSidebar('attachments')` 抛 `OFD_FEATURE_DISABLED`。
 
 `featureDisplay` 只决定被关闭功能的控件如何展示：`hide` 隐藏，`disable` 保留但禁用。`features: true` 不能绕过文档权限或引擎/环境限制；完整功能键、依赖与有效状态见 [API.md 功能开关](./API.md#功能开关)。
+
+### 图层显示控制（layerPanel）
+
+内置侧栏新增“图层”tab（顺序：缩略图/大纲/书签/签章/附件/**图层**）。面板是“全部页面”总项 + 每页一行；每页可展开 `签章 / 注释 / 自定义 / 前景 / 正文 / 背景` 六项，总项与页面行、六项复选框（不含注释类型）都支持跨页半选，右上角“恢复默认”把全部页恢复为 `defaultVisibility`（不重建树、保持展开状态与焦点；只有过滤签名变化的页重绘）。勾选变化直接进入渲染：只重绘签名变化的页，并同步文本层/查找/选区、缩略图、导出与打印。
+
+```ts
+// 默认隐藏每页背景（示例独立于下方“只隐藏水印”的构造示例）
+new OFDViewer({
+  container: '#viewer',
+  source: file,
+  layerPanel: {
+    enabled: true,          // false 时不渲染“图层”tab，openSidebar('layers') 抛 OFD_FEATURE_DISABLED
+    disabled: false,        // true 时保留 tab 但禁用交互并给出原因提示
+    defaultVisibility: { background: false }, // 缺省六项全可见
+  },
+});
+
+// viewer 的创建见上文；以下为该实例的方法
+viewer.openSidebar('layers');                        // layers 不是功能键，只由 layerPanel 控制
+viewer.getLayerVisibility(1);                        // 六项齐全的快照
+viewer.setLayerVisibility(3, { background: true });  // 只改第 3 页；未给的键保留当前值
+viewer.setLayerVisibility(3, { annotations: false }); // 关闭第 3 页注释总开关
+viewer.resetLayerVisibility();                       // 全部页恢复 layerPanel.defaultVisibility
+```
+
+- `layerPanel` 只在构造时生效（与 `fonts`/`supersample` 一致），层状态**不做持久化**：重新 `open()`/`close()` 后回到 `defaultVisibility`。
+- 关闭某项只影响该页该内容的绘制；四层（`custom`/`foreground`/`body`/`background`）按 `{ page, templates }` 映射到引擎 `PageContentFilter`，六项全可见时不传过滤（签名 `all`，默认态零额外成本）。
+- `layerPanel.enabled=false` 时 tab 不出现；`disabled=true` 时 tab 仍可见但点击无效，`setLayerVisibility()`/`resetLayerVisibility()`/`openSidebar('layers')` 抛 `OFD_FEATURE_DISABLED`。
+- 侧栏 tab（缩略图/大纲/书签/签章/附件/图层）都带内联图标；标题栏放不下全部“图标 + 文字”时**全部**切为仅图标，`title`/`aria-label` 保留完整名称，宽度恢复后自动切回（打开、拖拽/键盘调宽、切语言、断点与功能开关变化时立即重判；侧栏打开期间每 250 ms 兜底复核一次）。
+- 面板交互：全部页面总项 + 每页一行，当前页自动展开；总项与六项在“跨页取值不一致”时半选，页面行自身表示“该页六项的页内混合”，注释类型只有开/关两态；半选点击=全选。“恢复默认”保持展开状态；树只有一个 Tab 停靠点，方向键/Home/End/Space 操作。
+
+#### 注释类型
+
+“注释”是复合项：一个总开关 + 可展开的类型列表。展开后列出**常见五类**（`Link`/`Path`/`Highlight`/`Stamp`/`Watermark`，顺序固定、按当前语言显示为链接/路径/高亮/印章/水印）以及**该页实际出现的其他类型**（显示引擎原值，如 `Note`、`Signature`，按名称字典序排列，区分大小写）。没有内容的类型也会列出，只是淡色显示，仍可正常勾选。
+
+```ts
+// 默认只隐藏水印注释（构造示例，替换上面的实例）
+const withWatermarkHidden = new OFDViewer({
+  container: '#viewer',
+  source: file,
+  // 等价于 { annotations: { enabled: true, types: { Watermark: false } } }
+  layerPanel: { defaultVisibility: { annotations: { types: { Watermark: false } } } },
+});
+
+// 运行时只隐藏某一页的注释类型：types 与当前类型表按键合并，其余类型与总开关不动
+viewer.setLayerVisibility(3, { annotations: { types: { Stamp: false } } });
+// 再次取消该页的 Path
+viewer.setLayerVisibility(3, { annotations: { types: { Path: false } } });
+// 恢复该页的 Stamp（传 true = 从类型表里删掉该键，回到勾选）
+viewer.setLayerVisibility(3, { annotations: { types: { Stamp: true } } });
+
+// 读取：annotations 一定是 { enabled, types } 对象，types 只含被取消的类型
+const v = viewer.getLayerVisibility(3);
+v.annotations; // { enabled: true, types: { Path: false } }（只含被取消的类型）
+```
+
+规则要点：
+
+- `annotations` 可写布尔或对象：`false` ≡ `{ enabled: false }`，`true`/省略 ≡ `{ enabled: true, types: {} }`；`types` 只记录**被取消**的类型，`{}` 就是全勾。
+- **总开关关闭时类型勾选被记住**：`setLayerVisibility(3, { annotations: false })` 不会清空类型表，之后 `{ annotations: true }` 恢复原来的类型选择；面板里总开关关闭时类型行显示为未勾选，但不改存储。
+- 半选粒度：注释类型复选框只出现在页面行，且只有开/关两态（永不半选）；“全部页面”总项不显示类型复选框，也不做跨页类型三态，批量写类型只能走 `setAnnotationTypeForAllPages()`。
+- 引擎映射：总开关关闭**或该页列出的类型全部取消（零勾选）** → `annotations: false` 且不写 `annotationTypes`；总开关打开且类型全勾 → `annotations: true` 且不写 `annotationTypes`；只有部分取消时才写入白名单 `annotationTypes = 候选全集 ∪ 该页列出类型 中未被显式取消的类型`（探测不到的追加类型因此不会被误隐藏；候选全集 = 常见五类 + UI 内置探测候选）。
+- 类型列表来自 UI 侧的惰性探测（引擎没有读取本页注释类型的公开接口）：展开时用候选白名单 + 注释文字试探；探测失败或注释没有外观文字时只列常见五类，不重试、不告警，也不改变可见性。类型补齐不会重绘页面。
 
 ### 查找与选中
 
@@ -637,6 +700,11 @@ console.log(report.overall);
 - **附件读取不是流式**：引擎先整块读入内存再分块回调，UI 也会先把附件拼成完整 `Blob` 再下载；下载超大附件会占用等量内存，受引擎单附件上限（`maxAttachmentBytes`，未配置回退 `maxEntryBytes` 默认 64 MiB）约束。
 - **大附件阈值不可配置**：`524288000` 是源码常量，没有 `options` 入口；需要不同阈值时只能改用引擎接口自行实现下载。
 - **`<ofd-viewer sidebar="attachments">` 已支持**：适配层与核心共用 `SIDEBAR_VIEWS` 清单，`attachments` 可直接写在属性上；未知取值仍被忽略。
+- **图层不做对象级可见性**：只能按页控制六项内容层与注释类型，不能按 `annotationId` 单独隐藏某个注释或对象。
+- **图层状态不持久化**：每页可见性与注释类型勾选只存在于当前文档会话，不写 `localStorage`/`sessionStorage`/URL hash；重新 `open()`/`close()` 回到 `layerPanel.defaultVisibility`。需要跨会话记忆时由宿主自行保存并用 `getLayerVisibility()`/`setLayerVisibility()` 恢复。
+- **签章不拆分类型**：`signatures` 始终是一个布尔开关；`Stamp` 属于**注释类型**，与签章开关互不影响。
+- **注释类型列表不可由宿主自定义**：没有 `layerPanel.annotationTypes` 选项。常见五类固定为 `Link`/`Path`/`Highlight`/`Stamp`/`Watermark`，其余类型来自“该页实际出现的注释”并且只在展开该页类型组时惰性探测；探测失败（无外观文字、页不支持读取文本、打开被取消）时只列常见五类，不报错、不告警。Web Component 的 `layer-panel` 属性只能表达 `enabled`/`disabled` 与六项布尔，注释类型需用核心选项或 `setLayerVisibility()`。
+- **侧栏 tab 溢出切仅图标**：标题栏放不下全部“图标 + 文字”时全部 tab 切为仅图标（`title`/`aria-label` 保留完整名称），宽度恢复后自动切回（触发点同上）；不会隐藏或收纳个别 tab。
 
 ## 新增或修改 UI API 时的同步清单
 
@@ -650,6 +718,8 @@ console.log(report.overall);
 | Vue `./vue` | 同 React，类型再导出在 `src/vue/index.ts` |
 | Web Component `./element` | `OBSERVED_ATTRIBUTES` 加入属性名 → `ensureViewer()` 读取并传入构造选项 → `attributeChangedCallback` 处理变更（运行时生效则调用核心方法，仅构造时生效则重建）→ `src/component/support.ts` 增加解析函数 |
 | 文档 | `skills/API.md` 的构造选项表与 Web Component 属性表、`skills/SKILL.md` 相关章节 |
+
+`layerPanel` 这类**构造时生效**的配置同样要在 Web Component 加入 `layer-panel` 属性并走销毁重建；新增侧栏视图时注意 `layers` 由 `layerPanel` 门控而不是 `ViewerFeature`。
 
 判断「能否运行时修改」再决定 element 的处理方式：能运行时生效的走 setter（如 `scale`、`theme`）；
 只能构造时生效的（如 `fonts`、`supersample`）走销毁重建，并在文档里写清会重新打开文档。

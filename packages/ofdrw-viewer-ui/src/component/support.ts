@@ -14,6 +14,9 @@ import type {
   ViewerState,
 } from '../index';
 import { SIDEBAR_VIEWS } from '../state';
+import { PAGE_LAYER_KEYS, type LayerKey, type LayerPanelOptions } from '../layers/content-filter';
+
+export type { LayerPanelOptions } from '../layers/content-filter';
 
 /** 旋转角度；与核心 `Rotation` 同构。 */
 export type Rotation = ViewerState['view']['rotation'];
@@ -315,6 +318,78 @@ export function readSidebarAttribute(element: HTMLElement): SidebarView | null |
   const normalized = raw.trim();
   if (normalized === '' || normalized === 'none' || normalized === 'off') return null;
   return isSidebarView(normalized) ? normalized : undefined;
+}
+
+/** `layer-panel` 属性解析结果；未出现的字段保持 undefined。 */
+export type LayerPanelAttribute = {
+  /** 是否渲染“图层”tab。 */
+  readonly enabled?: boolean;
+  /** 是否禁用“图层”tab。 */
+  readonly disabled?: boolean;
+  /** 每页六项默认可见性；只包含 `hide`/`show` 提到的层。 */
+  readonly defaultVisibility?: Readonly<Partial<Record<LayerKey, boolean>>>;
+};
+
+/**
+ * 读取 `layer-panel` 属性。
+ *
+ * 支持以下写法（逗号分隔，顺序无关）：
+ * - `disabled`：禁用 tab（保留并给出原因提示）；`disabled:false` 取消禁用；
+ * - `enabled:false`：不渲染 tab；`on` / `off` 为等效简写；
+ * - `hide:background+annotations`：默认隐藏这些层；`show:body`：默认显示这些层。
+ *
+ * 无法识别的项忽略；属性缺失或为空时返回 undefined（按默认配置）。
+ *
+ * @param element 自定义元素。
+ * @returns 解析结果；未配置时 undefined。
+ */
+export function readLayerPanelAttribute(element: HTMLElement): LayerPanelAttribute | undefined {
+  const raw = element.getAttribute('layer-panel');
+  if (raw === null || raw.trim() === '') return undefined;
+  let enabled: boolean | undefined;
+  let disabled: boolean | undefined;
+  let defaultVisibility: Partial<Record<LayerKey, boolean>> | undefined;
+  const setVisibility = (key: string, value: boolean): void => {
+    if (!(PAGE_LAYER_KEYS as readonly string[]).includes(key)) return;
+    defaultVisibility = { ...defaultVisibility, [key as LayerKey]: value };
+  };
+  for (const rawToken of raw.split(',')) {
+    const token = rawToken.trim();
+    if (token === '') continue;
+    const separator = token.indexOf(':');
+    const name = (separator < 0 ? token : token.slice(0, separator)).trim().toLowerCase();
+    const value = separator < 0 ? '' : token.slice(separator + 1).trim().toLowerCase();
+    if (name === 'disabled') disabled = value !== 'false';
+    else if (name === 'enabled') enabled = value !== 'false';
+    else if (name === 'on') enabled = true;
+    else if (name === 'off') enabled = false;
+    else if (name === 'hide' || name === 'show') {
+      for (const key of value.split('+')) setVisibility(key.trim(), name === 'show');
+    }
+  }
+  return {
+    ...(enabled === undefined ? {} : { enabled }),
+    ...(disabled === undefined ? {} : { disabled }),
+    ...(defaultVisibility === undefined ? {} : { defaultVisibility }),
+  };
+}
+
+/**
+ * 把 `layer-panel` 属性解析结果转成构造选项。
+ *
+ * @param element 自定义元素。
+ * @returns 图层侧栏配置；未配置时 undefined。
+ */
+export function readLayerPanelOptions(element: HTMLElement): LayerPanelOptions | undefined {
+  const attribute = readLayerPanelAttribute(element);
+  if (!attribute) return undefined;
+  return {
+    ...(attribute.enabled === undefined ? {} : { enabled: attribute.enabled }),
+    ...(attribute.disabled === undefined ? {} : { disabled: attribute.disabled }),
+    ...(attribute.defaultVisibility === undefined
+      ? {}
+      : { defaultVisibility: attribute.defaultVisibility }),
+  };
 }
 
 /**

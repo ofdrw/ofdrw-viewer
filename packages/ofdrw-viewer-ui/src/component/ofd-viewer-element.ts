@@ -13,6 +13,7 @@ import {
   isUsableSource,
   mergeFeatures,
   readFontAttribute,
+  readLayerPanelOptions,
   readNumber,
   readRotationAttribute,
   readScaleAttribute,
@@ -47,6 +48,7 @@ const OBSERVED_ATTRIBUTES = [
   'theme',
   'locale',
   'sidebar',
+  'layer-panel',
   'font-default',
   'font-supplementary',
   'supersample',
@@ -191,7 +193,12 @@ export class OFDViewerElement extends HTMLElement {
   ): void {
     if (oldValue === newValue) return;
     // 只在创建实例时生效的属性：变更后销毁并按新属性重建（与 src 行为一致）。
-    if (name === 'font-default' || name === 'font-supplementary' || name === 'supersample') {
+    if (
+      name === 'font-default' ||
+      name === 'font-supplementary' ||
+      name === 'supersample' ||
+      name === 'layer-panel'
+    ) {
       this.destroyViewer();
       this.ensureViewer();
       return;
@@ -385,6 +392,7 @@ export class OFDViewerElement extends HTMLElement {
     const sidebar = readSidebarAttribute(this);
     const fonts = this.resolveFonts();
     const supersample = readSupersampleAttribute(this);
+    const layerPanel = readLayerPanelOptions(this);
     this.instance = new OFDViewer({
       container: this,
       ...(source === null ? {} : { source }),
@@ -399,6 +407,7 @@ export class OFDViewerElement extends HTMLElement {
       ...(this.cryptoValue === undefined ? {} : { crypto: this.cryptoValue }),
       ...(fonts === undefined ? {} : { fonts }),
       ...(supersample === undefined ? {} : { supersample }),
+      ...(layerPanel === undefined ? {} : { layerPanel }),
     });
     // 省略来源且页面无查询参数时 ready 会拒绝；错误卡已由核心展示，这里避免
     // 未处理的 Promise rejection。

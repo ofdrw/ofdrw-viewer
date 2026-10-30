@@ -72,6 +72,7 @@ export const enUS: MessageDictionary = {
   'sidebar.noBookmarks': 'This document has no bookmarks',
   'sidebar.noSignatures': 'This document has no signatures',
   'sidebar.settings': 'Settings',
+  'sidebar.layers': 'Layers',
 
   // Local fonts (design §5.1 / §5.2).
   'localFonts.group': 'Fonts',
@@ -110,6 +111,27 @@ export const enUS: MessageDictionary = {
   'attachments.exportSummary': 'Exported {exported} attachment(s), skipped {skipped} (too large or unreadable)',
   'attachments.unsupported': 'The current engine cannot stream attachment content',
   'attachments.ofdUnavailable': 'The OFD source file is not readable in this environment',
+
+  // Layer sidebar (design §B.4).
+  'layers.title': 'Layers',
+  'layers.allPages': 'All pages',
+  'layers.page': 'Page {page}',
+  'layers.restoreDefault': 'Restore defaults',
+  'layers.signatures': 'Signatures',
+  'layers.annotations': 'Annotations',
+  'layers.custom': 'Custom',
+  'layers.foreground': 'Foreground',
+  'layers.body': 'Body',
+  'layers.background': 'Background',
+  'layers.empty': 'This document has no pages',
+  'layers.noDocument': 'Open a document to control layers',
+  'layers.disabled': 'Layer control is disabled by the host',
+  'layers.annotationTypes': 'Annotation types',
+  'layers.type.link': 'Link',
+  'layers.type.path': 'Path',
+  'layers.type.highlight': 'Highlight',
+  'layers.type.stamp': 'Stamp',
+  'layers.type.watermark': 'Watermark',
 
   'findbar.label': 'Find',
   'findbar.placeholder': 'Find in document',

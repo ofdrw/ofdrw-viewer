@@ -126,6 +126,9 @@ export class ExportService {
       await this.assertPermission('export');
       throwIfAborted(scope);
 
+      const contentFilter = this.host.getPageContentFilter
+        ? this.host.getPageContentFilter(targetPage)
+        : undefined;
       const image = await renderPageImage(this.host, {
         pageNumber: targetPage,
         dpi,
@@ -135,6 +138,7 @@ export class ExportService {
         rotation,
         signal: scope.signal,
         feature: 'export',
+        ...(contentFilter ? { contentFilter } : {}),
       });
       const filename = buildImageFilename({
         documentName: resolveDocumentName(this.host),
@@ -245,6 +249,9 @@ export class ExportService {
       for (const pageNumber of pages) {
         throwIfAborted(scope);
         try {
+          const contentFilter = this.host.getPageContentFilter
+            ? this.host.getPageContentFilter(pageNumber)
+            : undefined;
           const image = await renderPageImage(this.host, {
             pageNumber,
             dpi,
@@ -254,6 +261,7 @@ export class ExportService {
             rotation,
             signal: scope.signal,
             feature: 'export',
+            ...(contentFilter ? { contentFilter } : {}),
           });
           const filename = buildImageFilename({
             documentName,

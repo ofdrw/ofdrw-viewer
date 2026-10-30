@@ -453,3 +453,28 @@ describe('打印样式工具', () => {
     expect(supportsNamedPages(null)).toBe(false);
   });
 });
+
+describe('图层过滤联动', () => {
+  it('打印逐页传入各自的内容过滤', async () => {
+    const host = new FakeHost({
+      pageCount: 3,
+      contentFilter: (pageNumber) =>
+        pageNumber === 2
+          ? {
+              layers: { background: { page: false, templates: false } },
+              annotations: true,
+              signatures: true,
+            }
+          : undefined,
+    });
+    printSpy.mockImplementation(() => {
+      window.dispatchEvent(new Event('afterprint'));
+    });
+    await new PrintService(host).print({ pages: [1, 2, 3] });
+    expect(host.pages[0]!.exportImage.mock.lastCall![0]).not.toHaveProperty('contentFilter');
+    expect(host.pages[1]!.exportImage.mock.lastCall![0]).toMatchObject({
+      contentFilter: { layers: { background: { page: false, templates: false } } },
+    });
+    expect(host.pages[2]!.exportImage.mock.lastCall![0]).not.toHaveProperty('contentFilter');
+  });
+});

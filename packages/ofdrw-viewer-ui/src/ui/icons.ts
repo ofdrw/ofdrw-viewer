@@ -6,6 +6,7 @@
  */
 
 import { replaceChildren } from '../compat';
+import type { SidebarView } from '../state';
 
 /** 图标名称。 */
 export type IconName =
@@ -24,7 +25,14 @@ export type IconName =
   | 'fullscreen-exit'
   | 'info'
   | 'more'
-  | 'close';
+  | 'close'
+  | 'thumbnail'
+  | 'outline'
+  | 'bookmark-ribbon'
+  | 'attachments'
+  | 'layers'
+  | 'restore'
+  | 'chevron-right';
 
 /** 图标几何定义。 */
 interface IconSpec {
@@ -117,6 +125,48 @@ const ICONS: Readonly<Record<IconName, IconSpec>> = Object.freeze({
   close: {
     paths: ['M18 6L6 18M6 6l12 12'],
   },
+  thumbnail: {
+    paths: ['M4 4h16v16H4z', 'M8 8h8v8H8z'],
+  },
+  outline: {
+    lines: [
+      [4, 6, 20, 6],
+      [8, 12, 20, 12],
+      [12, 18, 20, 18],
+    ],
+  },
+  'bookmark-ribbon': {
+    paths: ['M7 3h10a1 1 0 0 1 1 1v17l-6-4-6 4V4a1 1 0 0 1 1-1z'],
+  },
+  attachments: {
+    paths: [
+      'M20 11l-8.2 8.2a5 5 0 0 1-7.1-7.1L13 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-2.8-2.8L14 7.5',
+    ],
+  },
+  layers: {
+    paths: ['M12 3l9 5-9 5-9-5z', 'M3 13l9 5 9-5'],
+  },
+  restore: {
+    paths: ['M4 4v6h6', 'M3.5 13a8.5 8.5 0 1 0 2.6-6.6L4 10'],
+  },
+  'chevron-right': {
+    polylines: ['9 6 15 12 9 18'],
+  },
+});
+
+/**
+ * 侧栏 tab 图标。
+ *
+ * `Record<SidebarView, IconName>` 保证新增视图必须补图标；图标颜色由 CSS
+ * `currentColor` 决定。
+ */
+export const TAB_ICONS: Readonly<Record<SidebarView, IconName>> = Object.freeze({
+  thumbnails: 'thumbnail',
+  outline: 'outline',
+  bookmarks: 'bookmark-ribbon',
+  signatures: 'signature',
+  attachments: 'attachments',
+  layers: 'layers',
 });
 
 const SVG_NS = 'http://www.w3.org/2000/svg';

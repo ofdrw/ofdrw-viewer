@@ -46,6 +46,20 @@ export type {
   ResolvedViewerOptions,
   SupersamplePreset,
 } from './options';
+
+// ---------------------------------------------------------------------------
+// 图层可见性：六项模型、每页快照与 layerPanel 配置
+// ---------------------------------------------------------------------------
+export type {
+  LayerAnnotationVisibility,
+  LayerKey,
+  LayerPanelOptions,
+  LayerVisibility,
+  ResolvedAnnotationVisibility,
+  ResolvedLayerVisibility,
+} from './layers/content-filter';
+export type { PageLayerState } from './state';
+export type { ResolvedLayerPanelOptions } from './layers/content-filter';
 export type {
   CertificateSummary,
   CryptoCredential,

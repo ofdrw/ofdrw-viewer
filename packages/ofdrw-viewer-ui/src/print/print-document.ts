@@ -181,6 +181,9 @@ export async function preparePrintDocument(
       const rotated = isQuarterTurn(options.rotation)
         ? { widthMm: size.heightMm, heightMm: size.widthMm }
         : size;
+      const contentFilter = host.getPageContentFilter
+        ? host.getPageContentFilter(pageNumber)
+        : undefined;
       const image = await renderPageImage(host, {
         pageNumber,
         page,
@@ -191,6 +194,7 @@ export async function preparePrintDocument(
         rotation: 0,
         signal: options.signal,
         feature: 'print',
+        ...(contentFilter ? { contentFilter } : {}),
       });
       const objectUrl = urlApi.createObjectURL(image.blob);
       objectUrls.push(objectUrl);

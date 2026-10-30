@@ -17,7 +17,7 @@ import { SIDEBAR_VIEWS, createFindState } from '../state';
 import type { SidebarView, Theme } from '../state';
 import { ThemeController, isTheme } from '../theme';
 import { DialogManager } from './dialog';
-import { sidebarViewFeature } from './feature-control';
+import { resolveSidebarViewGate } from './feature-control';
 import { Findbar } from './findbar';
 import { Sidebar } from './sidebar';
 import { ToastManager } from './toast';
@@ -92,6 +92,7 @@ export class UIShell {
   private destroyed = false;
   private readonly manageViewport: boolean;
   private readonly manageSidebarVisibility: boolean;
+  private readonly layerPanel: { readonly enabled: boolean; readonly disabled: boolean };
   private readonly idPrefix: string;
 
   /**
@@ -104,6 +105,7 @@ export class UIShell {
     this.root.classList.add('ofd-viewer');
     this.manageViewport = options.manageViewport ?? false;
     this.manageSidebarVisibility = options.manageSidebarVisibility ?? false;
+    this.layerPanel = options.layerPanel ?? { enabled: true, disabled: false };
     this.idPrefix = this.root.id || `ofd-viewer-${++shellSequence}`;
 
     const initialTheme: Theme =
@@ -129,6 +131,7 @@ export class UIShell {
       locale: patch.locale ?? this.translator.locale,
       documentStatus: patch.documentStatus,
       documentTitle: patch.documentTitle,
+      layerPanel: this.layerPanel,
     };
     if (this.state.sidebarView !== null) this.lastSidebarView = this.state.sidebarView;
 
@@ -169,6 +172,7 @@ export class UIShell {
       onOpenView: (view) => this.handleCommand({ type: 'sidebar.open', view }),
       onCloseRequest: () => this.handleCommand({ type: 'sidebar.close' }),
       getRestoreFocusTarget: () => this.toolbar.getSidebarButton(),
+      layerPanel: this.layerPanel,
     });
     this.state = { ...this.state, sidebarView: this.sidebar.currentView };
     this.findbar = new Findbar({
@@ -462,8 +466,13 @@ export class UIShell {
   /** 选择要打开的侧栏视图。 */
   private pickSidebarView(): SidebarView | null {
     const usable = (view: SidebarView): boolean => {
-      const state = getFeatureState(this.featureStates, sidebarViewFeature(view));
-      return state.enabled && state.visible;
+      const gate = resolveSidebarViewGate(
+        this.featureStates,
+        view,
+        this.translator,
+        this.layerPanel,
+      );
+      return gate.visible && !gate.disabled;
     };
     if (usable(this.lastSidebarView)) return this.lastSidebarView;
     return SIDEBAR_VIEW_ORDER.find(usable) ?? null;

@@ -8,6 +8,7 @@
 import { vi } from 'vitest';
 import type {
   DocumentPermissions,
+  PageContentFilter,
   PageImageExportOptions,
   PageImageFormat,
   PageImageResult,
@@ -111,6 +112,8 @@ export interface FakeHostOptions {
   readonly sourceBytes?: ArrayBuffer | Uint8Array;
   /** 读取原文件时抛出的错误。 */
   readonly sourceError?: Error;
+  /** 页级内容过滤；按页码（1-based）返回，用于图层联动断言。 */
+  readonly contentFilter?: (pageNumber: number) => PageContentFilter | undefined;
 }
 
 /** 内存宿主；结构兼容 `OutputHost`。 */
@@ -192,6 +195,11 @@ export class FakeHost implements OutputHost {
 
   getState(): { readonly document: { readonly metadata?: { readonly title?: string } } } {
     return { document: { metadata: { title: this.options.title ?? '测试文档' } } };
+  }
+
+  /** 读取指定页的图层过滤；选项未提供时返回 undefined（全画）。 */
+  getPageContentFilter(pageNumber: number): PageContentFilter | undefined {
+    return this.options.contentFilter ? this.options.contentFilter(pageNumber) : undefined;
   }
 
   /** 读取原 OFD 字节；默认返回占位 ZIP 头。 */

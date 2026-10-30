@@ -13,7 +13,9 @@ const engineMocks = vi.hoisted(() => ({
   buses: [] as unknown[],
 }));
 
-vi.mock('@ofdrw/ofdrw-viewer-engine', () => {
+vi.mock('@ofdrw/ofdrw-viewer-engine', async (importOriginal) => {
+  // 未覆盖的引擎导出（常量、类型辅助）保持真实实现，避免新特性读取到 undefined。
+  const actual = await importOriginal<typeof import('@ofdrw/ofdrw-viewer-engine')>();
   /**
    * 与引擎 `OFDEventBus` 同步快照/异常隔离语义一致的最小替身。
    */
@@ -84,6 +86,7 @@ vi.mock('@ofdrw/ofdrw-viewer-engine', () => {
   }
 
   return {
+    ...actual,
     OFDDocument: { open: engineMocks.open },
     OFDEventBus,
     OFDError,

@@ -88,6 +88,7 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 | `onError` | `(error: ViewerErrorInfo) => void` | 无 | 打开/渲染/交互失败回调 |
 | `crypto` | `CryptoViewerOptions` | 默认启用 | 加密文档与验签配置 |
 | `fonts` | `ViewerFontOptions` | 无 | 字体配置（`default`/`supplementary`/`loader`/`aliases`/`localFonts`），见下 |
+| `layerPanel` | `LayerPanelOptions` | `{ enabled: true, disabled: false, defaultVisibility: 六项全 true、注释类型全勾 }` | “图层”tab 开关与每页默认可见性（含注释类型）；**只在构造时生效**，见[图层侧栏](#图层侧栏layerpanel) |
 
 `container` 是唯一必填项。字符串选择器在构造时解析；找不到元素抛 `OFD_INVALID_OPTION`。
 
@@ -96,6 +97,8 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 ### `ResolvedViewerOptions`
 
 `ResolvedViewerOptions` 是内部展开默认值后的完整选项形状，字段与 `OFDViewerOptions` 相同，但除 `source`、`requestInit`、`debug`、`onWarning`、`onError`、`crypto`、`fonts` 外均为必填。调用方通常不需要构造该类型；它用于需要读取解析结果或编写扩展的 TypeScript 场景。
+
+其中 `layerPanel` 的类型是 `ResolvedLayerPanelOptions`：`enabled`/`disabled` 已补齐布尔默认值，`defaultVisibility` 已归一化为 `ResolvedLayerVisibility`（六项齐全，`annotations` 一定是 `{ enabled, types }` 对象），见[图层侧栏](#图层侧栏layerpanel)。
 
 ### 默认值与移动端差异
 
@@ -108,6 +111,114 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 - `supersample` 在移动端默认固定 1（优先保流畅）；显式传 `'high'`、`'max'` 或数字时以传入值为准。DPR ≥ 2 时 `'auto'` 不额外放大，因为后备像素已足够。该选项只在构造时生效。
 - `thumbnailCacheSize` 当前只被解析，未接入缩略图缓存实现，实际缓存数量固定；不要依赖该选项控制缩略图内存。
 - `updateHash` 默认关闭，避免嵌入场景污染宿主地址。启用后 hash 形如 `#page=3&zoom=page-width&rotation=90&sidebar=outline`，未知参数会保留；监听 `hashchange`/`popstate` 恢复视图，非法字段忽略。查询串 `?file=`/`?base64=` 与 hash 互不覆盖。
+- `layerPanel` 与 `fonts`/`supersample` 一样**只在构造时生效**，且不被 `updateHash` 或任何存储持久化：每页可见性（含注释类型勾选）只在当前文档会话内有效，重新 `open()`/`close()` 后回到 `defaultVisibility`。
+
+### 图层侧栏（layerPanel）
+
+“图层”tab 让用户逐页勾选六项内容层，勾选结果经引擎 `PageContentFilter` 进入渲染，并同步到文本层、查找、选区、缩略图、导出与打印。设计来源见 [`图层控制与侧栏图标设计方案.md`](../../../docs/图层控制与侧栏图标设计方案.md)。
+
+#### 配置与默认值
+
+```ts
+interface LayerPanelOptions {
+  readonly enabled?: boolean;   // 是否渲染“图层”tab；默认 true
+  readonly disabled?: boolean;  // 是否禁用（tab 保留 + 原因提示）；默认 false
+  readonly defaultVisibility?: LayerVisibility; // 每页默认可见性；缺省六项全 true、注释类型全勾
+}
+```
+
+| 字段 | 默认 | 非法输入 |
+| --- | --- | --- |
+| `enabled` | `true` | 非布尔 → `true` |
+| `disabled` | `false` | 非布尔 → `false`；与 `enabled: true` 同时出现时 `disabled` 优先 |
+| `defaultVisibility` | 六项全 `true`，`annotations` 为 `{ enabled: true, types: {} }` | 非对象 → 全 true；五项非布尔 → 该项 `true`；`annotations` 非布尔非对象 → 同上；未知键忽略；`types` 保留未知类型名 |
+
+`enabled: false` 不渲染 tab，`openSidebar('layers')` 抛 `OFD_FEATURE_DISABLED`；`disabled: true` 保留 tab 但禁用交互并给出原因提示（同样抛错）。两种情况下 `getLayerVisibility()` 仍返回 `defaultVisibility`，`setLayerVisibility()`/`resetLayerVisibility()` 抛 `OFD_FEATURE_DISABLED`。**图层不是功能键**：`features` 里没有对应键，只由 `layerPanel` 控制（`features.sidebar=false` 时整条侧栏一起不可用）。
+
+#### 六项与引擎映射
+
+| 键 `LayerKey` | 界面名称 | 引擎 `PageContentFilter` 字段 | 说明 |
+| --- | --- | --- | --- |
+| `signatures` | 签章 | `signatures: boolean` | **不做类型拆分**，单一开关 |
+| `annotations` | 注释 | `annotations`（总开关）+ `annotationTypes`（类型白名单） | 复合项：总开关 + 可展开的注释类型，见[注释类型](#注释类型) |
+| `custom` | 自定义 | `layers.custom = { page, templates }` | 模板位引擎恒忽略 |
+| `foreground` | 前景 | `layers.foreground = { page, templates }` | — |
+| `body` | 正文 | `layers.body = { page, templates }` | — |
+| `background` | 背景 | `layers.background = { page, templates }` | — |
+
+- 顺序恒定（自上而下＝视觉层级），六项缺失键按 `true`（可见）处理。
+- 四层的 `page` 与 `templates` 同值；`custom` 的 `templates` 恒为 `false`。
+- **等价“全画”时不传过滤**：六项都处于“有效可见”（五项布尔为 `true`，`annotations` 总开关打开且类型全勾）时返回 `undefined`，规范化签名为 `all`，默认配置即命中该分支，因此**默认签名恒为 `all`**。
+- 六项全不可见（五项 `false` 且注释 `annotations: false`）返回完整对象，引擎规范化签名为 `none`。
+- 每页独立：取消某一页的某一项只重绘该页；文本层、查找、缩略图按过滤签名变化失效，导出与打印逐页使用同一过滤。
+- **兼容性**：全部是新增的可选 API——`OFDViewerOptions.layerPanel?`、`UIState.layers`、`InitialViewerStateOptions.layerVisibility?`、4 个实例方法、6 个类型导出、`SidebarView` 追加 `'layers'`、Web Component 属性 `layer-panel`。不传 `layerPanel` 时行为与引入本特性前完全一致（不传 `PageContentFilter`，签名恒为 `all`）。
+
+#### UI 交互语义
+
+- 树结构：`role="tree"`，首行“全部页面”总项（默认收起），其下每页一行（页码行），当前页自动展开；页面行展开后是按 `PAGE_LAYER_KEYS` 顺序的六项复选框。
+- 三态：**六项复选框**（签章/注释/自定义/前景/正文/背景）与“全部页面”自身在跨页取值不一致时显示半选（`indeterminate` + `aria-checked="mixed"`）；页面行自身表示该页六项的页内混合；点击后的目标值只由点击前三态决定——`mixed` 与 `off` 都变为选中（`on`），只有 `on` 变为未选中。六项全可见/全隐藏时总项分别为选中/未选中。**注释类型复选框不参与跨页三态**：它只出现在页面行、只有开/关两态，“全部页面”总项不提供任何类型复选框（类型只在每页显示，避免跨页并集歧义，见下）。
+- 右上“恢复默认”：所有页恢复 `layerPanel.defaultVisibility`（含注释类型表），不重建树、保持展开状态与焦点与滚动位置，只有过滤签名变化的页重绘；无变化时不派发 `statechange`。
+- 键盘：树只有一个 Tab 停靠点，`↑`/`↓` 在可见行间移动，`→` 展开/进入子项、`←` 收起/回到父行，`Home`/`End` 跳到首/末行，`Space` 切换当前行复选框。
+- 空态：未打开文档显示 `layers.noDocument`，文档无页显示 `layers.empty`，此时不构建树。
+
+#### 注释类型
+
+图层 tab 的页面行“注释”项可展开为该页的类型列表；类型复选框只出现在页面行，且只有开/关两态（永不半选）。“全部页面”总项只有六项总开关，不显示任何类型复选框，也不做跨页类型三态。总开关关闭时类型行显示为 `off`，但**存储的类型表保留**，重新打开总开关即恢复。
+
+| 项 | 规则 |
+| --- | --- |
+| 常见五类 | `Link`、`Path`、`Highlight`、`Stamp`、`Watermark`（顺序恒等于引擎 `KNOWN_ANNOTATION_TYPES` 的顺序），界面按当前语言本地化显示（链接/路径/高亮/印章/水印） |
+| 追加类型 | 该页**实际出现**、且不属于常见五类的注释类型，显示引擎原值（如 `Note`、`Signature`）；追加部分按名称**字典序**（`Array.prototype.sort()` 默认比较，UTF-16 码元序，区分大小写：`A < Z < a`），与探测/文档内顺序无关 |
+| 类型集 | 只按页：常见五类 ∪ 该页追加类型；总项组不显示类型，不做跨页并集 |
+| 无内容的类型 | 照常渲染**可切换**的复选框，仅以淡色区分；不隐藏、不 `disabled`、不加 `aria-disabled` |
+| 类型来源 | 引擎没有“读取本页注释类型”的公开接口，UI 在首次展开时用候选白名单 + `getTextContent({ includeAnnotations: true })` 的注释文字**试探**；探测失败或无 Appearance 文字时只列常见五类，不重试、不告警；补齐新类型不改变勾选，若因此改变该页过滤签名（部分勾选时白名单变大、或零勾选后恢复）只重绘该页，其它页不动 |
+| 未列出的类型 | “部分勾选”时白名单 = 候选全集（常见五类 ∪ UI 内置探测候选）∪ 该页列出类型 中所有**未被显式取消**的类型，因此探测不到的追加类型不会被误隐藏；候选全集之外的极端自定义类型无法保留（引擎白名单只能“允许”，不能“排除”） |
+| 零页/未打开文档 | 面板只显示空态文案，不构建图层树，也不出现任何类型复选框 |
+
+`Annotations` → `PageContentFilter` 的映射（按顺序判定）：
+
+| 条件 | `annotations` | `annotationTypes` | 效果 |
+| --- | --- | --- | --- |
+| 总开关关闭 **或** 该页列出的类型全部取消（零勾选） | `false` | **不写** | 该页不画任何注释 |
+| 总开关打开且列出的类型全部勾选 | `true` | **不写** | 与“全画”一致（其余项也全开时整体不传过滤，签名 `all`） |
+| 总开关打开且至少取消一个类型（仍有勾选） | `true` | `候选全集 ∪ 该页列出类型` 中**未被显式取消**的类型 | 只画白名单内的注释 |
+
+- **零勾选固定为 `annotations: false` 且不写 `annotationTypes`**，与“关闭总开关”产出同一个签名段 `annotations=0;types=`；**不要**用 `annotationTypes: []` 表达零勾选（那会得到 `annotations=1;types=`，形成等价但不同的签名）。
+- 签名形如 `layers=b:11,o:11,f:00,c:00;annotations=1;types=Link,Stamp;signatures=0`；`types=` 为空串表示全部类型。
+- 注释类型只影响注释本身：`Stamp` 是**注释类型**，与 `signatures`（签章开关）互不影响。
+
+```ts
+new OFDViewer({
+  container: '#viewer',
+  source: '/doc.ofd',
+  // 默认只隐藏水印注释：等价于 { annotations: { enabled: true, types: { Watermark: false } } }
+  layerPanel: { defaultVisibility: { annotations: { types: { Watermark: false } } } },
+});
+
+// 等价写法：关闭注释总开关（类型表此后仍可单独设置，重新打开总开关即恢复）
+viewer.setLayerVisibility(1, { annotations: false });
+// 等价于 { annotations: { enabled: false } }
+```
+
+`defaultVisibility.annotations` 的两种形状（以及对象内字段缺省）语义等价关系：
+
+| 写法 | 归一化结果 | 等价于 |
+| --- | --- | --- |
+| 省略 / `undefined` / `true` | `{ enabled: true, types: {} }` | 注释可见、类型全勾 |
+| `false` | `{ enabled: false, types: {} }` | `{ enabled: false }` |
+| `{ enabled: false }` | `{ enabled: false, types: {} }` | `false` |
+| `{ types: { Link: false } }` | `{ enabled: true, types: { Link: false } }` | `{ enabled: true, types: { Link: false } }` |
+| `{ enabled: false, types: { Link: false } }` | 原样保留 | 总开关关闭，但**类型表保留**，重新打开总开关即恢复 |
+| 非对象非布尔（`'x'`、`[]`、`null`）或 `types` 里的非布尔值 | `{ enabled: true, types: {} }` / 丢弃该类型键 | 回落为“注释开、类型全勾” |
+
+`types` 只记录**与“全勾”不同的类型**（实际只出现 `false` 项）：未出现的类型一律按勾选，`types: {}` 即全勾；类型名使用引擎原值、区分大小写，未知类型名可以保留但永远不会出现在文档里（等价于无影响）。
+
+#### 状态与生命周期
+
+- `state.ui.layers`（`PageLayerState`）是只读快照：`{ sessionId, defaults, pages }`，只保存与默认值不同的页，内容不变时引用不变。
+- 不写 `localStorage`/`sessionStorage`/`URL hash`；`open()`/`close()`/`destroy()` 之后回到 `defaultVisibility`（含类型表），类型探测缓存同时清空。
+- 不做对象级（按 `annotationId`）可见性，也不提供宿主自定义类型列表（没有 `layerPanel.annotationTypes` 选项）。
+- 不产生新的 warning 码；探测失败与无效输入一律静默降级。
 
 ### 诊断与日志
 
@@ -189,6 +300,8 @@ new OFDViewer({
 | `properties.*` | 文档属性对话框六个分组 | 分组标题、新元数据字段、权限项、单位与数值模板 |
 | `feature.attachments` | 功能开关文案 | — |
 | `localFonts.*` | 设置侧栏的本机字体分组与授权确认框 | `group`、`toggle`、`toggleHint`、`status.prompt`、`status.enabled`、`status.unsupported`、`status.denied`、`dialog.title`、`dialog.description`、`dialog.allow`、`dialog.deny` |
+| `sidebar.layers` | 侧栏“图层”tab | 标签 / `title` / `aria-label` |
+| `layers.*` | 图层树与注释类型 | `title`、`allPages`、`page`（含 `{page}`）、`restoreDefault`、六项 `signatures`/`annotations`/`custom`/`foreground`/`body`/`background`、`annotationTypes`（类型分组名）、`type.link`/`type.path`/`type.highlight`/`type.stamp`/`type.watermark`（常见五类显示名）、`empty`、`noDocument`、`disabled` |
 
 ### 容器与来源
 
@@ -325,6 +438,8 @@ interface LocalFontDeclaration {
 ### 功能键
 
 `ViewerFeature` 是以下 20 个键的联合；`ViewerFeatures` 是 `Partial<Record<ViewerFeature, boolean>>`，未出现的键默认开启。
+
+**“图层”不是功能键**：没有 `layers` 这个 `ViewerFeature`，图层 tab 的可见/禁用完全由 [`layerPanel`](#图层侧栏layerpanel) 决定；关闭 `sidebar` 时它与其它 tab 一起不可用。
 
 | 功能键 | 作用 | 依赖 |
 | --- | --- | --- |
@@ -521,6 +636,8 @@ viewer.off('pagechanging', handler);
 | `getElements()` | 内置 UI 结构元素 `{ root, toolbar, body, sidebar, sidebarMask, main, findbar, dialogLayer, toastLayer }` |
 | `warnCrypto(code, message)` | 供密码服务/扩展上报 warning，宿主一般不用 |
 | `getLocalFontsStatus()` | 本机字体状态快照 `LocalFontsStatus`，见[本机字体方法](#本机字体方法) |
+| `getLayerPanelState()` | 每页图层可见性快照 `PageLayerState`（`state.ui.layers`），见[图层侧栏](#图层侧栏layerpanel) |
+| `getLayerVisibility(pageNumber)` | 该页 `ResolvedLayerVisibility`；`annotations` 恒为 `{ enabled, types }` 对象；页码越界抛 `OFD_INVALID_OPTION` |
 
 `getPageView()`/`getPageViews()` 返回的是内部页视图对象，主要供扩展使用；普通宿主优先用 `getPageInfo()` 与引擎页面 API。
 
@@ -603,7 +720,7 @@ class OFDViewer {
 
 | 方法 | 说明 |
 | --- | --- |
-| `openSidebar(view)` | 打开 `thumbnails`/`outline`/`bookmarks`/`signatures`/`attachments`；需要 `sidebar` 及对应功能 |
+| `openSidebar(view)` | 打开 `thumbnails`/`outline`/`bookmarks`/`signatures`/`attachments`/`layers`；需要 `sidebar` 及对应功能（`layers` 由 [`layerPanel`](#图层侧栏layerpanel) 控制，不是功能键） |
 | `closeSidebar()` | 关闭侧栏；已关闭时无操作 |
 | `toggleSidebar()` | 已打开则关闭，否则打开第一个可用侧栏 |
 | `setFullscreen(value): Promise<void>` | 进入/退出全屏；原生不支持或失败时回退为沉浸式样式并产生 `W_FULLSCREEN_FALLBACK` |
@@ -634,7 +751,33 @@ interface UIDialogOptions {
 
 `DialogName` 允许宿主扩展字符串，内置名称仅为约定。
 
-`SidebarView` 为 `'thumbnails' | 'outline' | 'bookmarks' | 'signatures' | 'attachments'`，只承载文档内容视图。本机字体开关不在侧栏，见[本机字体](#本机字体)。
+`SidebarView` 为 `'thumbnails' | 'outline' | 'bookmarks' | 'signatures' | 'attachments' | 'layers'`（`layers` 为末位），只承载文档内容视图。**联合类型新增 `'layers'` 对穷举 `switch` 的宿主是编译期破坏性变化**，需补一个分支。侧栏 tab 带内联 SVG 图标；标题栏放不下全部“图标 + 文字”时**全部** tab 统一切为仅图标模式，`title`/`aria-label` 保留完整名称，宽度恢复后自动切回（打开、拖拽/键盘调宽、切语言、断点与功能开关变化时立即重判，侧栏打开期间每 250 ms 兜底复核）。本机字体开关不在侧栏，见[本机字体](#本机字体)。
+
+#### 图层方法
+
+| 方法 | 说明 |
+| --- | --- |
+| `getLayerPanelState(): PageLayerState` | 每页覆盖快照 `{ sessionId, defaults, pages }`；只含与默认值不同的页，同一会话内无变化时引用稳定 |
+| `getLayerVisibility(pageNumber): ResolvedLayerVisibility` | 1-based；返回该页六项齐全的冻结快照，`annotations` 为 `{ enabled, types }`；非整数或越界抛 `OFD_INVALID_OPTION` |
+| `setLayerVisibility(pageNumber, visibility): void` | 视同用户勾选：仅过滤签名变化的页重绘，文本层/查找/缩略图同步失效，一次调用只派发一次 `statechange`；未给出的键保留当前值；面板关闭/禁用时抛 `OFD_FEATURE_DISABLED` |
+| `resetLayerVisibility(): void` | 清空全部页覆盖，恢复 `layerPanel.defaultVisibility`（含注释类型表）；与默认值一致时不派发 `statechange` |
+
+`setLayerVisibility()` 的 `visibility` 是 `LayerVisibility`：五项布尔 + `annotations` 可为布尔或对象。`types` 与**该页当前类型表按键合并**（只覆盖给出的类型，`true` 表示从表中删除该键、回到勾选），不给 `annotations` 时其余五项与注释都不动。被关闭或禁用的面板读到的仍是默认值，写入一律抛 `OFD_FEATURE_DISABLED`。
+
+```ts
+viewer.getLayerVisibility(3);
+// { signatures: true, annotations: { enabled: true, types: {} }, custom: true, foreground: true, body: true, background: true }
+
+// 只关闭第 3 页的水印注释，其余类型与总开关保持
+viewer.setLayerVisibility(3, { annotations: { types: { Watermark: false } } });
+// 关闭第 3 页注释总开关（类型表保留，未来重新打开时恢复）
+viewer.setLayerVisibility(3, { annotations: false });
+// 恢复所有页为 layerPanel.defaultVisibility
+viewer.resetLayerVisibility();
+```
+
+- 图层变化同时派发一次 `statechange`，宿主可从 `state.ui.layers` 读取同一份快照；连续改多项请合并为一次调用或逐页调用，每次调用只重绘签名变化的页。
+- 通过 `setLayerVisibility()` 设置注释类型时只会写入给出的类型键，**不会**触发“本页类型探测”；探测不到的追加类型按“未列出”处理并保持可见，只有用户在面板里展开类型组才会补齐列表。
 
 #### 「关于」对话框（本机字体开关）
 
@@ -809,10 +952,11 @@ interface ViewerState {
 | `toast` | `ViewerToast / null` | 当前 Toast |
 | `warnings` | `ViewerWarning[]` | 诊断信息列表 |
 | `features` | `ViewerFeatureStates` | 全部功能有效状态 |
+| `layers` | `PageLayerState` | 每页图层可见性（含注释类型）快照 `{ sessionId, defaults, pages }`；只含与默认值不同的页，无文档时 `pages` 为空对象 |
 
 ### `InitialViewerStateOptions`
 
-用于构造初始状态快照，主要供测试或自定义外壳：`pageNumber`（默认 1）、`scale`（默认 1）、`zoomMode`（默认 `auto`）、`rotation`（默认 0）、`sidebarView`（默认 `null`）、`theme`（默认 `auto`）、`locale`（默认 `zh-CN`）、`features`（默认全部开启）。
+用于构造初始状态快照，主要供测试或自定义外壳：`pageNumber`（默认 1）、`scale`（默认 1）、`zoomMode`（默认 `auto`）、`rotation`（默认 0）、`sidebarView`（默认 `null`）、`theme`（默认 `auto`）、`locale`（默认 `zh-CN`）、`features`（默认全部开启）、`layerVisibility`（`PageLayerState`，默认六项全可见、类型全勾）。
 
 ### 诊断与 Toast
 
@@ -1220,16 +1364,19 @@ type CertificateInputLoader = (
 | `rotation` | 数字 | 规范为 0/90/180/270 |
 | `theme` | `light`/`dark`/`auto` | 仅合法值生效 |
 | `locale` | 字符串 | 非空时生效 |
-| `sidebar` | `thumbnails`/`outline`/`bookmarks`/`signatures`/`attachments` / 空 / `none` / `off` | 空、`none`、`off` 关闭侧栏；非法值忽略 |
+| `sidebar` | `thumbnails`/`outline`/`bookmarks`/`signatures`/`attachments`/`layers` / 空 / `none` / `off` | 空、`none`、`off` 关闭侧栏；非法值忽略 |
 | `font-default` | 逗号分隔 URL | 默认字体简写，映射为 `fonts.default: [{ url }]` |
 | `font-supplementary` | 逗号分隔 URL | 补充字体简写，映射为 `fonts.supplementary: [{ url }]` |
 | `supersample` | 预设名 / 数字 | 超采样：`off`/`auto`/`high`/`max` 或 1..4 的固定倍率；非法值忽略 |
+| `layer-panel` | 逗号分隔配置 | “图层”tab 配置：`disabled`（禁用，`disabled:false` 取消）、`enabled:false`（不渲染，`on`/`off` 是简写）、`hide:background+annotations`（默认隐藏这些层）、`show:body`（默认显示）；非法项忽略，见下 |
 
 `src` 变化会重新打开文档；设置空 `src` 会关闭文档但保留元素。未连接 DOM 时设置属性不会创建实例，连接后按当前属性创建。
 
 `font-default`/`font-supplementary` 按英文逗号切分，逐项去除首尾空白并丢弃空项；属性缺失、空值或全部为空项时不传对应字段。两者都是 `observedAttributes`：值变化时**销毁并按当前属性重建**实例（与 `src` 的解绑重建语义一致），因此已加载的文档需要重新打开；属性是更具体的配置入口，设置时覆盖 `fonts` property 的同名字段，`loader`/`aliases` 仍来自 property。
 
 `supersample` 同样是 `observedAttributes` 且只在构造时生效，值变化时按新值重建实例。改动画布渲染参数一律需要重建：已有 canvas 的像素密度无法原地调整。
+
+`layer-panel` 映射为构造选项 `layerPanel`：`disabled` / `enabled` 直接对应同名字段，`hide`/`show` 依次写 `defaultVisibility.<层>`（只写提到的层，层名取 `signatures`/`annotations`/`custom`/`foreground`/`body`/`background`）。属性是**简化写法**：无法表达注释类型表，需要控制注释类型时用核心 `layerPanel.defaultVisibility.annotations.types` 或运行时 `setLayerVisibility()`。例如 `<ofd-viewer layer-panel="hide:background+annotations">`、`<ofd-viewer layer-panel="disabled">`。
 
 ### 构造时生效的属性
 
@@ -1240,6 +1387,7 @@ type CertificateInputLoader = (
 | `font-default` | 字体来源在引擎侧与文档解析绑定，无法热替换 |
 | `font-supplementary` | 同上 |
 | `supersample` | 画布后备像素密度在创建 canvas 时确定，无法原地调整 |
+| `layer-panel` | 图层可见性是会话状态，`layerPanel` 只在构造时读取；重建会重新打开文档并回到新的默认可见性 |
 
 ### 四入口同步约定
 
@@ -1328,6 +1476,7 @@ Web Component 转发本机字体方法：`el.getLocalFontsStatus()`（未创建�
 - 状态：`getState`、`getFeatureState`、`isFeatureEnabled`；
 - 验证：`verify`、`getVerificationReport`、`setRootCertificates`、`getRootCertificates`、`openVerificationPanel`。
 - 本机字体：`getLocalFontsStatus`、`setLocalFontsEnabled`、`onLocalFontsStatusChange`。
+- 图层：命令句柄未单独代理图层方法，需要时经 `getInstance()` 调用 `getLayerVisibility`/`setLayerVisibility`/`resetLayerVisibility`/`getLayerPanelState`；`layerPanel` 通过继承的构造选项传入。
 
 `getInstance` 在挂载前返回 `null`；`exportImage`/`exportOfd` 在无实例时返回 `null`；`verify` 在无实例时抛 `Error('阅读器尚未挂载')`。
 
@@ -1370,6 +1519,8 @@ Web Component 转发本机字体方法：`el.getLocalFontsStatus()`（未创建�
 模板 ref 暴露 `getInstance`、`getViewer`、`open`、`close`、`goToPage`、`nextPage`、`previousPage`、`setScale`、`setZoomMode`、`setRotation`、`setFeatures`、`find`、`print`、`exportImage`、`exportOfd`、`getState`、`getFeatureState`、`isFeatureEnabled`、`verify`、`getVerificationReport`、`setRootCertificates`、`getRootCertificates`、`openVerificationPanel`、`getLocalFontsStatus`、`setLocalFontsEnabled`、`onLocalFontsStatusChange`。
 
 本机字体方法已进入 expose：`getLocalFontsStatus()`（未挂载时返回默认状态）、`setLocalFontsEnabled(enabled)`（未挂载时抛 `Error('阅读器尚未挂载')`）、`onLocalFontsStatusChange(handler)`（未挂载时返回空退订函数）；状态变化同时触发 `@local-fonts-change`。启用需在点击事件处理函数内调用；`fonts.localFonts` 通过 `options`（`AdvancedOptions`）传入。
+
+图层方法未进入 expose：需要时经 `getInstance()` 调用 `getLayerVisibility`/`setLayerVisibility`/`resetLayerVisibility`；`layerPanel` 通过 `options`（`AdvancedOptions`）传入，构造时生效。
 
 ### Vue 受控同步
 
@@ -1449,6 +1600,35 @@ interface ViewerErrorOptions {
 **渲染清晰度**：`SupersamplePreset`（`'off' | 'auto' | 'high' | 'max'`，`./`、`/react`、`/vue`、`/element` 均可导入）。
 
 **功能**：`ViewerFeature`、`ViewerFeatures`、`ViewerFeatureStates`、`FeatureState`、`FeatureReason`、`FeatureDisplay`、`FeatureDisplayMode`、`FeatureAvailability`。
+
+**图层**：`LayerKey`、`LayerVisibility`、`LayerPanelOptions`、`LayerAnnotationVisibility`、`ResolvedLayerVisibility`、`PageLayerState`。`LayerPanelOptions` 另从 `/react`、`/vue` 再导出；`LayerVisibility` 的形状为
+
+```ts
+interface LayerAnnotationVisibility {
+  readonly enabled?: boolean;                          // 注释总开关；缺省 true
+  readonly types?: Partial<Record<AnnotationType, boolean>>; // 只记录 false 项；缺省全勾
+}
+
+interface LayerVisibility {
+  readonly signatures?: boolean;
+  readonly annotations?: boolean | LayerAnnotationVisibility; // false ≡ { enabled: false }
+  readonly custom?: boolean;
+  readonly foreground?: boolean;
+  readonly body?: boolean;
+  readonly background?: boolean;
+}
+
+interface ResolvedLayerVisibility {
+  readonly signatures: boolean;
+  readonly annotations: Readonly<{ enabled: boolean; types: Readonly<Record<string, boolean>> }>;
+  readonly custom: boolean;
+  readonly foreground: boolean;
+  readonly body: boolean;
+  readonly background: boolean;
+}
+```
+
+`AnnotationType` 来自引擎（常见五类 `KnownAnnotationType` + 任意字符串）；`types` 的键使用引擎原值、区分大小写。`LayerVisibility.annotations` 由布尔**放宽**为 `boolean | LayerAnnotationVisibility`，旧代码继续可用；但 `state.ui.layers` 里每页的 `annotations` 是对象，直接读该字段的宿主需按对象处理（`UIState.layers` 为本版本新增字段）。
 
 **字体**：`FontSource`、`ViewerFontOptions`、`FontSourceLoader`、`FontSourceResolver`、`FontSourceResolverOptions`、`LocalFontsOptions`、`LocalFontDeclaration`、`composeFontAliases`；再导出引擎的 `FontAliasTable`、`FontInput`、`FontMatchRequest`、`FontProvider`。
 

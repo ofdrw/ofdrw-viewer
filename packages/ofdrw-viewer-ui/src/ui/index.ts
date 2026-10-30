@@ -98,6 +98,8 @@ export interface UIShellHost {
   setLocalFontsEnabled?(enabled: boolean): Promise<void>;
   /** 订阅本地字体状态变化。 */
   onLocalFontsStatusChange?(handler: (status: LocalFontsStatus) => void): () => void;
+  /** 读取图层面板可用性；核心未提供时按可见、可用处理。 */
+  getLayerPanelAvailability?(): { readonly enabled: boolean; readonly disabled: boolean };
   /**
    * 用内置对话框向用户确认是否授权使用本机字体。核心在浏览器授权状态与用户意向不一致时
    * 调用它，拿到对话框按钮上的**真实用户手势**后再申请 `local-fonts` 权限。
@@ -1149,6 +1151,7 @@ function dispatchCommand(
 export function attachUIShell(viewer: UIShellHost): () => void {
   const elements = viewer.getElements();
   const state = viewer.getState();
+  const layerPanel = viewer.getLayerPanelAvailability?.() ?? { enabled: true, disabled: false };
   let shell!: UIShell;
   shell = new UIShell({
     root: elements.root,
@@ -1158,6 +1161,7 @@ export function attachUIShell(viewer: UIShellHost): () => void {
     featureStates: state.ui.features,
     sidebarView: state.view.sidebarView,
     state: toShellState(state),
+    layerPanel,
     manageViewport: false,
     manageSidebarVisibility: false,
     onCommand: (command) => dispatchCommand(viewer, shell, command),

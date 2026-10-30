@@ -12,11 +12,14 @@
 import { runMicrotask } from '../compat';
 
 import type { Translator } from '../i18n';
+import { LayerPanel } from '../layers/layer-panel';
 import { getUIShell } from '../ui';
-import { sidebarViewFeature } from '../ui/feature-control';
+import { resolveSidebarViewGate } from '../ui/feature-control';
+import type { UIShell } from '../ui/ui-shell';
 import { registerViewerExtension, type OFDViewer } from '../viewer';
 import { AttachmentView } from './attachments';
 import { BookmarkView } from './bookmarks';
+import { layerPanelHost } from './layers';
 import { OutlineView } from './outline';
 import { ThumbnailView } from './thumbnails';
 
@@ -30,6 +33,8 @@ export interface NavigationServices {
   bookmarks?: BookmarkView;
   /** 附件列表；打开过“附件”面板后才有。 */
   attachments?: AttachmentView;
+  /** 图层面板；打开过“图层”面板后才有。 */
+  layers?: LayerPanel;
 }
 
 /** 实例到导航视图的映射；用于诊断与测试。 */
@@ -93,8 +98,43 @@ function bindPanels(viewer: OFDViewer): NavigationServices {
     };
   });
 
+  shell.sidebar.registerPanel('layers', (host) => {
+    const panel = new LayerPanel({ host, viewer: layerPanelHost(viewer, getTranslator) });
+    services.layers = panel;
+    return () => {
+      if (services.layers === panel) delete services.layers;
+      panel.destroy();
+    };
+  });
+
   servicesByViewer.set(viewer, services);
   return services;
+}
+
+/**
+ * 收起“当前不可用”的侧栏视图。
+ *
+ * 外壳只按核心推入的状态刷新选中态；本例的视图级可用性（附件无附件不渲染、
+ * 功能键关闭、`layerPanel` 禁用等）也要让侧栏同步收起，因此用与外壳完全相同的
+ * 门控规则判断后请求核心关闭。核心尚未提供图层能力时，图层视图按可见可用处理。
+ *
+ * @param viewer 阅读器实例。
+ * @param shell 内置外壳。
+ */
+function closeUnusableSidebar(viewer: OFDViewer, shell: UIShell): void {
+  const view = viewer.getSidebarView();
+  if (!view) return;
+  const host = viewer as unknown as {
+    getLayerPanelAvailability?: () => { readonly enabled: boolean; readonly disabled: boolean };
+  };
+  const layerPanel = host.getLayerPanelAvailability?.() ?? { enabled: true, disabled: false };
+  const gate = resolveSidebarViewGate(
+    viewer.getFeatureStates(),
+    view,
+    shell.translatorInstance,
+    layerPanel,
+  );
+  if (!gate.visible || gate.disabled) viewer.closeSidebar();
 }
 
 /**
@@ -119,11 +159,18 @@ export function attachNavigation(viewer: OFDViewer): () => void {
   bind();
   if (!services) runMicrotask(bind);
 
-  // 功能被关闭时同步关闭核心侧栏状态：核心只负责 hidden，UI 外壳只收起自己的
-  // 选中态；两者保持一致需要导航层补一刀（不修改 viewer.ts）。
+  // 功能被关闭（含视图级不可用，例如附件 tab 因文档无附件不渲染）时同步关闭核心
+  // 侧栏状态：核心只负责 hidden，UI 外壳只收起自己的选中态；两者保持一致需要导航层
+  // 补一刀（不修改 viewer.ts）。图层视图的可用性由 `layerPanel` 决定，与外壳同一规则。
   const closeDisabledSidebar = (): void => {
     const view = viewer.getSidebarView();
-    if (view && !viewer.isFeatureEnabled(sidebarViewFeature(view))) viewer.closeSidebar();
+    if (!view) return;
+    if (!viewer.isFeatureEnabled('sidebar')) {
+      viewer.closeSidebar();
+      return;
+    }
+    const shell = getUIShell(viewer);
+    if (shell) closeUnusableSidebar(viewer, shell);
   };
 
   const offs = [

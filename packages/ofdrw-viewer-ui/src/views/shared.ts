@@ -12,6 +12,7 @@ import type {
   BookmarkItem,
   DocumentDestination,
   OutlineNode,
+  PageContentFilter,
   PageInfo,
   PageRenderParameters,
   Viewport,
@@ -105,6 +106,18 @@ export interface NavigationViewer {
     event: K,
     handler: (payload: ViewerEventMap[K]) => void,
   ): () => void;
+  /**
+   * 读取指定页的图层过滤；省略或返回 undefined 表示全画（可选能力）。
+   *
+   * @param pageNumber 页码，1-based。
+   */
+  getPageContentFilter?(pageNumber: number): PageContentFilter | undefined;
+  /**
+   * 读取指定页的图层过滤签名；省略时按 `'all'`（可选能力）。
+   *
+   * @param pageNumber 页码，1-based。
+   */
+  getLayerFilterKey?(pageNumber: number): string;
 }
 
 /** 派发诊断 warning 所需的最小宿主；`OFDViewer` 与附件视图均结构兼容。 */

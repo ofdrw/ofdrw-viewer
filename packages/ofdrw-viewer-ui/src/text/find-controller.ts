@@ -8,10 +8,10 @@
  * 本类不直接操作 DOM：高亮渲染与滚动交给 `FindHighlightRenderer`。
  */
 
-import type { TextContent } from '@ofdrw/ofdrw-viewer-engine';
+import type { PageContentFilter, TextContent } from '@ofdrw/ofdrw-viewer-engine';
 import { createFeatureDisabledError } from '../errors';
 import type { FindOptions } from '../types';
-import type { FindState } from '../state';
+import type { FindState, ViewerState } from '../state';
 import type { FindHighlightRenderer, FindMatch, SliceScheduler } from './types';
 import type { TextViewerHost, ViewerBridge } from './viewer-bridge';
 import { textContentOptions } from './viewer-bridge';
@@ -101,7 +101,13 @@ export class FindController {
   private readonly maxTotalMatches: number;
   private readonly maxCachedPages: number;
   private readonly cache = new Map<number, PageSearchSource>();
+  /** 与 `cache` 同步的过滤签名；签名变化后旧命中作废。 */
+  private readonly cacheKeys = new Map<number, string>();
   private readonly cleanups: Array<() => void> = [];
+  /** 最近一次处理过的图层快照；用引用比较判断是否发生过滤变化。 */
+  private lastLayers: ViewerState['ui']['layers'] | null = null;
+  /** 最近一次 `find()` 的原始查询串；重跑时原样使用。 */
+  private rawQuery = '';
 
   private query = '';
   private options: ResolvedFindOptions = DEFAULT_FIND_OPTIONS;
@@ -146,7 +152,73 @@ export class FindController {
       host.on('featureschange', () => {
         if (!host.isFeatureEnabled('find')) this.clearFind();
       }),
+      host.on('statechange', (state) => this.handleStateChange(state)),
     );
+    this.lastLayers = host.getState().ui.layers;
+  }
+
+  /**
+   * 图层可见性变化：作废旧缓存命中，并按需重跑当前查询。
+   *
+   * 用快照引用比较判断：引用未变说明没有页的过滤改变，滚动等常规状态变化直接返回。
+   *
+   * @param state 最新状态快照。
+   */
+  private handleStateChange(state: ViewerState): void {
+    if (this.disposed) return;
+    if (state.ui.layers === this.lastLayers) return;
+    this.lastLayers = state.ui.layers;
+    this.refreshLayerVisibility();
+  }
+
+  /**
+   * 过滤变化后立即重跑当前查询。
+   *
+   * 清空逐页缓存后重新搜索：即使不重跑，下一次 `find()` 也会重新抽取（不会命中隐藏
+   * 内容）；重跑只保证面板打开时的结果立即变化。
+   */
+  refreshLayerVisibility(): void {
+    if (this.disposed) return;
+    this.cache.clear();
+    this.cacheKeys.clear();
+    if (this.query === '' || this.searching) return;
+    void this.find(this.rawQuery, this.toFindOptions());
+  }
+
+  /**
+   * 把解析后的选项还原为调用方选项，用于按原样重跑。
+   *
+   * @returns 可直接传给 `find()` 的选项。
+   */
+  private toFindOptions(): FindOptions {
+    return {
+      caseSensitive: this.options.caseSensitive,
+      wholeWord: this.options.wholeWord,
+      highlightAll: this.options.highlightAll,
+      fromCurrentPage: this.options.fromCurrentPage,
+    };
+  }
+
+  /**
+   * 读取指定页的图层过滤。
+   *
+   * @param pageNumber 页码，1-based。
+   * @returns 过滤配置；宿主未实现或全画时为 undefined。
+   */
+  private filterFor(pageNumber: number): PageContentFilter | undefined {
+    return this.host.getPageContentFilter
+      ? this.host.getPageContentFilter(pageNumber)
+      : undefined;
+  }
+
+  /**
+   * 读取指定页的过滤签名。
+   *
+   * @param pageNumber 页码，1-based。
+   * @returns 签名；宿主未实现时为 `'all'`。
+   */
+  private filterKeyFor(pageNumber: number): string {
+    return this.host.getLayerFilterKey ? this.host.getLayerFilterKey(pageNumber) : 'all';
   }
 
   /**
@@ -174,6 +246,7 @@ export class FindController {
     const generation = this.generation;
     const abort = new AbortController();
     this.abort = abort;
+    this.rawQuery = query;
     this.query = normalized;
     this.options = resolved;
     this.matches = [];
@@ -257,6 +330,7 @@ export class FindController {
     for (const cleanup of this.cleanups.splice(0)) cleanup();
     this.highlights.clearFindHighlights();
     this.cache.clear();
+    this.cacheKeys.clear();
   }
 
   // -------------------------------------------------------------------------
@@ -304,8 +378,13 @@ export class FindController {
     generation: number,
     signal: AbortSignal,
   ): Promise<void> {
-    let source = this.cache.get(pageNumber);
+    const filterKey = this.filterKeyFor(pageNumber);
+    let source = this.cacheKeys.get(pageNumber) === filterKey
+      ? this.cache.get(pageNumber)
+      : undefined;
     if (!source) {
+      this.cache.delete(pageNumber);
+      this.cacheKeys.delete(pageNumber);
       let content: TextContent;
       try {
         const page = await this.host.getPage(pageNumber);
@@ -314,7 +393,9 @@ export class FindController {
           this.bridge.warn(UI_WARNING_CODES.W_TEXT_UNSUPPORTED, '当前引擎页面不支持文本提取', pageNumber - 1);
           return;
         }
-        content = await page.getTextContent(textContentOptions(signal));
+        content = await page.getTextContent(
+          textContentOptions(signal, this.filterFor(pageNumber)),
+        );
       } catch (error) {
         if (this.isStale(generation, signal) || isAbortError(error)) return;
         this.bridge.warn(
@@ -326,7 +407,7 @@ export class FindController {
       }
       if (this.isStale(generation, signal)) return;
       source = createPageSearchSource(content, pageNumber);
-      this.remember(pageNumber, source);
+      this.remember(pageNumber, source, this.filterKeyFor(pageNumber));
     }
     if (source.text.length === 0) {
       this.emptyPageCount += 1;
@@ -468,14 +549,22 @@ export class FindController {
     });
   }
 
-  /** 写入单页缓存并做 LRU 淘汰。 */
-  private remember(pageNumber: number, source: PageSearchSource): void {
+  /**
+   * 写入单页缓存并做 LRU 淘汰。
+   *
+   * @param pageNumber 页码，1-based。
+   * @param source 文本索引。
+   * @param filterKey 生成该索引时的过滤签名。
+   */
+  private remember(pageNumber: number, source: PageSearchSource, filterKey: string): void {
     this.cache.delete(pageNumber);
     this.cache.set(pageNumber, source);
+    this.cacheKeys.set(pageNumber, filterKey);
     while (this.cache.size > this.maxCachedPages) {
       const oldest = this.cache.keys().next().value;
       if (oldest === undefined) break;
       this.cache.delete(oldest);
+      this.cacheKeys.delete(oldest);
     }
   }
 
@@ -501,7 +590,9 @@ export class FindController {
     this.searching = false;
     this.truncated = false;
     this.emptyPageCount = 0;
+    this.rawQuery = '';
     this.cache.clear();
+    this.cacheKeys.clear();
     this.highlights.clearFindHighlights();
   }
 

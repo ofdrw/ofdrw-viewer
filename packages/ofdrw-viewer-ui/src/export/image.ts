@@ -5,7 +5,11 @@
  * 页面 canvas 或模型；旋转、背景、质量等选项原样交给引擎，确保输出与页面一致。
  */
 
-import type { PageImageFormat, PageImageResult } from '@ofdrw/ofdrw-viewer-engine';
+import type {
+  PageContentFilter,
+  PageImageFormat,
+  PageImageResult,
+} from '@ofdrw/ofdrw-viewer-engine';
 import { createFeatureDisabledError } from '../errors';
 import type { ViewerFeature } from '../features';
 import type { Rotation } from '../state';
@@ -32,6 +36,8 @@ export interface PageImageRequest {
   readonly signal: AbortSignal;
   /** 所属功能；引擎能力不足时用于错误码。 */
   readonly feature: ViewerFeature;
+  /** 页级内容过滤；省略表示全画。 */
+  readonly contentFilter?: PageContentFilter;
 }
 
 /** 单页图片生成结果。 */
@@ -164,6 +170,7 @@ export async function renderPageImage(
   if (typeof page.exportImage !== 'function') {
     throw createFeatureDisabledError(request.feature, '当前引擎不支持图片导出');
   }
+  const contentFilter = request.contentFilter;
   const result: PageImageResult = await page.exportImage({
     dpi: request.dpi,
     format: request.format,
@@ -171,6 +178,7 @@ export async function renderPageImage(
     rotation: request.rotation,
     background: request.background,
     signal: request.signal,
+    ...(contentFilter ? { contentFilter } : {}),
   });
   if (request.signal.aborted) throw createAbortError();
   const format = formatFromMime(result.mime, request.format);

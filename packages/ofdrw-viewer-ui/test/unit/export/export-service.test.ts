@@ -397,3 +397,48 @@ describe('导出错误类型', () => {
     ).rejects.toMatchObject({ name: 'AbortError' });
   });
 });
+
+describe('图层过滤联动', () => {
+  it('单页导出按目标页传入 contentFilter，多页导出逐页各自过滤', async () => {
+    const host = new FakeHost({
+      pageCount: 3,
+      // 第 2 页关闭背景：导出时只应把这一个过滤交给第 2 页。
+      contentFilter: (pageNumber) =>
+        pageNumber === 2
+          ? {
+              layers: {
+                background: { page: false, templates: false },
+                body: { page: true, templates: true },
+                foreground: { page: true, templates: true },
+                custom: { page: true, templates: false },
+              },
+              annotations: true,
+              signatures: true,
+            }
+          : undefined,
+    });
+    const service = new ExportService(host);
+
+    await service.exportImage({ page: 2 });
+    expect(host.pages[1]!.exportImage.mock.lastCall![0]).toMatchObject({
+      contentFilter: { layers: { background: { page: false, templates: false } } },
+    });
+
+    host.pages.forEach((page) => page.exportImage.mockClear());
+    await service.exportImages({ pages: 'all' });
+    expect(host.pages[0]!.exportImage.mock.lastCall![0]).not.toHaveProperty('contentFilter');
+    expect(host.pages[1]!.exportImage.mock.lastCall![0]).toMatchObject({
+      contentFilter: { layers: { background: { page: false, templates: false } } },
+    });
+    expect(host.pages[2]!.exportImage.mock.lastCall![0]).not.toHaveProperty('contentFilter');
+  });
+
+  it('宿主未实现 getPageContentFilter 时按全画导出（旧宿主兼容）', async () => {
+    const host = new FakeHost({ pageCount: 2 });
+    // 模拟引入图层控制前的宿主：删除可选成员。
+    delete (host as { getPageContentFilter?: unknown }).getPageContentFilter;
+    const service = new ExportService(host);
+    await service.exportImage({ page: 2 });
+    expect(host.pages[1]!.exportImage.mock.lastCall![0]).not.toHaveProperty('contentFilter');
+  });
+});

@@ -12,7 +12,7 @@
 
 import { replaceChildren } from '../compat';
 
-import type { TextContent, TextQuad } from '@ofdrw/ofdrw-viewer-engine';
+import type { PageContentFilter, TextContent, TextQuad } from '@ofdrw/ofdrw-viewer-engine';
 import type { EnginePage } from '../document-controller';
 import type { PageView } from '../page-view';
 import type { Rotation } from '../state';
@@ -121,6 +121,8 @@ interface PageTextState {
   page: EnginePage | null;
   /** 是否正在抽取文本；避免刷新重入重复调用 getTextContent。 */
   extracting: boolean;
+  /** 构建该页文本时的图层过滤签名；与当前签名不一致即需要整页重建。 */
+  filterKey: string;
 }
 
 /** 文本层服务选项。 */
@@ -441,6 +443,13 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
       if (!view || view.isDestroyed) continue;
       const pageState = this.pages.get(pageNumber);
       if (!pageState) {
+        void this.loadPage(pageNumber, view);
+        continue;
+      }
+      // 图层过滤变化：整页释放后重建，避免旧 span 残留（隐藏文字仍可被选中）。
+      // 放在分支最前，否则已整页建满的页会走 domBuilt 早退而跳过重建。
+      if (pageState.filterKey !== this.filterKeyOf(pageNumber)) {
+        this.clearPageTextLayer(pageNumber);
         void this.loadPage(pageNumber, view);
         continue;
       }
@@ -959,13 +968,15 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
 
   /** 异步取页并抽取文本；滚动未停止时保存页句柄，等 settle 后再抽取。 */
   private async loadPage(pageNumber: number, view: PageView): Promise<void> {
-    const state = this.pages.get(pageNumber) ?? this.createPageState();
+    const state = this.pages.get(pageNumber) ?? this.createPageState(pageNumber);
     this.pages.set(pageNumber, state);
     this.cancelPageBuild(state);
     state.generation += 1;
     const generation = state.generation;
     const abort = new AbortController();
     state.abort = abort;
+    // 记录本次抽取使用的过滤签名，刷新时据此判断是否需要整页重建。
+    state.filterKey = this.filterKeyOf(pageNumber);
 
     let page: EnginePage;
     try {
@@ -1022,7 +1033,8 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
         );
         return;
       }
-      const content = await page.getTextContent(textContentOptions(abort.signal));
+      const filter = this.readFilter(pageNumber);
+      const content = await page.getTextContent(textContentOptions(abort.signal, filter));
       if (this.isStale(pageNumber, generation, abort)) return;
       state.page = null;
       state.abort = null;
@@ -1060,7 +1072,7 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
   }
 
   /** 创建空的页文字层状态。 */
-  private createPageState(): PageTextState {
+  private createPageState(pageNumber = 1): PageTextState {
     return {
       content: null,
       rows: null,
@@ -1074,7 +1086,55 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
       failed: false,
       page: null,
       extracting: false,
+      filterKey: this.filterKeyOf(pageNumber),
     };
+  }
+
+  /**
+   * 读取指定页的图层过滤。
+   *
+   * 宿主未实现过滤能力（测试替身/旧宿主）时按全画处理。
+   *
+   * @param pageNumber 页码，1-based。
+   * @returns 过滤配置；全画时为 undefined。
+   */
+  private readFilter(pageNumber: number): PageContentFilter | undefined {
+    return this.host.getPageContentFilter
+      ? this.host.getPageContentFilter(pageNumber)
+      : undefined;
+  }
+
+  /**
+   * 读取指定页的过滤签名；宿主未实现时按 `'all'`。
+   *
+   * @param pageNumber 页码，1-based。
+   * @returns 过滤签名。
+   */
+  private filterKeyOf(pageNumber: number): string {
+    return this.host.getLayerFilterKey ? this.host.getLayerFilterKey(pageNumber) : 'all';
+  }
+
+  /**
+   * 图层可见性变化后立即重建可见页文本层。
+   *
+   * 已建好的页整页释放（清空 span、中止构建、丢弃内容缓存）后重新抽取，保证隐藏
+   * 内容既不残留 span、也不会被选区取到几何；页不在可见集合时不处理，等下一次
+   * `refresh()` 按签名判定。
+   *
+   * @param pageNumber 页码，1-based。
+   */
+  invalidateLayerFilter(pageNumber: number): void {
+    if (this.disposed) return;
+    if (!this.host.isFeatureEnabled('textLayer')) return;
+    const state = this.host.getState();
+    if (state.document.status !== 'ready' || this.host.getPageCount() === 0) return;
+    const view = this.host.getPageView(pageNumber);
+    if (!view || view.isDestroyed) return;
+    // 该页从未建立文本层：无需重建，等待正常 refresh() 按新过滤首次构建。
+    if (!this.clearPageTextLayer(pageNumber)) return;
+    this.renderFindHighlights();
+    this.syncSelectionLayers();
+    void this.loadPage(pageNumber, view);
   }
 
   /** 判断加载是否已过期。 */
@@ -1521,9 +1581,11 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
    * 清空单页文本层并放弃进行中的加载。
    *
    * @param pageNumber 页码，1-based。
-   * @param preserveSelectionLayer 是否保留选区层（快照仍覆盖该页时）。
+   * @param preserveSelectionLayer 是否保留选区高亮层（快照仍覆盖该页时）。
+   * @returns 释放前该页是否存在页状态（从未建立过文本层的页返回 false）。
    */
-  private clearPageTextLayer(pageNumber: number, preserveSelectionLayer = false): void {
+  private clearPageTextLayer(pageNumber: number, preserveSelectionLayer = false): boolean {
+    const existed = this.pages.has(pageNumber);
     // 这里只是移除 span，抑制窗口只需覆盖当前微任务。
     this.onDomMutation?.(0);
     const state = this.pages.get(pageNumber);
@@ -1546,6 +1608,7 @@ export class TextLayerService implements FindHighlightRenderer, ViewerTextLayerS
     }
     if (!preserveSelectionLayer) this.removeSelectionLayer(pageNumber);
     this.removeFindLayer(pageNumber);
+    return existed;
   }
 
   /** 清空全部文本层。 */

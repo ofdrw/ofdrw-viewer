@@ -9,11 +9,13 @@
 import { getGlobalObject, replaceChildren } from './compat';
 
 import type {
+  AnnotationType,
   DocumentFontResource,
   DocumentPermissions,
   DocumentOpenAbortEvent,
   DocumentOpenErrorEvent,
   DocumentOpenStartEvent,
+  PageContentFilter,
   PageImageFormat,
   PageInfo,
   PageRenderAbortEvent,
@@ -56,6 +58,21 @@ import type {
   ViewerFeatures,
 } from './features';
 import { ViewerHistory, type ViewerHashState } from './history';
+import {
+  PageLayerOverrides,
+  PAGE_LAYER_KEYS,
+  annotationTypesForGroup,
+  cloneVisibility,
+  knownAnnotationTypes,
+  readLayerFlag,
+  isAnnotationsEffectivelyVisible,
+  type LayerKey,
+  type LayerSummary,
+  type LayerVisibility,
+  type PageLayerState,
+  type ResolvedLayerVisibility,
+} from './layers/content-filter';
+import { probeAnnotationTypesForPage } from './layers/annotation-probe';
 import { createTranslator, type MessageKey, type Translator } from './i18n';
 import { KeyboardController } from './keyboard';
 import {
@@ -190,6 +207,12 @@ export interface ViewerFindService {
   copySelection?(): void | Promise<void>;
   /** 清除选区。 */
   clearSelection?(): void;
+  /**
+   * 图层可见性变化后重跑当前查询（可选）。
+   *
+   * 文本模块据此作废逐页文本索引并按原查询重算，保证隐藏内容立即从结果中消失。
+   */
+  refreshLayerVisibility?(): void;
 }
 
 /** 文本层服务；由文本模块实现。 */
@@ -200,6 +223,12 @@ export interface ViewerTextLayerService {
   destroy?(): void;
   /** 释放指定页文本层；页缓存淘汰时调用。 */
   releasePage?(pageNumber: number): void;
+  /**
+   * 按当前图层过滤重建指定页文本层（可选）；页码 1-based。
+   *
+   * 隐藏内容必须同时从 DOM span 与字符几何中消失，因此是整页释放后重建。
+   */
+  invalidateLayerFilter?(pageNumber: number): void;
   /** 读取选区端点页 pin 集合（1-based）。 */
   getPinnedPages?(): readonly number[];
   /** 指定页是否仍持有文本数据；页级 LRU 的淘汰候选。 */
@@ -475,6 +504,16 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private readonly engineEvents: InstanceType<typeof engineApi.OFDEventBus> | null;
   /** `page.render()` 前的用途登记；按页索引分组，start 事件同步消费。 */
   private readonly pendingStarts = new Map<number, PendingPageRenderStart[]>();
+  /** 每页图层可见性覆盖表；只保存与 `layerPanel.defaultVisibility` 不同的页。 */
+  private readonly layerOverrides: PageLayerOverrides;
+  /** 文档会话标识；每次打开/关闭递增，用于丢弃迟到的图层写入。 */
+  private layerSession = 0;
+  /** 页索引（0-based）→ 该页“实际出现的追加注释类型”（§I.3 探测缓存）。 */
+  private readonly annotationTypesByPage = new Map<number, readonly AnnotationType[]>();
+  /** 正在探测的页，避免重复发起。 */
+  private readonly annotationTypeProbes = new Map<number, Promise<readonly AnnotationType[]>>();
+  /** 探测失败（无文字外观/接口不支持）的页；不再重试、不告警。 */
+  private readonly annotationTypeProbeFailed = new Set<number>();
   /** 已映射的页面操作：`operationId` → 用途与页索引。 */
   private readonly pageOperations = new Map<
     number,
@@ -755,6 +794,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       padding: DEFAULT_PAGE_PADDING,
       devicePixelRatio: this.devicePixelRatio(),
     });
+    this.layerOverrides = new PageLayerOverrides(this.options.layerPanel.defaultVisibility);
     this.state = createInitialViewerState({
       pageNumber: this.options.initialPage,
       scale: 1,
@@ -764,6 +804,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       theme: this.options.theme,
       locale: this.options.locale,
       features: this.featureGate.getStates(),
+      layerVisibility: this.layerOverrides.clone(this.layerSession),
     });
     // 用户意向（本机字体开关）在构造时初始化：持久化选择优先于宿主默认值。
     this.initLocalFontsWanted();
@@ -868,6 +909,429 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     };
   }
 
+  // -------------------------------------------------------------------------
+  // 图层可见性
+  // -------------------------------------------------------------------------
+
+  /**
+   * 每页图层可见性快照（`state.ui.layers`）。
+   *
+   * 只包含与默认可见性不同的页；同一文档会话内除非内容变化，引用保持稳定。
+   */
+  getLayerPanelState(): PageLayerState {
+    return this.state.ui.layers;
+  }
+
+  /**
+   * 读取指定页的六项可见性。
+   *
+   * @param pageNumber 页码，1-based。
+   * @returns 六项齐全的只读快照。
+   * @throws {OFDViewerError} 页码非整数或越界时抛 `OFD_INVALID_OPTION`。
+   */
+  getLayerVisibility(pageNumber: number): ResolvedLayerVisibility {
+    const index = this.layerIndex(pageNumber);
+    return cloneVisibility(this.layerOverrides.visibilityAt(index));
+  }
+
+  /**
+   * 设置指定页的六项可见性；未给出的键保留当前值。
+   *
+   * 视同 UI 勾选：只有过滤签名变化的页重绘，文本层/查找/缩略图同步失效；一次调用只
+   * 派发一次 `statechange`。被 `layerPanel` 关闭或禁用时抛 `OFD_FEATURE_DISABLED`。
+   *
+   * @param pageNumber 页码，1-based。
+   * @param visibility 目标可见性；每项为布尔值，`annotations` 另可传 `{ enabled?, types? }`（`types` 按键合并）。
+   * @throws {OFDViewerError} 页码越界抛 `OFD_INVALID_OPTION`；面板不可用抛 `OFD_FEATURE_DISABLED`。
+   */
+  setLayerVisibility(pageNumber: number, visibility: LayerVisibility): void {
+    this.assertLayerPanelEnabled();
+    const index = this.layerIndex(pageNumber);
+    // `PageLayerOverrides.set()` 只覆盖给出的键，`annotations.types` 按键合并（§I.8）。
+    const patch: LayerVisibility = typeof visibility === 'object' && visibility !== null ? visibility : {};
+    this.commitLayerWrites([{ index, visibility: patch }]);
+  }
+
+  /**
+   * 恢复每页可见性为 `layerPanel.defaultVisibility`。
+   *
+   * 无文档或本来就与默认值一致时不派发 `statechange`。
+   */
+  resetLayerVisibility(): void {
+    this.assertLayerPanelEnabled();
+    const changed = this.layerOverrides.clear();
+    if (!changed) return;
+    const indices: number[] = [];
+    for (let index = 0; index < this.pageViews.length; index += 1) indices.push(index);
+    this.finishLayerChange(indices);
+  }
+
+  /**
+   * 读取指定页的引擎内容过滤。
+   *
+   * @internal 供文本层/缩略图/导出/打印等模块读取；宿主通常不需要直接调用。
+   * @param pageNumber 页码，1-based。
+   * @returns 过滤配置；undefined 表示全画。
+   */
+  getPageContentFilter(pageNumber: number): PageContentFilter | undefined {
+    if (!Number.isFinite(pageNumber)) return undefined;
+    const index = Math.trunc(pageNumber) - 1;
+    return this.layerOverrides.filterAt(index, this.getAnnotationTypeKeysForPage(index));
+  }
+
+  /**
+   * 读取指定页的过滤签名。
+   *
+   * @internal 与 `getPageContentFilter` 同步变化，供缓存判断是否需要失效。
+   * @param pageNumber 页码，1-based。
+   * @returns 稳定签名；全画时为 `'all'`。
+   */
+  getLayerFilterKey(pageNumber: number): string {
+    if (!Number.isFinite(pageNumber)) return this.layerOverrides.defaultKey;
+    const index = Math.trunc(pageNumber) - 1;
+    return this.layerOverrides.keyAt(index, this.getAnnotationTypeKeysForPage(index));
+  }
+
+  /**
+   * 图层面板可用性。
+   *
+   * @internal 供 UI 外壳渲染 tab 的可见/禁用状态。
+   * @returns 是否渲染与是否禁用。
+   */
+  getLayerPanelAvailability(): { enabled: boolean; disabled: boolean } {
+    const config = this.options.layerPanel;
+    return { enabled: config.enabled, disabled: config.disabled };
+  }
+
+  /**
+   * 设置单页的一项可见性（图层面板入口）。
+   *
+   * @internal
+   * @param pageIndex 页索引，0-based。
+   * @param key 图层键。
+   * @param value 是否可见。
+   */
+  setPageLayer(pageIndex: number, key: LayerKey, value: boolean): void {
+    this.commitLayerWrites([
+      { index: pageIndex, visibility: layerKeyPatch(key, value, this.layerOverrides.visibilityAt(pageIndex)) },
+    ]);
+  }
+
+  /**
+   * 把所有页的某一项设为同一值（图层面板“全部页面”子项入口）。
+   *
+   * @internal
+   * @param key 图层键。
+   * @param value 是否可见。
+   */
+  setLayerForAllPages(key: LayerKey, value: boolean): void {
+    const writes: LayerWrite[] = [];
+    for (let index = 0; index < this.pageViews.length; index += 1) {
+      writes.push({
+        index,
+        visibility: layerKeyPatch(key, value, this.layerOverrides.visibilityAt(index)),
+      });
+    }
+    this.commitLayerWrites(writes);
+  }
+
+  /**
+   * 设置某页某注释类型的勾选（图层面板注释类型复选框入口）。
+   *
+   * @internal
+   * @param pageIndex 页索引，0-based。
+   * @param type 注释类型（引擎原值）。
+   * @param value 是否勾选。
+   */
+  setAnnotationTypeForPage(pageIndex: number, type: AnnotationType, value: boolean): void {
+    const current = this.layerOverrides.visibilityAt(pageIndex);
+    this.commitLayerWrites([{ index: pageIndex, visibility: annotationTypePatch(type, value, current) }]);
+  }
+
+  /**
+   * 设置所有页某注释类型的勾选（总项注释类型复选框入口）。
+   *
+   * @internal
+   * @param type 注释类型（引擎原值）。
+   * @param value 是否勾选。
+   */
+  setAnnotationTypeForAllPages(type: AnnotationType, value: boolean): void {
+    const writes: LayerWrite[] = [];
+    for (let index = 0; index < this.pageViews.length; index += 1) {
+      writes.push({
+        index,
+        visibility: annotationTypePatch(type, value, this.layerOverrides.visibilityAt(index)),
+      });
+    }
+    this.commitLayerWrites(writes);
+  }
+
+  /**
+   * 读取某页列出的注释类型（常见五类 + 该页追加类型，§I.1）。
+   *
+   * @internal
+   * @param pageNumber 页码，1-based。
+   * @returns 类型列表（常见五类在前，追加类型字典序）。
+   */
+  getAnnotationTypes(pageNumber: number): readonly AnnotationType[] {
+    if (!Number.isFinite(pageNumber)) return knownAnnotationTypes();
+    return annotationTypesForGroup(this.getExtraAnnotationTypes(pageNumber));
+  }
+
+  /**
+   * 读取某页的追加注释类型（该页实际出现、且不在常见五类中的类型）。
+   *
+   * @internal
+   * @param pageNumber 页码，1-based。
+   * @returns 追加类型（字典序）；探测失败或尚未探测时为空数组。
+   */
+  getExtraAnnotationTypes(pageNumber: number): readonly AnnotationType[] {
+    if (!Number.isFinite(pageNumber)) return [];
+    return this.annotationTypesByPage.get(Math.trunc(pageNumber) - 1) ?? [];
+  }
+
+  /**
+   * 读取某组“实际出现过”的注释类型集合（用于面板淡色区分）。
+   *
+   * @internal
+   * @param group `'all'` 或页索引（0-based）。
+   * @returns 类型集合。
+   */
+  readAnnotationTypesInUse(group: 'all' | number): ReadonlySet<string> {
+    const result = new Set<string>();
+    if (group === 'all') {
+      for (const types of this.annotationTypesByPage.values()) {
+        for (const type of types) result.add(type);
+      }
+      return result;
+    }
+    const types = this.annotationTypesByPage.get(group);
+    if (types) for (const type of types) result.add(type);
+    return result;
+  }
+
+  /**
+   * 懒加载若干页的注释类型探测（§I.3）：每页只探测一次，失败后不重试、不告警。
+   *
+   * 并发策略：本方法**串行**逐页探测——同一时刻只有一页在跑白名单试探（每页最多
+   * `候选数` 次低 DPI `getTextContent`），避免用户一次性展开多页时同时向引擎发起多轮
+   * 文本收集；已有探测在途的页会被 `probeAnnotationTypesForPage()` 复用，不会重复发起。
+   *
+   * @internal
+   * @param pageNumbers 页码（1-based）。
+   * @returns 全部探测结束（含失败）时 resolve。
+   */
+  async ensureAnnotationTypesLoaded(pageNumbers: readonly number[]): Promise<void> {
+    const wanted: number[] = [];
+    for (const pageNumber of pageNumbers) {
+      if (!Number.isInteger(pageNumber) || pageNumber < 1) continue;
+      const index = pageNumber - 1;
+      if (index >= this.pageViews.length) continue;
+      if (wanted.indexOf(index) >= 0) continue;
+      if (this.annotationTypesByPage.has(index) || this.annotationTypeProbeFailed.has(index)) continue;
+      wanted.push(index);
+    }
+    for (const index of wanted) {
+      if (this.disposed) return;
+      await this.probeAnnotationTypesForPage(index);
+    }
+  }
+
+  /**
+   * 探测一页的追加注释类型；结果写入缓存，若发现新类型则补一次快照。
+   *
+   * 追加类型会进入该页的“列出类型”：只影响白名单里出现的类型清单，不改变任何勾选值。
+   * 若它改变了该页的过滤签名（部分勾选时白名单变大、或零勾选后恢复），按签名变化
+   * 重绘该页并失效文本层，保证画面、导出与打印读到同一份过滤。
+   *
+   * @param index 页索引，0-based。
+   * @returns 该页追加类型（字典序，可能为空）。
+   */
+  private probeAnnotationTypesForPage(index: number): Promise<readonly AnnotationType[]> {
+    const pending = this.annotationTypeProbes.get(index);
+    if (pending) return pending;
+    const session = this.layerSession;
+    const run = (async (): Promise<readonly AnnotationType[]> => {
+      const extra = await probeAnnotationTypesForPage(this.controller, index);
+      if (session !== this.layerSession) return [];
+      if (extra === null) {
+        this.annotationTypeProbeFailed.add(index);
+        return [];
+      }
+      const before = this.getLayerFilterKey(index + 1);
+      this.annotationTypesByPage.set(index, extra);
+      if (extra.length === 0) return extra;
+      if (this.getLayerFilterKey(index + 1) !== before) {
+        // 签名变化：与导出/打印保持一致，按变化页重绘（不改勾选、不派发多余事件）。
+        this.finishLayerChange([index]);
+      } else {
+        // 只补齐面板行文案，不动画面。
+        this.patchUI({ layers: this.layerOverrides.clone(this.layerSession) });
+        this.commit();
+      }
+      return extra;
+    })().finally(() => {
+      if (this.annotationTypeProbes.get(index) === run) this.annotationTypeProbes.delete(index);
+    });
+    this.annotationTypeProbes.set(index, run);
+    return run;
+  }
+
+  /**
+   * 该页参与签名/过滤的注释类型（常见五类 + 已探测的追加类型）。
+   *
+   * @param pageIndex 页索引，0-based。
+   * @returns 类型列表。
+   */
+  private getAnnotationTypeKeysForPage(pageIndex: number): readonly AnnotationType[] {
+    // 注释白名单只排除“用户明确取消”的类型；引擎对白名单外的类型一律不画，因此这里
+    // 必须列出该页**已探测到的全部类型**（常见五类 + 该页未知类型）。尚未探测的页在
+    // 部分勾选时会缺少未知类型 → 视为“未列出”（见 `layers/annotation-probe.ts` 的降级说明）。
+    return annotationTypesForGroup(this.annotationTypesByPage.get(pageIndex) ?? []);
+  }
+
+  /**
+   * 所有页六项一起显示/隐藏（图层面板“全部页面”复选框入口）。
+   *
+   * @internal
+   * @param visible 是否显示。
+   */
+  setAllLayersVisible(visible: boolean): void {
+    const writes: LayerWrite[] = [];
+    for (let index = 0; index < this.pageViews.length; index += 1) {
+      writes.push({ index, visibility: allVisibleVisibility(visible) });
+    }
+    this.commitLayerWrites(writes);
+  }
+
+  /**
+   * 单页六项一起显示/隐藏（图层面板页面行复选框入口）。
+   *
+   * @internal
+   * @param pageIndex 页索引，0-based。
+   * @param visible 是否显示。
+   */
+  setAllLayersVisibleForPage(pageIndex: number, visible: boolean): void {
+    this.commitLayerWrites([{ index: pageIndex, visibility: allVisibleVisibility(visible) }]);
+  }
+
+  /**
+   * “全部页面”总项状态汇总。
+   *
+   * @internal
+   * @returns 六项各自是否全开/全关，以及总项复选框三态。
+   */
+  readLayerSummary(): LayerSummary {
+    const pageCount = this.pageViews.length;
+    const allKeysOn: Record<LayerKey, boolean> = booleanFlags(true);
+    const allKeysOff: Record<LayerKey, boolean> = booleanFlags(true);
+    for (let index = 0; index < pageCount; index += 1) {
+      const visibility = this.layerOverrides.visibilityAt(index);
+      const types = this.getAnnotationTypeKeysForPage(index);
+      for (const key of PAGE_LAYER_KEYS) {
+        // 注释项按“有效开”（总开关 + 至少勾选一个列出类型）计数（§I.4.1）。
+        if (!this.layerFlagOn(visibility, key, types)) allKeysOn[key] = false;
+        else allKeysOff[key] = false;
+      }
+    }
+    const anyOn = PAGE_LAYER_KEYS.some((key) => !allKeysOff[key]);
+    const anyOff = PAGE_LAYER_KEYS.some((key) => !allKeysOn[key]);
+    const state: LayerSummary['state'] = !anyOn ? 'off' : !anyOff ? 'on' : 'mixed';
+    return { allKeysOn, allKeysOff, state };
+  }
+
+  /**
+   * 某页某一项的“有效开”状态（§I.4.1：注释零勾选等同关闭）。
+   *
+   * @param visibility 该页可见性。
+   * @param key 图层键。
+   * @param types 该页列出的注释类型。
+   * @returns 是否有效可见。
+   */
+  private layerFlagOn(
+    visibility: ResolvedLayerVisibility,
+    key: LayerKey,
+    types: readonly AnnotationType[],
+  ): boolean {
+    if (key !== 'annotations') return visibility[key];
+    // 与过滤层共用同一判定（§I.4.1），避免面板三态与引擎过滤口径不一致。
+    return isAnnotationsEffectivelyVisible(visibility.annotations, types);
+  }
+
+  /**
+   * 文档会话切换时重置图层可见性。
+   *
+   * 默认可见性来自构造选项且不随会话变化，因此清空覆盖后快照与初始一致；不额外
+   * `commit()`，由打开/关闭流程已有的提交统一派发。
+   */
+  private resetLayersForDocument(): void {
+    this.layerSession += 1;
+    this.annotationTypesByPage.clear();
+    this.annotationTypeProbes.clear();
+    this.annotationTypeProbeFailed.clear();
+    this.layerOverrides.setDefaults(this.options.layerPanel.defaultVisibility);
+    this.layerOverrides.clear();
+    this.patchUI({ layers: this.layerOverrides.clone(this.layerSession) });
+  }
+
+  /**
+   * 页码转页索引并校验越界。
+   *
+   * @param pageNumber 页码，1-based。
+   * @returns 页索引，0-based。
+   * @throws {OFDViewerError} 非整数或越界时抛 `OFD_INVALID_OPTION`。
+   */
+  private layerIndex(pageNumber: number): number {
+    const pageCount = this.pageViews.length;
+    if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > pageCount) {
+      throw new OFDViewerError(
+        'OFD_INVALID_OPTION',
+        `页码越界：${pageNumber}（页数 ${pageCount}）`,
+      );
+    }
+    return pageNumber - 1;
+  }
+
+  /**
+   * 批量写入图层覆盖并统一收尾。
+   *
+   * 顺序固定为：逐页写入并收集签名变化的页 → 无变化直接返回 → 重建快照并写 UI 状态 →
+   * 仅对变化页取消在途渲染并强制重绘、失效文本层与查找 → 一次 `commit()`。
+   *
+   * @param writes 待写入项：页索引（0-based）与六项可见性。
+   * @returns 是否有页的签名发生变化。
+   */
+  private commitLayerWrites(writes: readonly LayerWrite[]): boolean {
+    if (this.options.layerPanel.disabled) return false;
+    const changed: number[] = [];
+    const session = this.layerSession;
+    for (const write of writes) {
+      if (session !== this.layerSession) return false;
+      if (!Number.isInteger(write.index) || write.index < 0) continue;
+      const types = this.getAnnotationTypeKeysForPage(write.index);
+      if (this.layerOverrides.set(write.index, write.visibility, types)) changed.push(write.index);
+    }
+    if (changed.length === 0) return false;
+    this.finishLayerChange(changed);
+    return true;
+  }
+
+  /**
+   * 图层变化收尾：写快照、失效消费链路、只重绘变化页并提交一次状态。
+   *
+   * @param changed 签名变化的页索引（0-based）。
+   */
+  private finishLayerChange(changed: readonly number[]): void {
+    this.patchUI({ layers: this.layerOverrides.clone(this.layerSession) });
+    for (const index of changed) {
+      const pageNumber = index + 1;
+      this.services.textLayer?.invalidateLayerFilter?.(pageNumber);
+      this.queue.cancel(`page:${index}`);
+      if (index < this.pageViews.length) this.renderPage(index, true, 0);
+    }
+    this.services.find?.refreshLayerVisibility?.();
+    this.commit();
+  }
   /** 当前总页数。 */
   getPageCount(): number {
     return this.state.document.pageCount;
@@ -1126,6 +1590,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       if (token !== this.openToken || abort.signal.aborted) throw createAbortError();
       this.pageInfos = infos;
       this.buildPages();
+      // 新文档会话：图层可见性回到 `layerPanel.defaultVisibility`（不做持久化）。
+      this.resetLayersForDocument();
       this.patchDocument({
         source: opened.source,
         origin,
@@ -1304,6 +1770,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       this.cryptoPreparation = null;
       this.cryptoService.reset();
       this.pageInfos = [];
+      this.resetLayersForDocument();
       this.patchDocument({
         status: 'closed',
         source: null,
@@ -1662,11 +2129,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /** 打开指定侧栏。 */
   openSidebar(view: SidebarView): void {
     this.assertFeature('sidebar');
-    if (view === 'thumbnails') this.assertFeature('thumbnails');
-    else if (view === 'outline') this.assertFeature('outline');
-    else if (view === 'bookmarks') this.assertFeature('bookmarks');
-    else if (view === 'signatures') this.assertFeature('signatures');
-    else if (view === 'attachments') this.assertFeature('attachments');
+    this.assertSidebarViewUsable(view);
     this.patchView({ sidebarView: view });
     this.updateSidebarVisibility();
     this.emit('sidebarviewchanged', { view });
@@ -1690,10 +2153,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       return;
     }
     const first = (
-      ['thumbnails', 'outline', 'bookmarks', 'signatures', 'attachments'] as const
-    ).find(
-      (view) => this.featureGate.isEnabled(view) && this.featureGate.isVisible(view),
-    );
+      ['thumbnails', 'outline', 'bookmarks', 'signatures', 'attachments', 'layers'] as const
+    ).find((view) => this.isSidebarViewUsable(view));
     if (first) this.openSidebar(first);
   }
 
@@ -3127,7 +3588,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     const pageView = this.pageViews[index];
     if (!pageView || pageView.isDestroyed) return;
     const renderScale = this.effectiveRenderScale();
-    const key = this.renderKey(renderScale);
+    const key = this.renderKey(renderScale, index);
     if (!force && pageView.renderedKey === key) return;
     // 屏幕外预渲染页不跟随缩小降低渲染 DPI：直接复用已画好的 canvas，
     // 避免一次缩小触发所有缓存页以低质量重绘。
@@ -3165,10 +3626,16 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         const pending = this.trackPageRenderStart(index, 'main');
         let task: ReturnType<EnginePage['render']>;
         try {
+          const contentFilter = this.layerOverrides.filterAt(
+            index,
+            this.getAnnotationTypeKeysForPage(index),
+          );
           task = page.render({
             canvasContext: context,
             viewport,
             signal,
+            // 全画时不写该键，保持与未引入图层控制时相同的调用形状。
+            ...(contentFilter ? { contentFilter } : {}),
           });
         } catch (error) {
           pending.drop();
@@ -3353,10 +3820,21 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /**
    * 当前渲染参数键。
    *
+   * 末尾追加该页图层过滤签名：签名变化只让该页失配重绘，其它页仍命中缓存。
+   * 默认可见性下签名为 `all`，与旧三段拼出的结果一致（不会导致升级后全页重绘）。
+   *
    * @param renderScale 有效渲染倍率；省略时按当前状态计算。
+   * @param pageIndex 页索引，0-based；省略时取当前页。
    */
-  private renderKey(renderScale = this.effectiveRenderScale()): string {
-    return `${renderScale.toFixed(4)}:${this.state.view.rotation}:${this.devicePixelRatio()}`;
+  private renderKey(
+    renderScale = this.effectiveRenderScale(),
+    pageIndex = this.state.view.pageNumber - 1,
+  ): string {
+    const layers = this.layerOverrides.keyAt(
+      pageIndex,
+      this.getAnnotationTypeKeysForPage(pageIndex),
+    );
+    return `${renderScale.toFixed(4)}:${this.state.view.rotation}:${this.devicePixelRatio()}:${layers}`;
   }
 
   /** 记录已渲染页并裁剪 LRU。 */
@@ -4692,6 +5170,55 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     if (!state.enabled) throw createFeatureDisabledError(feature);
   }
 
+  /**
+   * 侧栏视图当前是否可见且可用。
+   *
+   * 图层视图由 `layerPanel` 配置决定（不占功能键），其余视图沿用功能门控。
+   *
+   * @param view 侧栏视图。
+   * @returns 可打开时 true。
+   */
+  private isSidebarViewUsable(view: SidebarView): boolean {
+    if (view === 'layers') return this.isLayerPanelUsable();
+    return this.featureGate.isEnabled(view) && this.featureGate.isVisible(view);
+  }
+
+  /**
+   * 断言侧栏视图当前可用。
+   *
+   * @param view 侧栏视图。
+   * @throws {OFDViewerError} 不可见或禁用时抛 `OFD_FEATURE_DISABLED`。
+   */
+  private assertSidebarViewUsable(view: SidebarView): void {
+    if (view === 'layers') {
+      this.assertLayerPanelEnabled();
+      return;
+    }
+    this.assertFeature(view);
+  }
+
+  /** 图层面板是否渲染且未被禁用。 */
+  private isLayerPanelUsable(): boolean {
+    const config = this.options.layerPanel;
+    return config.enabled && !config.disabled;
+  }
+
+  /**
+   * 断言图层面板可用；不可见或禁用时视为功能不可用。
+   *
+   * @throws {OFDViewerError} `OFD_FEATURE_DISABLED`；禁用时 message 使用图层禁用文案。
+   */
+  private assertLayerPanelEnabled(): void {
+    const config = this.options.layerPanel;
+    if (!config.enabled) throw createFeatureDisabledError('sidebar');
+    if (config.disabled) {
+      throw createFeatureDisabledError(
+        'sidebar',
+        createTranslator(this.state.ui.locale).t('layers.disabled'),
+      );
+    }
+  }
+
   /** 断言文档已打开。 */
   private assertOpen(): void {
     if (!this.controller.isOpen) throw new OFDViewerError('OFD_NOT_OPENED', '文档尚未打开');
@@ -4834,6 +5361,94 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private emit<K extends ViewerEventName>(event: K, payload: ViewerEventMap[K]): void {
     this.eventBus.emit(event, payload);
   }
+}
+
+/** 一页的图层写入项：页索引（0-based）与目标六项可见性。 */
+interface LayerWrite {
+  /** 页索引，0-based。 */
+  readonly index: number;
+  /** 目标可见性；缺失键保留当前值。 */
+  readonly visibility: LayerVisibility;
+  /** 该页列出的注释类型；省略时按页索引现查。 */
+  readonly types?: readonly AnnotationType[];
+}
+
+/**
+ * 生成六项统一的可见性。
+ *
+ * 注释项按布尔归一化：`true` 等价于“总开关打开 + 类型全勾”，`false` 等价于关闭总开关；
+ * 写入时由 `PageLayerOverrides.set()` 的合并语义保留原有类型表。
+ *
+ * @param visible 是否可见。
+ * @returns 六项同值的可见性。
+ */
+function allVisibleVisibility(visible: boolean): LayerVisibility {
+  return {
+    signatures: visible,
+    annotations: visible,
+    custom: visible,
+    foreground: visible,
+    body: visible,
+    background: visible,
+  };
+}
+
+/**
+ * 构造“只改一项”的可见性补丁。
+ *
+ * `annotations` 只改总开关（类型表由合并语义原样保留，§I.2）。
+ *
+ * @param key 图层键。
+ * @param value 目标值。
+ * @param current 该页当前可见性（仅注释项需要）。
+ * @returns 可见性补丁。
+ */
+function layerKeyPatch(
+  key: LayerKey,
+  value: boolean,
+  current: ResolvedLayerVisibility,
+): LayerVisibility {
+  if (key === 'annotations') {
+    return { annotations: { enabled: value, types: current.annotations.types } };
+  }
+  const patch: Record<string, unknown> = {};
+  patch[key] = value;
+  return patch as LayerVisibility;
+}
+
+/**
+ * 构造“只改某注释类型”的可见性补丁（总开关保持不变）。
+ *
+ * @param type 类型名。
+ * @param value 是否勾选。
+ * @param current 该页当前可见性。
+ * @returns 可见性补丁。
+ */
+function annotationTypePatch(
+  type: AnnotationType,
+  value: boolean,
+  current: ResolvedLayerVisibility,
+): LayerVisibility {
+  const types: Record<string, boolean> = {};
+  types[type] = value;
+  return { annotations: { enabled: current.annotations.enabled, types } };
+}
+
+/**
+ * 生成六项同值的布尔表（用于总项汇总的初值）。
+ *
+ * @param value 初值。
+ * @returns 六项同值的布尔表。
+ */
+function booleanFlags(value: boolean): Record<LayerKey, boolean> {
+  return {
+    signatures: value,
+    annotations: value,
+    custom: value,
+    foreground: value,
+    body: value,
+    background: value,
+  };
 }
 
 /** 夹取缩放倍率。 */

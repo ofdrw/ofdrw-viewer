@@ -95,6 +95,8 @@ export interface UIShellViewState {
   readonly documentTitle?: string;
   /** 本地字体状态；省略表示宿主未启用该能力（设置面板不出现字体分组）。 */
   readonly localFonts?: LocalFontsStatus;
+  /** 图层面板可用性；省略时按可见、可用处理。 */
+  readonly layerPanel?: { readonly enabled: boolean; readonly disabled: boolean };
 }
 
 /** 外壳结构元素；核心创建的必存在元素可原样传入。 */
@@ -189,6 +191,8 @@ export interface UIShellOptions {
   readonly theme?: Theme;
   /** 功能有效状态；默认全部开启。 */
   readonly featureStates?: ViewerFeatureStates;
+  /** 图层面板可用性；省略时按可见、可用处理。 */
+  readonly layerPanel?: { readonly enabled: boolean; readonly disabled: boolean };
   /** 初始侧栏；默认 null。 */
   readonly sidebarView?: SidebarView | null;
   /** 初始视图状态补丁。 */

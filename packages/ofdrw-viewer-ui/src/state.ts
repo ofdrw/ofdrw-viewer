@@ -15,6 +15,11 @@ import type {
 } from '@ofdrw/ofdrw-viewer-engine';
 import { createDefaultFeatureStates } from './features';
 import type { ViewerFeatureStates } from './features';
+import {
+  PageLayerOverrides,
+  createDefaultVisibility,
+  type PageLayerState,
+} from './layers/content-filter';
 
 /** 文档生命周期状态。 */
 export type DocumentStatus = 'idle' | 'opening' | 'ready' | 'error' | 'closed';
@@ -51,6 +56,7 @@ export const SIDEBAR_VIEWS = [
   'bookmarks',
   'signatures',
   'attachments',
+  'layers',
 ] as const;
 
 /** 侧栏视图。 */
@@ -192,6 +198,12 @@ export interface UIState {
   readonly warnings: readonly ViewerWarning[];
   /** 全部功能的有效状态。 */
   readonly features: ViewerFeatureStates;
+  /**
+   * 每页图层可见性快照（只保存与默认值不同的页）。
+   *
+   * 不进入持久化（localStorage/URL hash）；重开文档回到 `layerPanel.defaultVisibility`。
+   */
+  readonly layers: PageLayerState;
 }
 
 /** 对外只读的阅读器状态快照。 */
@@ -224,6 +236,9 @@ export function createFindState(overrides: Partial<FindState> = {}): FindState {
   };
 }
 
+/** 每页图层可见性快照；由 `layers/content-filter.ts` 定义，这里再导出。 */
+export type { PageLayerState };
+
 /** 初始化状态时的可覆盖项。 */
 export interface InitialViewerStateOptions {
   /** 当前页，1-based；默认 1。 */
@@ -242,6 +257,8 @@ export interface InitialViewerStateOptions {
   locale?: string;
   /** 功能状态；默认全部开启。 */
   features?: ViewerFeatureStates;
+  /** 初始图层可见性；默认六项全可见。 */
+  layerVisibility?: PageLayerState;
 }
 
 /**
@@ -281,6 +298,7 @@ export function createInitialViewerState(
       toast: null,
       warnings: [],
       features: options.features ?? createDefaultFeatureStates(),
+      layers: options.layerVisibility ?? new PageLayerOverrides(createDefaultVisibility()).clone(),
     },
   };
 }

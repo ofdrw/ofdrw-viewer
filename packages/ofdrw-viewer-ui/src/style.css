@@ -3415,3 +3415,189 @@
   outline: var(--ofd-focus-width) solid var(--ofd-accent);
   outline-offset: 2px;
 }
+
+/* ========================================================================= */
+/* 侧栏标签图标与“图层”面板（图层控制与侧栏图标设计方案 §D / §E）              */
+/* ========================================================================= */
+
+/* 标签：图标 + 文字。Chrome 67 不支持 flex gap，间距用 margin。 */
+.ofd-sidebar__tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ofd-sidebar__tab .ofd-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.ofd-sidebar__tab-label {
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
+/* 仅图标模式：隐藏文字节点，标题与 aria-label 仍保留完整名称。 */
+.ofd-sidebar__tabs[data-mode='icons'] .ofd-sidebar__tab-label {
+  display: none;
+}
+
+.ofd-sidebar__tabs[data-mode='icons'] .ofd-sidebar__tab {
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+/* 图层面板：颜色全部取 CSS 变量，明暗与高对比度主题自动生效。 */
+.ofd-layers {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.ofd-layers__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0 4px;
+}
+
+.ofd-layers__title {
+  color: var(--ofd-text);
+  font-weight: 600;
+}
+
+.ofd-layers__restore {
+  color: var(--ofd-text-secondary);
+}
+
+.ofd-layers__restore:hover:enabled {
+  background: var(--ofd-hover-bg);
+}
+
+.ofd-layers__tree {
+  display: block;
+}
+
+.ofd-layers__row {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 4px;
+  border-radius: 2px;
+  cursor: default;
+}
+
+.ofd-layers__row--all {
+  font-weight: 600;
+}
+
+.ofd-layers__row:hover {
+  background: var(--ofd-hover-bg);
+}
+
+.ofd-layers__row[aria-current='page'] {
+  background: var(--ofd-accent-soft);
+}
+
+/* chrome67: focus fallback（67 无 :focus-visible，改用 :focus 提供焦点环） */
+.ofd-layers__row:focus,
+.ofd-layers__row:focus-visible {
+  outline: var(--ofd-focus-width) solid var(--ofd-accent);
+  outline-offset: -2px;
+}
+
+.ofd-layers__twisty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--ofd-text-secondary);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.ofd-layers__twisty--placeholder {
+  visibility: hidden;
+}
+
+.ofd-layers__chevron {
+  transition: transform 120ms ease-out;
+}
+
+.ofd-layers__row[aria-expanded='true'] .ofd-layers__chevron {
+  transform: rotate(90deg);
+}
+
+.ofd-layers__checkbox {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin: 0 6px 0 0;
+}
+
+.ofd-layers__label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ofd-layers__group[hidden] {
+  display: none;
+}
+
+.ofd-layers__row--layer {
+  padding-left: 20px;
+}
+
+.ofd-layers__row--layer .ofd-layers__label {
+  margin-left: 6px;
+}
+
+.ofd-layers__notice {
+  margin: 0 0 6px;
+  padding: 4px 6px;
+  color: var(--ofd-warning);
+}
+
+.ofd-layers__empty {
+  margin: 0;
+  color: var(--ofd-text-secondary);
+}
+
+/* 减少动效：关闭展开箭头旋转。 */
+@media (prefers-reduced-motion: reduce) {
+  .ofd-layers__chevron {
+    transition: none;
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* 图层：注释类型（设计方案 §I.7）                                            */
+/* ------------------------------------------------------------------------- */
+
+.ofd-layers__group--types {
+  display: block;
+}
+
+.ofd-layers__group--types[hidden] {
+  display: none;
+}
+
+.ofd-layers__row--type {
+  padding-left: 40px;
+}
+
+/* 注释行的展开箭头与其它行的占位箭头同宽（20px），保证六项文字左对齐。 */
+.ofd-layers__twisty--sub {
+  width: 20px;
+}
+
+/* 本页没有该类型：淡色区分（仍可勾选，不是禁用） */
+.ofd-layers__row--type[data-empty='true'] {
+  color: var(--ofd-text-secondary);
+  opacity: 0.6;
+}

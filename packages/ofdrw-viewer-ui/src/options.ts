@@ -14,6 +14,11 @@ import type { FeatureDisplay, ViewerFeatures } from './features';
 import type { DiagnosticLevel } from './diagnostics';
 import type { ViewerFontOptions } from './font';
 import {
+  resolveLayerPanelOptions,
+  type LayerPanelOptions,
+  type ResolvedLayerPanelOptions,
+} from './layers/content-filter';
+import {
   DEFAULT_LOCALE,
   DEFAULT_THEME,
   type Rotation,
@@ -354,7 +359,18 @@ export interface OFDViewerOptions {
    * warning，不阻断文档打开。
    */
   readonly fonts?: ViewerFontOptions;
+  /**
+   * 图层侧栏配置：`enabled`（默认 true，false 时不渲染 tab）、`disabled`（默认 false，
+   * true 时保留 tab 但禁用并给出原因提示）、`defaultVisibility`（每页六项可见性默认值，
+   * 缺省六项全可见）。
+   *
+   * 只在实例创建时生效，修改后需重新构造。
+   */
+  readonly layerPanel?: LayerPanelOptions;
 }
+
+/** 图层侧栏配置；类型定义在 `layers/content-filter.ts`，这里再导出供子路径使用。 */
+export type { LayerPanelOptions } from './layers/content-filter';
 
 /** 展开默认值后的构造选项；由 `OFDViewer` 内部持有。 */
 export interface ResolvedViewerOptions {
@@ -391,6 +407,8 @@ export interface ResolvedViewerOptions {
   readonly crypto?: CryptoViewerOptions;
   /** 原样透传的字体配置；未提供时为 undefined，行为与未引入 `fonts` 时一致。 */
   readonly fonts?: ViewerFontOptions;
+  /** 已解析的图层侧栏配置（六项齐全的默认可见性）。 */
+  readonly layerPanel: ResolvedLayerPanelOptions;
 }
 
 /** 解析默认值时可用的宿主环境信息。 */
@@ -467,6 +485,7 @@ export function resolveViewerOptions(
     onError: options.onError,
     crypto: options.crypto,
     fonts: options.fonts,
+    layerPanel: resolveLayerPanelOptions(options.layerPanel),
   };
 }
 

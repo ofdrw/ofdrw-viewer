@@ -8,6 +8,8 @@ import {
   isTheme,
   isZoomMode,
   mergeFeatures,
+  readLayerPanelAttribute,
+  readLayerPanelOptions,
   readScaleAttribute,
   readSidebarAttribute,
   readSupersampleAttribute,
@@ -117,5 +119,31 @@ describe('wrapper 公共桥接', () => {
     const next = mergeFeatures(current, { find: false });
     expect(next).toEqual({ print: false, find: false });
     expect(current).toEqual({ print: false });
+  });
+
+  it('sidebar="layers" 作为合法视图下发', () => {
+    const element = document.createElement('ofd-viewer');
+    element.setAttribute('sidebar', 'layers');
+    expect(readSidebarAttribute(element)).toBe('layers');
+    expect(isSidebarView('layers')).toBe(true);
+  });
+
+  it('layer-panel 属性解析开关与默认可见性', () => {
+    const element = document.createElement('ofd-viewer');
+    expect(readLayerPanelAttribute(element)).toBeUndefined();
+    expect(readLayerPanelOptions(element)).toBeUndefined();
+
+    element.setAttribute('layer-panel', 'disabled');
+    expect(readLayerPanelAttribute(element)).toEqual({ disabled: true });
+    expect(readLayerPanelOptions(element)).toEqual({ disabled: true });
+
+    element.setAttribute('layer-panel', 'enabled:false,hide:background+annotations,show:body');
+    expect(readLayerPanelAttribute(element)).toEqual({
+      enabled: false,
+      defaultVisibility: { background: false, annotations: false, body: true },
+    });
+
+    element.setAttribute('layer-panel', 'disabled:false,off');
+    expect(readLayerPanelAttribute(element)).toEqual({ enabled: false, disabled: false });
   });
 });

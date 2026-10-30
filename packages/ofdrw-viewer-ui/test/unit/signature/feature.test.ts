@@ -7,12 +7,17 @@ import type { PageInfo, SignatureEntryInfo } from '@ofdrw/ofdrw-viewer-engine';
 
 const engineMocks = vi.hoisted(() => ({ open: vi.fn() }));
 
-vi.mock('@ofdrw/ofdrw-viewer-engine', () => ({
-  OFDDocument: { open: engineMocks.open },
-  OFDError: class extends Error {},
-  isOFDError: () => false,
-  toOFDError: (error: unknown) => error,
-}));
+vi.mock('@ofdrw/ofdrw-viewer-engine', async (importOriginal) => {
+  // 未覆盖的引擎导出（常量、类型辅助）保持真实实现，避免新特性读取到 undefined。
+  const actual = await importOriginal<typeof import('@ofdrw/ofdrw-viewer-engine')>();
+  return {
+    ...actual,
+    OFDDocument: { open: engineMocks.open },
+    OFDError: class extends Error {},
+    isOFDError: () => false,
+    toOFDError: (error: unknown) => error,
+  };
+});
 
 import { parseSignedValue } from '@ofdrw/ofdrw-viewer-crypto';
 import { OFDViewer } from '../../../src/viewer';

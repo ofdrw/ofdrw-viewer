@@ -2,10 +2,13 @@
  * 侧栏外壳（设计方案 §5.1 / §5.4 / §8.3）。
  *
  * 只提供标签、面板容器、抽屉/覆盖行为与基础可访问性；
- * 缩略图/大纲/书签/签章内容由对应模块通过 `registerPanel()` 注入。
+ * 缩略图/大纲/书签/签章/附件/图层内容由对应模块通过 `registerPanel()` 注入。
  *
  * 布局由 CSS 按根节点 `data-viewport` 切换（inline / overlay / drawer），这里只同步
  * 遮罩、焦点陷阱与 tab 状态，不重建 DOM、不改变页码/缩放/旋转。
+ *
+ * 标签为“图标 + 文字”：标题栏放不下全部标签的图标与文字时整行切换为仅图标
+ * （`data-mode="icons"`），`title`/`aria-label` 始终保留完整名称。
  */
 
 import { replaceChildren } from '../compat';
@@ -13,8 +16,8 @@ import { FocusTrap } from '../a11y';
 import type { ViewerFeatureStates } from '../features';
 import type { MessageKey, Translator } from '../i18n';
 import { SIDEBAR_VIEWS, type SidebarView } from '../state';
-import { applyFeatureGate, resolveFeatureGate, sidebarViewFeature } from './feature-control';
-import { createIcon } from './icons';
+import { applyFeatureGate, resolveSidebarViewGate } from './feature-control';
+import { TAB_ICONS, createIcon } from './icons';
 import type { SidebarMode, SidebarPanelContext, SidebarPanelMount, UIShellViewState } from './types';
 
 /** 标签文案键。 */
@@ -24,6 +27,7 @@ const TAB_LABEL_KEYS: Readonly<Record<SidebarView, MessageKey>> = Object.freeze(
   bookmarks: 'sidebar.bookmarks',
   signatures: 'sidebar.signatures',
   attachments: 'attachments.title',
+  layers: 'sidebar.layers',
 });
 
 /** 空态文案键。 */
@@ -33,6 +37,7 @@ const EMPTY_LABEL_KEYS: Readonly<Record<SidebarView, MessageKey>> = Object.freez
   bookmarks: 'sidebar.noBookmarks',
   signatures: 'sidebar.noSignatures',
   attachments: 'attachments.empty',
+  layers: 'layers.noDocument',
 });
 
 /** 侧栏宽度范围，单位 px（设计方案 §5.1）。 */
@@ -40,10 +45,29 @@ export const SIDEBAR_MIN_WIDTH = 180;
 export const SIDEBAR_MAX_WIDTH = 320;
 export const SIDEBAR_DEFAULT_WIDTH = 200;
 
+/** 标签图标的宽度，单位 px（`createIcon` 固定 16）。 */
+const TAB_ICON_WIDTH = 16;
+
+/** 图标与文字之间的间距，单位 px（对应 `.ofd-sidebar__tab-label { margin-left }`）。 */
+const TAB_ICON_GAP = 4;
+
+/** 标签水平内边距，单位 px（对应 `.ofd-sidebar__tab { padding: 4px 6px }`）。 */
+const TAB_H_PADDING = 6;
+
+/** 无法实测文字宽度时（jsdom 等无布局环境）按每个字符估算的宽度，单位 px。 */
+const FALLBACK_CJK_CHAR_WIDTH = 14;
+
+/** 溢出判定容差，单位 px；避免亚像素抖动导致来回切换。 */
+const TAB_OVERFLOW_TOLERANCE_PX = 1;
+
+/** 侧栏打开期间复核宽度的间隔，单位 ms（兜住不派发事件的纯 CSS 宽度变化）。 */
+const TAB_OVERFLOW_POLL_MS = 250;
+
 /** 侧栏标签实例。 */
 interface TabEntry {
   readonly view: SidebarView;
   readonly button: HTMLButtonElement;
+  readonly label: HTMLSpanElement;
   readonly panel: HTMLElement;
   empty: HTMLElement | null;
   mounted: boolean;
@@ -74,6 +98,12 @@ export interface SidebarOptions {
   readonly onCloseRequest: () => void;
   /** 关闭后恢复焦点的元素（通常是工具栏侧栏开关）。 */
   readonly getRestoreFocusTarget?: () => HTMLElement | null;
+  /** 图层面板可用性；`enabled=false` 时不渲染图层标签，`disabled=true` 时禁用并给出原因。 */
+  readonly layerPanel?: { readonly enabled: boolean; readonly disabled: boolean };
+  /** 读取标签行可用宽度（单位 px）；仅用于测试注入，省略时实测。 */
+  readonly readTabListWidth?: () => number;
+  /** 标签行在“图标+文字 / 仅图标”之间切换时回调；参数为是否处于仅图标模式。 */
+  readonly onTabOverflowChange?: (iconsOnly: boolean) => void;
 }
 
 /**
@@ -95,6 +125,11 @@ export class Sidebar {
   private closeButton!: HTMLButtonElement;
   private resizer!: HTMLElement;
   private resizing: { pointerId: number; startX: number; startWidth: number } | null = null;
+  private resizeObserver: ResizeObserver | null = null;
+  /** 标签文字宽度缓存（键为当前语言下的文案），单位 px。 */
+  private readonly tabLabelWidths = new Map<string, number>();
+  /** 宽度复核定时器；侧栏打开期间存在。 */
+  private layoutTimer: number | null = null;
 
   /**
    * 创建侧栏。
@@ -125,6 +160,7 @@ export class Sidebar {
     this.resizer = resizer;
     this.applyFeatureStates();
     this.setView(options.view);
+    this.observeTabOverflow();
   }
 
   /** 当前视图。 */
@@ -140,6 +176,11 @@ export class Sidebar {
   /** 是否打开。 */
   get isOpen(): boolean {
     return this.view !== null;
+  }
+
+  /** 当前标签行模式：`full`（图标+文字）或 `icons`（仅图标）。 */
+  get tabMode(): 'full' | 'icons' {
+    return this.tablist.dataset.mode === 'icons' ? 'icons' : 'full';
   }
 
   /**
@@ -161,6 +202,7 @@ export class Sidebar {
     }
     if (changed) this.syncTrap(false);
     this.updateAriaExpanded();
+    this.updateTabOverflow();
   }
 
   /**
@@ -192,7 +234,11 @@ export class Sidebar {
     if (open && openedView !== null) {
       this.ensurePanelMounted(openedView);
       this.syncTrap(true);
+      // 收起状态下宽度不可测（按默认宽度估算）；打开后按真实宽度重判一次。
+      this.updateTabOverflow();
+      this.startTabOverflowWatch();
     } else {
+      this.stopTabOverflowWatch();
       const hadFocus = this.element.contains(document.activeElement);
       this.trap.deactivate({ restoreFocus: false });
       if (hadFocus) {
@@ -228,12 +274,17 @@ export class Sidebar {
     this.element.setAttribute('aria-label', translator.t('sidebar.label'));
     this.tablist.setAttribute('aria-label', translator.t('sidebar.tabsLabel'));
     for (const [view, entry] of this.tabs) {
-      entry.button.textContent = translator.t(TAB_LABEL_KEYS[view]);
+      const name = translator.t(TAB_LABEL_KEYS[view]);
+      entry.label.textContent = name;
+      entry.button.setAttribute('aria-label', name);
+      entry.button.title = name;
       if (entry.empty) entry.empty.textContent = translator.t(EMPTY_LABEL_KEYS[view]);
     }
+    this.tabLabelWidths.clear();
     this.closeButton.setAttribute('aria-label', translator.t('sidebar.close'));
     this.resizer.setAttribute('aria-label', translator.t('sidebar.resize'));
     this.applyFeatureStates();
+    this.updateTabOverflow();
   }
 
   /**
@@ -277,6 +328,17 @@ export class Sidebar {
   destroy(): void {
     this.trap.deactivate({ restoreFocus: false });
     this.stopResize();
+    this.stopTabOverflowWatch();
+    if (this.resizeObserver) {
+      this.resizeObserver.disconnect();
+      this.resizeObserver = null;
+    } else {
+      this.element.ownerDocument.defaultView?.removeEventListener(
+        'resize',
+        this.handleWindowResize,
+      );
+    }
+    this.tabLabelWidths.clear();
     this.options.mask.removeEventListener('click', this.handleMaskClick);
     this.closeButton.removeEventListener('click', this.handleCloseClick);
     this.resizer.removeEventListener('pointerdown', this.handleResizeStart);
@@ -300,6 +362,7 @@ export class Sidebar {
     tablist.setAttribute('role', 'tablist');
     tablist.setAttribute('aria-label', this.translator.t('sidebar.tabsLabel'));
     tablist.setAttribute('aria-orientation', 'horizontal');
+    tablist.dataset.mode = 'full';
 
     this.closeButton = doc.createElement('button');
     this.closeButton.type = 'button';
@@ -313,6 +376,9 @@ export class Sidebar {
     const panels = doc.createElement('div');
     panels.className = 'ofd-sidebar__panels';
     for (const view of SIDEBAR_VIEWS) {
+      // 可读名称只来自 `aria-label`/`title`：内部文字节点在仅图标模式下被隐藏，
+      // 不再进入无障碍树。
+      const name = this.translator.t(TAB_LABEL_KEYS[view]);
       const button = doc.createElement('button');
       button.type = 'button';
       button.className = 'ofd-sidebar__tab';
@@ -320,9 +386,15 @@ export class Sidebar {
       button.id = `${this.options.idPrefix}-tab-${view}`;
       button.setAttribute('aria-controls', `${this.options.idPrefix}-panel-${view}`);
       button.setAttribute('aria-selected', 'false');
+      button.setAttribute('aria-label', name);
+      button.title = name;
       button.tabIndex = -1;
       button.dataset.view = view;
-      button.textContent = this.translator.t(TAB_LABEL_KEYS[view]);
+      button.appendChild(createIcon(TAB_ICONS[view]));
+      const label = doc.createElement('span');
+      label.className = 'ofd-sidebar__tab-label';
+      label.textContent = name;
+      button.appendChild(label);
       button.addEventListener('click', () => this.options.onOpenView(view));
       tablist.appendChild(button);
 
@@ -338,6 +410,7 @@ export class Sidebar {
       this.tabs.set(view, {
         view,
         button,
+        label,
         panel,
         empty: null,
         mounted: false,
@@ -367,18 +440,22 @@ export class Sidebar {
   /** 应用功能门控。 */
   private applyFeatureStates(): void {
     for (const [view, entry] of this.tabs) {
-      const gate = resolveFeatureGate(
+      const gate = resolveSidebarViewGate(
         this.featureStates,
-        sidebarViewFeature(view),
+        view,
         this.translator,
+        this.options.layerPanel,
       );
       applyFeatureGate(entry.button, gate);
+      // 可用时保持 `title` 为完整名称；禁用时应用的是禁用原因说明。
+      if (!gate.disabled) entry.button.title = entry.button.getAttribute('aria-label') ?? '';
       entry.panel.setAttribute(
         'aria-hidden',
         entry.button.hidden ? 'true' : 'false',
       );
     }
     this.syncTabIndexes();
+    this.updateTabOverflow();
   }
 
   /** 只有一个可用标签进入 Tab 顺序。 */
@@ -437,6 +514,139 @@ export class Sidebar {
     this.element.dataset.open = this.isOpen ? 'true' : 'false';
     this.closeButton.hidden = this.mode === 'inline';
   }
+
+  /**
+   * 重新判断标签行是否溢出，并在“图标+文字 / 仅图标”之间切换；幂等。
+   *
+   * 只看可见标签：宽度放不下全部标签的图标与文字时整行切换为仅图标。
+   */
+  private updateTabOverflow(): void {
+    if (!this.tablist) return;
+    const tabs = [...this.tabs.values()].filter((entry) => !entry.button.hidden);
+    if (tabs.length === 0) return;
+    const overflowing = this.isTabRowOverflowing(tabs, this.tabListWidth());
+    const next = overflowing ? 'icons' : 'full';
+    if (this.tablist.dataset.mode === next) return;
+    this.tablist.dataset.mode = next;
+    this.options.onTabOverflowChange?.(overflowing);
+  }
+
+  /**
+   * 侧栏打开期间按固定间隔复核宽度，兜住布局变化不派发事件的情况
+   * （例如宿主仅改 `--ofd-sidebar-width`，`ResizeObserver` 也不一定通知）。
+   */
+  private startTabOverflowWatch(): void {
+    if (this.layoutTimer !== null) return;
+    const win = this.element.ownerDocument.defaultView;
+    if (!win || typeof win.setInterval !== 'function') return;
+    this.layoutTimer = win.setInterval(() => {
+      if (this.view === null) return;
+      this.updateTabOverflow();
+    }, TAB_OVERFLOW_POLL_MS);
+  }
+
+  /** 停止宽度复核。 */
+  private stopTabOverflowWatch(): void {
+    if (this.layoutTimer === null) return;
+    this.element.ownerDocument.defaultView?.clearInterval(this.layoutTimer);
+    this.layoutTimer = null;
+  }
+
+  /** 标签行可用宽度，单位 px：优先测试注入，其次实测，最后按默认宽度估算。 */
+  private tabListWidth(): number {
+    const injected = this.options.readTabListWidth?.();
+    if (typeof injected === 'number' && Number.isFinite(injected) && injected >= 0) {
+      return injected;
+    }
+    const measured = this.tablist.clientWidth;
+    if (measured > 0) return measured;
+    // jsdom / 未布局：退化为默认宽度基准，保证结果确定（只用于测试与极端环境）。
+    return SIDEBAR_DEFAULT_WIDTH;
+  }
+
+  /**
+   * 当前是否溢出。
+   *
+   * @param tabs 参与判定的可见标签。
+   * @param width 可用宽度，单位 px。
+   * @returns 溢出时 true。
+   */
+  private isTabRowOverflowing(tabs: readonly TabEntry[], width: number): boolean {
+    if (width <= 0) return false;
+    // 内容宽度恒可度量（Canvas 度量文字，见 `measureLabelWidth`），直接与可用宽度比较。
+    return this.measureTabContentWidth(tabs) > width + TAB_OVERFLOW_TOLERANCE_PX;
+  }
+
+  /**
+   * 各标签在“图标+文字”下的内容宽度之和，单位 px；不可测时返回 0。
+   *
+   * @param tabs 参与判定的可见标签。
+   * @returns 内容宽度，单位 px。
+   */
+  private measureTabContentWidth(tabs: readonly TabEntry[]): number {
+    let total = 0;
+    for (const entry of tabs) {
+      total += TAB_ICON_WIDTH + TAB_ICON_GAP + TAB_H_PADDING * 2 + this.measureLabelWidth(entry);
+    }
+    return total;
+  }
+
+  /**
+   * 标签文字在“图标+文字”模式下的宽度，单位 px。
+   *
+   * 不用 `label.scrollWidth`：侧栏收起或当前已是仅图标模式时文字节点不参与布局，
+   * 实测值恒为 0，会让溢出判定永远停在“仅图标”。这里用 Canvas 按标签的计算字体
+   * 度量文字宽度，与当前布局状态无关；无法度量（jsdom 等）时按字数估算。
+   *
+   * @param entry 标签实例。
+   * @returns 文字宽度，单位 px。
+   */
+  private measureLabelWidth(entry: TabEntry): number {
+    const text = entry.label.textContent ?? '';
+    if (text === '') return 0;
+    const cached = this.tabLabelWidths.get(text);
+    if (cached !== undefined) return cached;
+    let width = 0;
+    const doc = this.element.ownerDocument;
+    const win = doc.defaultView;
+    const style = win ? win.getComputedStyle(entry.label) : null;
+    const context = doc.createElement('canvas').getContext('2d');
+    if (context && style) {
+      // 计算字体在未布局时也可读；ComputedStyle.font 为空时按分项拼装。
+      const font =
+        style.font ||
+        `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      context.font = font;
+      width = typeof context.measureText === 'function' ? context.measureText(text).width : 0;
+    }
+    if (!(width > 0)) width = text.length * FALLBACK_CJK_CHAR_WIDTH;
+    this.tabLabelWidths.set(text, width);
+    return width;
+  }
+
+  /**
+   * 监听宽度变化并重判溢出。
+   *
+   * 优先使用 `ResizeObserver`（观察标签行、侧栏本身与每个标签按钮）；缺失时降级为
+   * 窗口 `resize`，两者互斥。
+   */
+  private observeTabOverflow(): void {
+    if (typeof ResizeObserver === 'function') {
+      this.resizeObserver = new ResizeObserver(() => this.updateTabOverflow());
+      this.resizeObserver.observe(this.tablist);
+      this.resizeObserver.observe(this.element);
+      for (const entry of this.tabs.values()) this.resizeObserver.observe(entry.button);
+    } else {
+      this.element.ownerDocument.defaultView?.addEventListener(
+        'resize',
+        this.handleWindowResize,
+      );
+    }
+    this.updateTabOverflow();
+  }
+
+  /** 窗口尺寸变化（无 `ResizeObserver` 时的降级路径）。 */
+  private readonly handleWindowResize = (): void => this.updateTabOverflow();
 
   /** 标签键盘导航（自动激活）。 */
   private readonly handleTablistKeydown = (event: KeyboardEvent): void => {
@@ -541,10 +751,11 @@ export class Sidebar {
     return Number.isFinite(parsed) ? parsed : SIDEBAR_DEFAULT_WIDTH;
   }
 
-  /** 写入宽度并同步 aria-valuenow。 */
+  /** 写入宽度并同步 aria-valuenow，随后重判溢出。 */
   private setWidth(width: number): void {
     this.element.style.setProperty('--ofd-sidebar-width', `${width}px`);
     this.resizer.setAttribute('aria-valuenow', String(width));
+    this.updateTabOverflow();
   }
 
   /** 移除拖拽监听。 */

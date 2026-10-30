@@ -29,7 +29,7 @@ npm install -g @ofdrw/ofdrw-viewer-cli     # 终端图片转换命令
 
 ### 📖 HTML5 OFD阅读器
 
-功能完备的产品级别的HTML5 OFD阅读器，支持可视化浏览、书签、缩略图、解密、验证等阅读器功能，可以用于快速接入实现OFD在线预览；
+功能完备的产品级别的HTML5 OFD阅读器，支持可视化浏览、书签、缩略图、逐页图层显示控制、解密、验证等阅读器功能，可以用于快速接入实现OFD在线预览；
 
 [**👉 在线体验**： *https://ofdrw.github.io/ofdrw-viewer/index.html*](https://ofdrw.github.io/ofdrw-viewer/index.html)
 

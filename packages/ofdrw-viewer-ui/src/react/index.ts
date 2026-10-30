@@ -17,8 +17,9 @@ export type {
   ViewerEventHandlers,
   ViewerFeatures,
 } from '../component/support';
-// 构造选项随 props 透传给核心，超采样预设类型一并再导出，避免使用方回到核心入口取。
-export type { OFDViewerOptions, SupersamplePreset } from '../options';
+// 构造选项随 props 透传给核心，超采样预设与图层侧栏配置类型一并再导出，
+// 避免使用方回到核心入口取。
+export type { LayerPanelOptions, OFDViewerOptions, SupersamplePreset } from '../options';
 
 // 显式引用公共入口：构建时保留该依赖，运行时不重复实现阅读器。
 import '../index';

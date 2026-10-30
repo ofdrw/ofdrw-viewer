@@ -12,8 +12,9 @@
 
 import { replaceChildren } from '../compat';
 
+import type { PageContentFilter } from '@ofdrw/ofdrw-viewer-engine';
 import type { Translator } from '../i18n';
-import type { Rotation, ViewerState } from '../state';
+import type { PageLayerState, Rotation, ViewerState } from '../state';
 import {
   createEmptyState,
   ensureNavigationStyle,
@@ -59,6 +60,8 @@ interface ThumbnailEntry {
   readonly skeleton: HTMLElement;
   canvas: HTMLCanvasElement | null;
   state: ThumbnailState;
+  /** 渲染该 canvas 时的图层过滤签名；与当前签名不同即需要重绘。 */
+  filterKey: string;
 }
 
 /**
@@ -129,6 +132,8 @@ export class ThumbnailView {
   private lastPageCount = 0;
   private lastLocale = '';
   private lastRotation: Rotation = 0;
+  /** 最近处理的图层快照；引用变化表示有页的过滤改变。 */
+  private lastLayers: PageLayerState | null = null;
   private destroyed = false;
 
   /**
@@ -152,6 +157,7 @@ export class ThumbnailView {
     this.lastPageCount = state.document.pageCount;
     this.lastLocale = state.ui.locale;
     this.lastRotation = state.view.rotation;
+    this.lastLayers = state.ui.layers;
     this.active = this.viewer.getSidebarView() === 'thumbnails';
     this.root.dataset.rotation = String(this.lastRotation);
     this.buildList();
@@ -252,6 +258,7 @@ export class ThumbnailView {
         skeleton,
         canvas: null,
         state: 'idle',
+        filterKey: this.filterKeyOf(pageNumber),
       };
       this.entries.set(pageNumber, entry);
       this.setEntryState(entry, 'idle');
@@ -330,6 +337,10 @@ export class ThumbnailView {
     if (state.view.rotation !== this.lastRotation) {
       this.lastRotation = state.view.rotation;
       this.root.dataset.rotation = String(state.view.rotation);
+    }
+    if (state.ui.layers !== this.lastLayers) {
+      this.lastLayers = state.ui.layers;
+      this.invalidateLayers();
     }
     const active = state.view.sidebarView === 'thumbnails';
     if (active !== this.active) {
@@ -551,12 +562,15 @@ export class ThumbnailView {
       if (!context) throw new Error('当前环境不支持 Canvas 2D');
       const tracker = this.viewer as NavigationViewer & Partial<RenderStartTracking>;
       const pending = tracker.trackPageRenderStart?.(pageNumber - 1, 'thumbnail');
+      const filter = this.filterOf(pageNumber);
+      const filterKey = this.filterKeyOf(pageNumber);
       let task: NavigationRenderTask;
       try {
         task = page.render({
           canvasContext: context,
           viewport,
           signal: controller.signal,
+          ...(filter ? { contentFilter: filter } : {}),
         });
       } catch (error) {
         // 入口校验失败不会派发 start，必须弹出待归属项避免错配后续事件。
@@ -573,6 +587,7 @@ export class ThumbnailView {
         return false;
       }
       this.setEntryState(entry, 'rendered');
+      entry.filterKey = filterKey;
       this.touchCache(pageNumber, canvas);
       return true;
     } catch (error) {
@@ -594,6 +609,41 @@ export class ThumbnailView {
     } finally {
       if (this.activeRender?.pageNumber === pageNumber) this.activeRender = null;
     }
+  }
+
+  /**
+   * 读取指定页的图层过滤。
+   *
+   * @param pageNumber 页码，1-based。
+   * @returns 过滤配置；宿主未实现或全画时为 undefined。
+   */
+  private filterOf(pageNumber: number): PageContentFilter | undefined {
+    return this.viewer.getPageContentFilter
+      ? this.viewer.getPageContentFilter(pageNumber)
+      : undefined;
+  }
+
+  /**
+   * 读取指定页的图层过滤签名。
+   *
+   * @param pageNumber 页码，1-based。
+   * @returns 签名；宿主未实现时为 `'all'`。
+   */
+  private filterKeyOf(pageNumber: number): string {
+    return this.viewer.getLayerFilterKey ? this.viewer.getLayerFilterKey(pageNumber) : 'all';
+  }
+
+  /** 过滤变化的页：释放 canvas、回到 idle，并让窗口内该项重新排队。 */
+  private invalidateLayers(): void {
+    for (const entry of this.entries.values()) {
+      if (entry.filterKey === this.filterKeyOf(entry.pageNumber)) continue;
+      if (this.activeRender?.pageNumber === entry.pageNumber) this.abortActive();
+      this.cache.delete(entry.pageNumber);
+      this.releaseCanvas(entry);
+      entry.filterKey = this.filterKeyOf(entry.pageNumber);
+      this.setEntryState(entry, 'idle');
+    }
+    this.refreshWindow();
   }
 
   /** 写入 LRU 缓存并按上限淘汰离屏 canvas。 */

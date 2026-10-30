@@ -71,6 +71,7 @@ export const zhCN = {
   'sidebar.noBookmarks': '本文档没有书签',
   'sidebar.noSignatures': '本文档没有签章',
   'sidebar.settings': '设置',
+  'sidebar.layers': '图层',
 
   // 本地字体（本地字体加载方案设计 §5.1 / §5.2）。
   'localFonts.group': '字体',
@@ -108,6 +109,27 @@ export const zhCN = {
   'attachments.exportSummary': '已导出 {exported} 个附件，跳过 {skipped} 个（过大或读取失败）',
   'attachments.unsupported': '当前引擎不支持流式读取附件',
   'attachments.ofdUnavailable': '当前环境无法读取 OFD 原文件',
+
+  // 图层侧栏（图层控制与侧栏图标设计方案 §B.4）。
+  'layers.title': '图层',
+  'layers.allPages': '全部页面',
+  'layers.page': '第 {page} 页',
+  'layers.restoreDefault': '恢复默认',
+  'layers.signatures': '签章',
+  'layers.annotations': '注释',
+  'layers.custom': '自定义',
+  'layers.foreground': '前景',
+  'layers.body': '正文',
+  'layers.background': '背景',
+  'layers.empty': '本文档没有页面',
+  'layers.noDocument': '打开文档后可控制图层显示',
+  'layers.disabled': '宿主已禁用图层控制',
+  'layers.annotationTypes': '注释类型',
+  'layers.type.link': '链接',
+  'layers.type.path': '路径',
+  'layers.type.highlight': '高亮',
+  'layers.type.stamp': '印章',
+  'layers.type.watermark': '水印',
 
   'findbar.label': '查找',
   'findbar.placeholder': '在文档中查找',

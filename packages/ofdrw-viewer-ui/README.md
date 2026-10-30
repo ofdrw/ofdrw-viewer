@@ -5,7 +5,7 @@
 
 ## ✨ 功能概述
 
-**ofdrw-viewer-ui** 是一款产品级的 Web OFD 阅读器组件，内置连续滚动、缩放/旋转、缩略图、大纲、书签、全文查找、文本选择、打印与图片导出等功能。组件基于 ofdrw-viewer-engine 实现高质量的 OFD 页面绘制，同时提供 Web Component 与 React、Vue API适配，可直接嵌入现有应用在线预览 OFD 文件，并自适应桌面、平板与手机。
+**ofdrw-viewer-ui** 是一款产品级的 Web OFD 阅读器组件，内置连续滚动、缩放/旋转、缩略图、大纲、书签、逐页图层显示控制（含注释类型过滤）、全文查找、文本选择、打印与图片导出等功能。组件基于 ofdrw-viewer-engine 实现高质量的 OFD 页面绘制，同时提供 Web Component 与 React、Vue API适配，可直接嵌入现有应用在线预览 OFD 文件，并自适应桌面、平板与手机。
 
 ![OFD Web 阅读器演示](../../docs/img/ofdrw-viewer-ui-showcase.gif)
 

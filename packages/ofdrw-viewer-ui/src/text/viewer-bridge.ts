@@ -15,6 +15,7 @@
 import type { EnginePage } from '../document-controller';
 import type { ViewerFeature, ViewerFeatureStates } from '../features';
 import type {
+  PageContentFilter,
   PageInfo,
   TextContent,
   TextContentOptions,
@@ -31,8 +32,24 @@ import type {
   ViewerEventName,
 } from '../types';
 
+/** 提供页级内容过滤的宿主（可选能力；未实现时按全画处理）。 */
+export interface LayerFilterHost {
+  /**
+   * 读取指定页的内容过滤；未实现或返回 undefined 表示全画。
+   *
+   * @param pageNumber 页码，1-based。
+   */
+  getPageContentFilter?(pageNumber: number): PageContentFilter | undefined;
+  /**
+   * 读取指定页的过滤签名（与 `getPageContentFilter` 同步变化）；未实现时按 `'all'`。
+   *
+   * @param pageNumber 页码，1-based。
+   */
+  getLayerFilterKey?(pageNumber: number): string;
+}
+
 /** 文本模块使用的阅读器能力；`OFDViewer` 结构兼容。 */
-export interface TextViewerHost {
+export interface TextViewerHost extends LayerFilterHost {
   /** 最新状态快照。 */
   getState(): ViewerState;
   /** 订阅核心事件；返回退订函数。 */
@@ -214,15 +231,21 @@ export function createViewerBridge(host: TextViewerHost): ViewerBridge {
  * 读取文本内容的统一选项；固定 96 DPI（CSS px 基准），包含字符级几何。
  *
  * @param signal 取消信号。
+ * @param contentFilter 页级过滤；undefined 表示全画（不写该键）。
  * @returns 引擎文本选项。
  */
-export function textContentOptions(signal: AbortSignal): TextContentOptions {
+export function textContentOptions(
+  signal: AbortSignal,
+  contentFilter?: PageContentFilter,
+): TextContentOptions {
   return {
     dpi: 96,
     includeChars: true,
     includeAnnotations: false,
     includeInvisible: false,
     signal,
+    // 全画时不写该键，保持与改动前相同的调用形状。
+    ...(contentFilter ? { contentFilter } : {}),
   };
 }
 

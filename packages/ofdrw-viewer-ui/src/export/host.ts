@@ -8,6 +8,7 @@
 import type {
   DocumentPermissions,
   OFDSource,
+  PageContentFilter,
   PageInfo,
 } from '@ofdrw/ofdrw-viewer-engine';
 import type { EnginePage } from '../document-controller';
@@ -55,4 +56,12 @@ export interface OutputHost {
    * @param signal 取消信号。
    */
   readSourceBytes?(signal?: AbortSignal): Promise<ArrayBuffer | Uint8Array>;
+  /**
+   * 读取指定页的内容过滤；省略或返回 undefined 表示全画。
+   *
+   * 旧宿主未实现该可选成员时导出/打印按全画处理，与引入图层控制前一致。
+   *
+   * @param pageNumber 页码，1-based。
+   */
+  getPageContentFilter?(pageNumber: number): PageContentFilter | undefined;
 }

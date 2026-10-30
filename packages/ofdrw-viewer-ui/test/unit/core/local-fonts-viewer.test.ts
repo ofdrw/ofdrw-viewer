@@ -13,14 +13,19 @@ const engineMocks = vi.hoisted(() => ({
   open: vi.fn(),
 }));
 
-vi.mock('@ofdrw/ofdrw-viewer-engine', () => ({
-  OFDDocument: { open: engineMocks.open },
-  OFDError: class extends Error {},
-  isOFDError: () => false,
-  toOFDError: (error: unknown) => error,
-  // 字体别名表被 `composeFontAliases()` / 候选展开直接引用，mock 里必须提供。
-  DEFAULT_FONT_ALIASES: [['宋体', 'simsun', 'songti', 'stsong']],
-}));
+vi.mock('@ofdrw/ofdrw-viewer-engine', async (importOriginal) => {
+  // 未覆盖的引擎导出（常量、类型辅助）保持真实实现，避免新特性读取到 undefined。
+  const actual = await importOriginal<typeof import('@ofdrw/ofdrw-viewer-engine')>();
+  return {
+    ...actual,
+    OFDDocument: { open: engineMocks.open },
+    OFDError: class extends Error {},
+    isOFDError: () => false,
+    toOFDError: (error: unknown) => error,
+    // 字体别名表被 `composeFontAliases()` / 候选展开直接引用，mock 里必须提供。
+    DEFAULT_FONT_ALIASES: [['宋体', 'simsun', 'songti', 'stsong']],
+  };
+});
 
 import { OFDViewer, registerViewerExtension } from '../../../src/viewer';
 import { attachUIShell } from '../../../src/ui';

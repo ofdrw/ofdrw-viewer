@@ -69,11 +69,16 @@ describe('BookmarkView 书签列表', () => {
     await vi.waitFor(() => {
       expect(viewer.getElements().main.scrollTop).toBe(expected);
     });
-    expect(bookmarkView.getCurrentName()).toBe('正文');
+    // 当前书签由滚动事件异步同步，等它落定再断言（避免并行跑测试时的时序抖动）。
+    await vi.waitFor(() => {
+      expect(bookmarkView.getCurrentName()).toBe('正文');
+    });
     expect(bookmarkItems(panel)[1]!.getAttribute('aria-current')).toBe('true');
 
     viewer.goToPage(10);
-    expect(bookmarkView.getCurrentName()).toBe('附录');
+    await vi.waitFor(() => {
+      expect(bookmarkView.getCurrentName()).toBe('附录');
+    });
     expect(bookmarkItems(panel)[2]!.getAttribute('aria-current')).toBe('true');
     viewer.destroy();
   });

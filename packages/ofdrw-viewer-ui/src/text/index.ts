@@ -52,6 +52,8 @@ export function attachTextModule(viewer: OFDViewer): () => void {
     getSelectedText: () => selection.getSelectedText(),
     copySelection: () => selection.copySelection(),
     clearSelection: () => selection.clearSelection(),
+    // 图层可见性变化后由核心调用：作废旧索引并按需重跑当前查询。
+    refreshLayerVisibility: () => find.refreshLayerVisibility(),
   };
 
   const detachFind = host.attachFindController(service);
@@ -92,6 +94,7 @@ export { TextLayerService, createTextSpan } from './text-layer';
 export type { TextLayerServiceOptions } from './text-layer';
 export { createViewerBridge, textContentOptions } from './viewer-bridge';
 export type {
+  LayerFilterHost,
   TextViewerHost,
   ViewerBridge,
   ViewerTextLayerServiceLike,
