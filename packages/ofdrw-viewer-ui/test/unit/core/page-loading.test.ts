@@ -123,7 +123,7 @@ describe('PageView 页面 loading', () => {
     page.destroy();
   });
 
-  it('重渲染保留旧 canvas，loading 切换为半透明遮罩', async () => {
+  it('重渲染保留旧 canvas 且不弹加载遮罩，新画面完成后原子替换', async () => {
     const page = createPage();
     const firstGeneration = page.beginRender('scale:1');
     page.prepareCanvas(120, 160, firstGeneration);
@@ -137,15 +137,17 @@ describe('PageView 页面 loading', () => {
     expect(canvas?.dataset.stale).toBe('true');
 
     const loading = loadingOf(page);
-    await vi.advanceTimersByTimeAsync(DELAY_MS);
-    expect(loading.hidden).toBe(false);
-    expect(loading.dataset.variant).toBe('overlay');
+    // 已有画面时重渲染不显示 loading：旧画布仍在可见，遮罩只会制造“点一下要等”的卡顿感。
+    await vi.advanceTimersByTimeAsync(DELAY_MS * 4);
+    expect(loading.hidden).toBe(true);
     expect(page.canvasWrapper.contains(canvas)).toBe(true);
+    expect(page.element.getAttribute('aria-busy')).toBe('true');
 
     page.completeRender(secondGeneration, 'scale:2');
     expect(page.canvas).toBe(canvas);
     expect(canvas?.dataset.stale).toBeUndefined();
     expect(canvas?.dataset.renderKey).toBe('scale:2');
+    expect(page.element.hasAttribute('aria-busy')).toBe(false);
 
     page.destroy();
   });

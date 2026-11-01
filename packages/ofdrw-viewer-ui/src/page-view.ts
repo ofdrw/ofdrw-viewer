@@ -324,6 +324,10 @@ export class PageView {
       this.updateLoadingVariant();
       return;
     }
+    // 已有画面（重渲染，例如缩放/旋转）不显示加载遮罩：旧画布本身仍然可见，
+    // 在它上面弹 spinner 会让每次缩放都出现 150ms 后才遮住画面的“卡顿感”，
+    // 而新画布完成后会原子替换，不会闪白。首屏仍用骨架表现进度。
+    if (this.painted) return;
     this.loadingShowTimer = setTimeout(() => {
       this.loadingShowTimer = null;
       if (this.loadingOperationId === operationId) this.showLoading();

@@ -730,7 +730,7 @@ describe('页面 loading 与引擎渲染事件', () => {
     expect(pageLoading(viewer, call.pageIndex + 1).visible).toBe(false);
   });
 
-  it('重渲染保留旧 canvas 并切换为遮罩层', async () => {
+  it('重渲染保留旧 canvas 且不弹出 loading 遮罩', async () => {
     const { viewer } = createHarness({ openMode: 'auto', renderMode: 'manual' });
     await viewer.ready;
     await until(() => renderCalls.length > 0);
@@ -748,8 +748,8 @@ describe('页面 loading 与引擎渲染事件', () => {
       .at(-1)!;
     await wait(160);
     const shown = pageLoading(viewer, second.pageIndex + 1);
-    expect(shown.visible).toBe(true);
-    expect(shown.loading.dataset.variant).toBe('overlay');
+    // 已有画面时重渲染不弹遮罩：旧画布继续可见，完成后再原子替换。
+    expect(shown.visible).toBe(false);
     expect(shown.page.contains(canvas!)).toBe(true);
     second.complete();
     await wait(50);

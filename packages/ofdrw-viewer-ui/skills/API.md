@@ -65,14 +65,15 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 | `container` | `HTMLElement / string` | 必填 | 挂载点；字符串按 CSS 选择器解析，元素必须已存在 |
 | `source` | `ViewerSource` | 无 | 文档来源；省略时读取 `?file=`/`?base64=` |
 | `initialPage` | `number` | `1` | 初始页，1-based；非有限值按 1，打开时夹取到有效页 |
-| `initialScale` | `number / ZoomMode` | `'auto'` | 数字为倍率（0.1–25）；字符串为缩放模式 |
+| `initialScale` | `number / ZoomMode` | `'auto'` | 数字为倍率（0.25–10）；字符串为缩放模式 |
 | `rotation` | `0 / 90 / 180 / 270` | `0` | 初始顺时针旋转角度 |
 | `sidebar` | `SidebarView / null` | `null` | 初始侧栏；`null` 表示关闭 |
 | `features` | `ViewerFeatures` | 全部开启 | 功能开关补丁，只需写要关闭的键 |
 | `featureDisplay` | `FeatureDisplay` | `'hide'` | 被关闭功能的展示方式 |
 | `theme` | `'light' / 'dark' / 'auto'` | `'auto'` | `auto` 跟随 `prefers-color-scheme` |
 | `locale` | `string` | `'zh-CN'` | 内置 `zh-CN`/`en-US`；翻译层不可识别时回落到 `zh-CN` |
-| `maxCanvasPixels` | `number` | 桌面 `256_000_000`，移动 `32_000_000` | 单页 canvas 像素上限（width × height） |
+| `maxCanvasPixels` | `number` | 桌面 `256_000_000`，移动 `32_000_000` | 单页 canvas 像素上限（width × height）；`0` 表示不限 |
+| `maxCanvasDim` | `number` | `32767` | 单页 canvas 单边像素上限；`0` 表示不限 |
 | `pageCachePixelBudget` | `number` | `512_000_000` | 已渲染页 canvas 总像素预算；超预算时释放离可见区最远的页 |
 | `supersample` | `SupersamplePreset / number` | `'auto'` | 画布超采样：`'off'` 固定 1 倍、`'auto'` 按页面面积分档、`'high'` 每档加 1 倍、`'max'` 固定 3 倍、`1..4` 固定倍率；移动端默认 1，显式传值可覆盖 |
 | `pageCacheSize` | `number` | 桌面 `10`，移动 `4` | 页级缓存基数；最终页数上限为 `max(1, pageCacheSize, 2 × 可见页数 + 1) + pin 页数` |
@@ -103,10 +104,11 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 ### 默认值与移动端差异
 
 - 初始缩放 `auto` 等价于适合宽度；`page-width` 适合宽度，`page-fit` 适合整页，`page-actual` 为 100%。
-- `setScale()` 和数字型 `initialScale` 都会被夹取到 `0.1`–`25`；非有限数字按 `1`。
+- `setScale()` 和数字型 `initialScale` 都会被夹取到 `0.25`–`10`（25%–1000%）；非有限数字按 `1`。
 - 移动端默认值在**构造时**按 `matchMedia('(max-width: 767px)')` 判断：页缓存 4、渲染并发 1；桌面为 10/2。断点变化不会自动改这些值。
 - `locale` 会设置根节点 `lang` 并写入 `state.ui.locale`；翻译器会把 `zh`/`en` 等别名归一，未注册语言回落到 `zh-CN`，但 `state.ui.locale` 保留传入值。
-- `maxCanvasPixels` 超限时通常静默降低该页渲染 DPI；只有连续降档仍失败时才产生 `W_CANVAS_LIMIT` warning，不能用它判断每一次降档。
+- `maxCanvasPixels` / `maxCanvasDim` 超限时按精确反解一次性降低该页渲染 DPI：只降清晰度，不会让渲染失败。降级时产生 `W_CANVAS_LIMIT` warning；窄长页面（如 8.5×45 英寸票据）在高倍率下会频繁命中该 warning，属预期行为。
+- 画布像素预算**由阅读器负责**：打开文档时会把 `maxCanvasPixels` 作为 `limits.maxCanvasPixels` 交给引擎，避免引擎旧默认 64MP 与 UI 256MP 冲突。引擎默认已不再限制画布像素。
 - 主画布分辨率有下限：不低于页面 100% CSS 尺寸的 `min(devicePixelRatio, 2)` 倍。缩放低于对应倍率（`min(1, 2 / dpr)`）时不再重绘 canvas、也不改变 canvas 尺寸，只由 CSS 缩小显示；因此缩小/放大到下限以下不会触发重绘或页面 loading。下限只由 DPR 决定，窗口尺寸变化不影响它。
 - `supersample` 在移动端默认固定 1（优先保流畅）；显式传 `'high'`、`'max'` 或数字时以传入值为准。DPR ≥ 2 时 `'auto'` 不额外放大，因为后备像素已足够。该选项只在构造时生效。
 - `thumbnailCacheSize` 当前只被解析，未接入缩略图缓存实现，实际缓存数量固定；不要依赖该选项控制缩略图内存。
@@ -707,7 +709,7 @@ class OFDViewer {
 | `goToPage(pageNumber, { smooth?, durationMs? })` | 跳页；1-based，越界夹取；`smooth` 控制平滑滚动，`durationMs` 指定时长（单位毫秒，钳到 150–360ms，省略时按滚动距离估算） |
 | `nextPage()` / `previousPage()` | 下一页/上一页 |
 | `firstPage()` / `lastPage()` | 首页/末页 |
-| `setScale(scale)` | 设置实际倍率，夹取到 0.1–25 |
+| `setScale(scale)` | 设置实际倍率，夹取到 0.25–10 |
 | `setZoomMode(mode)` | 设置 `auto`/`page-actual`/`page-fit`/`page-width` |
 | `zoomIn()` / `zoomOut()` | 按预置档位放大/缩小 |
 | `resetZoom()` | 回到 `auto` |

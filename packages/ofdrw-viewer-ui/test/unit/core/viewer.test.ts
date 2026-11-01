@@ -24,8 +24,12 @@ import { UI_WARNING_CODES } from '../../../src/diagnostics';
 interface FakePage {
   index: number;
   getSize: () => { width: number; height: number };
-  getViewport: (options?: { dpi?: number }) => { width: number; height: number };
-  render: (params: { canvasContext: { clearRect: (...args: number[]) => void }; signal?: AbortSignal }) => {
+  getViewport: (options?: { dpi?: number }) => { width: number; height: number; dpi: number };
+  render: (params: {
+    canvasContext: CanvasRenderingContext2D;
+    viewport?: { dpi: number; width: number; height: number };
+    signal?: AbortSignal;
+  }) => {
     promise: Promise<void>;
     cancel: () => void;
   };
@@ -41,19 +45,42 @@ function makeInfos(count: number): PageInfo[] {
   }));
 }
 
-function makePage(index: number): FakePage {
+/** 主画布渲染记录：每次 render 收到的 DPI 与 viewport 尺寸。 */
+const renderCalls: { dpi: number; viewportWidth: number; viewportHeight: number }[] = [];
+
+
+function makePage(index: number, pageSize = { width: 210, height: 297 }): FakePage {
+  // 页尺寸必须存在闭包里：消费方可能以裸函数形式调用这些方法（this 为 undefined），
+  // 不能依赖参数默认值在每次调用时重新求值。
   return {
     index,
-    getSize: () => ({ width: 210, height: 297 }),
+    getSize: () => ({ ...pageSize }),
+    // 与引擎 getPageViewport 一致：viewport = 页尺寸(mm) × dpi / 25.4，保留 3 位小数。
     getViewport: (options = {}) => {
       const dpi = options.dpi ?? 96;
+      const round = (value: number): number => Math.round(value * 1000) / 1000;
+      // 必须带上 dpi：真实引擎的 viewport 一定含 dpi，缺了会让下游读到 undefined。
       return {
-        width: Math.ceil((210 / 25.4) * dpi),
-        height: Math.ceil((297 / 25.4) * dpi),
+        width: round((pageSize.width / 25.4) * dpi),
+        height: round((pageSize.height / 25.4) * dpi),
+        dpi,
       };
     },
-    render: (params) => {
-      params.canvasContext.clearRect(0, 0, 1, 1);
+    // 用普通函数而不是箭头函数：与真实页面一致，避免箭头函数在原型 prototype 上
+    // 读到 undefined 的 context。
+    render(received) {
+      // 只记录渲染参数：离屏与可见画布可能并存，直接读 DOM 会拿到旧画布。
+      // 注意 jsdom 在重新赋值 canvas.width 时会重置 2D 上下文，因此绘制步骤要容错。
+      renderCalls.push({
+        dpi: received.viewport?.dpi ?? 96,
+        viewportWidth: received.viewport?.width ?? 0,
+        viewportHeight: received.viewport?.height ?? 0,
+      });
+      try {
+        received.canvasContext.clearRect(0, 0, 1, 1);
+      } catch {
+        // 上下文已被 canvas 尺寸变更重置，不影响尺寸断言。
+      }
       return { promise: Promise.resolve(), cancel: vi.fn() };
     },
     getTextContent: async () => ({ items: [], chars: [] }),
@@ -203,6 +230,7 @@ function restorePointerMedia(): void {
 }
 
 beforeEach(() => {
+  renderCalls.length = 0;
   document.body.innerHTML = '';
   engineMocks.open.mockReset();
   engineMocks.open.mockImplementation(async () => makeDocument(3));
@@ -1420,5 +1448,242 @@ describe('OFDViewer 核心', () => {
       feature: 'export',
     });
     denied.destroy();
+  });
+});
+
+describe('画布像素预算传递', () => {
+  it('打开文档时把阅读器的 maxCanvasPixels 交给引擎，避免两层默认值冲突', async () => {
+    // 引擎旧默认 64MP 会把 UI 按 256MP 收敛好的画布（如 500% 时约 88.8MP）判为超限。
+    engineMocks.open.mockImplementation(async () => makeDocument(1));
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+      maxCanvasPixels: 128_000_000,
+    });
+    await viewer.ready;
+
+    const options = engineMocks.open.mock.calls[0]?.[0] as
+      | { limits?: { maxCanvasPixels?: number } }
+      | undefined;
+    expect(options?.limits?.maxCanvasPixels).toBe(128_000_000);
+    viewer.destroy();
+  });
+
+  it('未配置时传递桌面默认 256MP', async () => {
+    engineMocks.open.mockImplementation(async () => makeDocument(1));
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+    });
+    await viewer.ready;
+
+    const options = engineMocks.open.mock.calls[0]?.[0] as
+      | { limits?: { maxCanvasPixels?: number } }
+      | undefined;
+    expect(options?.limits?.maxCanvasPixels).toBe(256_000_000);
+    viewer.destroy();
+  });
+});
+
+describe('画布尺寸上限（窄长页面）', () => {
+  /**
+   * 窄长票据页尺寸（mm）：8.5 英寸宽、约 45.4 英寸高，长宽比比 A4 大近 4 倍。
+   *
+   * 与真实样例 gov.ofd 的 PhysicalBox 一致：放大后整页会撞上单边/像素上限，必须靠
+   * 降低输出比例收敛，而不是让整页渲染失败（旧实现从 1000% 起就抛
+   * OFD_CANVAS_TOO_LARGE）。
+   */
+  const LONG_PAGE_MM = { width: 215.9, height: 1152.144 };
+
+  /**
+   * 页面在给定 DPI 下传给引擎的 viewport 尺寸（与引擎 getPageViewport 同口径）。
+   *
+   * @param dpi 输出 DPI。
+   * @returns 宽高，单位像素。
+   */
+  function viewportAt(dpi: number): { width: number; height: number } {
+    const round = (value: number): number => Math.round(value * 1000) / 1000;
+    return {
+      width: round((LONG_PAGE_MM.width / 25.4) * dpi),
+      height: round((LONG_PAGE_MM.height / 25.4) * dpi),
+    };
+  }
+
+  /** 让测试文档渲染窄长单页。 */
+  function useLongPageDocument(): void {
+    engineMocks.open.mockImplementation(async () => ({
+      // 注意展开顺序：基础文档里自带 getPageInfos/getPage，必须放在前面，
+      // 否则会把下面按窄长尺寸覆写的实现盖回去（页面又变回 A4）。
+      ...(makeDocument(1) as Record<string, unknown>),
+      getPageInfos: async () => [
+        { index: 0, widthMm: LONG_PAGE_MM.width, heightMm: LONG_PAGE_MM.height },
+      ],
+      getPage: async (index: number) => makePage(index, LONG_PAGE_MM),
+    }));
+  }
+
+  /** 以指定选项打开单页窄长文档。 */
+  async function openLongPageViewer(
+    options: Partial<ConstructorParameters<typeof OFDViewer>[0]> = {},
+  ) {
+    useLongPageDocument();
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+      initialScale: 1,
+      ...options,
+    });
+    await viewer.ready;
+    return viewer;
+  }
+
+  /**
+   * 切到指定倍率并等该倍率下的重新渲染完成，返回本次渲染参数。
+   *
+   * 阅读器会在页面状态回到 rendered 之后再补一次排空渲染（超采样重排），因此不能只看
+   * 状态位；这里先等渲染队列静止，再记录基线，缩放后等计数增长并重新静止。
+   */
+  async function renderAt(viewer: OFDViewer, scale: number) {
+    const page = viewer.getPageView(1)!;
+    /** 等渲染次数在若干轮 rAF 内保持不变。 */
+    const waitIdle = async (): Promise<number> => {
+      let last = -1;
+      let stable = 0;
+      await vi.waitFor(() => {
+        if (renderCalls.length === last) stable += 1;
+        else {
+          stable = 0;
+          last = renderCalls.length;
+        }
+        expect(stable).toBeGreaterThanOrEqual(3);
+      });
+      return renderCalls.length;
+    };
+    await vi.waitFor(() => expect(page.state).toBe('rendered'));
+    const before = await waitIdle();
+    const previous = renderCalls.at(-1)!;
+    viewer.setScale(scale);
+    // 实际渲染倍率未变（例如 100% 与首屏超采样后的 2 倍等价、或被上限压到同一档）时
+    // 阅读器不会重绘，这是正确的省算力行为：沿用上一次的画布参数即可。
+    try {
+      await vi.waitFor(() => expect(renderCalls.length).toBeGreaterThan(before), {
+        timeout: 500,
+      });
+    } catch {
+      if (viewer.getScale() !== scale) throw new Error(`倍率未生效：${viewer.getScale()} ≠ ${scale}`);
+      return previous;
+    }
+    await vi.waitFor(() => expect(page.state).toBe('rendered'));
+    await waitIdle();
+    return renderCalls.at(-1)!;
+  }
+
+  it('默认上限下放大到最大倍率不报错，且画布始终落在像素上限内', async () => {
+    const viewer = await openLongPageViewer();
+    const warnings: string[] = [];
+    const errors: string[] = [];
+    viewer.on('warning', (warning) => warnings.push(warning.code));
+    viewer.on('error', (info) => errors.push(info.code));
+    const page = viewer.getPageView(1)!;
+    await vi.waitFor(() => expect(page.state).toBe('rendered'));
+
+    // 上限已对齐 pdf.js 的 1000%（MAX_SCALE = 10）。
+    for (const scale of [1, 2, 4, 5, 7.5, 10]) {
+      const call = await renderAt(viewer, scale);
+      // 旧实现在 1000% 起直接抛 OFD_CANVAS_TOO_LARGE；现在任何倍率都必须渲染成功。
+      expect(errors).toEqual([]);
+      const { width, height } = viewportAt(call.dpi);
+      expect(Math.ceil(width) * Math.ceil(height)).toBeLessThanOrEqual(256_000_000);
+      expect(Math.ceil(width)).toBeLessThanOrEqual(32767);
+      expect(Math.ceil(height)).toBeLessThanOrEqual(32767);
+    }
+
+    expect(page.state).toBe('rendered');
+    // 超过 256MP 的倍率只降清晰度：产生 W_CANVAS_LIMIT，而不是错误卡。
+    expect(warnings).toContain(UI_WARNING_CODES.W_CANVAS_LIMIT);
+    viewer.destroy();
+  });
+
+  it('默认上限下放大到最大倍率仍能渲染，尺寸不越界', async () => {
+    const viewer = await openLongPageViewer();
+    const page = viewer.getPageView(1)!;
+    await vi.waitFor(() => expect(page.state).toBe('rendered'));
+
+    // 窄长页面 1000% 全清晰需要约 355MP，超过 256MP 预算，因此会被降级；
+    // 关键是不能失败，且画布密度随倍率单调上升（放大仍然更清晰）。
+    const calls = [];
+    for (const scale of [2, 4, 8, 10]) calls.push(await renderAt(viewer, scale));
+    for (const call of calls) {
+      const { width, height } = viewportAt(call.dpi);
+      expect(Math.ceil(width) * Math.ceil(height)).toBeLessThanOrEqual(256_000_000);
+    }
+    for (let index = 1; index < calls.length; index += 1) {
+      expect(calls[index]!.dpi).toBeGreaterThanOrEqual(calls[index - 1]!.dpi);
+    }
+    viewer.destroy();
+  });
+
+  it('密度被上限压住后，再放大不再重画整页位图', async () => {
+    const viewer = await openLongPageViewer();
+    const page = viewer.getPageView(1)!;
+    await vi.waitFor(() => expect(page.state).toBe('rendered'));
+
+    // 750% 之后后备比例已低于 DPR：画布密度不再提升，继续放大应由 CSS 拉伸。
+    await renderAt(viewer, 7.5);
+    const before = renderCalls.length;
+    for (const scale of [8, 9, 10]) {
+      viewer.setScale(scale);
+      await vi.waitFor(() => expect(page.state).toBe('rendered'));
+    }
+    // 允许最多一次收尾重绘，但绝不能每档都重画约 200MP 的位图。
+    expect(renderCalls.length - before).toBeLessThanOrEqual(1);
+    viewer.destroy();
+  });
+
+  it('从饱和档缩小回来会重绘，恢复清晰度', async () => {
+    const viewer = await openLongPageViewer();
+    const page = viewer.getPageView(1)!;
+    await vi.waitFor(() => expect(page.state).toBe('rendered'));
+
+    await renderAt(viewer, 10);
+    const before = renderCalls.length;
+    viewer.setScale(2);
+    await vi.waitFor(() => {
+      expect(page.state).toBe('rendered');
+      expect(renderCalls.length).toBeGreaterThan(before);
+    });
+    // 缩回 200% 后画布应恢复成 1:1 密度（宽度约 1632），而不是继续复用放大的位图。
+    const { width } = viewportAt(renderCalls.at(-1)!.dpi);
+    expect(width).toBeCloseTo(1632, 0);
+    viewer.destroy();
+  });
+
+  it('maxCanvasDim 收紧后仍能渲染，只产生 W_CANVAS_LIMIT 而不报错', async () => {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    // 告警从首屏渲染开始产生，必须在打开前订阅。
+    const viewer = await openLongPageViewer({
+      maxCanvasDim: 4000,
+      onError: (info) => errors.push(info.code),
+      onWarning: (warning) => warnings.push(warning.code),
+    });
+    const page = viewer.getPageView(1)!;
+    await vi.waitFor(() => expect(page.state).toBe('rendered'));
+
+    // 单边上限被压到 4000 后，整页（高 4354.56 CSS px）连 1:1 都装不下：任何倍率的
+    // DPI 都必须收敛到上限内，且只能降清晰度、不能出错。
+    for (const scale of [1, 4, 8, 10]) {
+      const call = await renderAt(viewer, scale);
+      expect(errors).toEqual([]);
+      const { width, height } = viewportAt(call.dpi);
+      expect(Math.ceil(height)).toBeLessThanOrEqual(4000);
+      expect(Math.ceil(width)).toBeLessThanOrEqual(4000);
+      expect(Math.ceil(width) * Math.ceil(height)).toBeLessThanOrEqual(256_000_000);
+    }
+    expect(warnings).toContain(UI_WARNING_CODES.W_CANVAS_LIMIT);
+    viewer.destroy();
   });
 });

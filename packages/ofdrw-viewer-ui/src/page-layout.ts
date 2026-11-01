@@ -690,7 +690,7 @@ function clamp(value: number, min: number, max: number): number {
  * 限制到阅读器允许的缩放范围。
  *
  * @param value 倍率。
- * @returns {@link MIN_SCALE}..{@link MAX_SCALE}（25%..2500%）的倍率。
+ * @returns {@link MIN_SCALE}..{@link MAX_SCALE}（25%..1000%）的倍率。
  */
 function clampScale(value: number): number {
   return clamp(value, MIN_SCALE, MAX_SCALE);

@@ -76,7 +76,6 @@ import { probeAnnotationTypesForPage } from './layers/annotation-probe';
 import { createTranslator, type MessageKey, type Translator } from './i18n';
 import { KeyboardController } from './keyboard';
 import {
-  CANVAS_RETRY_PIXEL_STEPS,
   DEFAULT_MOBILE_RENDER_CONCURRENCY,
   DEFAULT_RENDER_CONCURRENCY,
   MAX_CANVAS_BASE_DPR,
@@ -88,6 +87,7 @@ import {
   SUPERSAMPLE_MAX,
   SUPERSAMPLE_MAX_FACTOR,
   SUPERSAMPLE_MID,
+  limitCanvasOutputScale,
   resolveViewerOptions,
   ZOOM_LEVELS,
   type OFDViewerOptions,
@@ -99,6 +99,7 @@ import {
   PageLayout,
   scrollTopForZoomAnchor,
   type ContentPoint,
+  type PageBox,
   type ScrollAnchor,
 } from './page-layout';
 import { PageView } from './page-view';
@@ -767,6 +768,12 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       openDocument: (openOptions) =>
         engineApi.OFDDocument.open({
           ...openOptions,
+          // 画布预算由 UI 决策：把阅读器的像素上限显式交给引擎，避免两层各用一套默认值
+          // （引擎旧默认 64MP 会让 UI 已收敛好的 500% 画布被拒）。
+          limits: {
+            ...openOptions.limits,
+            maxCanvasPixels: this.options.maxCanvasPixels,
+          },
           ...(this.engineEvents ? { eventBus: this.engineEvents } : {}),
         }) as unknown as Promise<EngineDocument>,
       ...(this.options.requestInit ? { requestInit: this.options.requestInit } : {}),
@@ -2050,7 +2057,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /**
    * 设置实际缩放倍率。
    *
-   * @param scale 倍率，限制在 {@link MIN_SCALE}..{@link MAX_SCALE}（25%..2500%）。
+   * @param scale 倍率，限制在 {@link MIN_SCALE}..{@link MAX_SCALE}（25%..1000%）。
    */
   setScale(scale: number): void {
     this.assertFeature('zoom');
@@ -3340,6 +3347,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       return;
     }
     const previous = this.state.view.scale;
+    const zoomingIn = nextScale > previous;
     const previousRenderScale = this.effectiveRenderScale();
     const viewportHeight = this.viewportHeight();
     const locked = anchor === undefined ? this.pinnedZoomAnchor : null;
@@ -3360,7 +3368,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.anchorScrollTo(point, offset);
     this.updateScrollState();
     this.emit('scalechanging', { scale: nextScale, zoomMode, previous });
-    this.renderAfterScaleChange(previousRenderScale);
+    this.renderAfterScaleChange(previousRenderScale, zoomingIn);
     this.commit();
     this.syncHash();
   }
@@ -3434,11 +3442,15 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
    * 任务、不重绘，避免小图反复重绘导致闪烁和 loading。
    *
    * @param previousRenderScale 缩放前的有效渲染倍率。
+   * @param zoomingIn 本次是否为放大。
    */
-  private renderAfterScaleChange(previousRenderScale: number): void {
+  private renderAfterScaleChange(previousRenderScale: number, zoomingIn: boolean): void {
     if (Math.abs(this.effectiveRenderScale() - previousRenderScale) > 0.0001) {
       this.cancelAllPageTasks();
-      this.renderVisible(true);
+      // 放大且画布密度已饱和（缓存键归一到饱和阈值）时不强制重绘：各档共用同一份
+      // 位图，由 CSS 拉伸，避免每档都重画约 200MP 的整页位图。
+      // 缩小则必须重绘：位图是放大的，缩小后要用更密的一份才能恢复清晰度。
+      this.renderVisible(!zoomingIn);
       return;
     }
     this.renderVisible();
@@ -3588,12 +3600,15 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     const pageView = this.pageViews[index];
     if (!pageView || pageView.isDestroyed) return;
     const renderScale = this.effectiveRenderScale();
-    const key = this.renderKey(renderScale, index);
+    // 用“实际渲染倍率”而不是显示倍率做键：超长页面被上限压住后，真实密度不再随
+    // 显示倍率变化，用显示倍率做键会让每次放大都判定命中缓存而永远不重绘。
+    const renderedScale = this.renderedScaleFor(index, renderScale);
+    const key = this.renderKey(renderedScale, index);
     if (!force && pageView.renderedKey === key) return;
     // 屏幕外预渲染页不跟随缩小降低渲染 DPI：直接复用已画好的 canvas，
     // 避免一次缩小触发所有缓存页以低质量重绘。
     const offscreen = index < this.lastVisibleRange.start || index > this.lastVisibleRange.end;
-    if (!force && offscreen && pageView.renderedScale > renderScale) return;
+    if (!force && offscreen && pageView.renderedScale > renderedScale) return;
     const generation = pageView.beginRender(key, renderScale);
     this.queue.enqueue({
       key: `page:${index}`,
@@ -3603,15 +3618,13 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       run: async (signal) => {
         const page = await this.controller.getPage(index);
         if (signal.aborted) throw createAbortError();
-        // 高倍率下单页画布可能大到浏览器无法分配：按 CANVAS_RETRY_PIXEL_STEPS
-        // 逐级收紧像素上限后重试，宁可牺牲清晰度也不要让整页渲染失败。
-        const budget = Math.max(1, this.options.maxCanvasPixels);
-        const { context, size, degraded } = this.prepareCanvasWithinBudget(
+        // 高倍率或超长页面下单页画布可能超出像素/单边上限：按精确反解把输出比例
+        // 压到上限内，宁可牺牲清晰度也不要让整页渲染失败。
+        const { context, size, degraded } = this.prepareCanvasAtRenderScale(
           page,
           pageView,
           generation,
           renderScale,
-          budget,
         );
         if (!context) throw new OFDViewerError('OFD_UNSUPPORTED', '当前环境不支持 Canvas 2D');
         if (degraded) {
@@ -3622,7 +3635,9 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
           );
         }
         pageView.markRendering(generation);
-        const viewport = page.getViewport({ dpi: size.dpi });
+        // 补全 dpi：引擎页返回的 viewport 一定带 dpi，但结构化替身未必；缺了会以
+        // undefined 传给 render，引擎侧再推导 DPI 时就变成 NaN。
+        const viewport = { ...page.getViewport({ dpi: size.dpi }), dpi: size.dpi };
         const pending = this.trackPageRenderStart(index, 'main');
         let task: ReturnType<EnginePage['render']>;
         try {
@@ -3738,83 +3753,149 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   }
 
   /**
-   * 在像素预算内为一次渲染准备 canvas；分配失败时按 {@link CANVAS_RETRY_PIXEL_STEPS}
-   * 逐级收紧预算重试。
+   * 按渲染倍率准备本次渲染的 canvas，并把输出比例收敛到像素/单边上限内。
+   *
+   * 画布尺寸一次算准，不做逐级试错：上下限由 {@link limitCanvasOutputScale} 反解，
+   * 结果必然落在边界内，因此不会出现“降了 DPI 仍然超限”的中间态。
    *
    * @param page 引擎页。
    * @param pageView 页视图。
    * @param generation 渲染代次号。
    * @param renderScale 有效渲染倍率。
-   * @param budget 初始像素预算（width × height）。
    * @returns 渲染上下文、最终尺寸，以及是否因超限而降级。
    */
-  private prepareCanvasWithinBudget(
+  private prepareCanvasAtRenderScale(
     page: EnginePage,
     pageView: PageView,
     generation: number,
     renderScale: number,
-    budget: number,
   ): {
     context: CanvasRenderingContext2D | null;
     size: { width: number; height: number; dpi: number };
     degraded: boolean;
   } {
     const idealDpi = 96 * renderScale * this.devicePixelRatio();
-    let size = this.computeCanvasSize(page, renderScale, budget);
-    let context = pageView.prepareCanvas(size.width, size.height, generation);
-    for (const step of CANVAS_RETRY_PIXEL_STEPS) {
-      if (context || step >= 1) break;
-      size = this.computeCanvasSize(page, renderScale, budget * step);
-      context = pageView.prepareCanvas(size.width, size.height, generation);
-    }
-    // 只有“没拿到期望 DPI”才算降级：正常页面的像素数本来就可能小于预算，
-    // 用尺寸和预算比较会误报。
+    const size = this.computeCanvasSize(page, renderScale);
+    const context = pageView.prepareCanvas(size.width, size.height, generation);
+    // 只有“没拿到期望 DPI”才算降级：正常页面的像素数本来就可能小于上限，
+    // 用尺寸和上限比较会误报。
     return { context, size, degraded: size.dpi < idealDpi - 0.5 };
   }
 
   /**
    * 计算 canvas 设备像素与受上限约束的 DPI。
    *
+   * 上限同时约束总像素数（`maxCanvasPixels`）与单边尺寸（`maxCanvasDim`），取两者
+   * 允许的最小比例。窄长页面（例如 215.9 × 1152.144 mm 的票据报表）往往先撞到单边
+   * 上限：整页按 1:1 换算后高度就已超过 32767，此时只能降低输出比例，由浏览器
+   * CSS 放大显示。
+   *
    * @param page 引擎页。
    * @param renderScale 有效渲染倍率。
-   * @param maxPixelsOverride 临时像素上限（分配失败后重试时逐级收紧）；省略时取选项值。
+   * @returns 画布宽高（输出像素）与实际 DPI。
    */
   private computeCanvasSize(
     page: EnginePage,
     renderScale: number,
-    maxPixelsOverride?: number,
   ): { width: number; height: number; dpi: number } {
     const dpr = this.devicePixelRatio();
-    let dpi = 96 * renderScale * dpr;
-    const maxPixels = Math.max(1, maxPixelsOverride ?? this.options.maxCanvasPixels);
-    const maxSide = 32767;
-    for (let attempt = 0; attempt < 8; attempt += 1) {
-      const viewport = page.getViewport({ dpi });
-      if (
-        viewport.width <= maxSide &&
-        viewport.height <= maxSide &&
-        viewport.width * viewport.height <= maxPixels
-      ) {
-        return {
-          // 必须向上取整：引擎要求画布不小于 viewport，少 1px 会直接报
-          // OFD_CANVAS_SIZE_MISMATCH。多出的不足 1px 由 CSS 缩放吸收，不影响清晰度。
-          width: Math.max(1, Math.ceil(viewport.width)),
-          height: Math.max(1, Math.ceil(viewport.height)),
-          dpi,
-        };
-      }
-      dpi *= 0.75;
-    }
+    // 单位尺寸 = 页面在 96 DPI 下的 CSS 像素（即页盒尺寸），是画布与上限的共同基准。
+    const pageSize = page.getSize();
+    const unitWidth = (pageSize.width / 25.4) * 96;
+    const unitHeight = (pageSize.height / 25.4) * 96;
+    // 目标 DPI = 96 × 显示倍率 × 后备比例。饱和阈值是“后备比例刚好等于 DPR”的
+    // 显示倍率，因此超过它的一律按该阈值封顶：未受限时阈值远大于当前倍率，
+    // 结果就是 96 × 显示倍率 × DPR（与旧口径一致）。
+    const limitScale = this.canvasSaturationScale(unitWidth, unitHeight, dpr);
+    let dpi = 96 * Math.min(renderScale, limitScale) * dpr;
+    // 反解值正好卡在边界上时，两条边各自的 ceil 最多多出 1px 而越界（单边 4000 →
+    // 4001）。这里再做一次微调，落到真正装得下的 DPI。
+    dpi = this.fitDpiWithinLimits(dpi, unitWidth, unitHeight);
+    // 画布尺寸从“即将传给 render 的 DPI”推导，与引擎取整口径完全一致；必须向上取整，
+    // 少 1px 会直接报 OFD_CANVAS_SIZE_MISMATCH。多出的不足 1px 由 CSS 缩放吸收。
     const viewport = page.getViewport({ dpi });
-    this.warn(
-      UI_WARNING_CODES.W_CANVAS_LIMIT,
-      `页面像素超过上限，已降低渲染 DPI 至 ${Math.round(dpi)}。`,
-    );
     return {
       width: Math.max(1, Math.ceil(viewport.width)),
       height: Math.max(1, Math.ceil(viewport.height)),
       dpi,
     };
+  }
+
+  /**
+   * 把 DPI 微调到画布真正装得进上限为止。
+   *
+   * 正常情况下只需 1 次即可；每次只收缩 0.01%，因此不会明显降低清晰度。
+   *
+   * @param dpi 目标 DPI。
+   * @param unitWidth 页面在 96 DPI 下的宽度，单位 CSS 像素。
+   * @param unitHeight 页面在 96 DPI 下的高度，单位 CSS 像素。
+   * @returns 装得下的 DPI（必要时略低于入参）。
+   */
+  private fitDpiWithinLimits(
+    dpi: number,
+    unitWidth: number,
+    unitHeight: number,
+  ): number {
+    const limitPixels = this.options.maxCanvasPixels;
+    const limitDim = this.options.maxCanvasDim;
+    if (limitPixels <= 0 && limitDim <= 0) return dpi;
+    let next = dpi;
+    for (let attempt = 0; attempt < 64; attempt += 1) {
+      const ratio = next / 96;
+      const width = Math.ceil(unitWidth * ratio);
+      const height = Math.ceil(unitHeight * ratio);
+      const fitsDim = limitDim <= 0 || (width <= limitDim && height <= limitDim);
+      const fitsArea = limitPixels <= 0 || width * height <= limitPixels;
+      if (fitsDim && fitsArea) return next;
+      next *= 0.9999;
+    }
+    return next;
+  }
+
+  /**
+   * 某页的渲染缓存键倍率。
+   *
+   * 两段式：
+   * - 密度变化段（后备比例 ≥ DPR）：键取显示倍率，每档对应不同清晰度，各自重绘一次；
+   * - 饱和段（后备比例 < DPR）：画布密度已达上限，再放大只由浏览器 CSS 拉伸位图，
+   *   键固定为饱和阈值。这样 800%~1000% 共用同一份位图，不必每档重画约 200MP 的位图
+   *   （单页可达 1 秒）。
+   *
+   * @param pageIndex 页索引，0-based。
+   * @param renderScale 显示倍率（含最低倍率与超采样）。
+   * @returns 用于缓存键的倍率；页信息尚未就绪或未受限制时返回显示倍率。
+   */
+  private renderedScaleFor(pageIndex: number, renderScale: number): number {
+    const box = this.layout.getBoxes()[pageIndex];
+    if (!box) return renderScale;
+    const dpr = this.devicePixelRatio();
+    // 饱和阈值：后备比例刚好降到 DPR 时的显示倍率（上限 > 0 时才有意义）。
+    const limitScale = this.canvasSaturationScale(box.unitWidth, box.unitHeight, dpr);
+    if (!Number.isFinite(limitScale) || renderScale <= limitScale) return renderScale;
+    return limitScale;
+  }
+
+  /**
+   * 后备比例刚好降到 DPR（即画布密度达上限）时的显示倍率。
+   *
+   * @param unitWidth 页面在 96 DPI 下的宽度，单位 CSS 像素。
+   * @param unitHeight 页面在 96 DPI 下的高度，单位 CSS 像素。
+   * @param dpr 设备像素比。
+   * @returns 饱和显示倍率；没有任何上限时为 Infinity。
+   */
+  private canvasSaturationScale(
+    unitWidth: number,
+    unitHeight: number,
+    dpr: number,
+  ): number {
+    const maxPixels = this.options.maxCanvasPixels;
+    const maxDim = this.options.maxCanvasDim;
+    const candidates = [
+      maxPixels > 0 ? Math.sqrt(maxPixels / (unitWidth * unitHeight)) / dpr : Infinity,
+      maxDim > 0 ? maxDim / (unitWidth * dpr) : Infinity,
+      maxDim > 0 ? maxDim / (unitHeight * dpr) : Infinity,
+    ];
+    return Math.min(...candidates);
   }
 
   /**
@@ -3827,7 +3908,10 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
    * @param pageIndex 页索引，0-based；省略时取当前页。
    */
   private renderKey(
-    renderScale = this.effectiveRenderScale(),
+    renderScale = this.renderedScaleFor(
+      this.state.view.pageNumber - 1,
+      this.effectiveRenderScale(),
+    ),
     pageIndex = this.state.view.pageNumber - 1,
   ): string {
     const layers = this.layerOverrides.keyAt(

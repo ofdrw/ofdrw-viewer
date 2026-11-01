@@ -74,10 +74,11 @@ URL 字符串和 `{ url, headers }` 由 UI 的 `HttpByteSource` 读取：先探�
 | 选项 | 当前默认/边界 |
 | --- | --- |
 | `initialPage` | `1`，按 1-based 处理并夹取到有效页范围 |
-| `initialScale` | `auto`（适合宽度）；数字倍率限制在 `0.1..25` |
+| `initialScale` | `auto`（适合宽度）；数字倍率限制在 `0.25..10` |
 | `rotation` | `0`，只接受 0/90/180/270 |
 | `theme` / `locale` | `auto` / `zh-CN` |
 | `maxCanvasPixels` | 桌面 `256_000_000`、移动 `32_000_000` 像素 |
+| `maxCanvasDim` | `32767`（单边像素上限，`0` 表示不限） |
 | `pageCachePixelBudget` | `512_000_000` 像素（已渲染页 canvas 总预算） |
 | `supersample` | `'auto'`（按页面面积分档 2 / 1.5 / 1）；可选 `'off'` / `'high'` / `'max'` / `1..4` |
 | `pageCacheSize` | 桌面 `10`，移动 `4` |
@@ -96,7 +97,7 @@ URL 字符串和 `{ url, headers }` 由 UI 的 `HttpByteSource` 读取：先探�
 ### 导航、缩放与阅读控制
 
 - 页码：`goToPage(pageNumber, { smooth?, durationMs? })`、`nextPage()`、`previousPage()`、`firstPage()`、`lastPage()`；页码 1-based，边界不循环。`smooth` 使用 rAF 补间，时长钳在 150–360ms，可被用户滚动/缩放/新跳转立即打断；系统要求减少动效时退化为直接定位。
-- 缩放：`setScale()`、`setZoomMode('auto'|'page-actual'|'page-fit'|'page-width')`、`zoomIn()`、`zoomOut()`、`resetZoom()`；实际倍率限制在 10%–2500%。
+- 缩放：`setScale()`、`setZoomMode('auto'|'page-actual'|'page-fit'|'page-width')`、`zoomIn()`、`zoomOut()`、`resetZoom()`；实际倍率限制在 25%–1000%（与 pdf.js 的 `MAX_SCALE = 10` 对齐）。
 - 旋转：`setRotation(value)` 接受数字并规范到 0/90/180/270，`rotateClockwise()`、`rotateCounterClockwise()` 每次旋转 90°；旋转是阅读器行为，引擎始终输出未旋转页面。
 - 侧栏：`openSidebar(view)`、`closeSidebar()`、`toggleSidebar()`；视图为缩略图、大纲、书签、签章。
 - 对话框：`showDialog(options)`、`closeDialog()` 控制内置对话框；未挂载内置 UI 时 `showDialog` 抛 `OFD_UNSUPPORTED`。
@@ -192,7 +193,8 @@ UI 对 `error` 事件与错误卡只展示 `code`/`message`，需要定位时读
 ### 缩放、旋转与手势
 
 - 缩放立即更新页盒 CSS 尺寸和 `--scale-factor`，取消旧任务并对可见页按新 DPI 重新渲染；没有额外的缩放防抖延迟。
-- 设备像素比参与渲染 DPI：`96 × scale × devicePixelRatio`。canvas 受 `maxCanvasPixels` 和单边 `32767` 限制；超限时最多按 0.75 系数降低 8 次 DPI，仍超限则产生 `W_CANVAS_LIMIT` 并按最后一次计算结果继续。
+- 画布像素预算由 UI 负责：打开文档时把 `maxCanvasPixels` 作为引擎 `limits.maxCanvasPixels` 传入，引擎默认不再保留自己的画布上限（避免两层默认值冲突）。
+- 设备像素比参与渲染 DPI：`96 × scale × devicePixelRatio`。canvas 同时受 `maxCanvasPixels`（像素数）与 `maxCanvasDim`（单边，默认 `32767`）约束；超限时按 pdf.js `OutputScale.limitCanvas()` 的解法**一次反解**出允许的后备比例（`√(像素上限/单位面积)`、`单边上限/单位边长` 取最小），不做逐级试错，因此画布必然落在上限内。降级只降低清晰度并产生 `W_CANVAS_LIMIT`，**不会让整页渲染失败**。`ceil` 取整可能让边界值多出 1px，最终 DPI 会再微调到真正装得下。
 - 画布分辨率有下限：后备尺寸不低于页面 100% CSS 尺寸的 `min(devicePixelRatio, 2)` 倍，即有效渲染倍率为 `max(scale, min(1, 2 / dpr))`。低于该倍率时不再重绘 canvas、也不改变 canvas 尺寸，仅由 CSS 缩小显示，避免小图按低分辨率重绘后出现色块；该下限只由 DPR 决定，窗口尺寸变化不会改变它。缩略图使用独立 DPI，不受此下限约束。
 - 缩放保持滚动锚点：工具栏/API 以页顶加页内比例恢复；滚轮、捏合、双击以指针下的页面坐标为锚点。
 - Ctrl/Cmd + 滚轮按 1.1/0.9 步进；触摸双指捏合按两指距离比例缩放；双击在适合宽度和 100% 之间切换。`zoom` 关闭时不拦截浏览器默认行为。

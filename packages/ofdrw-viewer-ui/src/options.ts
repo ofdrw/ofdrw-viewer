@@ -39,7 +39,8 @@ import type { ViewerSource } from './types';
  * 要做到 2500% 完全 1:1 需要 557MP、单页约 2.2GB 显存，超出浏览器可稳定分配的
  * 范围，宿主确需时可经 {@link OFDViewerOptions.maxCanvasPixels} 显式提高。
  *
- * 分配失败时由渲染层按 {@link CANVAS_RETRY_PIXEL_STEPS} 逐级收紧重试，不会直接报错。
+ * 超限时由 {@link limitCanvasOutputScale} 反解出还能装下的输出比例，只降低清晰度，
+ * 不会让整页渲染失败。
  */
 export const DEFAULT_MAX_CANVAS_PIXELS = 256_000_000;
 
@@ -52,15 +53,43 @@ export const DEFAULT_MAX_CANVAS_PIXELS = 256_000_000;
 export const DEFAULT_PAGE_CACHE_PIXEL_BUDGET = 512_000_000;
 
 /**
- * 画布尺寸超限或分配失败时的回退比例序列。
+ * 单页 canvas 单边像素上限，默认 32767。
  *
- * 与 pdf.js 逐级降低 DPI 的做法一致：先尝试按原始倍率渲染，失败后按 0.75 逐级
- * 回退，直到成功或走完序列。
+ * 浏览器对 canvas 宽或高有硬上限（Chromium/Firefox 为 32767，Safari 更低），超过后
+ * 得到的是空白画布。这里取主流浏览器的较大值，由 {@link limitCanvasOutputScale}
+ * 在分配前用精确反解保证不越界。
  */
-export const CANVAS_RETRY_PIXEL_STEPS: readonly number[] = Object.freeze([
-  1, 0.75, 0.5625, 0.421875, 0.31640625, 0.2373046875, 0.177978515625,
-  0.13348388671875,
-]);
+export const DEFAULT_MAX_CANVAS_DIM = 32767;
+
+/**
+ * 计算 canvas 输出比例在像素预算内允许的精确上限。
+ *
+ * 与 pdf.js 的 `OutputScale.limitCanvas()` 同款解法：不逐级试错，而是分别反解
+ * “像素数”和“单边尺寸”两个约束允许的最大输出比例，再取三者最小值。因为上下限
+ * 是同一个数学约束，一次反解就能落在边界上，不会像按 0.75 递减那样既降过多又
+ * 仍然越界。
+ *
+ * @param width 页面在 96 DPI 单位下的宽度，单位 CSS 像素。
+ * @param height 页面在 96 DPI 单位下的高度，单位 CSS 像素。
+ * @param maxPixels 单页像素上限（width × height，输出像素）；不大于 0 表示不限制。
+ * @param maxDim 单边像素上限，单位输出像素；不大于 0 表示不限制。
+ * @returns 允许的最大输出比例（输出像素 / CSS 像素）；无约束时为 Infinity。
+ */
+export function limitCanvasOutputScale(
+  width: number,
+  height: number,
+  maxPixels: number,
+  maxDim: number,
+): number {
+  const areaScale =
+    maxPixels > 0 && width > 0 && height > 0
+      ? Math.sqrt(maxPixels / (width * height))
+      : Number.POSITIVE_INFINITY;
+  const widthScale = maxDim > 0 && width > 0 ? maxDim / width : Number.POSITIVE_INFINITY;
+  const heightScale =
+    maxDim > 0 && height > 0 ? maxDim / height : Number.POSITIVE_INFINITY;
+  return Math.min(areaScale, widthScale, heightScale);
+}
 
 /**
  * 移动端单页 canvas 像素上限（width × height），默认 32MP。
@@ -117,8 +146,14 @@ export const DEFAULT_ROTATION: Rotation = 0;
  */
 export const MIN_SCALE = 0.25;
 
-/** 最大缩放倍率（2500%）。 */
-export const MAX_SCALE = 25;
+/**
+ * 最大缩放倍率（1000%）。
+ *
+ * 与 pdf.js 的 `MAX_SCALE = 10` 对齐。更高的倍率在版式文档里几乎没有实用价值，
+ * 却让画布像素数按平方膨胀（A4 在 2500% 需要约 557MP / 2.2GB 显存），单页重绘
+ * 耗时可过秒，表现为“点一下放大要等很久”。1000% 已足够日常阅读与校对。
+ */
+export const MAX_SCALE = 10;
 
 /**
  * 主画布基准渲染密度上限（2×）。
@@ -139,7 +174,8 @@ export const MAX_CANVAS_BASE_DPR = 2;
  * 多填充像素，滚动与缩放明显变卡（2× 使单页像素数变 4 倍）。
  *
  * 宿主若需要更高抗锯齿过渡（例如投影/截图场景），可显式传入 1.5 或 2；上限由
- * `ViewerOptions.maxCanvasPixels` 约束，超限时按 0.75 逐级回退 DPI。
+ * `ViewerOptions.maxCanvasPixels` 与 `ViewerOptions.maxCanvasDim` 约束，超限时只降低
+ * 清晰度并产生 `W_CANVAS_LIMIT`，不会让渲染失败。
  */
 /**
  * 自动超采样的面积分档，单位 设备像素²（px²）。
@@ -177,9 +213,9 @@ export const SUPERSAMPLE_HIGH_BOOST = 1;
 /** `max` 预设的固定倍率。 */
 export const SUPERSAMPLE_MAX_FACTOR = 3;
 
-/** 预置缩放档位；UI 的 +/- 与下拉菜单共用，最低档与 {@link MIN_SCALE} 一致。 */
+/** 预置缩放档位；最高档与 {@link MAX_SCALE} 一致。 */
 export const ZOOM_LEVELS: readonly number[] = Object.freeze([
-  0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 7.5, 10, 15, 20, 25,
+  0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 7.5, 10,
 ]);
 
 /**
@@ -286,9 +322,18 @@ export interface OFDViewerOptions {
    * 单页 canvas 像素上限。
    *
    * 省略时桌面端 256,000,000、移动端 32,000,000。上限决定高倍率下画面是否按屏幕
-   * 像素 1:1 渲染：超出后按 0.75 逐级回退 DPI，画面由浏览器放大并出现锯齿。
+   * 像素 1:1 渲染：超出后按精确反解的比例降低输出分辨率，画面由浏览器 CSS 放大并
+   * 出现锯齿，但整页仍能正常渲染，不会报错。传 `0` 表示不限制像素数。
    */
   readonly maxCanvasPixels?: number;
+  /**
+   * 单页 canvas 单边像素上限，默认 32767。
+   *
+   * 浏览器对 canvas 宽高有硬上限（超过后得到空白画布）；窄长页面（例如票据报表）在高
+   * 倍率下很容易先撞到它。超限同样只降低输出分辨率并产生 `W_CANVAS_LIMIT`。
+   * 传 `0` 表示不限制单边尺寸。
+   */
+  readonly maxCanvasDim?: number;
   /**
    * 画布超采样倍率，默认 `auto`。
    *
@@ -385,6 +430,8 @@ export interface ResolvedViewerOptions {
   readonly theme: Theme;
   readonly locale: string;
   readonly maxCanvasPixels: number;
+  /** 单页 canvas 单边像素上限；0 表示不限。 */
+  readonly maxCanvasDim: number;
   /** 已规范化的超采样设置：预设名或固定倍率。 */
   readonly supersample: SupersamplePreset | number;
   readonly pageCacheSize: number;
@@ -452,6 +499,7 @@ export function resolveViewerOptions(
     maxCanvasPixels:
       options.maxCanvasPixels ??
       (mobile ? DEFAULT_MOBILE_MAX_CANVAS_PIXELS : DEFAULT_MAX_CANVAS_PIXELS),
+    maxCanvasDim: options.maxCanvasDim ?? DEFAULT_MAX_CANVAS_DIM,
     supersample: normalizeSupersample(options.supersample),
     pageCacheSize:
       options.pageCacheSize ??
