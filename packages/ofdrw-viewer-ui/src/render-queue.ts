@@ -238,6 +238,10 @@ export class RenderQueue {
     const existing = this.entries.get(spec.key);
     if (existing) {
       existing.cancelled = true;
+      // 旧任务若已在执行，必须在此清掉 running：随后 entries 被新记录覆盖，
+      // 旧任务结束时 `entries.get(key) !== entry` 不会删记录，若这里不清，
+      // runningCount 会永久占住并发名额，队列在完成若干次缩放后就不再启动任务。
+      existing.running = false;
       existing.controller?.abort();
       existing.spec.onCancel?.();
     }
