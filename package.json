@@ -1,6 +1,6 @@
 {
   "name": "ofdrw-viewer",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": true,
   "description": "OFD 页面渲染引擎（pnpm monorepo 根）",
   "license": "MIT",
