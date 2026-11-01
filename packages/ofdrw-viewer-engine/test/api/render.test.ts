@@ -91,7 +91,29 @@ describe('页面渲染', () => {
     }
   });
 
-  it('viewport 超过 maxCanvasPixels 返回 OFD_CANVAS_TOO_LARGE', async () => {
+  it('默认不限制画布像素：超过旧的 64MP 默认值也能渲染', async () => {
+    // 画布预算由上层决策：阅读器允许 256MP 时，引擎不得再用 64MP 拒绝。
+    const doc = await openTestDocument(buildPageOfd());
+    try {
+      const page = await doc.getPage(0);
+      // 夹具页约 200mm 边长，用 5000 DPI 造出远超旧默认 64MP 的 viewport。
+      const viewport = page.getViewport({ dpi: 5000 });
+      const width = Math.ceil(viewport.width);
+      const height = Math.ceil(viewport.height);
+      expect(width * height).toBeGreaterThan(64_000_000);
+      const canvas = createTestCanvas(width, height);
+      await expect(
+        page.render({
+          canvasContext: canvas.context,
+          viewport: { width, height, dpi: 5000 },
+        }).promise,
+      ).resolves.toBeUndefined();
+    } finally {
+      await doc.close();
+    }
+  });
+
+  it('宿主显式设置 maxCanvasPixels 时，viewport 超限返回 OFD_CANVAS_TOO_LARGE', async () => {
     const doc = await openTestDocument(buildPageOfd(), {
       limits: { maxCanvasPixels: 1000 },
     });

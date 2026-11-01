@@ -2659,6 +2659,8 @@ export class OFDDocument {
         `第 ${pageIndex} 页 viewport 非法：${JSON.stringify(viewport)}`,
       );
     }
+    // 画布像素预算由调用方负责：阅读器等上层在选 DPI 时已按自身上限收敛，引擎只做
+    // 参数合法性与 Canvas 宽高校验。宿主需要兜底时显式设置 `limits.maxCanvasPixels`。
     if (this.limits.maxCanvasPixels > 0) {
       const pixels = viewport.width * viewport.height;
       if (pixels > this.limits.maxCanvasPixels) {

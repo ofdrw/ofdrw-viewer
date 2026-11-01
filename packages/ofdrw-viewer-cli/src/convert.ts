@@ -15,7 +15,6 @@ import { parse as parsePath } from 'node:path';
 import { openDecryptingContainer } from '@ofdrw/ofdrw-viewer-crypto';
 import type { CryptoCredential } from '@ofdrw/ofdrw-viewer-crypto';
 import {
-  DEFAULT_RESOURCE_LIMITS,
   OFDDocument,
   isOFDError,
 } from '@ofdrw/ofdrw-viewer-engine';
@@ -399,21 +398,29 @@ async function exportPageText(
 }
 
 /**
+ * CLI 单页导出画布的像素上限，单位 像素。
+ *
+ * 引擎不再内置画布预算（`limits.maxCanvasPixels` 默认 0 = 不限制），由调用方按自身
+ * 策略决策；CLI 是批量转图工具，沿用原先的保守上限，避免一次转换把内存打满。
+ */
+export const CLI_MAX_CANVAS_PIXELS = 64_000_000;
+
+/**
  * 在分配 Canvas 前校验页面像素数。
  *
  * @param page 页面
  * @param pageNumber 页号（1 起）
  * @param dpi 输出 DPI
- * @throws {CliError} 超过 engine 默认画布像素上限时抛出（退出码 2）
+ * @throws {CliError} 超过 {@link CLI_MAX_CANVAS_PIXELS} 时抛出（退出码 2）
  */
 function assertCanvasWithinLimit(page: OFDPage, pageNumber: number, dpi: number): void {
   const viewport = page.getViewport({ dpi });
   const width = Math.max(1, Math.ceil(viewport.width));
   const height = Math.max(1, Math.ceil(viewport.height));
-  if (width * height <= DEFAULT_RESOURCE_LIMITS.maxCanvasPixels) return;
+  if (width * height <= CLI_MAX_CANVAS_PIXELS) return;
   throw new CliError(
     'CLI_PAGE_TOO_LARGE',
-    `页面 ${pageNumber} 在 ${dpi} DPI 下为 ${width}×${height} 像素，超过上限 ${DEFAULT_RESOURCE_LIMITS.maxCanvasPixels}；请降低 --dpi`,
+    `页面 ${pageNumber} 在 ${dpi} DPI 下为 ${width}×${height} 像素，超过上限 ${CLI_MAX_CANVAS_PIXELS}；请降低 --dpi`,
     EXIT_CODES.DOCUMENT,
   );
 }

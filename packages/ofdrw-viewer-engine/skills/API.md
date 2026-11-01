@@ -387,7 +387,7 @@ document.events.listenerCount(type);
 `PageRenderParameters`：`canvasContext`（必填）、`viewport`（必填）、`signal`（可选）、`contentFilter`（可选，见 §4.10）。
 
 - `canvasContext`/`canvas` 必须有效，canvas 宽高必须为有限数值且 `>= viewport.width/height`（浮点误差容差约 1e-6 px）；context 无效抛 `OFD_RENDERER_UNSUPPORTED`，canvas 小于 viewport 抛 `OFD_CANVAS_SIZE_MISMATCH`。
-- `viewport` 宽高/DPI 必须为有限正数，否则 `OFD_CANVAS_SIZE_MISMATCH`；宽×高超过 `maxCanvasPixels`（默认 64,000,000）抛 `OFD_CANVAS_TOO_LARGE`。
+- `viewport` 宽高/DPI 必须为有限正数，否则 `OFD_CANVAS_SIZE_MISMATCH`；仅当宿主显式设置 `limits.maxCanvasPixels > 0` 且宽×高超过该值时抛 `OFD_CANVAS_TOO_LARGE`（默认不限制，画布预算由上层决策）。
 - 只绘制页面内容：不设置 canvas 尺寸、不清屏、不填背景、不绘制阅读器 UI；以 `M_page` 覆盖上下文的预置 CTM。
 - 同一 canvas 的渲染串行排队（前一个失败不影响后续任务）；不同 canvas 可并行。
 - 使用 `viewport.dpi` 准备页面；同一页已有该 DPI 的准备结果时复用（`prepare()` 固定准备 96 DPI），否则重新准备。
@@ -412,7 +412,7 @@ document.events.listenerCount(type);
 
 - 整页导出，不包含阅读器缩放；使用独立的离屏画布，不经过宿主主 Canvas；页面内容仍由文档级 `renderer` 绘制，因此自定义 renderer 会影响导出。
 - 画布由文档级 `createCanvas` 创建（未注入时用浏览器默认工厂）；编码优先 `encodeImage`，其次浏览器 `convertToBlob`/`toBlob`。
-- 输出尺寸按旋转后的画布计算，超过 `maxCanvasPixels` 抛 `OFD_CANVAS_TOO_LARGE`；画布尺寸与请求不符抛 `OFD_CANVAS_SIZE_MISMATCH`。
+- 输出尺寸按旋转后的画布计算；显式设置 `limits.maxCanvasPixels > 0` 且超限时抛 `OFD_CANVAS_TOO_LARGE`；画布尺寸与请求不符抛 `OFD_CANVAS_SIZE_MISMATCH`。
 - 编码失败、缺少编码器、返回空/非 `Uint8Array` 结果：统一 `OFD_RENDERER_UNSUPPORTED`，原始错误放入 `cause`。
 - `PageImageResult`：`data`（归调用方）、`mime`、`width`、`height`（输出设备像素）、`dpi`（实际使用值）。
 - 导出期间 `close()` 会中止并等待本次导出，最终以 `OFD_CLOSED` 结束。
@@ -813,7 +813,7 @@ interface OFDWarning {
 | `maxXmlBytes` | 32 MiB | byte | 单个 XML 大小 |
 | `maxFontBytes` | 64 MiB | byte | 单个字体大小 |
 | `maxImagePixels` | 100,000,000 | 像素 | 单图解码像素 |
-| `maxCanvasPixels` | 64,000,000 | 像素 | canvas 像素（render/export） |
+| `maxCanvasPixels` | 0（不限制） | 像素 | canvas 像素（render/export）；预算由调用方决策，显式设正数才校验 |
 | `maxRecursionDepth` | 16 | 层 | 复合对象/资源递归 |
 
 ### 11.2 `CacheOptions`

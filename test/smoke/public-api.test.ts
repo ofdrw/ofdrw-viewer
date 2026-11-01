@@ -29,7 +29,8 @@ describe('public API surface', () => {
     expect(DEFAULT_RESOURCE_LIMITS.maxEntryBytes).toBe(64 * 1024 * 1024);
     expect(DEFAULT_RESOURCE_LIMITS.maxTotalUncompressedBytes).toBe(512 * 1024 * 1024);
     expect(DEFAULT_RESOURCE_LIMITS.maxCompressionRatio).toBe(200);
-    expect(DEFAULT_RESOURCE_LIMITS.maxCanvasPixels).toBe(64_000_000);
+    // 画布像素预算由调用方决策（阅读器/CLI 各自限制），引擎默认不限制。
+    expect(DEFAULT_RESOURCE_LIMITS.maxCanvasPixels).toBe(0);
     expect(DEFAULT_CACHE_OPTIONS.pageModels).toBe(8);
     expect(Object.isFrozen(DEFAULT_RESOURCE_LIMITS)).toBe(true);
   });

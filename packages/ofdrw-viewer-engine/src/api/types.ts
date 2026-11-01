@@ -55,7 +55,13 @@ export interface ResourceLimits {
   maxFontBytes: number;
   /** 图片像素上限，默认 100,000,000。 */
   maxImagePixels: number;
-  /** Canvas 像素上限，默认 64,000,000。 */
+  /**
+   * Canvas 像素上限，默认 `0`（不限制）。
+   *
+   * 画布预算由调用方决策：阅读器按自身的 `maxCanvasPixels` 选 DPI 后再调用渲染，
+   * 引擎重复限制只会与之冲突（例如 UI 允 256MP、引擎默认 64MP 时，500% 缩放会被
+   * 引擎以 `OFD_CANVAS_TOO_LARGE` 拒绝）。宿主需要兜底时显式传正数开启校验。
+   */
   maxCanvasPixels: number;
   /** 递归深度上限（复合对象/资源引用），默认 16。 */
   maxRecursionDepth: number;
@@ -87,7 +93,8 @@ export const DEFAULT_RESOURCE_LIMITS: Readonly<ResourceLimits> = Object.freeze({
   maxXmlBytes: 32 * 1024 * 1024,
   maxFontBytes: 64 * 1024 * 1024,
   maxImagePixels: 100_000_000,
-  maxCanvasPixels: 64_000_000,
+  // 不限制：画布预算由上层（阅读器、CLI）按各自策略决策，见 ResourceLimits 注释。
+  maxCanvasPixels: 0,
   maxRecursionDepth: 16,
 });
 

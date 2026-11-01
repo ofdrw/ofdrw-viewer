@@ -409,7 +409,7 @@ restore（finally，失败也恢复）
 页尺寸按 3 节回退链解析，结果始终是有效的 mm 尺寸。`page.getSize()` 返回该尺寸；`page.getViewport({dpi})` 返回像素尺寸。
 
 - `page.render` 使用调用方传入的 `viewport`；engine 不校验它是否等于 `getPageViewport(getSize(), dpi)`，宿主应使用同一 DPI 计算，否则内容比例可能不符。
-- `page.exportImage` 自行按请求 DPI 计算 viewport，并创建离屏画布；导出画布的宽高取 `ceil`，并受 `maxCanvasPixels` 限制。
+- `page.exportImage` 自行按请求 DPI 计算 viewport，并创建离屏画布；导出画布的宽高取 `ceil`。画布像素预算由调用方决策，引擎默认不限制；宿主显式设置 `limits.maxCanvasPixels` 时才按该值拒绝。
 - `PhysicalBox` 原点非零时，页面矩阵包含平移，并上报 `W_PHYSICALBOX_ORIGIN`；这兼容把内容坐标写成绝对坐标的文件。
 
 ## 7. 图元、文本与颜色
@@ -445,7 +445,7 @@ engine 不调用 Canvas 文字 API，而是把文字转成字形轮廓路径后�
 - 蒙版由渲染器用 `destination-in` 合成；engine 不创建宿主可见的 scratch canvas。
 - 替换图在 `dpi > 200` 的 `auto` 模式下优先使用，`always`/`never` 可覆盖；替换图未解码时回退主图并 warning。
 - 图片平滑默认开启；边框线宽为 0 时不画，圆角/虚线使用 `Boundary` 空间单位。
-- 超大图片在解码前按头部宽高和 `maxImagePixels` 拒绝；画布尺寸另受 `maxCanvasPixels` 限制。
+- 超大图片在解码前按头部宽高和 `maxImagePixels` 拒绝。画布尺寸不设默认上限，由调用方按自身预算决策。
 
 ### 7.4 复合对象、独立块与底纹
 
@@ -558,7 +558,7 @@ warning 和错误都不改变返回值结构；调用方需要根据 warning 决
 
 - 打开时只保留容器、入口 XML 和页信息；页面内容/模板/字体/图片按需加载。
 - 页面模型受 `pageModels` 预算控制；`page.prepare` 的 bundle 独立保留到关闭，批量预取大量页时内存随页数增长。
-- 图片解码结果受 `maxImagePixels` 和 `imageBytes` 双重约束；导出画布受 `maxCanvasPixels` 约束。
+- 图片解码结果受 `maxImagePixels` 和 `imageBytes` 双重约束；导出画布的像素预算由调用方决策（引擎默认不限制）。
 - 底纹 tile 和 group 使用渲染器内部临时画布，绘制结束/页面结束释放；tile 像素和数量有独立上限。
 - 显示列表只保存路径/绘制命令和图片句柄，不保存页面 XML；复合/底纹单元复用同一显示列表。
 - 字形轮廓缓存是进程级共享对象，条目数固定；字体面按文档/字体资源缓存，`document.close()` 后不再持有。

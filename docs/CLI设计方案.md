@@ -357,7 +357,7 @@ ofdrw-viewer-cli encrypted.ofd -o out --key encrypt.key.pem --key-passphrase '**
 1. 打开成功后用 `document.pageCount` 校验页码范围，得到升序页号列表；
 2. 逐页串行执行：
    - `document.getPage(pageNumber - 1)`；失败计页级失败并继续；
-   - 用 `page.getViewport({ dpi })` 计算 `ceil(width) × ceil(height)`，超过 engine 默认 `maxCanvasPixels`（64,000,000）时抛 `CLI_PAGE_TOO_LARGE`，按文档级失败退出 2，不分配 Canvas、不写该页文件；
+   - 用 `page.getViewport({ dpi })` 计算 `ceil(width) × ceil(height)`，超过 CLI 自身上限 `CLI_MAX_CANVAS_PIXELS`（64,000,000）时抛 `CLI_PAGE_TOO_LARGE`，按文档级失败退出 2，不分配 Canvas、不写该页文件。引擎默认不再限制画布像素，预算由调用方（CLI / 阅读器）各自决策；
    - `--text` 时先读取文本并原子写 JSON；`OFD_RENDERER_UNSUPPORTED`（映射 `CLI_TEXT_UNSUPPORTED`）及其他文档级 `CliError` 按文档级失败退出 2，不按页级失败处理；其余文本读取失败或写盘失败（`CLI_TEXT_WRITE_FAILED`）都只记页级失败（退出 3），继续尝试同页图片与后续页；
    - 调用 `page.exportImage({ dpi, format, quality: 0.9, background: '#ffffff', signal })`，再原子写图片；图片写盘失败只记页级失败；
 3. 页面成功 = 图片写出，且（`--text` 时）JSON 也写出；页级失败保留已成功的那一份产物并继续后续页；
