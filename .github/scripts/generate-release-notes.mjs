@@ -237,7 +237,7 @@ function appendInstallSection(lines, { version, repository }) {
     `- **CLI 二进制**：\`ofdrw-viewer-cli-${version}-{${tarTargets}}.tar.gz\` 或 ` +
       `\`ofdrw-viewer-cli-${version}-${zipTarget}.zip\`，解压即用`,
   );
-  lines.push(`- **CDN**：\`cdn-${version}.zip\`（engine → crypto 顺序加载）`);
+  lines.push(`- **CDN**：\`ofdrw-viewer-lib-${version}.zip\`（engine → crypto 顺序加载）`);
 
   const siteArchive = `ofdrw-viewer-ui-demo-${version}`;
   const siteUrl = resolvePagesUrl(repository);

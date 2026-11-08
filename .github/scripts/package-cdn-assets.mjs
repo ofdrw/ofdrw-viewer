@@ -2,7 +2,7 @@
 /**
  * 把 engine 与 crypto 的 CDN 构建产物打成单个压缩包。
  *
- * 产物：`release-assets/cdn-<version>.zip`
+ * 产物：`release-assets/ofdrw-viewer-lib-<version>.zip`
  *
  * 前置条件：已执行 `pnpm --filter @ofdrw/ofdrw-viewer-engine build` 与
  * `pnpm --filter @ofdrw/ofdrw-viewer-crypto build`。
@@ -83,13 +83,13 @@ async function main() {
   await assertArtifacts();
   const version = await readVersion();
   const releaseDir = join(REPO_ROOT, 'release-assets');
-  const archivePath = join(releaseDir, `cdn-${version}.zip`);
+  const archivePath = join(releaseDir, `ofdrw-viewer-lib-${version}.zip`);
 
   await mkdir(releaseDir, { recursive: true });
   await rm(archivePath, { force: true });
   createZip(archivePath);
 
-  console.log(`CDN 产物已生成：release-assets/cdn-${version}.zip`);
+  console.log(`CDN 产物已生成：release-assets/ofdrw-viewer-lib-${version}.zip`);
 }
 
 main().catch((error) => {

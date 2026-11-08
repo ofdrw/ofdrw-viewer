@@ -272,7 +272,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: cdn
-          path: release-assets/cdn-*.zip
+          path: release-assets/ofdrw-viewer-lib-*.zip
           if-no-files-found: error
           retention-days: 7
 
