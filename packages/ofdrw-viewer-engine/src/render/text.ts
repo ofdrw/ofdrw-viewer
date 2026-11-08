@@ -210,12 +210,28 @@ export interface PendingUnit {
   glyphs: GlyphRun[];
   /** 覆盖的 Delta 数量；缺省等于 codeCount，CG 兜底 run 为 1。 */
   deltaCount?: number;
+  /**
+   * 该单元的字符内容只由显式 GID 表达，且主字体是替代字体、GID 不可套用。
+   *
+   * true 时该单元不产生任何字形，只保留 pen 步进；整个文字对象都被标记时调用方应跳过绘制。
+   */
+  untrustedGid?: boolean;
 }
 
 /** 每个对象一次的 warning 状态。 */
 export interface WarningState {
   warnedGlyph: boolean;
   warnedBadNumber: boolean;
+  warnedUntrustedGid: boolean;
+}
+
+/**
+ * 创建一个空 warning 状态。
+ *
+ * @returns 全部为 false 的 warning 状态。
+ */
+function createWarningState(): WarningState {
+  return { warnedGlyph: false, warnedBadNumber: false, warnedUntrustedGid: false };
 }
 
 /**
@@ -252,16 +268,23 @@ function glyphPath(face: FontFace, glyph: Glyph, cache: GlyphOutlineCache): Path
   return cached ?? glyph.path;
 }
 
-/** 构建结果；explicit 表示是否真正使用了 CGTransform 的显式 gid。 */
-interface BuiltRun {
-  /** 字形 run。 */
-  run: GlyphRun;
-  /** 显式 gid 是否被字体面接受。 */
-  explicit: boolean;
-}
+/** 一个字形 run 的构建结果。 */
+type BuiltRunResult =
+  /** 成功构建字形 run。 */
+  | {
+      kind: 'ok';
+      /** 字形 run。 */
+      run: GlyphRun;
+      /** 显式 gid 是否被字体面接受。 */
+      explicit: boolean;
+    }
+  /** 真缺字：显式 GID 越界或 cmap 无命中。 */
+  | { kind: 'missing' }
+  /** 主字体为替代字体，文档 GID 不可套用。 */
+  | { kind: 'untrusted' };
 
 /**
- * 把一个码点解析成字形 run；缺失时返回 null。
+ * 把一个码点解析成字形 run。
  *
  * @param codePoint Unicode 码点。
  * @param explicitGlyphId 显式 gid；无则为 undefined。
@@ -269,7 +292,7 @@ interface BuiltRun {
  * @param cache 轮廓缓存。
  * @param state warning 状态。
  * @param options 布局选项。
- * @returns 字形 run 与显式 gid 使用情况；缺失时返回 null。
+ * @returns 构建结果；区分真缺字与 GID 不可信任。
  */
 function buildGlyphRun(
   codePoint: number,
@@ -278,7 +301,7 @@ function buildGlyphRun(
   cache: GlyphOutlineCache,
   state: WarningState,
   options: TextLayoutOptions,
-): BuiltRun | null {
+): BuiltRunResult {
   const resolved = resolveGlyph(codePoint, explicitGlyphId, faces);
   if (!resolved) {
     warnOnce(
@@ -288,9 +311,21 @@ function buildGlyphRun(
       'W_GLYPH_MISSING',
       `字符 U+${codePoint.toString(16).toUpperCase().padStart(4, '0')} 无可用字形`,
     );
-    return null;
+    return { kind: 'missing' };
+  }
+  // 替代字体无法还原原字体 GID：不绘制 .notdef，改由上层跳过该文字对象。
+  if (!resolved.glyph) {
+    warnOnce(
+      options,
+      state,
+      'warnedUntrustedGid',
+      'W_FONT_MISSING',
+      `缺少原始字体：显式字形 GID 无法套用到替代字体，文字对象已跳过`,
+    );
+    return { kind: 'untrusted' };
   }
   return {
+    kind: 'ok',
     run: {
       face: resolved.face,
       gid: resolved.glyph.id,
@@ -322,7 +357,7 @@ export function buildUnits(
   cgTransforms: TextCode['cgTransforms'],
   faces: FontFaceSet,
   cache: GlyphOutlineCache = DEFAULT_OUTLINE_CACHE,
-  state: WarningState = { warnedGlyph: false, warnedBadNumber: false },
+  state: WarningState = createWarningState(),
   options: TextLayoutOptions = {},
 ): PendingUnit[] {
   // 高频小对象（无 CGTransform，通常 1 个字符）走无 Map/排序的快路径。
@@ -330,7 +365,7 @@ export function buildUnits(
     const simple: PendingUnit[] = [];
     for (let index = 0; index < codePoints.length; index += 1) {
       const built = buildGlyphRun(codePoints[index], undefined, faces, cache, state, options);
-      simple.push({ cpStart: index, codeCount: 1, glyphs: built ? [built.run] : [] });
+      simple.push({ cpStart: index, codeCount: 1, glyphs: built.kind === 'ok' ? [built.run] : [] });
     }
     return simple;
   }
@@ -403,7 +438,7 @@ export function buildUnits(
     const transform = byPosition.get(index);
     if (!transform) {
       const built = buildGlyphRun(codePoints[index], undefined, faces, cache, state, options);
-      units.push({ cpStart: index, codeCount: 1, glyphs: built ? [built.run] : [] });
+      units.push({ cpStart: index, codeCount: 1, glyphs: built.kind === 'ok' ? [built.run] : [] });
       index += 1;
       continue;
     }
@@ -435,35 +470,46 @@ export function buildUnits(
         units.push({
           cpStart: index + offset,
           codeCount: 1,
-          glyphs: built ? [built.run] : [],
+          glyphs: built.kind === 'ok' ? [built.run] : [],
+          ...(built.kind === 'untrusted' ? { untrustedGid: true } : {}),
         });
       }
       index += span;
       continue;
     }
-    const builtRuns: BuiltRun[] = [];
+    const builtRuns: GlyphRun[] = [];
     let allExplicit = true;
+    let allUntrusted = true;
     for (const gid of transform.glyphs) {
       const built = buildGlyphRun(codePoints[index], gid, faces, cache, state, options);
-      if (!built) {
-        allExplicit = false;
-        continue;
+      if (built.kind !== 'ok') allExplicit = false;
+      if (built.kind !== 'untrusted') allUntrusted = false;
+      if (built.kind === 'ok') {
+        if (!built.explicit) allExplicit = false;
+        builtRuns.push(built.run);
       }
-      if (!built.explicit) allExplicit = false;
-      builtRuns.push(built);
     }
-    if (!allExplicit) {
+    if (allUntrusted) {
+      // 整个 CGTransform 的字形都只能由原字体 GID 表达：替代字体无法还原，
+      // 不回落 cmap（TextCode 往往是 ¤ 之类占位符），只保留该单元自己的 Delta。
+      units.push({ cpStart: index, codeCount: span, deltaCount: 1, glyphs: [], untrustedGid: true });
+    } else if (!allExplicit) {
       // 显式 GID/连字字形不可用时，CGTransform 的 N:1/1:N/N:M 映射不能成立；
       // 用被覆盖字符各自的 cmap 轮廓组成一个 run，保留每个字符的可见性，
       // 同时只消费该 CG 单元自己的 Delta，避免把后续字符格整体错位。
+      //
+      // 混合场景（部分 gid 不可信任、部分仍可用）：不整段丢弃，按被覆盖字符的
+      // cmap 渲染。替代字体下 TextCode 若为占位符，这些字符会在 cmap 阶段记
+      // `W_GLYPH_MISSING` 而得到空字形，仍不会画出 .notdef；丢弃整段反而会连带
+      // 抹掉同段中本可正常显示的字符。
       const glyphs: GlyphRun[] = [];
       for (let offset = 0; offset < span; offset += 1) {
         const built = buildGlyphRun(codePoints[index + offset], undefined, faces, cache, state, options);
-        if (built) glyphs.push(built.run);
+        if (built.kind === 'ok') glyphs.push(built.run);
       }
       units.push({ cpStart: index, codeCount: span, deltaCount: 1, glyphs });
     } else {
-      units.push({ cpStart: index, codeCount: span, glyphs: builtRuns.map((built) => built.run) });
+      units.push({ cpStart: index, codeCount: span, glyphs: builtRuns });
     }
     index += span;
   }
@@ -488,7 +534,7 @@ function fallbackAdvance(
   hScale: number,
 ): number {
   const resolved = resolveGlyph(codePoint, undefined, faces);
-  if (!resolved) return 0;
+  if (!resolved || !resolved.glyph) return 0;
   return scaleAdvance(resolved.glyph.advanceWidth, size, hScale, resolved.face.unitsPerEm);
 }
 
@@ -648,11 +694,10 @@ export function layoutText(
   options: TextLayoutOptions = {},
 ): TextLayout {
   const cache = options.outlineCache ?? DEFAULT_OUTLINE_CACHE;
-  const state: WarningState = {
-    warnedGlyph: false,
-    warnedBadNumber: false,
-  };
+  const state = createWarningState();
   const units: TextLayoutUnit[] = [];
+  // 每个 TextCode 的布局单元：内容只由 GID 表达且 GID 不可套用时，整对象跳过。
+  const perCode: { units: TextLayoutUnit[]; untrusted: boolean }[] = [];
   const size = Number.isFinite(object.size) ? object.size : 0;
   const hScale = Number.isFinite(object.hScale) ? object.hScale : 1;
   const readDirection = normalizeDirection(object.readDirection, 'ReadDirection', options, state);
@@ -744,9 +789,16 @@ export function layoutText(
       penY += dirY === 0 ? stepY : dirY * stepY;
       deltaIndex += deltaCount;
     }
+    const untrusted =
+      pending.length > 0 && pending.every((unit) => unit.untrustedGid === true);
+    // 替代字体无法还原的 GID 文本整段丢弃，但保留 pen 步进，保证后续 TextCode 位置正确。
+    perCode.push({ units: untrusted ? [] : units.splice(0), untrusted });
   }
 
-  return { units, endX: penX, endY: penY };
+  if (perCode.length > 0 && perCode.every((code) => code.untrusted)) {
+    return { units: [], endX: 0, endY: 0 };
+  }
+  return { units: perCode.flatMap((code) => code.units), endX: penX, endY: penY };
 }
 
 /**

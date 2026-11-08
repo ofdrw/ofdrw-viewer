@@ -310,8 +310,9 @@ XML 层封装 `saxes`，目标是安全、可预测地读取 OFD XML，而不是
 - `fontProvider.match()` 是字体按需读取的唯一入口；engine 不读 URL、不读本地路径。
 - 回退是逐字形的：主字体缺字时才尝试回退链，不会整段切换字体。缺字上报 `W_GLYPH_MISSING`，字体资源缺失/加载失败上报 `W_FONT_MISSING`。
 - 字体解析使用 `fontkit`；字体大小受 `maxFontBytes` 限制，字体字节按路径缓存在预算内。
+- 交给 `fontkit` 之前先做格式推断与适配（`detectFontKind()` → `ADAPTERS[kind]` → `fontkit`），把 OFD 常见的裸 CFF 内嵌字体包装为 sfnt 后解析；适配失败保持原字节并回落 `OFD_FONT_PARSE`。
 
-字体优先级、命名匹配和 CLI/宿主的字体配置见 [渲染字体缺省方案设计](渲染字体缺省方案设计.md)。
+字体优先级、命名匹配和 CLI/宿主的字体配置见 [渲染字体缺省方案设计](渲染字体缺省方案设计.md)；字体格式推断与裸 CFF 适配规则见 [字体格式适配方案设计](字体格式适配方案设计.md)。
 
 ### 5.6 图片资源
 

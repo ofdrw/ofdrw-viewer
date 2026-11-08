@@ -10,6 +10,7 @@ import { FontLibrary, resolveGlyph } from '../../src/font/provider';
 import type { FontResource } from '../../src/model/types';
 import type { FontInput, FontProvider } from '../../src/platform/font-provider';
 import type { FontWarningCallback } from '../../src/font/types';
+import { corruptSfntTableDirectory } from './corrupt-fonts';
 import { ensureFixtures, readFixture } from './fixtures';
 
 const fixtures = ensureFixtures();
@@ -162,19 +163,22 @@ describe('defaultFonts 与精确来源', () => {
 });
 
 describe('defaultFonts 显式 GID 与缓存', () => {
-  it.skipIf(!fixtures.dejavu)('替代字体 explicitGlyphs=false：CGTransform 显式 GID 被忽略并走 cmap', async () => {
+  it.skipIf(!fixtures.dejavu)('替代字体 explicitGlyphs=false：文档 GID 不可用，解析为被拒绝', async () => {
     const library = new FontLibrary({
       defaultFonts: [dataInput(fixtures.dejavu as string, 'DejaVu Sans')],
     });
     const faces = await library.resolve(makeFontResource({ fontName: 'Missing Font' }));
     expect(faces?.primary.explicitGlyphs).toBe(false);
 
-    // DejaVu 的 'A'（U+0041）cmap gid 为 36；显式给 37 时应被忽略并返回 36。
+    // 文档 GID 属于原字体，替代字体下不回落 cmap，交由上层跳过该文字对象。
     const resolved = resolveGlyph(0x41, 37, faces!);
-    expect(resolved).not.toBeNull();
-    expect(resolved?.explicit).toBeUndefined();
-    expect(resolved?.face).toBe(faces?.primary);
-    expect(resolved?.glyph.id).toBe(36);
+    expect(resolved).toEqual({ glyph: null, untrustedGid: true });
+
+    // 无文档 GID 时仍按 TextCode 走 cmap：DejaVu 的 'A'（U+0041）为 36。
+    const byCode = resolveGlyph(0x41, undefined, faces!);
+    if (!byCode?.glyph) throw new Error('期望解析出 cmap 字形');
+    expect(byCode.glyph.id).toBe(36);
+    expect(byCode.face).toBe(faces?.primary);
     library.dispose();
   });
 
@@ -215,24 +219,21 @@ describe('defaultFonts 失败降级与回退链', () => {
     library.dispose();
   });
 
-  it.skipIf(!fixtures.dejavu || !fixtures.broken)(
-    '单个来源解析失败只 warning 并继续后续来源',
-    async () => {
-      const { callback, warnings } = collectWarnings();
-      const library = new FontLibrary({
-        defaultFonts: [
-          { data: readFixture(fixtures.broken as string), family: 'Broken Font' },
-          dataInput(fixtures.dejavu as string, 'DejaVu Sans'),
-        ],
-        onWarning: callback,
-      });
+  it.skipIf(!fixtures.dejavu)('单个来源解析失败只 warning 并继续后续来源', async () => {
+    const { callback, warnings } = collectWarnings();
+    const library = new FontLibrary({
+      defaultFonts: [
+        { data: corruptSfntTableDirectory(), family: 'Broken Font' },
+        dataInput(fixtures.dejavu as string, 'DejaVu Sans'),
+      ],
+      onWarning: callback,
+    });
 
-      const faces = await library.resolve(makeFontResource({ fontName: 'Missing Font' }));
-      expect(faces?.primary.family).toContain('DejaVu');
-      expect(warnings.some((warning) => warning.includes('字体解析失败'))).toBe(true);
-      library.dispose();
-    },
-  );
+    const faces = await library.resolve(makeFontResource({ fontName: 'Missing Font' }));
+    expect(faces?.primary.family).toContain('DejaVu');
+    expect(warnings.some((warning) => warning.includes('字体解析失败'))).toBe(true);
+    library.dispose();
+  });
 
   it.skipIf(!fixtures.dejavu || !fixtures.cjkTtf)(
     '单个来源超过 maxFontBytes 时 warning 并继续后续来源',

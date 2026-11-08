@@ -51,6 +51,24 @@ export interface ResolvedGlyph {
   explicit?: boolean;
 }
 
+/**
+ * 字形解析结果：命中字形，或因主字体不可信任显式 gid 而无法解析。
+ *
+ * 调用方据此区分“真缺字”（null）与“文档内容只能由原字体 GID 表达”的情况。
+ */
+export type GlyphResolution =
+  | ResolvedGlyph
+  | {
+      /** 未解析出可用字形。 */
+      glyph: null;
+      /**
+       * 文档提供了显式 gid，但主字体不是原字体，GID 语义已失效。
+       *
+       * true 表示不应绘制任何替代字形，调用方应跳过该文字对象。
+       */
+      untrustedGid: true;
+    };
+
 /** 字体解析缓存键。 */
 function fontCacheKey(font: FontResource): string {
   const names = expandFontNames([font.fontName, font.familyName]).join('|');
@@ -520,25 +538,45 @@ export class FontLibrary {
 }
 
 /**
+ * 判断文档是否给该字符提供了可用的显式 gid。
+ *
+ * @param explicitGlyphId CGTransform 给出的显式 gid；无则为 null/undefined。
+ * @returns gid 为整数且非负时返回 true。
+ */
+function hasExplicitGlyphId(
+  explicitGlyphId: number | null | undefined,
+): explicitGlyphId is number {
+  return (
+    typeof explicitGlyphId === 'number' &&
+    Number.isInteger(explicitGlyphId) &&
+    explicitGlyphId >= 0
+  );
+}
+
+/**
  * 在字体链中逐字形回退解析。
  *
- * 显式 gid 只对主字体有意义；主字体找不到时再按码点回退。
+ * 显式 gid 属于文档指定的原字体：主字体可信任 GID 时先用 GID 取字形，
+ * 越界或为 .notdef 才回落 cmap；主字体是替代字体时 GID 不可套用，
+ * 不回落 cmap，而是返回 `untrustedGid` 结果，由调用方决定跳过该文字对象。
  *
  * @param codePoint Unicode 码点。
  * @param explicitGlyphId CGTransform 给出的显式 gid；无则为 null/undefined。
  * @param faces 主字体与回退链。
- * @returns 命中的字体面与字形；全部缺失时返回 null。
+ * @returns 命中的字体面与字形；GID 不可信任时返回 `untrustedGid`；全部缺失时返回 null。
  */
 export function resolveGlyph(
   codePoint: number,
   explicitGlyphId: number | null | undefined,
   faces: FontFaceSet,
-): ResolvedGlyph | null {
-  if (
-    explicitGlyphId !== null &&
-    explicitGlyphId !== undefined &&
-    faces.primary.explicitGlyphs !== false
-  ) {
+): GlyphResolution | null {
+  const hasGid = hasExplicitGlyphId(explicitGlyphId);
+  // 主字体是替代字体而文档给了 GID：GID 语义属于原字体，必须整体拒绝，
+  // 不能先回落 cmap（TextCode 常是占位符，会把 .notdef 画成方块）。
+  if (hasGid && faces.primary.explicitGlyphs === false) {
+    return { glyph: null, untrustedGid: true };
+  }
+  if (hasGid) {
     const glyph = faces.primary.glyph(explicitGlyphId);
     if (glyph && (glyph.id !== 0 || codePoint === 0)) {
       return { face: faces.primary, glyph, fallback: false, explicit: true };

@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { OFDError } from '../../src/errors';
 import { createFontFace, createFontFaces, disposeFontFace } from '../../src/font/face';
 import type { FontWarningCallback } from '../../src/font/types';
+import { corruptSfntTableDirectory, corruptUnknownSignature } from './corrupt-fonts';
 import { ensureFixtures, readFixture } from './fixtures';
 
 const fixtures = ensureFixtures();
@@ -122,10 +123,14 @@ describe('createFontFace', () => {
     expect(warnings[0]).toContain('W_FONT_MISSING');
   });
 
-  it.skipIf(!fixtures.broken)('损坏字体抛 OFD_FONT_PARSE', () => {
+  it.each([
+    ['签名既非 sfnt 也非裸 CFF', corruptUnknownSignature],
+    ['sfnt 表目录声明的表数量越界', corruptSfntTableDirectory],
+    ['空字节', () => new Uint8Array(0)],
+  ])('%s 抛 OFD_FONT_PARSE', (_label, makeBytes) => {
     let thrown: unknown;
     try {
-      createFontFace(readFixture(fixtures.broken as string));
+      createFontFace(makeBytes());
     } catch (error) {
       thrown = error;
     }

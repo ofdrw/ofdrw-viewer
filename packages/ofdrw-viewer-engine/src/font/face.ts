@@ -11,6 +11,7 @@ import { OFDError, toOFDError } from '../errors';
 import { expandFontNames } from './aliases';
 import type { FontFace, FontFaceCreateOptions, Glyph } from './types';
 import { LruCache } from './glyph';
+import { normalizeFontBytes } from './pipeline';
 
 /** fontkit 字体面的最小结构；用于在运行时收窄集合/单字体。 */
 interface FontkitFaceLike {
@@ -390,7 +391,9 @@ function parseFaces(
   data: Uint8Array,
   options: FontFaceCreateOptions,
 ): { faces: FontkitFaceLike[]; isCollection: boolean } {
-  const bytes = toBytes(data);
+  // 先推断字体封装类型，再交给对应适配器归一化，最后统一交给 fontkit。
+  // 无法识别的类型保持原样，由 fontkit 报错后转换为 OFD_FONT_PARSE。
+  const { bytes } = normalizeFontBytes(toBytes(data));
   let parsed: FontkitFaceLike;
   try {
     parsed = createFontkit(bytes) as unknown as FontkitFaceLike;

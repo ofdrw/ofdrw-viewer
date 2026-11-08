@@ -186,8 +186,12 @@ describe('FontLibrary 宿主 provider 与补充字体', () => {
     const faces = await library.resolve(makeFontResource({ fontName: 'Not The Font' }));
     expect(faces?.primary.family).toContain('DejaVu');
     expect(faces?.primary.explicitGlyphs).toBe(false);
-    const resolved = resolveGlyph(0x41, 36, faces!);
-    expect(resolved?.explicit).not.toBe(true);
+    // 文档 GID 属于原字体，替代字体下不得套用，也不回落 cmap。
+    expect(resolveGlyph(0x41, 37, faces!)).toEqual({ glyph: null, untrustedGid: true });
+    // 无文档 GID 时仍按 TextCode 走 cmap：DejaVu 的 'A' 为 36。
+    const byCode = resolveGlyph(0x41, undefined, faces!);
+    if (!byCode?.glyph) throw new Error('期望解析出 cmap 字形');
+    expect(byCode.glyph.id).toBe(36);
     library.dispose();
   });
 
@@ -269,11 +273,12 @@ describe('FontLibrary 宿主 provider 与补充字体', () => {
     expect(faces?.fallbacks.length).toBeGreaterThan(0);
 
     const latin = resolveGlyph(0x41, undefined, faces!);
-    expect(latin?.fallback).toBe(false);
+    if (!latin?.glyph) throw new Error('期望主字体命中拉丁字形');
+    expect(latin.fallback).toBe(false);
     const cjk = resolveGlyph(0x4e2d, undefined, faces!);
-    expect(cjk).not.toBeNull();
-    expect(cjk?.fallback).toBe(true);
-    expect(cjk?.glyph.id).toBe(1117);
+    if (!cjk?.glyph) throw new Error('期望回退字体命中 CJK 字形');
+    expect(cjk.fallback).toBe(true);
+    expect(cjk.glyph.id).toBe(1117);
     library.dispose();
   });
 
@@ -283,7 +288,9 @@ describe('FontLibrary 宿主 provider 与补充字体', () => {
     });
     const faces = await library.resolve(makeFontResource({ fontName: 'Missing Font' }));
     expect(faces?.primary.family).toContain('DejaVu');
-    expect(resolveGlyph(0x41, undefined, faces!)?.face).toBe(faces?.primary);
+    const resolved = resolveGlyph(0x41, undefined, faces!);
+    if (!resolved?.glyph) throw new Error('期望 cmap 命中主字体');
+    expect(resolved.face).toBe(faces?.primary);
     library.dispose();
   });
 
@@ -319,8 +326,9 @@ describe('resolveGlyph', () => {
     const faces = { primary: primary!, fallbacks: [fallback!] };
 
     const explicit = resolveGlyph(0x4e2d, 11, faces);
-    expect(explicit?.face).toBe(primary);
-    expect(explicit?.glyph.id).toBe(11);
+    if (!explicit?.glyph) throw new Error('期望显式 GID 命中主字体');
+    expect(explicit.face).toBe(primary);
+    expect(explicit.glyph.id).toBe(11);
 
     // 主字体无 cmap 且无显式 gid 时，逐字形回退到 DejaVu（DejaVu 无“中”字形）。
     const missing = resolveGlyph(0x4e2d, undefined, faces);
@@ -329,7 +337,7 @@ describe('resolveGlyph', () => {
   });
 });
 describe('resolveGlyph 与替代字体', () => {
-  it('explicitGlyphs=false 时忽略显式 gid，改用 cmap/回退', () => {
+  it('explicitGlyphs=false 时文档 gid 不可用，返回 untrustedGid', () => {
     const primary = createFakeFace({
       explicitGlyphs: false,
       glyphs: [{ gid: 5, advanceWidth: 100 }],
@@ -338,9 +346,14 @@ describe('resolveGlyph 与替代字体', () => {
       glyphs: [{ gid: 7, advanceWidth: 200, codePoints: [0x4e2d] }],
     });
     const resolved = resolveGlyph(0x4e2d, 5, { primary, fallbacks: [fallback] });
-    expect(resolved?.face).toBe(fallback);
-    expect(resolved?.glyph.id).toBe(7);
-    expect(resolved?.fallback).toBe(true);
+    expect(resolved).toEqual({ glyph: null, untrustedGid: true });
+
+    // 无文档 gid 时仍按 cmap 的逐字形回退链解析。
+    const byCode = resolveGlyph(0x4e2d, undefined, { primary, fallbacks: [fallback] });
+    if (!byCode?.glyph) throw new Error('期望回退字体命中');
+    expect(byCode.face).toBe(fallback);
+    expect(byCode.glyph.id).toBe(7);
+    expect(byCode.fallback).toBe(true);
   });
 
   it('explicitGlyphs=true 时优先使用显式 gid', () => {
@@ -349,8 +362,9 @@ describe('resolveGlyph 与替代字体', () => {
       glyphs: [{ gid: 5, advanceWidth: 100 }],
     });
     const resolved = resolveGlyph(0x4e2d, 5, { primary, fallbacks: [] });
-    expect(resolved?.face).toBe(primary);
-    expect(resolved?.glyph.id).toBe(5);
+    if (!resolved?.glyph) throw new Error('期望显式 GID 命中主字体');
+    expect(resolved.face).toBe(primary);
+    expect(resolved.glyph.id).toBe(5);
   });
 
   it.skipIf(!fixtures.dejavu)('supplementary 实际 family 与请求完全匹配时信任显式 gid', async () => {
@@ -365,9 +379,10 @@ describe('resolveGlyph 与替代字体', () => {
     expect(faces?.primary.family).toContain('DejaVu');
     expect(faces?.primary.explicitGlyphs).toBe(true);
     const resolved = resolveGlyph(0x41, 36, faces!);
-    expect(resolved?.face).toBe(faces?.primary);
-    expect(resolved?.explicit).toBe(true);
-    expect(resolved?.glyph.id).toBe(36);
+    if (!resolved?.glyph) throw new Error('期望显式 GID 命中主字体');
+    expect(resolved.face).toBe(faces?.primary);
+    expect(resolved.explicit).toBe(true);
+    expect(resolved.glyph.id).toBe(36);
     library.dispose();
   });
 
@@ -401,9 +416,10 @@ describe('resolveGlyph 与替代字体', () => {
     expect(faces?.primary.family).toBe('Times New Roman');
     expect(faces?.primary.explicitGlyphs).toBe(true);
     const resolved = resolveGlyph(0x66, 191, faces!);
-    expect(resolved?.face).toBe(faces?.primary);
-    expect(resolved?.explicit).toBe(true);
-    expect(resolved?.glyph.id).toBe(191);
+    if (!resolved?.glyph) throw new Error('期望显式连字 GID 命中主字体');
+    expect(resolved.face).toBe(faces?.primary);
+    expect(resolved.explicit).toBe(true);
+    expect(resolved.glyph.id).toBe(191);
     library.dispose();
   });
 
@@ -416,8 +432,11 @@ describe('resolveGlyph 与替代字体', () => {
     const faces = await library.resolve(makeFontResource({ fontName: 'Missing Font' }));
     expect(faces).not.toBeNull();
     expect(faces?.primary.explicitGlyphs).toBe(false);
-    const resolved = resolveGlyph(0x41, 37, faces!);
-    expect(resolved?.glyph.id).toBe(36);
+    // 替代字体的 GID 语义已失效：不套用文档 GID，也不回落 cmap。
+    expect(resolveGlyph(0x41, 37, faces!)).toEqual({ glyph: null, untrustedGid: true });
+    const byCode = resolveGlyph(0x41, undefined, faces!);
+    if (!byCode?.glyph) throw new Error('期望解析出 cmap 字形');
+    expect(byCode.glyph.id).toBe(36);
     library.dispose();
   });
 
@@ -433,9 +452,48 @@ describe('resolveGlyph 与替代字体', () => {
       const faces = await library.resolve(makeFontResource({ fontName: 'Times New Roman' }));
       expect(faces?.primary.family).toContain('Nimbus');
       expect(faces?.primary.explicitGlyphs).toBe(false);
-      const resolved = resolveGlyph(0x41, 36, faces!);
-      expect(resolved?.explicit).not.toBe(true);
+      expect(resolveGlyph(0x41, 36, faces!)).toEqual({ glyph: null, untrustedGid: true });
+      const byCode = resolveGlyph(0x41, undefined, faces!);
+      if (!byCode?.glyph) throw new Error('期望解析出 cmap 字形');
+      expect(byCode.explicit).not.toBe(true);
       library.dispose();
     },
   );
+
+  it('替代字体 + 纯 GID 占位符文本：不回落 cmap，返回 untrustedGid', () => {
+    const primary = createFakeFace({
+      explicitGlyphs: false,
+      glyphs: [{ gid: 5, advanceWidth: 100 }],
+    });
+    const fallback = createFakeFace({
+      glyphs: [{ gid: 7, advanceWidth: 200, codePoints: [0x4e2d] }],
+    });
+    const resolved = resolveGlyph(0xa4, 5, { primary, fallbacks: [fallback] });
+    expect(resolved).toEqual({ glyph: null, untrustedGid: true });
+  });
+
+  it('原始字体 + 越界 GID：回落到 cmap 而不是判定为不可信任', () => {
+    const primary = createFakeFace({
+      explicitGlyphs: true,
+      glyphs: [{ gid: 1, advanceWidth: 100, codePoints: [0x4e2d] }],
+    });
+    const resolved = resolveGlyph(0x4e2d, 99, { primary, fallbacks: [] });
+    if (!resolved?.glyph) throw new Error('期望回落到 cmap');
+    expect(resolved.explicit).not.toBe(true);
+    expect(resolved.glyph.id).toBe(1);
+  });
+
+  it.skipIf(!fixtures.cjkTtf)('替代字体 + 原字体 GID 越界：判定 GID 不可信任', async () => {
+    const library = new FontLibrary({
+      defaultFonts: [
+        { data: readFixture(fixtures.cjkTtf as string), family: 'Droid Sans Fallback' },
+      ],
+    });
+    const faces = await library.resolve(makeFontResource({ fontName: 'Missing Font' }));
+    expect(faces?.primary.explicitGlyphs).toBe(false);
+    // Droid Sans Fallback 的 cmap 把 U+00A4 映射为 .notdef，GID 又不可套用。
+    const resolved = resolveGlyph(0xa4, 1234, faces!);
+    expect(resolved).toEqual({ glyph: null, untrustedGid: true });
+    library.dispose();
+  });
 });

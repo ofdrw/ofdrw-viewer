@@ -246,6 +246,7 @@ CLI 只提供可执行文件 `ofdrw-viewer-cli`，不导出库 API。命令、�
 - 需要按需读取字体时，宿主实现 `FontProvider.match()`，在 `match()` 内读取并返回 `FontInput`；这是 engine 唯一的字体 I/O 入口。
 - UI/CLI 负责把本地目录、系统字体或宿主资源读成字节后注入；engine 不扫描文件系统、不解析字体 URL。
 - 字体匹配、默认字体优先级、缺字回退和字重/字形策略以 [渲染字体缺省方案设计](渲染字体缺省方案设计.md) 为准；engine 不使用 Canvas `fillText` 作为生产文本路径。
+- 字体字节进入 fontkit 前先经推断与适配流水线（`detectFontKind()` → `ADAPTERS[kind]` → fontkit），用于解析 OFD 常见的裸 CFF 内嵌字体；适配失败返回 null 并回落 `OFD_FONT_PARSE` → `W_FONT_MISSING`，不新增 warning 码。规则与约束以 [字体格式适配方案设计](字体格式适配方案设计.md) 为准。
 - UI 层的字体来源（`data`/`url`/`path`/`filePath`/`local`，共五态）由 UI 读取成字节后注入，URL 读取口径与失败降级以 [字体配置方案设计](字体配置方案设计.md) 为准；`local` 为浏览器本机字体来源，默认关闭、需宿主配置与用户授权，边界见 [本地字体加载方案设计](本地字体加载方案设计.md)。
 
 ### 7.5.1 手势缩放

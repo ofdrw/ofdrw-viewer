@@ -399,13 +399,10 @@ describe('CGTransform 容错', () => {
     expect(layout.endX).toBe(30);
   });
 
-  it('替代字体的显式 gid 不生效，按码点 cmap 解析', () => {
+  it('显式 GID 在主字体中缺失时用被覆盖字符的 cmap 解析', () => {
     const face = createFakeFace({
-      explicitGlyphs: false,
-      glyphs: [
-        { gid: 1, advanceWidth: 500, codePoints: [0x41] },
-        { gid: 21, advanceWidth: 900 },
-      ],
+      explicitGlyphs: true,
+      glyphs: [{ gid: 1, advanceWidth: 500, codePoints: [0x41] }],
     });
     const warnings: string[] = [];
     const layout = layoutText(
@@ -427,7 +424,7 @@ describe('CGTransform 容错', () => {
 
   it('N:1 的显式 gid 不可用时回退为逐字符轮廓，保留两字符 Delta', () => {
     const face = createFakeFace({
-      explicitGlyphs: false,
+      explicitGlyphs: true,
       glyphs: [
         { gid: 1, advanceWidth: 500, codePoints: [0x41] },
         { gid: 2, advanceWidth: 700, codePoints: [0x42] },
@@ -459,7 +456,7 @@ describe('CGTransform 容错', () => {
 
   it('N:M 的显式 gid 不可用时保留全部字符轮廓，只消费该 CG 单元 Delta', () => {
     const face = createFakeFace({
-      explicitGlyphs: false,
+      explicitGlyphs: true,
       glyphs: [
         { gid: 1, advanceWidth: 500, codePoints: [0x41] },
         { gid: 2, advanceWidth: 700, codePoints: [0x42] },
@@ -484,5 +481,196 @@ describe('CGTransform 容错', () => {
     expect(layout.units[0].placements.map((placement) => placement.x)).toEqual([0, 5]);
     expect(layout.endX).toBe(10);
     expect(warnings).toEqual([]);
+  });
+});
+describe('显式 GID 信任语义', () => {
+  /** 收集 warning 的文本 code 串。 */
+  function warningsOf(run: (push: (code: string, message: string) => void) => void): string[] {
+    const warnings: string[] = [];
+    run((code, message) => warnings.push(`${code}:${message}`));
+    return warnings;
+  }
+
+  it('原始字体：1:1 CGTransform 使用文档 GID 而不是 cmap', () => {
+    const face = createFakeFace({
+      explicitGlyphs: true,
+      glyphs: [
+        { gid: 1, advanceWidth: 500, codePoints: [0xa4] },
+        { gid: 21, advanceWidth: 900 },
+      ],
+    });
+    const layout = layoutText(
+      makeTextObject({
+        codes: [makeTextCode({ text: '¤', deltaX: [5], cgTransforms: [transform(0, 1, [21])] })],
+      }),
+      createFakeFaceSet(face),
+    );
+    expect(layout.units[0].glyphs.map((glyph) => glyph.gid)).toEqual([21]);
+  });
+
+  it('原始字体：GID 越界回落 cmap，不计为 GID 不可信任', () => {
+    const face = createFakeFace({
+      explicitGlyphs: true,
+      glyphs: [{ gid: 1, advanceWidth: 500, codePoints: [0xa4] }],
+    });
+    const warnings: string[] = [];
+    const layout = layoutText(
+      makeTextObject({
+        codes: [makeTextCode({ text: '¤', deltaX: [5], cgTransforms: [transform(0, 1, [99])] })],
+      }),
+      createFakeFaceSet(face),
+      { onWarning: (code, message) => warnings.push(`${code}:${message}`) },
+    );
+    // 回落到 cmap，仍有字形可画，且不能报告"缺少原始字体"。
+    expect(layout.units[0].glyphs.map((glyph) => glyph.gid)).toEqual([1]);
+    expect(warnings.some((warning) => warning.includes('缺少原始字体'))).toBe(false);
+  });
+
+  it('替代字体 + 纯 GID 占位符文本：跳过该文字对象并报 W_FONT_MISSING', () => {
+    const face = createFakeFace({
+      explicitGlyphs: false,
+      glyphs: [
+        { gid: 1, advanceWidth: 500, codePoints: [0xa4] },
+        { gid: 21, advanceWidth: 900 },
+      ],
+    });
+    const warnings: string[] = [];
+    const layout = layoutText(
+      makeTextObject({
+        codes: [makeTextCode({ text: '¤', deltaX: [5], cgTransforms: [transform(0, 1, [21])] })],
+      }),
+      createFakeFaceSet(face),
+      { onWarning: (code, message) => warnings.push(`${code}:${message}`) },
+    );
+    // 整对象跳过：既没有 GID 字形，也没有回落到 cmap 画 .notdef。
+    expect(layout.units).toEqual([]);
+    expect(warnings.some((warning) => warning.startsWith('W_FONT_MISSING'))).toBe(true);
+    expect(warnings.some((warning) => warning.startsWith('W_GLYPH_MISSING'))).toBe(false);
+  });
+
+  it('替代字体 + 纯 GID 多字符：整段跳过；相邻正常 Unicode 文本仍走 cmap', () => {
+    const face = createFakeFace({
+      explicitGlyphs: false,
+      glyphs: [
+        { gid: 1, advanceWidth: 500, codePoints: [0x41] },
+        { gid: 2, advanceWidth: 700, codePoints: [0x42] },
+        { gid: 21, advanceWidth: 900 },
+        { gid: 22, advanceWidth: 900 },
+      ],
+    });
+    const layout = layoutText(
+      makeTextObject({
+        codes: [
+          makeTextCode({
+            text: '¤¤',
+            deltaX: [5, 5],
+            cgTransforms: [transform(0, 2, [21, 22])],
+          }),
+          makeTextCode({ text: 'AB', deltaX: [5, 5] }),
+        ],
+      }),
+      createFakeFaceSet(face),
+    );
+    // 纯 GID 段落不绘制任何字形，第二段正常文本照常渲染。
+    const drawn = layout.units
+      .map((unit) => unit.glyphs.map((glyph) => glyph.gid))
+      .filter((glyphs) => glyphs.length > 0);
+    expect(drawn).toEqual([[1], [2]]);
+  });
+
+  it('无 CGTransform 的正常文本在替代字体下仍走 cmap', () => {
+    const face = createFakeFace({
+      explicitGlyphs: false,
+      glyphs: [{ gid: 1, advanceWidth: 500, codePoints: [0x41] }],
+    });
+    const warnings: string[] = [];
+    const layout = layoutText(
+      makeTextObject({ codes: [makeTextCode({ text: 'A', deltaX: [5] })] }),
+      createFakeFaceSet(face),
+      { onWarning: (code, message) => warnings.push(`${code}:${message}`) },
+    );
+    expect(layout.units[0].glyphs.map((glyph) => glyph.gid)).toEqual([1]);
+    expect(warnings).toEqual([]);
+  });
+
+  it('N:M 全部 GID 不可信任：整段丢弃，不回落占位符的 cmap', () => {
+    const face = createFakeFace({
+      explicitGlyphs: false,
+      glyphs: [
+        { gid: 1, advanceWidth: 500, codePoints: [0x41] },
+        { gid: 2, advanceWidth: 700, codePoints: [0x42] },
+      ],
+    });
+    const units = buildUnits(
+      [0x41, 0x42],
+      [transform(0, 2, [21, 22, 23])],
+      createFakeFaceSet(face),
+    );
+    expect(units).toHaveLength(1);
+    expect(units[0].untrustedGid).toBe(true);
+    expect(units[0].glyphs).toEqual([]);
+  });
+
+  it('N:M 混合场景（原字体 GID 部分可用、部分越界）：用可用的 GID，不整段丢弃', () => {
+    const face = createFakeFace({
+      explicitGlyphs: true,
+      glyphs: [{ gid: 21, advanceWidth: 100 }],
+    });
+    const units = buildUnits(
+      [0x41, 0x42],
+      [transform(0, 2, [21, 99])],
+      createFakeFaceSet(face),
+    );
+    // gid 21 可用、gid 99 越界：段内仍有可用字形，不整段丢弃。
+    expect(units.every((unit) => unit.untrustedGid !== true)).toBe(true);
+    const drawn = units.flatMap((unit) => unit.glyphs.map((glyph) => glyph.gid));
+    expect(drawn).toEqual([21]);
+  });
+
+  it('N:M 部分 GID 可用时使用可用 GID，不整段丢弃', () => {
+    const face = createFakeFace({
+      explicitGlyphs: true,
+      glyphs: [
+        { gid: 21, advanceWidth: 100 },
+        { gid: 22, advanceWidth: 200 },
+      ],
+    });
+    const units = buildUnits(
+      [0x41],
+      [transform(0, 1, [21, 22])],
+      createFakeFaceSet(face),
+    );
+    expect(units[0].glyphs.map((glyph) => glyph.gid)).toEqual([21, 22]);
+    expect(units[0].untrustedGid).toBeUndefined();
+  });
+
+  it('buildUnits 对 GID 越界（原始字体）不标记 untrustedGid', () => {
+    const face = createFakeFace({
+      explicitGlyphs: true,
+      hasCmap: false,
+      glyphs: [{ gid: 1, advanceWidth: 500 }],
+    });
+    const units = buildUnits(
+      [0x41],
+      [transform(0, 1, [99])],
+      createFakeFaceSet(face),
+    );
+    expect(units).toHaveLength(1);
+    expect(units[0].untrustedGid).toBeUndefined();
+    expect(units[0].glyphs).toEqual([]);
+  });
+
+  it('buildUnits 对替代字体 + 合法 GID 标记 untrustedGid', () => {
+    const face = createFakeFace({
+      explicitGlyphs: false,
+      glyphs: [{ gid: 21, advanceWidth: 900 }],
+    });
+    const units = buildUnits(
+      [0xa4],
+      [transform(0, 1, [21])],
+      createFakeFaceSet(face),
+    );
+    expect(units).toHaveLength(1);
+    expect(units[0].untrustedGid).toBe(true);
   });
 });
