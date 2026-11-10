@@ -232,17 +232,21 @@ export class PageLayout {
   }
 
   /**
-   * 把长度对齐到设备像素网格。
+   * 把长度对齐到设备像素网格（向上取整）。
    *
    * 对齐后的长度在屏幕上恰好覆盖整数个物理像素，画布位图与设备像素一一对应；不对齐时
    * 整页会落在半像素上，浏览器需重采样，表现为全页（尤其文字）均匀发虚。
+   *
+   * 必须向上取整而不是四舍五入：画布位图尺寸由 `Math.ceil(viewport)` 得出（引擎要求
+   * canvas 不小于 viewport），页盒若四舍五入就可能比位图少 1 像素，使 canvas 被 CSS
+   * 拉伸约 0.999 倍而重采样。取同一方向后两者恒等，缩放后位图与显示像素始终 1:1。
    *
    * @param value 长度，单位 px。
    * @returns 对齐后的长度，单位 px。
    */
   snapToDevicePixel(value: number): number {
     const ratio = this.devicePixelRatio;
-    return Math.round(value * ratio) / ratio;
+    return Math.ceil(value * ratio) / ratio;
   }
 
   /**

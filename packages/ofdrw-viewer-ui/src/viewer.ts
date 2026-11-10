@@ -4824,7 +4824,10 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   }
 
   /**
-   * 双击在适合宽度与 100% 之间切换并清除双击文本选区；鼠标以指针为锚点。
+   * 触屏主设备的双击在适合宽度与 100% 之间切换并清除文本选区，以指针为锚点。
+   *
+   * 桌面端（含带触摸屏的笔记本）不响应双击缩放：鼠标双击保留浏览器原生的选词行为，
+   * 空白处双击也不做任何处理。这与滚轮/滚动条独占缩放的桌面交互一致。
    *
    * 触屏双击由 {@link handleTap} 判定：触摸事件也会带出 `dblclick`，这里统一忽略
    * 触屏与合成触摸事件，避免一次双击缩放两次。
@@ -4832,6 +4835,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
    * @param event 双击事件；clientX/clientY 单位 px。
    */
   private handleDoubleClick(event: MouseEvent): void {
+    if (!this.touchGesturesEnabled) return;
     if (!this.featureGate.isEnabled('zoom')) return;
     if ((event as MouseEvent & { readonly pointerType?: string }).pointerType === 'touch') return;
     if (isSyntheticTouchClick(event)) return;

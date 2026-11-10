@@ -118,26 +118,27 @@ describe('核心集成：页面布局', () => {
     const pageWidth = MM_TO_CSS_PX * 210;
     const pageHeight = MM_TO_CSS_PX * 297;
 
-    // 页盒尺寸对齐到设备像素网格，与理论值相差不超过半个像素。
+    // 页盒尺寸向上对齐到设备像素网格（与画布位图同为 ceil 口径），与理论值相差
+    // 不超过一个像素。
     const first = boxMetrics(viewer.getPageView(1)!.element);
     const second = boxMetrics(viewer.getPageView(2)!.element);
-    expect(Math.abs(first.width - pageWidth)).toBeLessThan(0.5);
-    expect(Math.abs(first.height - pageHeight)).toBeLessThan(0.5);
+    expect(Math.abs(first.width - pageWidth)).toBeLessThan(1);
+    expect(Math.abs(first.height - pageHeight)).toBeLessThan(1);
     expect(first.top).toBeCloseTo(DEFAULT_PAGE_PADDING, 2);
     expect(second.top).toBeCloseTo(first.top + first.height + DEFAULT_PAGE_GAP, 2);
 
-    // 页高逐页对齐设备像素，累计误差随页数线性增长（不超过每页半个像素）。
+    // 页高逐页向上对齐设备像素，累计误差随页数线性增长（不超过每页一个像素）。
     const pages = viewer.getElements().main.querySelector<HTMLElement>('.ofd-viewer__pages')!;
     const expectedHeight = DEFAULT_PAGE_PADDING * 2 + pageHeight * 3 + DEFAULT_PAGE_GAP * 2;
-    expect(Math.abs(Number.parseFloat(pages.style.height) - expectedHeight)).toBeLessThan(1.5);
+    expect(Math.abs(Number.parseFloat(pages.style.height) - expectedHeight)).toBeLessThan(3);
 
     viewer.setScale(2);
-    expect(Math.abs(boxMetrics(viewer.getPageView(1)!.element).width - pageWidth * 2)).toBeLessThan(0.5);
+    expect(Math.abs(boxMetrics(viewer.getPageView(1)!.element).width - pageWidth * 2)).toBeLessThan(1);
 
     viewer.setRotation(90);
     const rotated = boxMetrics(viewer.getPageView(1)!.element);
-    expect(Math.abs(rotated.width - pageHeight * 2)).toBeLessThan(0.5);
-    expect(Math.abs(rotated.height - pageWidth * 2)).toBeLessThan(0.5);
+    expect(Math.abs(rotated.width - pageHeight * 2)).toBeLessThan(1);
+    expect(Math.abs(rotated.height - pageWidth * 2)).toBeLessThan(1);
     expect(viewer.getPageView(1)!.surface.style.transform).toContain('rotate(90deg)');
     expect(viewer.getPageView(1)!.element.dataset.rotation).toBe('90');
     viewer.destroy();

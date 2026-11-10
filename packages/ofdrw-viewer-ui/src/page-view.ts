@@ -457,17 +457,21 @@ export class PageView {
   }
 
   /**
-   * 把长度对齐到设备像素网格。
+   * 把长度对齐到设备像素网格（向上取整）。
    *
    * 页盒恰好覆盖整数个物理像素时，画布位图与设备像素一一对应；否则整页落在半像素上，
    * 浏览器重采样会让全页（尤其文字）均匀发虚。
+   *
+   * 必须向上取整而不是四舍五入：画布位图尺寸由 `Math.ceil(viewport)` 得出（引擎要求
+   * canvas 不小于 viewport），页盒若四舍五入就可能比位图少 1 像素，使 canvas 被 CSS
+   * 拉伸约 0.999 倍而重采样。取同一方向后两者恒等。
    *
    * @param value 长度，单位 px。
    * @returns 对齐后的长度，单位 px。
    */
   private snapToDevicePixel(value: number): number {
     const ratio = this.devicePixelRatio;
-    return Math.round(value * ratio) / ratio;
+    return Math.ceil(value * ratio) / ratio;
   }
 
   /**

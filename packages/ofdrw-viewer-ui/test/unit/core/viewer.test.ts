@@ -248,6 +248,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  // 指针能力由 matchMedia 判定；不还原会让触屏用例的 stub 泄漏到后续用例。
+  restorePointerMedia();
 });
 
 describe('OFDViewer 核心', () => {
@@ -764,6 +766,31 @@ describe('OFDViewer 核心', () => {
     expect(floorCanvas.width).toBe(a4CanvasWidth(2 / 3, 3));
 
     viewer.destroy();
+  });
+
+  it('页盒尺寸向上对齐设备像素，保证画布位图不被 CSS 缩小重采样', async () => {
+    // 引擎要求画布位图不小于 viewport（ceil(viewport)），页盒必须与位图同向取整；
+    // 若页盒四舍五入，1.05 这类倍率下会比位图少 1 像素，整页被轻微拉伸而文字发虚。
+    for (const dpr of [1, 2, 3]) {
+      for (const scale of [1, 1.05, 1.08, 1.25, 1.5, 2, 3]) {
+        Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: dpr });
+        const viewer = new OFDViewer({
+          crypto: { enabled: false },
+          container: document.body,
+          source: new ArrayBuffer(8),
+          initialScale: scale,
+        });
+        await viewer.ready;
+        const page = viewer.getPageView(1)!;
+        await vi.waitFor(() => expect(page.state).toBe('rendered'));
+        const cssWidth = Number.parseFloat(page.element.style.width);
+        // A4 单位宽 793.7008：页盒设备像素必须等于 ceil(单位宽 × 倍率 × DPR)，
+        // 与画布位图的取整口径一致。
+        const unitWidth = (210 / 25.4) * 96;
+        expect(Math.round(cssWidth * dpr)).toBe(Math.ceil(unitWidth * scale * dpr));
+        viewer.destroy();
+      }
+    }
   });
 
   it('主区域 scroll 事件驱动连续滚动状态、事件与后续页渲染', async () => {
@@ -1367,7 +1394,54 @@ describe('OFDViewer 核心', () => {
     viewer.destroy();
   });
 
-  it('双击在适合宽度与 100% 之间切换并清除文本选区', async () => {
+  it('桌面端双击不缩放，保留浏览器原生选词行为', async () => {
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+      initialScale: 1,
+    });
+    await viewer.ready;
+    const main = viewer.getElements().main;
+    vi.spyOn(main, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 800,
+      bottom: 800,
+      width: 800,
+      height: 800,
+      toJSON: () => ({}),
+    } as DOMRect);
+    const textLayer = viewer.getPageView(1)!.textLayer;
+    textLayer.textContent = 'hello';
+    const selection = window.getSelection()!;
+    const range = document.createRange();
+    range.selectNodeContents(textLayer);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    expect(selection.isCollapsed).toBe(false);
+
+    const scaleBefore = viewer.getScale();
+    const zoomModeBefore = viewer.getState().view.zoomMode;
+    const dblclick = new MouseEvent('dblclick', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 300,
+      clientY: 300,
+    });
+    textLayer.dispatchEvent(dblclick);
+    // 桌面端既不拦截默认行为（浏览器照常选词），也不改倍率与缩放模式。
+    expect(dblclick.defaultPrevented).toBe(false);
+    expect(viewer.getScale()).toBe(scaleBefore);
+    expect(viewer.getState().view.zoomMode).toBe(zoomModeBefore);
+    expect(selection.isCollapsed).toBe(false);
+    viewer.destroy();
+  });
+
+  it('触屏主设备双击在适合宽度与 100% 之间切换并清除文本选区', async () => {
+    stubPointerMedia(true);
     const viewer = new OFDViewer({
       crypto: { enabled: false },
       container: document.body,
