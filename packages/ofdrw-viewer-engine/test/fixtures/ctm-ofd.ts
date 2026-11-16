@@ -34,12 +34,23 @@ export interface CtmTextSpec {
   ctm?: [number, number, number, number, number, number];
   /** 字号，单位 mm。 */
   size: number;
-  /** 文字内容（只支持 ASCII，便于用固定字体断言）。 */
+  /** 文字内容。 */
   text: string;
   /** 首个 TextCode 的 X 坐标，对象空间单位 mm；缺省 0。 */
   codeX?: number;
   /** 首个 TextCode 的 Y 坐标（基线），对象空间单位 mm；缺省为字号。 */
   codeY?: number;
+  /**
+   * 逐字 X 方向偏移队列（表 46 `DeltaX`），对象空间单位 mm。
+   *
+   * 按 GB/T 33190—2016 表 46，每项是后一个字相对前一个字在 X 方向的偏移值；
+   * 省略表示不输出该属性。
+   */
+  deltaX?: readonly number[];
+  /** 逐字 Y 方向偏移队列（表 46 `DeltaY`），对象空间单位 mm。 */
+  deltaY?: readonly number[];
+  /** 是否输出 CGTransform（CodePosition=0、CodeCount/GlyphCount=字符数）。 */
+  cgTransform?: boolean;
   /** 填充色 `r g b`，缺省黑色。 */
   fillColor?: [number, number, number];
   /** 是否勾边，缺省 false。 */
@@ -218,10 +229,20 @@ function buildTextObject(text: CtmTextSpec, fontId: number): XmlElementSpec {
     X: text.codeX ?? 0,
     Y: text.codeY ?? text.size,
   };
+  if (text.deltaX && text.deltaX.length > 0) codeAttrs.DeltaX = text.deltaX.join(' ');
+  if (text.deltaY && text.deltaY.length > 0) codeAttrs.DeltaY = text.deltaY.join(' ');
+
   const children: XmlElementSpec[] = [
     { name: 'ofd:FillColor', attrs: { Value: (text.fillColor ?? [0, 0, 0]).join(' ') } },
-    { name: 'ofd:TextCode', attrs: codeAttrs, children: [text.text] },
   ];
+  if (text.cgTransform) {
+    const count = [...text.text].length;
+    children.push({
+      name: 'ofd:CGTransform',
+      attrs: { CodePosition: 0, CodeCount: count, GlyphCount: count },
+    });
+  }
+  children.push({ name: 'ofd:TextCode', attrs: codeAttrs, children: [text.text] });
   if (text.clips && text.clips.length > 0) {
     children.push({
       name: 'ofd:Clips',
@@ -256,7 +277,8 @@ function buildClip(clip: CtmClipSpec): XmlElementSpec {
           {
             name: 'ofd:Path',
             attrs: {
-              ID: 9000 + Math.round(x * 100 + y),
+              // 用全部尺寸做位移哈希，避免不同裁剪区生成重复 ID。
+              ID: 9000 + ((Math.round(x * 64) * 7919 + Math.round(y * 64) * 104729 + Math.round(w * 64) * 1299709 + Math.round(h * 64) * 15485863) >>> 0) % 100000,
               Boundary: `${x} ${y} ${w} ${h}`,
               Fill: 'true',
               Stroke: 'false',
