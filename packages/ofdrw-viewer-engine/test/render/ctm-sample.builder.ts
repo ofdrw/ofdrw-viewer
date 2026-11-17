@@ -227,6 +227,19 @@ function buildCells(): Cell[] {
 }
 
 /**
+ * 构造等宽逐字偏移队列。
+ *
+ * 按表 46，队列第 i 项是后一个字相对前一个字的 X 偏移；等宽字距时每项都等于字宽。
+ *
+ * @param charCount 字符数。
+ * @param advance 单字宽度，单位 mm。
+ * @returns 长度为 `charCount - 1` 的偏移队列。
+ */
+function uniformDelta(charCount: number, advance: number): number[] {
+  return Array.from({ length: Math.max(0, charCount - 1) }, () => advance);
+}
+
+/**
  * 把格子局部坐标转换为页面坐标。
  *
  * @param index 格子序号。
@@ -323,6 +336,8 @@ export function writeCtmMatrixOfd(outputPath: string): number {
       text: cell.name,
       codeX: 0.5,
       codeY: 3.2,
+      // 表 46：多字符需显式给出逐字偏移，否则全部叠在同一位置。
+      ...(cell.name.length > 1 ? { deltaX: uniformDelta(cell.name.length, 3) } : {}),
       fillColor: [70, 70, 70] as [number, number, number],
     };
   });
@@ -345,7 +360,8 @@ export function writeCtmMatrixOfd(outputPath: string): number {
       text: content,
       codeX: CODE_X,
       codeY: cell.codeYOverride ?? CODE_Y,
-      // 不输出 DeltaX/DeltaY：缺省时按字体自身推进量排列字形，字距自然。
+      // 表 46：按字号等宽逐字给出 DeltaX，字形框首尾相接。
+      ...(content.length > 1 ? { deltaX: uniformDelta(content.length, FONT_SIZE) } : {}),
       ...(cell.clips ? { clips: cell.clips } : {}),
     };
   });

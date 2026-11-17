@@ -273,7 +273,7 @@ function fitInside(
 function text(
   overrides: Partial<CtmTextSpec> & Pick<CtmTextSpec, 'id'>,
 ): CtmTextSpec {
-  return {
+  const merged: CtmTextSpec = {
     boundary: ROOMY,
     size: SIZE,
     text: 'ABC',
@@ -281,6 +281,11 @@ function text(
     codeY: BASE_Y,
     ...overrides,
   };
+  // 表 46：DeltaX 不出现时所有字形共用同一 X，多字符需显式给出逐字偏移。
+  if (!merged.deltaX && merged.text.length > 1) {
+    merged.deltaX = Array.from({ length: merged.text.length - 1 }, () => merged.size);
+  }
+  return merged;
 }
 
 const describeWithFont = FONT ? describe : describe.skip;
@@ -413,7 +418,7 @@ describeWithFont('CTM 复合变换（表 20 矩阵迭加）', () => {
 describeWithFont('Boundary 裁剪契约（表 34）', () => {
   it('Boundary 恰好容纳字形时文字完整可见', async () => {
     const result = await renderTexts([
-      { id: 30, boundary: [30, 30, 60, 20], size: SIZE, text: 'ABC', codeX: 2, codeY: 16 },
+      { id: 30, boundary: [30, 30, 60, 20], size: SIZE, text: 'ABC', codeX: 2, codeY: 16, deltaX: [SIZE, SIZE] },
     ]);
     expect(inkIn(result, { x: 30, y: 30, w: 60, h: 20 })).toBeGreaterThan(MIN_INK);
   });
@@ -421,10 +426,10 @@ describeWithFont('Boundary 裁剪契约（表 34）', () => {
   it('Boundary 高度不足时裁掉超出部分且不越出下边界', async () => {
     // 基线 Y=12：字形上沿约在 Y≈2，落在 6mm 高的窗内；下沿约 Y≈12 落在窗外被裁掉。
     const tall = await renderTexts([
-      { id: 31, boundary: [30, 30, 60, 60], size: SIZE, text: 'ABC', codeX: 2, codeY: 12 },
+      { id: 31, boundary: [30, 30, 60, 60], size: SIZE, text: 'ABC', codeX: 2, codeY: 12, deltaX: [SIZE, SIZE] },
     ]);
     const short = await renderTexts([
-      { id: 32, boundary: [30, 30, 60, 6], size: SIZE, text: 'ABC', codeX: 2, codeY: 12 },
+      { id: 32, boundary: [30, 30, 60, 6], size: SIZE, text: 'ABC', codeX: 2, codeY: 12, deltaX: [SIZE, SIZE] },
     ]);
     const tallInk = inkIn(tall, { x: 30, y: 30, w: 60, h: 60 });
     const shortInk = inkIn(short, { x: 30, y: 30, w: 60, h: 6 });
@@ -437,10 +442,10 @@ describeWithFont('Boundary 裁剪契约（表 34）', () => {
 
   it('Boundary 宽度不足时裁掉右侧部分且不越出右边界', async () => {
     const wide = await renderTexts([
-      { id: 33, boundary: [30, 30, 80, 20], size: SIZE, text: 'ABC', codeX: 2, codeY: 16 },
+      { id: 33, boundary: [30, 30, 80, 20], size: SIZE, text: 'ABC', codeX: 2, codeY: 16, deltaX: [SIZE, SIZE] },
     ]);
     const narrow = await renderTexts([
-      { id: 34, boundary: [30, 30, 14, 20], size: SIZE, text: 'ABC', codeX: 2, codeY: 16 },
+      { id: 34, boundary: [30, 30, 14, 20], size: SIZE, text: 'ABC', codeX: 2, codeY: 16, deltaX: [SIZE, SIZE] },
     ]);
     const wideInk = inkIn(wide, { x: 30, y: 30, w: 80, h: 20 });
     const narrowInk = inkIn(narrow, { x: 30, y: 30, w: 14, h: 20 });

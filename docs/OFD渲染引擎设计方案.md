@@ -155,7 +155,7 @@ M_page = S(dpi / 25.4) × T(-PhysicalBox.x, -PhysicalBox.y)
 | `LineWidth=0` | 设备空间 1 px hairline；无法计算设备缩放时回退 1 用户单位 |
 | `Boundary` 零/负尺寸 | 零宽/零高跳过并 `W_ZERO_BOUNDARY`；负尺寸归一化到左上角并 `W_NEGATIVE_BOUNDARY`，归一化后仍为零则跳过 |
 | 图片缺 `CTM` | 默认严格 identity（1×1 mm）并 `W_IMAGE_NO_CTM`；`strictImageCtm=false` 时铺满 `Boundary` |
-| `DeltaX/DeltaY` | 支持数组、空白/逗号分隔、`g <count> <value>` 压缩组；显式 0 保留；缺失值按阅读方向轴回退字体 advance；无法解析的 token 跳过并 `W_BAD_NUMBER`；数量多于字符时静默忽略多余值 |
+| `DeltaX/DeltaY` | 支持数组、空白/逗号分隔、`g <count> <value>` 压缩组；显式 0 保留；属性整体缺失表示该轴不做偏移（全部字形共用同一绘制点，见 GB/T 33190 表 46 与图 62）；队列长度不足时后续字形复用最后一个值；无法解析的 token 跳过并 `W_BAD_NUMBER`；数量多于字符时静默忽略多余值 |
 | `CGTransform` 位置 | 允许位于 `TextCode` 前或 `TextCode` 内；`CodePosition` 是当前 `TextCode` 的字符偏移；`CodecPosition`/`CodecCount` 作为拼写兼容 |
 | `CGTransform` 多对多 | 字形列表作为整串按字体 advance 连续绘制，字符格只决定整串的总步进；不把字形按字符格比例拆开 |
 | XML 命名空间 | 解析时忽略命名空间，按 local name 匹配；OFD 1.0/1.1 的两种命名空间均可读 |
@@ -432,7 +432,7 @@ engine 不调用 Canvas 文字 API，而是把文字转成字形轮廓路径后�
 2. **过滤排版换行**：`TextCode` 中 XML 美化产生的 CR/LF 不参与排版，不占 `DeltaX/DeltaY` 下标，也不触发缺字 warning；普通空格保留。
 3. **构建 unit**：按 `CGTransform` 和字符码点构建“字符/多字形串”单元；多字形串内部按字体 advance 排布，字符格只决定整串步进。
 4. **计算起点**：每个 `TextCode` 的 `X/Y` 是第一个逻辑字符原点；缺省时沿用前一个 `TextCode` 的起点。
-5. **逐 unit 放置**：按 `ReadDirection` 选择 +X/+Y/-X/-Y 步进；unit 内每个字形按字体 advance × Size / unitsPerEm × HScale 推进；`DeltaX/DeltaY` 优先于字体 advance（显式 0 保留）；横排的 `DeltaY` 即使不参与主步进也会被消费，用于软换行。
+5. **逐 unit 放置**：按 `ReadDirection` 选择 +X/+Y/-X/-Y 步进；unit 内每个字形按字体 advance × Size / unitsPerEm × HScale 连续排布；unit 之间的步进完全由 `DeltaX/DeltaY` 决定（显式 0 保留；属性缺失则步进为 0；队列不足时复用最后一个值），不以其替代字体 advance；横排的 `DeltaY` 即使不参与主步进也会被消费，用于软换行。
 6. **字形变换**：`CharDirection` 让字形绕绘制点旋转；`HScale` 水平缩放；合成斜体按 shear 变换；合成粗体在字重 ≥600 且主字体非粗体时用描边加粗。
 7. **路径合并**：所有字形轮廓合并后按样式填充/描边；默认文字填充、不描边。
 
@@ -734,7 +734,7 @@ pnpm -C packages/ofdrw-viewer-engine test:audit
     按 ReadDirection 选择步进方向（+X/+Y/-X/-Y）
     逐 unit
       逐字形放置：字体 advance × Size / unitsPerEm × HScale
-      消费 DeltaX/DeltaY（显式 0 保留；缺失按阅读方向轴回退 advance）
+      消费 DeltaX/DeltaY（显式 0 保留；属性缺失则步进 0；队列不足复用末值）
       CharDirection 旋转字形
       HScale 缩放
       合成斜体 shear

@@ -234,18 +234,25 @@ describe('文本内容收集 - 几何与 DPI', () => {
     [270, 270],
     [0, 180],
   ] as const)('ReadDirection=%i/CharDirection=%i 的字符 quad 方向正确', (read, char) => {
+    // 阅读方向决定由哪个轴推进：横排用 DeltaX，竖排用 DeltaY（表 46）。
+    const vertical = read === 90 || read === 270;
     const object = makeTextObject({
       boundary: { x: 0, y: 0, w: 30, h: 30 },
       size: 10,
       readDirection: read,
       charDirection: char,
-      codes: [makeTextCode({ text: 'AB', deltaX: [5, 5] })],
+      codes: [
+        makeTextCode({
+          text: 'AB',
+          ...(vertical ? { deltaY: [5, 5] } : { deltaX: [5, 5] }),
+        }),
+      ],
     });
     const prepared = makePrepared({ page: textPage(object) });
     const item = collectTextPageMm(prepared).items[0];
     expect(item.chars).toHaveLength(2);
-    // 水平阅读方向由 DeltaX 推进（5+5）；垂直方向没有 DeltaY，回退字体 advance（5+6）。
-    expectClose(item.advance, read === 90 || read === 270 ? 11 : 10);
+    // 两字各推进 5，沿阅读方向共 10。
+    expectClose(item.advance, 10);
     const first = item.chars![0];
     const second = item.chars![1];
     // 阅读方向决定第二个字符的起点；字符方向只旋转字形单元。

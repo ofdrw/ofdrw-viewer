@@ -517,28 +517,6 @@ export function buildUnits(
 }
 
 /**
- * 取字符在字体链中的 advance（对象空间单位）。
- *
- * 仅在缺少 delta 时使用；不做 warning，避免重复刷屏。
- *
- * @param codePoint Unicode 码点。
- * @param faces 字体链。
- * @param size 字号，对象空间单位。
- * @param hScale 水平缩放。
- * @returns advance，对象空间单位；无字形时为 0。
- */
-function fallbackAdvance(
-  codePoint: number,
-  faces: FontFaceSet,
-  size: number,
-  hScale: number,
-): number {
-  const resolved = resolveGlyph(codePoint, undefined, faces);
-  if (!resolved || !resolved.glyph) return 0;
-  return scaleAdvance(resolved.glyph.advanceWidth, size, hScale, resolved.face.unitsPerEm);
-}
-
-/**
  * 把字体单位 advance 转为对象空间长度。
  *
  * @param advanceWidth 字体单位 advance。
@@ -560,37 +538,29 @@ function scaleAdvance(
 /**
  * 计算一个单元结束后沿指定轴的步进。
  *
- * 逐字符取值：有合法 delta 用 delta（显式 0 保留）；缺失时仅当该轴是阅读方向轴才回退字体 advance。
+ * GB/T 33190—2016 表 46 与图 62：`DeltaX` 队列中的每个值就是后一个字相对前一个字的
+ * 绘制点偏移，字形框宽度由它给出，与字体 advance 无关。
+ *
+ * - 属性整体不出现：表示该方向不做偏移，所有字形共用同一个绘制点，故步进为 0；
+ * - 队列长度不足：后续字形复用队列的最后一个值。生产工具常用单个值表达等宽字距
+ *   （例如 `DeltaX="1.59"` 覆盖整段编号），若按 0 处理会让剩余字形全部叠在一起。
  *
  * @param values 已解析的 delta 数组。
  * @param cpStart 单元起始码点索引。
  * @param codeCount 覆盖字符数。
- * @param codePoints 全部码点。
- * @param faces 字体链。
- * @param size 字号，对象空间单位。
- * @param hScale 水平缩放。
- * @param fallbackToAdvance 缺失值是否回退该字符的字体 advance。
  * @returns 步进，对象空间单位。
  */
 function computeDelta(
   values: readonly number[],
   cpStart: number,
   codeCount: number,
-  codePoints: readonly number[],
-  faces: FontFaceSet,
-  size: number,
-  hScale: number,
-  fallbackToAdvance: boolean,
 ): number {
+  if (values.length === 0) return 0;
+  const last = values[values.length - 1];
   let total = 0;
   for (let offset = 0; offset < codeCount; offset += 1) {
-    const position = cpStart + offset;
-    const value = values[position];
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      total += value;
-    } else if (fallbackToAdvance) {
-      total += fallbackAdvance(codePoints[position], faces, size, hScale);
-    }
+    const value = values[cpStart + offset] ?? last;
+    if (typeof value === 'number' && Number.isFinite(value)) total += value;
   }
   return total;
 }
@@ -752,26 +722,8 @@ export function layoutText(
         runPenX += dirX * advance;
         runPenY += dirY * advance;
       }
-      const stepX = computeDelta(
-        deltaX,
-        deltaIndex,
-        deltaCount,
-        codePoints,
-        faces,
-        size,
-        hScale,
-        dirX !== 0,
-      );
-      const stepY = computeDelta(
-        deltaY,
-        deltaIndex,
-        deltaCount,
-        codePoints,
-        faces,
-        size,
-        hScale,
-        dirY !== 0,
-      );
+      const stepX = computeDelta(deltaX, deltaIndex, deltaCount);
+      const stepY = computeDelta(deltaY, deltaIndex, deltaCount);
       units.push({
         codeIndex,
         cpStart: unit.cpStart,

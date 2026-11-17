@@ -133,8 +133,9 @@ describe('CGTransform N:1（连字）DeltaX 压缩兼容', () => {
       createFakeFaceSet(face),
     );
     expect(layout.units).toHaveLength(3);
-    expect(layout.units.map((unit) => unit.deltaX)).toEqual([4, 6, 4]);
-    expect(layout.endX).toBe(14);
+    // DeltaX 只覆盖前两个单元；第三个单元复用最后一个值。
+    expect(layout.units.map((unit) => unit.deltaX)).toEqual([4, 6, 6]);
+    expect(layout.endX).toBe(16);
   });
 });
 
@@ -222,7 +223,8 @@ describe('逐字形回退', () => {
     );
     // 回退字体 1 em = 500 单位、advance=500 → size 10 时前进 10。
     expect(layout.units[0].placements[0].advance).toBeCloseTo(10, 6);
-    expect(layout.endX).toBeCloseTo(10, 6);
+    // 无 DeltaX 时绘制点不做偏移，pen 不前进（表 46）。
+    expect(layout.endX).toBe(0);
   });
 });
 

@@ -275,14 +275,16 @@ describe('HScale', () => {
     expect(layout.endX).toBe(5);
   });
 
-  it('缺少 Delta 时 advance 也乘以 HScale', () => {
+  it('字形 advance 乘以 HScale，但无 Delta 时 pen 不前进', () => {
     const face = createLineFace();
     const layout = layoutText(
       makeTextObject({ hScale: 2, size: 10, codes: [makeTextCode({ text: 'A' })] }),
       createFakeFaceSet(face),
     );
     // advance 1000 × size 10 / upem 1000 × HScale 2 = 20
-    expect(layout.endX).toBe(20);
+    expect(layout.units[0].placements[0].advance).toBeCloseTo(20, 6);
+    // 表 46：缺失 DeltaX 表示绘制点不偏移，pen 保持在起点。
+    expect(layout.endX).toBe(0);
   });
 });
 

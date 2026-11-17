@@ -81,21 +81,24 @@ describe('parseDeltaTokens', () => {
 describe('layoutText DeltaX', () => {
   const faces = createFakeFaceSet(createAbcFace());
 
-  it('缺失 DeltaX 时按字体 advance 推进', () => {
+  it('缺失 DeltaX 时所有字符共用同一 X', () => {
+    // 表 46：DeltaX 不出现表示绘制点在 X 方向不做偏移，字形叠在同一 X 上。
     const layout = layoutText(makeTextObject({ codes: [makeTextCode({ text: 'ABC' })] }), faces);
     expect(layout.units).toHaveLength(3);
-    expect(layout.units.map((unit) => unit.deltaX)).toEqual([10, 10, 10]);
-    expect(layout.units.map((unit) => unit.x)).toEqual([0, 10, 20]);
-    expect(layout.endX).toBe(30);
+    expect(layout.units.map((unit) => unit.deltaX)).toEqual([0, 0, 0]);
+    expect(layout.units.map((unit) => unit.x)).toEqual([0, 0, 0]);
+    expect(layout.endX).toBe(0);
   });
 
-  it('DeltaX 数量不足时后面的字符回退 advance', () => {
+  it('DeltaX 数量不足时后续字形复用最后一个值', () => {
+    // 生产工具常用单个值表达等宽字距；缺失位置复用该值，避免后段字形叠在一起。
     const layout = layoutText(
       makeTextObject({ codes: [makeTextCode({ text: 'ABC', deltaX: [5] })] }),
       faces,
     );
-    expect(layout.units.map((unit) => unit.deltaX)).toEqual([5, 10, 10]);
-    expect(layout.endX).toBe(25);
+    expect(layout.units.map((unit) => unit.deltaX)).toEqual([5, 5, 5]);
+    expect(layout.units.map((unit) => unit.x)).toEqual([0, 5, 10]);
+    expect(layout.endX).toBe(15);
   });
 
   it('DeltaX 数量过多时忽略多余值且不 warning', () => {
@@ -148,15 +151,15 @@ describe('layoutText DeltaX', () => {
     expect(layout.endX).toBe(17);
   });
 
-  it('非法 token 跳过并 warning，缺失位置回退 advance', () => {
+  it('非法 token 跳过并 warning，缺失位置复用最后一个值', () => {
     const warnings = collectWarnings();
     const layout = layoutText(
       makeTextObject({ codes: [makeTextCode({ text: 'ABC', deltaX: '4 x 6' })] }),
       faces,
       { onWarning: (code, message) => warnings.push(`${code}:${message}`) },
     );
-    expect(layout.units.map((unit) => unit.deltaX)).toEqual([4, 6, 10]);
-    expect(layout.endX).toBe(20);
+    expect(layout.units.map((unit) => unit.deltaX)).toEqual([4, 6, 6]);
+    expect(layout.endX).toBe(16);
     expect(warnings.some((warning) => warning.includes('非法 token'))).toBe(true);
   });
 
@@ -192,19 +195,20 @@ describe('layoutText DeltaY 与 TextCode 起点', () => {
       }),
       faces,
     );
+    // DeltaY 只有 1 项，后续字形复用该值。
     expect(layout.endX).toBe(0);
-    expect(layout.endY).toBe(25);
-    expect(layout.units.map((unit) => unit.y)).toEqual([0, 5, 15]);
+    expect(layout.endY).toBe(15);
+    expect(layout.units.map((unit) => unit.y)).toEqual([0, 5, 10]);
   });
 
-  it('竖排缺失 DeltaY 时按字体 advance 推进', () => {
+  it('竖排缺失 DeltaY 时所有字符共用同一 Y', () => {
     const layout = layoutText(
       makeTextObject({ readDirection: 90, codes: [makeTextCode({ text: 'ABC' })] }),
       faces,
     );
-    expect(layout.units.map((unit) => unit.deltaY)).toEqual([10, 10, 10]);
-    expect(layout.units.map((unit) => unit.y)).toEqual([0, 10, 20]);
-    expect(layout.endY).toBe(30);
+    expect(layout.units.map((unit) => unit.deltaY)).toEqual([0, 0, 0]);
+    expect(layout.units.map((unit) => unit.y)).toEqual([0, 0, 0]);
+    expect(layout.endY).toBe(0);
   });
 
   it('竖排显式 DeltaY=0 被尊重', () => {
@@ -254,7 +258,7 @@ describe('layoutText DeltaY 与 TextCode 起点', () => {
       faces,
       { onWarning: (code, message) => warnings.push(`${code}:${message}`) },
     );
-    expect(layout.units.map((unit) => unit.deltaY)).toEqual([4, 6, 10]);
+    expect(layout.units.map((unit) => unit.deltaY)).toEqual([4, 6, 6]);
     expect(warnings.some((warning) => warning.includes('非法 token'))).toBe(true);
   });
 
@@ -270,8 +274,9 @@ describe('layoutText DeltaY 与 TextCode 起点', () => {
     );
     expect(layout.units[0]).toMatchObject({ x: 10, y: 20 });
     expect(layout.units[2]).toMatchObject({ x: 10, y: 20 });
-    // code2 从 (10,20) 重新开始，而不是接着上一段 pen 的 x=20。
-    expect(layout.endX).toBe(20);
+    // code2 从 (10,20) 重新开始，而不是接着上一段 pen 的 x=20；
+    // code2 无 DeltaX，所有字同一 X，故 endX 仍为 10。
+    expect(layout.endX).toBe(10);
   });
 
   it('首个 TextCode 缺省起点为 (0,0)', () => {
