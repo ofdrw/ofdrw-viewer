@@ -129,8 +129,43 @@ export const VIEWER_EVENT_BRIDGES = [
     react: 'onLocalFontsChange',
     vue: 'local-fonts-change',
   },
+  // 动作执行（UI 动作处理机制设计 §9.2）。
+  {
+    event: 'action:executed',
+    dom: 'ofd-action-executed',
+    react: 'onActionExecuted',
+    vue: 'action-executed',
+  },
+  {
+    event: 'action:skipped',
+    dom: 'ofd-action-skipped',
+    react: 'onActionSkipped',
+    vue: 'action-skipped',
+  },
+  { event: 'action:error', dom: 'ofd-action-error', react: 'onActionError', vue: 'action-error' },
+  // 音视频播放状态（音视频与动作方案设计 §7.8）。
+  { event: 'media:play', dom: 'ofd-media-play', react: 'onMediaPlay', vue: 'media-play' },
+  { event: 'media:pause', dom: 'ofd-media-pause', react: 'onMediaPause', vue: 'media-pause' },
+  { event: 'media:ended', dom: 'ofd-media-ended', react: 'onMediaEnded', vue: 'media-ended' },
+  { event: 'media:stop', dom: 'ofd-media-stop', react: 'onMediaStop', vue: 'media-stop' },
+  { event: 'media:error', dom: 'ofd-media-error', react: 'onMediaError', vue: 'media-error' },
   { event: 'statechange', dom: 'ofd-state-change', react: 'onStateChange', vue: 'state-change' },
 ] as const satisfies readonly ViewerEventBridge[];
+
+/** 已登记桥接的核心事件名联合。 */
+type BridgedEventName = (typeof VIEWER_EVENT_BRIDGES)[number]['event'];
+
+/**
+ * 桥接覆盖性断言（编译期）。
+ *
+ * `ViewerEventMap` 新增事件但忘记登记 {@link VIEWER_EVENT_BRIDGES} 时，此处会因
+ * 联合类型不可赋值给 `never` 而 typecheck 失败，避免 Web Component/React/Vue
+ * 静默收不到事件。`ViewerEventBridge.event` 的 `ViewerEventName` 约束同时防止反向
+ * 登记不存在的事件。
+ */
+type UnbridgedEventName = Exclude<ViewerEventName, BridgedEventName>;
+const _assertAllEventsBridged: UnbridgedEventName extends never ? true : never = true;
+void _assertAllEventsBridged;
 
 /** React 事件回调属性名联合。 */
 export type ReactViewerEventName = (typeof VIEWER_EVENT_BRIDGES)[number]['react'];
@@ -148,14 +183,28 @@ export function findEventBridge(event: ViewerEventName): ViewerEventBridge | und
   return VIEWER_EVENT_BRIDGES.find((bridge) => bridge.event === event);
 }
 
+/** 已告警的未登记事件名；同一次运行内只告警一次，避免逐事件刷屏。 */
+const unbridgedEventsWarned = new Set<string>();
+
 /**
  * 把核心事件名转换为 Web Component 的 CustomEvent 名称。
  *
+ * 只接受已登记 {@link VIEWER_EVENT_BRIDGES} 的事件。传入未登记的事件名属于
+ * 桥接表缺陷，此时输出一条告警并回退为 `ofd-<event>`，不抛异常以免宿主崩溃。
+ *
  * @param event 核心事件名。
- * @returns `ofd-*` 名称；未知事件回退为 `ofd-<event>`。
+ * @returns `ofd-*` 名称。
  */
 export function toDomEventName(event: ViewerEventName): string {
-  return findEventBridge(event)?.dom ?? `ofd-${event}`;
+  const bridge = findEventBridge(event);
+  if (bridge) return bridge.dom;
+  if (!unbridgedEventsWarned.has(event)) {
+    unbridgedEventsWarned.add(event);
+    console.warn(
+      `[ofdrw-viewer] 事件 "${event}" 未登记到 VIEWER_EVENT_BRIDGES，适配层将收不到该事件`,
+    );
+  }
+  return `ofd-${event}`;
 }
 
 /** 仅暴露订阅能力的最小结构；用于绕开联合事件名的泛型限制。 */

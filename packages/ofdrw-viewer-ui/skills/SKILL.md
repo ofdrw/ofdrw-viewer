@@ -520,7 +520,7 @@ viewer.setFeatures({ print: true });
 viewer.setFeatureDisplay({ export: 'disable' });
 ```
 
-`features` 是补丁对象，未出现的键默认开启；非法键/值被忽略。共 20 个功能键：`toolbar`、`sidebar`、`thumbnails`、`outline`、`bookmarks`、`attachments`、`pageNavigation`、`pageNumberInput`、`zoom`、`rotate`、`fullscreen`、`textLayer`、`selection`、`find`、`print`、`export`、`signatures`、`verification`、`documentProperties`、`keyboardShortcuts`。关闭 `textLayer` 会级联关闭 `selection` 和 `find`，关闭 `sidebar` 会级联关闭 `thumbnails`/`outline`/`bookmarks`/`attachments`（“图层”不是功能键，由 `layerPanel` 控制，`sidebar` 关闭时同样不可用，见[图层显示控制](#图层显示控制layerpanel)）。受功能守卫的方法在功能禁用时抛 `OFD_FEATURE_DISABLED`，可用 `isFeatureDisabledError(error, 'print')` 判断；`closeSidebar()` 等清理方法不设守卫。
+`features` 是补丁对象，未出现的键默认开启；非法键/值被忽略。共 21 个功能键：`toolbar`、`sidebar`、`thumbnails`、`outline`、`bookmarks`、`attachments`、`pageNavigation`、`pageNumberInput`、`zoom`、`rotate`、`fullscreen`、`textLayer`、`selection`、`find`、`print`、`export`、`signatures`、`verification`、`documentProperties`、`keyboardShortcuts`、`actions`。关闭 `textLayer` 会级联关闭 `selection` 和 `find`，关闭 `sidebar` 会级联关闭 `thumbnails`/`outline`/`bookmarks`/`attachments`（“图层”不是功能键，由 `layerPanel` 控制，`sidebar` 关闭时同样不可用，见[图层显示控制](#图层显示控制layerpanel)）。受功能守卫的方法在功能禁用时抛 `OFD_FEATURE_DISABLED`，可用 `isFeatureDisabledError(error, 'print')` 判断；`closeSidebar()` 等清理方法不设守卫。
 
 `attachments` 依赖 `sidebar`，另有两种由实现状态决定的关闭原因，宿主无法用 `features: true` 打开：引擎文档没有 `saveAttachment()`（旧引擎）时为 `unsupported`；引擎支持但 `getAttachments()` 为空或读取失败时为 `document`。两种情况下侧栏不渲染附件 tab，`openSidebar('attachments')` 抛 `OFD_FEATURE_DISABLED`。
 
@@ -660,6 +660,50 @@ console.log(info.pageCount, info.signatureCount, info.outlineCount, info.bookmar
 - **未打开抛 `OFD_NOT_OPENED`**：不返回空壳（与 `getPermissions()` 未打开时返回宽松默认值不同）；销毁后抛 `OFD_DESTROYED`。
 - 属性对话框（`documentProperties` 功能）按六个分组展示：文档属性、包信息、页面设置、颜色与资源、安全与结构、附件清单；某分组内全部字段缺失时整组隐藏。
 
+### 文档动作与音视频
+
+OFD 可以声明动作（`DO` 打开文档时、`PO` 进入页面时、`CLICK` 点击图元时），UI 负责触发与执行：`Goto` 复用跳转、`GotoA` 复用附件下载、`URI` 先弹确认框再开新窗口、`Sound`/`Movie` 用 `<audio>`/`<video>` 播放。宿主通常不需要配置，默认行为已经可用：
+
+```ts
+const viewer = new OFDViewer({
+  container: '#viewer',
+  source: file,
+  // 自动执行（DO/PO）默认关闭；这里给一个初始值，用户仍可在「更多 → 关于」里改
+  actions: {
+    autoExecuteActions: true,
+    allowUserToggleAutoExecute: true, // false = 用户不可改（受限展示场景）
+    maxActionDepth: 4,                // 嵌套深度上限
+    smoothGoto: true,                 // Goto 是否平滑滚动
+  },
+});
+
+await viewer.ready;
+
+viewer.on('action:executed', ({ type, owner, pageIndex }) => console.log('执行', type, pageIndex));
+viewer.on('action:skipped', ({ type, reason, pageIndex }) => console.log('跳过', type, reason));
+viewer.on('action:error', ({ type, code, reason, message }) => console.warn(type, code, reason, message));
+viewer.on('media:play', ({ resourceId, kind }) => console.log('播放', kind, resourceId));
+viewer.on('media:error', ({ resourceId, code }) => console.warn('播放失败', resourceId, code));
+
+// 手动执行某页的动作（便于集成测试与自动化）
+const outcomes = await viewer.executeActions(0, 'PO');
+
+// 「自动执行」开关的读取/设置（不持久化）
+viewer.getAutoExecuteActions();
+viewer.setAutoExecuteActions(true);
+```
+
+要点：
+
+- **自动执行默认关闭**：浏览器禁止无手势的有声自动播放，自动弹窗/跳转也会打断阅读。关闭时 DO/PO 不执行，改派 `action:skipped`（`reason: 'autoplay-disabled'`）并累加 `state.actions.pendingAutoActions`，宿主据此提示用户「此文档包含 N 个自动动作，可在「更多 → 关于」中开启」。
+- **开关位置**：工具栏「更多」→「关于」→「自动执行文档动作」。用户改动立即生效，**不持久化**（刷新后回到宿主预设值）；`allowUserToggleAutoExecute: false` 时开关为禁用态。
+- **命中口径**：点击命中只按 96 DPI 页面像素**外接矩形**判定，不解析 `Region` 折线；环形/凹形区域的挖空部分同样触发。拖拽、活动文本选区、签章按钮与媒体元素自身控件都优先。
+- **URI 动作**：只放行 `http:`/`https:`，每次都弹确认框（显示完整 URL 与主机名，默认焦点在「取消」），不提供"记住选择"；`Target="_self"` 会在当前窗口跳转（事件带 `target: '_self'`），宿主需要时可自行拦截。
+- **页淘汰即停**：页面被缓存淘汰时中止该页动作执行、销毁该页播放器并撤销 `ObjectURL`，不会后台继续出声；`PO` 每页只执行一次，翻页来回不会重放。
+- **没有 `media` 选项**：媒体音量、静音重试与单资源读取上限（256 MiB）是内部常量；超限时提示下载整个 OFD 原文件。
+- 关闭 `actions` 功能键后，`executeActions()` 抛 `OFD_FEATURE_DISABLED`（`feature='actions'`），「关于」里的开关行不出现。
+- 完整选项、方法、事件载荷、状态与词条见 [API.md 动作与音视频](./API.md#动作与音视频)；设计见 [UI动作处理机制设计](../../../docs/UI动作处理机制设计.md)。
+
 ### 加密文档与签名验证
 
 ```ts
@@ -699,6 +743,12 @@ console.log(report.overall);
 - **打印/导出范围**：打印调用浏览器对话框，不生成 PDF；图片导出不合并为 PDF；原 OFD 导出是字节拷贝，不重新打包或修正文档。
 - **加密边界**：`crypto.enabled=false` 时加密文档直接拒绝；吊销状态不检查，固定为未检查；时间戳只解析、不验证，不参与整体结论。
 - **跳转目标**：`goToDestination` 尚未暴露；可读 `getPageInfos()` 后用 `goToPage(pageIndex + 1)` 跳转，页内坐标由调用方处理。
+- **动作命中只到外接矩形**：`Action/Region` 的折线路径不参与判定（设计已定决策），环形/凹形区域的挖空部分同样触发；需要精确命中只能自行用 `getContentPointAtViewport()` 加引擎几何 API 实现，且不要绕过 `ActionService`。
+- **动作自动执行默认关闭且不持久化**：用户每次刷新都要重新在「关于」里打开；宿主想默认打开就传 `actions.autoExecuteActions: true`，想固定就再加 `allowUserToggleAutoExecute: false`。
+- **URI 动作只放行 http(s)**：`mailto:`/`tel:`/`ftp:`/`javascript:`/`data:`/`file:`/`blob:` 一律拒绝且不弹框；不提供"记住选择"，每次点击都确认。
+- **媒体选项不可配置**：没有 `ViewerOptions.media`；主音量、自动播放被拦截时的静音重试、单资源读取上限（256 MiB）都是内部常量。超过上限的媒体不读取内容，只能改为下载整个 OFD 原文件。
+- **页淘汰会打断该页动作**：滚动导致页面被缓存淘汰时，该页尚未播放完的音频/视频会被销毁（不会后台继续播放）；需要跨页持续播放的场景无法用内置动作实现。
+- **图层隐藏不改变 CLICK 命中**：图元所在图层被隐藏后，其 `CLICK` 动作仍参与命中（`ActionInfo` 不携带图层归属，反推不可靠）。
 - **性能**：未对数千页大文档、超大文件或低端设备做硬性性能承诺；首屏与全篇查找耗时随页数增长，宿主应自行压测。文字层 DOM 规模受页级 LRU 的页数/span 预算约束，不随总页数无限增长；超大单页受 `textLayerMaxSpans` 兜底。
 - **缩略图缓存**：`thumbnailCacheSize` 当前仅被解析，尚未接入缩略图缓存实现，实际缓存数量固定；需要严格控制内存时不要依赖该选项。
 - **附件**：附件列表只在 `attachments` 功能开启、引擎具备 `saveAttachment()` 且文档确有附件时出现；无附件时不渲染 tab。超过 500 MB（按声明大小）的附件不读取内容，只能改为下载整个 OFD 原文件；“导出全部”会跳过超阈值与读取失败的条目并汇总提示，不静默丢弃，但也不会部分重试。

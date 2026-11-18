@@ -6,7 +6,7 @@
 
 import type { Box, FillRule, LineCap, LineJoin, Matrix, Point } from '../common/types';
 import type { BadNumberHandler, XmlNode } from '../xml/types';
-import type { OFDWarning } from '../warnings';
+import type { OFDWarning, WarningCode } from '../warnings';
 import type { ResourceId } from './types';
 import { normalizeBox } from '../common/matrix';
 import { toBoolean, toNumber, toNumberArray } from '../xml/numbers';
@@ -31,7 +31,7 @@ export interface DecodeWarningContext {
  */
 export function emitWarning(
   context: DecodeWarningContext | undefined,
-  code: string,
+  code: WarningCode | string,
   message: string,
   overrides: { objectId?: ResourceId; resourceId?: ResourceId; pageIndex?: number } = {},
 ): void {

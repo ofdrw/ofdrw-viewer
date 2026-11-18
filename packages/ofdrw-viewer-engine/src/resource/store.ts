@@ -11,6 +11,7 @@ import type {
   DrawParam,
   FontResource,
   ImageResource,
+  MediaResource,
   Pattern,
   ResourceDefinitionSet,
   ResourceId,
@@ -26,6 +27,7 @@ export type ResourceWarningHandler = (warning: OFDWarning) => void;
 export const EMPTY_RESOURCE_INDEX: Readonly<ResourceIndex> = Object.freeze({
   fonts: new Map(),
   images: new Map(),
+  media: new Map(),
   drawParams: new Map(),
   compositeGraphicUnits: new Map(),
   patterns: new Map(),
@@ -37,6 +39,7 @@ export function resourceSetToIndex(set: ResourceDefinitionSet): ResourceIndex {
   return {
     fonts: new Map(set.fonts.map((font) => [font.id, font])),
     images: new Map(set.images.map((image) => [image.id, image])),
+    media: new Map(set.media.map((item) => [item.id, item])),
     drawParams: new Map(set.drawParams.map((param) => [param.id as ResourceId, param])),
     compositeGraphicUnits: new Map(set.compositeGraphicUnits.map((item) => [item.id, item])),
     patterns: new Map(set.patterns),
@@ -63,6 +66,7 @@ export interface MergeResourceIndexInput {
 export function mergeResourceIndexes(input: MergeResourceIndexInput): ResourceIndex {
   const fonts = new Map<ResourceId, FontResource>();
   const images = new Map<ResourceId, ImageResource>();
+  const media = new Map<ResourceId, MediaResource>();
   const drawParams = new Map<ResourceId, DrawParam>();
   const compositeGraphicUnits = new Map<ResourceId, CompositeGraphicUnit>();
   const patterns = new Map<ResourceId, Pattern>();
@@ -94,6 +98,7 @@ export function mergeResourceIndexes(input: MergeResourceIndexInput): ResourceIn
     const label = input.labels?.[index] ?? `第 ${index + 1} 层`;
     mergeMap(fonts, layer.fonts, label, 'Font');
     mergeMap(images, layer.images, label, 'Image');
+    mergeMap(media, layer.media, label, 'Media');
     mergeMap(drawParams, layer.drawParams, label, 'DrawParam');
     mergeMap(compositeGraphicUnits, layer.compositeGraphicUnits, label, 'CompositeGraphicUnit');
     mergeMap(patterns, layer.patterns, label, 'Pattern');
@@ -104,6 +109,7 @@ export function mergeResourceIndexes(input: MergeResourceIndexInput): ResourceIn
   return {
     fonts,
     images,
+    media,
     drawParams,
     compositeGraphicUnits,
     patterns,
@@ -199,6 +205,16 @@ export class ResourceStore {
   }
 
   /**
+   * 按 ID 查音视频资源。
+   *
+   * @param id 资源 ID。
+   * @returns 音视频资源定义或 undefined。
+   */
+  getMedia(id: ResourceId): MediaResource | undefined {
+    return this.index.media.get(normalizeResourceId(id));
+  }
+
+  /**
    * 按 ID 查 DrawParam。
    *
    * @param id 资源 ID。
@@ -267,6 +283,7 @@ export class ResourceStore {
       templateIds,
       getFont: (id: ResourceId) => merged.fonts.get(normalizeResourceId(id)),
       getImage: (id: ResourceId) => merged.images.get(normalizeResourceId(id)),
+      getMedia: (id: ResourceId) => merged.media.get(normalizeResourceId(id)),
       getDrawParam: (id: ResourceId) => merged.drawParams.get(normalizeResourceId(id)),
       getComposite: (id: ResourceId) => merged.compositeGraphicUnits.get(normalizeResourceId(id)),
       getPattern: (id: ResourceId) => merged.patterns.get(normalizeResourceId(id)),

@@ -44,10 +44,12 @@ export type {
   OFDPageEventMap,
   OFDPageEventName,
   OFDPageOperationEventBase,
+  ActionPageEndEvent,
   PageLoadAbortEvent,
   PageLoadEndEvent,
   PageLoadErrorEvent,
   PageLoadStartEvent,
+  MediaIndexEndEvent,
   PageRenderAbortEvent,
   PageRenderEndEvent,
   PageRenderErrorEvent,
@@ -117,6 +119,8 @@ export type {
   DocumentMetadata,
   DocumentPageArea,
   DocumentPermissions,
+  MediaResourceQueryOptions,
+  ObjectActionTarget,
   OfdPackageInfo,
   OFDDocumentApi,
   OFDPageApi,
@@ -141,6 +145,19 @@ export type {
   TextUnit,
 } from './api/ui-types';
 export { DEFAULT_DPI, MM_PER_INCH, getPageTransform, getPageViewport } from './api/viewport';
+
+// ---------------------------------------------------------------------------
+// 动作几何：动作触发区域 → 页面像素
+// ---------------------------------------------------------------------------
+export { getActionGeometry, isPointInActionRegion } from './api/geometry';
+export type {
+  ActionGeometry,
+  ActionGeometryEntry,
+  ActionGeometryOptions,
+  ActionGeometrySource,
+  PixelBox,
+  PixelPath,
+} from './api/geometry';
 
 // ---------------------------------------------------------------------------
 // 字体别名：内置别名组与扩展入口
@@ -214,4 +231,22 @@ export type {
   Viewport,
 } from './common/types';
 export type { DisplayList, DrawCommand } from './common/display-list';
-export type { ResourceId } from './model/types';
+export type {
+  ActionEvent,
+  ActionInfo,
+  ActionOwner,
+  ActionPayload,
+  ActionRegion,
+  ActionRegionPath,
+  ActionType,
+  GotoAActionPayload,
+  GotoActionPayload,
+  MediaKind,
+  MediaResource,
+  MovieActionPayload,
+  MovieOperator,
+  ResourceId,
+  ResourceScope,
+  SoundActionPayload,
+  UriActionPayload,
+} from './model/types';

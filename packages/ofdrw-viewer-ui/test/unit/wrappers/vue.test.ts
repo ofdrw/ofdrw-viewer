@@ -11,7 +11,43 @@ vi.mock('../../../src/index', async () => {
   return { OFDViewer: Fake };
 });
 
+import {
+  VIEWER_EVENT_BRIDGES,
+  type ViewerEventBridge,
+} from '../../../src/component/support';
 import { OFDViewer } from '../../../src/vue/index';
+
+/**
+ * 桥接表里每个 Vue emit 对应的 props 回调名（`on-page-change` → `onPageChange`）。
+ *
+ * @param vueName 桥接表登记的 kebab-case 名称。
+ * @returns 组件 props 中对应的回调名。
+ */
+function toPropsName(vueName: string): string {
+  return `on${vueName
+    .split('-')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join('')}`;
+}
+
+/**
+ * 为每条桥接生成 `onXxx` 监听器。
+ *
+ * @returns 组件 props 与按核心事件名索引的监听器表。
+ */
+function createBridgeProps(): {
+  props: Record<string, (payload: unknown) => void>;
+  spies: Map<ViewerEventBridge['event'], ReturnType<typeof vi.fn>>;
+} {
+  const props: Record<string, (payload: unknown) => void> = {};
+  const spies = new Map<ViewerEventBridge['event'], ReturnType<typeof vi.fn>>();
+  for (const bridge of VIEWER_EVENT_BRIDGES) {
+    const spy = vi.fn();
+    spies.set(bridge.event, spy);
+    props[toPropsName(bridge.vue)] = spy;
+  }
+  return { props, spies };
+}
 
 beforeEach(() => {
   FakeViewer.reset();
@@ -113,6 +149,112 @@ describe('Vue wrapper', () => {
     expect(exposed.getLocalFontsStatus().enabled).toBe(true);
     expect(wrapper.emitted('local-fonts-change')).toHaveLength(1);
     expect(onLocalFontsChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('遍历桥接表逐个 emit 并调用对应 onXxx 监听器', async () => {
+    const { props, spies } = createBridgeProps();
+    const wrapper = mount(OFDViewer, { props: { source: 'a.ofd', ...props } });
+    await nextTick();
+    const viewer = FakeViewer.instances[0]!;
+
+    for (const bridge of VIEWER_EVENT_BRIDGES) {
+      const payload = { marker: bridge.event };
+      viewer.emit(bridge.event, payload);
+      await nextTick();
+      const spy = spies.get(bridge.event)!;
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith(payload);
+      expect(wrapper.emitted(bridge.vue)).toHaveLength(1);
+    }
+    wrapper.unmount();
+  });
+
+  it('动作与音视频事件在 emits 中声明并被转发', async () => {
+    const onActionExecuted = vi.fn();
+    const onActionSkipped = vi.fn();
+    const onActionError = vi.fn();
+    const onMediaPlay = vi.fn();
+    const onMediaPause = vi.fn();
+    const onMediaEnded = vi.fn();
+    const onMediaStop = vi.fn();
+    const onMediaError = vi.fn();
+    const wrapper = mount(OFDViewer, {
+      props: {
+        source: 'a.ofd',
+        onActionExecuted,
+        onActionSkipped,
+        onActionError,
+        onMediaPlay,
+        onMediaPause,
+        onMediaEnded,
+        onMediaStop,
+        onMediaError,
+      },
+    });
+    await nextTick();
+    const viewer = FakeViewer.instances[0]!;
+    const declared = wrapper.vm.$options.emits as readonly string[];
+    for (const name of [
+      'action-executed',
+      'action-skipped',
+      'action-error',
+      'media-play',
+      'media-pause',
+      'media-ended',
+      'media-stop',
+      'media-error',
+    ]) {
+      expect(declared).toContain(name);
+    }
+
+    viewer.emit('action:executed', { type: 'Goto', owner: 'page' });
+    viewer.emit('action:skipped', { type: 'Sound', reason: 'autoplay-disabled' });
+    viewer.emit('action:error', { type: 'URI', code: 'OFD_UNSUPPORTED' });
+    viewer.emit('media:play', { resourceId: 'a', kind: 'video' });
+    viewer.emit('media:pause', { resourceId: 'a', kind: 'video' });
+    viewer.emit('media:ended', { resourceId: 'a', kind: 'video' });
+    viewer.emit('media:stop', { resourceId: 'a', kind: 'video' });
+    viewer.emit('media:error', { resourceId: 'a', code: 'decode' });
+    await nextTick();
+
+    expect(onActionExecuted).toHaveBeenCalledWith({ type: 'Goto', owner: 'page' });
+    expect(onActionSkipped).toHaveBeenCalledWith({
+      type: 'Sound',
+      reason: 'autoplay-disabled',
+    });
+    expect(onActionError).toHaveBeenCalledWith({ type: 'URI', code: 'OFD_UNSUPPORTED' });
+    expect(onMediaPlay).toHaveBeenCalledTimes(1);
+    expect(onMediaPause).toHaveBeenCalledTimes(1);
+    expect(onMediaEnded).toHaveBeenCalledTimes(1);
+    expect(onMediaStop).toHaveBeenCalledTimes(1);
+    expect(onMediaError).toHaveBeenCalledWith({ resourceId: 'a', code: 'decode' });
+    wrapper.unmount();
+  });
+
+  it('expose 转发动作执行与自动执行开关方法', async () => {
+    const wrapper = mount(OFDViewer, { props: { source: 'a.ofd' } });
+    await nextTick();
+    const viewer = FakeViewer.instances[0]!;
+    const exposed = wrapper.vm as unknown as {
+      executeActions: (
+        pageIndex: number,
+        event: string,
+        options?: { signal?: AbortSignal },
+      ) => Promise<readonly string[]>;
+      getAutoExecuteActions: () => boolean | undefined;
+      setAutoExecuteActions: (enabled: boolean) => void;
+      getAutoExecuteActionsToggleAllowed: () => boolean | undefined;
+    };
+
+    expect(await exposed.executeActions(0, 'PO')).toEqual(['executed']);
+    expect(viewer.executeActionsCalls).toEqual([[0, 'PO']]);
+
+    expect(exposed.getAutoExecuteActions()).toBe(false);
+    exposed.setAutoExecuteActions(true);
+    expect(viewer.autoExecuteCalls).toEqual([true]);
+    expect(exposed.getAutoExecuteActions()).toBe(true);
+    expect(exposed.getAutoExecuteActionsToggleAllowed()).toBe(true);
+    wrapper.unmount();
   });
 
   it('expose 提供实例与常用命令，卸载销毁实例', async () => {

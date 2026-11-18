@@ -183,6 +183,30 @@ export interface PageRenderAbortEvent extends OFDPageOperationEventBase {
 }
 
 // ---------------------------------------------------------------------------
+// 音视频与动作解析完成（只描述解析态，不承载播放语义）
+// ---------------------------------------------------------------------------
+
+/**
+ * `media:index:end`：音视频资源索引首次读取完成。
+ *
+ * 由 `OFDDocument.getMediaResources()` 首次调用后派发，之后命中缓存不再派发。
+ */
+export interface MediaIndexEndEvent extends OFDEventBase {
+  readonly type: 'media:index:end';
+  /** 音视频资源数量，单位：个。 */
+  readonly count: number;
+}
+
+/** `action:page:end`：页级动作解析完成。 */
+export interface ActionPageEndEvent extends OFDEventBase {
+  readonly type: 'action:page:end';
+  /** 页索引，从 0 开始。 */
+  readonly pageIndex: number;
+  /** 该页页级动作数量，单位：个；图元动作不计入。 */
+  readonly count: number;
+}
+
+// ---------------------------------------------------------------------------
 // 事件映射与监听器类型
 // ---------------------------------------------------------------------------
 
@@ -202,6 +226,8 @@ export interface OFDEventMap {
   'page:render:end': PageRenderEndEvent;
   'page:render:error': PageRenderErrorEvent;
   'page:render:abort': PageRenderAbortEvent;
+  'media:index:end': MediaIndexEndEvent;
+  'action:page:end': ActionPageEndEvent;
 }
 
 /** 所有事件名。 */

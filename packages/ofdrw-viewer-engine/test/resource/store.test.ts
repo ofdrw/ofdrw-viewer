@@ -41,6 +41,7 @@ describe('resourceSetToIndex', () => {
     const set: ResourceDefinitionSet = {
       fonts: [font('1', 'A')],
       images: [{ id: '2', mediaFile: 'Res/image.png', format: 'png' }],
+      media: [],
       drawParams: [{ id: '3', lineWidth: 2 }],
       compositeGraphicUnits: [{ id: '4', width: 10, height: 20, content: { kind: 'block', children: [] } }],
       colorSpaces: [{ id: '5', type: 'RGB', bitsPerComponent: 8 }],

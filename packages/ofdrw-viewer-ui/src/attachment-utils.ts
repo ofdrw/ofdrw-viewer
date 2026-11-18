@@ -2,9 +2,9 @@
  * 附件能力（设计方案 §6.2）。
  *
  * 只做三件事：
- * - 纯函数：大小/日期格式化、下载文件名清洗、阈值判断；
- * - ZIP 打包：浏览器原生 ZIP（store 模式），不引入第三方依赖；
- * - 侧栏视图：列表、单个下载、批量导出。
+ * - 纯函数：大小/日期格式化、下载文件名清洗、阈值判断、可预览类型判定；
+ * - ZIP 打包：复用图片导出的 store 模式 ZIP（fflate，按需动态导入）；
+ * - 侧栏视图：列表、单个下载、多选导出。
  *
  * 安全约束（§6.2.5）：附件内容一律不进入 DOM，不使用 innerHTML/srcdoc；
  * 未知格式只提供下载，不提供预览。
@@ -20,6 +20,14 @@ import type { Translator } from './i18n';
  * 未声明大小的附件不参与阈值判断。
  */
 export const ATTACHMENT_LARGE_THRESHOLD_BYTES = 524288000;
+
+/**
+ * 可预览附件的上限，单位 byte（20 MB）。
+ *
+ * 声明大小超过该阈值的附件不进入预览弹框，改为直接下载，避免整份内容驻留内存。
+ * 未声明大小的附件按未超限处理，否则无从判断，只有读取后才知道实际大小。
+ */
+export const ATTACHMENT_PREVIEW_THRESHOLD_BYTES = 20 * 1024 * 1024;
 
 /** 单个 ZIP 条目名最大长度（含扩展名），避免超长路径。 */
 const MAX_ENTRY_NAME_LENGTH = 120;
@@ -104,9 +112,14 @@ export type AttachmentIconKind =
   | 'pdf'
   | 'doc'
   | 'sheet'
+  | 'slide'
   | 'image'
   | 'text'
+  | 'xml'
   | 'archive'
+  | 'video'
+  | 'audio'
+  | 'code'
   | 'other';
 
 /** 扩展名到图标类别；键为小写扩展名。 */
@@ -127,8 +140,14 @@ const ICON_KINDS: Readonly<Record<string, AttachmentIconKind>> = Object.freeze({
   et: 'sheet',
   csv: 'sheet',
   ods: 'sheet',
-  ppt: 'sheet',
-  pptx: 'sheet',
+  ppt: 'slide',
+  pptx: 'slide',
+  pps: 'slide',
+  ppsx: 'slide',
+  pot: 'slide',
+  potx: 'slide',
+  dps: 'slide',
+  odp: 'slide',
   png: 'image',
   jpg: 'image',
   jpeg: 'image',
@@ -136,14 +155,48 @@ const ICON_KINDS: Readonly<Record<string, AttachmentIconKind>> = Object.freeze({
   bmp: 'image',
   webp: 'image',
   svg: 'image',
+  ico: 'image',
   tif: 'image',
   tiff: 'image',
   txt: 'text',
   md: 'text',
-  json: 'text',
-  xml: 'text',
   log: 'text',
   html: 'text',
+  htm: 'text',
+  xml: 'xml',
+  xsl: 'xml',
+  xslt: 'xml',
+  plist: 'xml',
+  json: 'code',
+  js: 'code',
+  mjs: 'code',
+  ts: 'code',
+  css: 'code',
+  yml: 'code',
+  yaml: 'code',
+  toml: 'code',
+  mp4: 'video',
+  m4v: 'video',
+  mov: 'video',
+  webm: 'video',
+  ogv: 'video',
+  avi: 'video',
+  mkv: 'video',
+  wmv: 'video',
+  flv: 'video',
+  mpg: 'video',
+  mpeg: 'video',
+  '3gp': 'video',
+  mp3: 'audio',
+  m4a: 'audio',
+  aac: 'audio',
+  wav: 'audio',
+  ogg: 'audio',
+  oga: 'audio',
+  opus: 'audio',
+  flac: 'audio',
+  wma: 'audio',
+  amr: 'audio',
   zip: 'archive',
   rar: 'archive',
   '7z': 'archive',
@@ -152,19 +205,140 @@ const ICON_KINDS: Readonly<Record<string, AttachmentIconKind>> = Object.freeze({
 });
 
 /**
- * 判断附件格式对应的图标类别。
+ * 读取附件扩展名（小写，不含点）。
  *
- * 优先取名称里的扩展名，其次使用 XML 声明的格式。
+ * 优先取名称里的扩展名，名称无扩展名时回退 XML 声明的格式。
+ *
+ * @param attachment 附件元信息。
+ * @returns 小写扩展名；无法确定时为空字符串。
+ */
+function attachmentExtension(attachment: AttachmentInfo): string {
+  const name = attachment.name ?? '';
+  const dot = name.lastIndexOf('.');
+  const fromName = dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+  return fromName || (attachment.format?.trim().toLowerCase() ?? '');
+}
+
+/**
+ * 判断附件格式对应的图标类别。
  *
  * @param attachment 附件元信息。
  * @returns 图标类别；无法识别时为 `other`。
  */
 export function attachmentIconKind(attachment: AttachmentInfo): AttachmentIconKind {
-  const name = attachment.name ?? '';
-  const dot = name.lastIndexOf('.');
-  const fromName = dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
-  const fromFormat = attachment.format?.trim().toLowerCase() ?? '';
-  return ICON_KINDS[fromName || fromFormat] ?? 'other';
+  return ICON_KINDS[attachmentExtension(attachment)] ?? 'other';
+}
+
+/** 可预览附件的类型。 */
+export type AttachmentPreviewKind = 'image' | 'video' | 'audio' | 'text';
+
+/** 扩展名到预览类型；未列出的扩展名不提供预览，只提供下载。 */
+const PREVIEW_KINDS: Readonly<Record<string, AttachmentPreviewKind>> = Object.freeze({
+  png: 'image',
+  jpg: 'image',
+  jpeg: 'image',
+  gif: 'image',
+  bmp: 'image',
+  webp: 'image',
+  ico: 'image',
+  mp4: 'video',
+  m4v: 'video',
+  webm: 'video',
+  ogv: 'video',
+  mov: 'video',
+  mp3: 'audio',
+  m4a: 'audio',
+  aac: 'audio',
+  wav: 'audio',
+  ogg: 'audio',
+  oga: 'audio',
+  opus: 'audio',
+  flac: 'audio',
+  txt: 'text',
+  md: 'text',
+  log: 'text',
+  json: 'text',
+  csv: 'text',
+  xml: 'text',
+  yml: 'text',
+  yaml: 'text',
+});
+
+/** 扩展名到 MIME 类型；用于预览对象 URL，避免浏览器按扩展名猜测失败。 */
+const MIME_BY_EXTENSION: Readonly<Record<string, string>> = Object.freeze({
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  bmp: 'image/bmp',
+  webp: 'image/webp',
+  ico: 'image/x-icon',
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  webm: 'video/webm',
+  ogv: 'video/ogg',
+  mov: 'video/quicktime',
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  aac: 'audio/aac',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  oga: 'audio/ogg',
+  opus: 'audio/ogg',
+  flac: 'audio/flac',
+});
+
+/**
+ * 判断附件是否可预览，以及按哪种类型预览。
+ *
+ * 只认可图片、视频、音频、纯文本四类；其余格式（含 PDF、Office、压缩包）
+ * 一律返回 undefined，由调用方只提供下载。
+ *
+ * @param attachment 附件元信息。
+ * @returns 预览类型；不可预览时 undefined。
+ */
+export function attachmentPreviewKind(
+  attachment: AttachmentInfo,
+): AttachmentPreviewKind | undefined {
+  return PREVIEW_KINDS[attachmentExtension(attachment)];
+}
+
+/**
+ * 判断附件声明的类型是否为纯文本。
+ *
+ * @param attachment 附件元信息。
+ * @returns 预览类型为 `text` 时 true。
+ */
+export function isTextAttachment(attachment: AttachmentInfo): boolean {
+  return attachmentPreviewKind(attachment) === 'text';
+}
+
+/**
+ * 推断预览用的 MIME 类型。
+ *
+ * 优先使用 XML 声明的 `ContentType`，其次按扩展名映射，都没有时按下载默认值处理。
+ *
+ * @param attachment 附件元信息。
+ * @returns MIME 类型；无法确定时为 `application/octet-stream`。
+ */
+export function attachmentMimeType(attachment: AttachmentInfo): string {
+  const declared = attachment.contentType?.trim();
+  if (declared) return declared;
+  return MIME_BY_EXTENSION[attachmentExtension(attachment)] ?? 'application/octet-stream';
+}
+
+/**
+ * 判断附件是否超过可预览阈值。
+ *
+ * 只依据 XML 声明的大小；未声明大小按未超限处理。
+ *
+ * @param attachment 附件元信息。
+ * @returns 声明大小超过预览阈值时 true。
+ */
+export function isPreviewTooLargeAttachment(attachment: AttachmentInfo): boolean {
+  return (
+    attachment.size !== undefined && attachment.size > ATTACHMENT_PREVIEW_THRESHOLD_BYTES
+  );
 }
 
 /**

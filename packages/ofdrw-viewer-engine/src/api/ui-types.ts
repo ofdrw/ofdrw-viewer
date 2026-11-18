@@ -7,7 +7,14 @@
  */
 
 import type { Box, Matrix } from '../common/types';
+import type {
+  ActionEvent,
+  ActionInfo,
+  MediaResource,
+  ResourceId,
+} from '../model/types';
 import type { PageContentFilter } from '../render/content-filter';
+import type { ActionGeometryEntry } from './geometry';
 
 /** 页面信息查询参数。 */
 export interface PageInfoOptions {
@@ -66,6 +73,8 @@ export interface OutlineNode {
   children: readonly OutlineNode[];
   /** 跳转目标；无效或缺失时省略。 */
   dest?: DocumentDestination;
+  /** 节点上的动作（`OutlineElem/Actions`）；无动作时省略。 */
+  actions?: readonly ActionInfo[];
 }
 
 /** 书签条目。 */
@@ -333,6 +342,34 @@ export interface AttachmentOperationOptions {
    */
   chunkSize?: number;
 }
+
+/**
+ * 音视频资源查询参数。
+ *
+ * `pageIndex` 用于页级资源作用域解析：页级 `PageRes` 中声明的音视频只在声明页可见。
+ */
+export interface MediaResourceQueryOptions {
+  /** 取消信号；中止后 promise 以 `OFD_ABORTED` 拒绝。 */
+  signal?: AbortSignal;
+  /**
+   * 查询来源页索引（从 0 开始）；用于页级资源作用域解析。
+   *
+   * 省略时按“文档 → 公共”查找，找不到再回退到任意页资源并上报 `W_MEDIA_SCOPE_AMBIGUOUS`。
+   */
+  pageIndex?: number;
+  /**
+   * 单次读取字节上限覆盖，byte。
+   *
+   * 只在 `getMediaData` 生效；省略时使用 `ResourceLimits.maxMediaBytes`（默认 256 MiB）。
+   * 取值与 `maxMediaBytes` 取较小者。
+   */
+  maxBytes?: number;
+}
+
+/** 图元动作定位参数：按图元 `ID` 或按页内嵌套路径定位。 */
+export type ObjectActionTarget =
+  | { objectId: ResourceId }
+  | { path: readonly number[] };
 
 /** 页面预取参数。 */
 export interface PagePrepareOptions {
@@ -607,6 +644,46 @@ export interface OFDDocumentApi {
     attachmentId: string,
     options?: { signal?: AbortSignal },
   ): Promise<Uint8Array | undefined>;
+  /** 读取文档内全部音视频资源；无音视频返回空数组。 */
+  getMediaResources(options?: { signal?: AbortSignal }): Promise<readonly MediaResource[]>;
+  /** 按资源 ID 查找音视频资源；仅读资源索引，不读内容。 */
+  getMediaResource(
+    resourceId: string,
+    options?: MediaResourceQueryOptions,
+  ): Promise<MediaResource | undefined>;
+  /** 读取音视频资源原始字节；资源不存在或类型不符时返回 undefined。 */
+  getMediaData(
+    resourceId: string,
+    options?: MediaResourceQueryOptions,
+  ): Promise<Uint8Array | undefined>;
+  /** 判断资源 ID 是否为图片资源（`MultiMedia Type=Image`）；只查索引、不读内容。 */
+  hasImageResource(
+    resourceId: string,
+    options?: { signal?: AbortSignal; pageIndex?: number },
+  ): Promise<boolean>;
+  /** 文档级动作（`Document.xml` 的 `Actions`），打开阶段已解析。 */
+  getDocumentActions(): readonly ActionInfo[];
+  /** 页级动作（`Page.xml` 的 `Actions`）。 */
+  getPageActions(pageIndex: number, options?: { signal?: AbortSignal }): Promise<readonly ActionInfo[]>;
+  /** 图元动作：按图元 ID 或页内路径定位。 */
+  getObjectActions(
+    pageIndex: number,
+    target: ObjectActionTarget,
+    options?: { signal?: AbortSignal },
+  ): Promise<readonly ActionInfo[]>;
+  /** 大纲节点动作：按大纲路径（如 `[0, 2]`）定位。 */
+  getOutlineActions(path: readonly number[], options?: { signal?: AbortSignal }): Promise<readonly ActionInfo[]>;
+  /** 取本页全部可定位动作及其页面像素几何，供宿主建命中表。 */
+  getPageActionGeometries(
+    pageIndex: number,
+    options?: { dpi?: number; signal?: AbortSignal },
+  ): Promise<readonly ActionGeometryEntry[]>;
+  /** 便捷聚合：取本页某事件可触发的全部动作（含图元动作）。 */
+  getPageActionsByEvent(
+    pageIndex: number,
+    event: ActionEvent,
+    options?: { signal?: AbortSignal },
+  ): Promise<readonly ActionInfo[]>;
 }
 
 /**

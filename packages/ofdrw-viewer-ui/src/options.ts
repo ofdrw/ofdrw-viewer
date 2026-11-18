@@ -29,6 +29,8 @@ import {
   type ViewerWarning,
 } from './state';
 import type { ViewerSource } from './types';
+import type { ViewerActionsOptions } from './actions/action-service';
+import { resolveViewerActionsOptions, type ResolvedViewerActionsOptions } from './actions/action-service';
 
 /**
  * 桌面端单页 canvas 像素上限（width × height），默认 256MP。
@@ -412,7 +414,17 @@ export interface OFDViewerOptions {
    * 只在实例创建时生效，修改后需重新构造。
    */
   readonly layerPanel?: LayerPanelOptions;
+  /**
+   * 动作执行选项（UI 动作处理机制设计 §5.2）。
+   *
+   * 自动执行（`DO`/`PO`）默认关闭：浏览器禁止无手势的有声自动播放，自动弹窗/跳转也会
+   * 打断阅读。用户可通过「更多 → 关于」临时开启，不持久化。
+   */
+  readonly actions?: ViewerActionsOptions;
 }
+
+/** 动作选项；类型定义在 `actions/action-service.ts`，这里再导出供子路径使用。 */
+export type { ViewerActionsOptions } from './actions/action-service';
 
 /** 图层侧栏配置；类型定义在 `layers/content-filter.ts`，这里再导出供子路径使用。 */
 export type { LayerPanelOptions } from './layers/content-filter';
@@ -456,6 +468,8 @@ export interface ResolvedViewerOptions {
   readonly fonts?: ViewerFontOptions;
   /** 已解析的图层侧栏配置（六项齐全的默认可见性）。 */
   readonly layerPanel: ResolvedLayerPanelOptions;
+  /** 已解析的动作执行选项。 */
+  readonly actions: ResolvedViewerActionsOptions;
 }
 
 /** 解析默认值时可用的宿主环境信息。 */
@@ -534,6 +548,7 @@ export function resolveViewerOptions(
     crypto: options.crypto,
     fonts: options.fonts,
     layerPanel: resolveLayerPanelOptions(options.layerPanel),
+    actions: resolveViewerActionsOptions(options.actions),
   };
 }
 

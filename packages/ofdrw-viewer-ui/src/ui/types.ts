@@ -56,6 +56,7 @@ export type UIShellCommand =
   | { readonly type: 'signatures.open' }
   | { readonly type: 'fullscreen.set'; readonly value: boolean }
   | { readonly type: 'localFonts.set'; readonly value: boolean }
+  | { readonly type: 'actions.setAutoExecute'; readonly value: boolean }
   | { readonly type: 'document.properties' }
   | { readonly type: 'about.open' };
 
@@ -95,6 +96,22 @@ export interface UIShellViewState {
   readonly documentTitle?: string;
   /** 本地字体状态；省略表示宿主未启用该能力（设置面板不出现字体分组）。 */
   readonly localFonts?: LocalFontsStatus;
+  /**
+   * 文档动作自动执行开关；省略表示动作模块未挂载（「关于」里不出现该行）。
+   *
+   * 与 `localFonts` 同构：由核心推送到外壳，用户在「关于」里切换后立即生效，
+   * **不持久化**（刷新后回到宿主预设值）。
+   */
+  readonly actions?: {
+    /** 当前是否自动执行 `DO`/`PO` 动作。 */
+    readonly autoExecute: boolean;
+    /**
+     * 是否允许用户通过界面修改该开关；省略按允许处理。
+     *
+     * 取自宿主选项 `actions.allowUserToggleAutoExecute`，为 `false` 时开关渲染为禁用态。
+     */
+    readonly allowUserToggle?: boolean;
+  };
   /** 图层面板可用性；省略时按可见、可用处理。 */
   readonly layerPanel?: { readonly enabled: boolean; readonly disabled: boolean };
 }
@@ -151,6 +168,19 @@ export interface UIDialogOptions {
   readonly dismissible?: boolean;
   /** 关闭回调。 */
   readonly onClose?: () => void;
+  /**
+   * ARIA 角色；默认 `dialog`。
+   *
+   * 安全相关确认（例如外部链接访问）应使用 `alertdialog`，让读屏立即播报。
+   */
+  readonly role?: 'dialog' | 'alertdialog';
+  /**
+   * 初始焦点落在哪个底部按钮；默认把焦点移入对话框并落在首个可聚焦元素。
+   *
+   * 传 `'cancel'` 表示把焦点放在**最后一个**按钮（约定为「取消」），防止用户
+   * 误按回车直接确认危险操作；传 `'primary'` 表示首个主按钮。
+   */
+  readonly initialFocus?: 'cancel' | 'primary';
 }
 
 /** Toast 选项。 */

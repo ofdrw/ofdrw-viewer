@@ -21,18 +21,24 @@ import { installUIShell } from './ui';
 // 内置工具栏/侧栏/查找栏等 UI 外壳。
 installUIShell(registerViewerExtension);
 
-// 能力模块：顶层 registerViewerExtension 注册文本/查找、导航、签章、打印、导出。
+// 能力模块：顶层 registerViewerExtension 注册文本/查找、导航、签章、打印、导出、动作。
 import './text/index';
 import './views/nav';
 import './views/signatures';
 import './print/index';
 import './export/index';
+import './actions/index';
 
 // ---------------------------------------------------------------------------
 // 核心实例与扩展 API
 // ---------------------------------------------------------------------------
 export { OFDViewer, registerViewerExtension } from './viewer';
-export type { ViewerExtension } from './viewer';
+export type { ViewerActionService, ViewerExtension } from './viewer';
+
+// ---------------------------------------------------------------------------
+// 动作执行：宿主手动执行 API 的结果与上下文类型
+// ---------------------------------------------------------------------------
+export type { ActionExecutionContext, ActionOutcome } from './actions/types';
 
 // ---------------------------------------------------------------------------
 // 构造选项
@@ -45,6 +51,7 @@ export type {
   OFDViewerOptions,
   ResolvedViewerOptions,
   SupersamplePreset,
+  ViewerActionsOptions,
 } from './options';
 
 // ---------------------------------------------------------------------------

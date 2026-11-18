@@ -196,7 +196,7 @@ describe('container/zip-reader', () => {
     expect(warnings[0]!.message).toContain('CRC32');
   });
 
-  it('拒绝超过包大小/条目数/单条目/总解压/压缩比限制的 ZIP', async () => {
+  it('拒绝超过包大小/条目数/总解压/压缩比限制的 ZIP', async () => {
     const twoEntries = buildZip([
       { name: 'a.txt', data: 'aaaa', method: 0 },
       { name: 'b.txt', data: 'bbbb', method: 0 },
@@ -209,10 +209,11 @@ describe('container/zip-reader', () => {
       ZipReader.open(new ArrayBufferSource(twoEntries), { maxEntries: 1 }),
       'OFD_LIMIT_EXCEEDED',
     );
-    await expectCode(
-      ZipReader.open(new ArrayBufferSource(twoEntries), { maxEntryBytes: 3 }),
-      'OFD_LIMIT_EXCEEDED',
-    );
+    // 单条目上限改为读取时校验：打开成功，读取超限时报错（见下一个用例）。
+    const smallEntry = await ZipReader.open(new ArrayBufferSource(twoEntries), { maxEntryBytes: 3 });
+    expect(smallEntry.listEntries()).toHaveLength(2);
+    await expectCode(smallEntry.readEntry('a.txt'), 'OFD_LIMIT_EXCEEDED');
+    smallEntry.close();
     await expectCode(
       ZipReader.open(new ArrayBufferSource(twoEntries), { maxTotalUncompressedBytes: 7 }),
       'OFD_LIMIT_EXCEEDED',
@@ -226,10 +227,19 @@ describe('container/zip-reader', () => {
     );
   });
 
-  it('readEntry 的 maxBytes 不能突破打开时的全局上限', async () => {
+  it('readEntry 的 maxBytes 可收紧，也可按调用方限制放宽以读取大条目', async () => {
     const zip = buildZip([{ name: 'a.txt', data: 'abcdefghij', method: 0 }]);
     const reader = await ZipReader.open(new ArrayBufferSource(zip), { maxEntryBytes: 10 });
     await expectCode(reader.readEntry('a.txt', { maxBytes: 5 }), 'OFD_LIMIT_EXCEEDED');
+    expect((await reader.readEntry('a.txt', { maxBytes: 10 })).byteLength).toBe(10);
+
+    // 打开时 4 byte 上限不再拒绝包；读取时显式放宽到 10 byte 成功。
+    const relaxed = await ZipReader.open(new ArrayBufferSource(zip), { maxEntryBytes: 4 });
+    expect(relaxed.getEntry('a.txt')?.uncompressedSize).toBe(10);
+    await expectCode(relaxed.readEntry('a.txt'), 'OFD_LIMIT_EXCEEDED');
+    expect(new TextDecoder().decode(await relaxed.readEntry('a.txt', { maxBytes: 10 }))).toBe(
+      'abcdefghij',
+    );
   });
 
   it('缺少 EOCD 或损坏结构时抛 OFD_INVALID_PACKAGE', async () => {

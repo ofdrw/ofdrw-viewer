@@ -53,6 +53,8 @@ release-notes-*.md
 /.pki/
 /.config/
 /.local/
+# 各包测试运行产生的临时产物（如几何对照图）
+**/.tmp/
 
 # Python 字节码（scripts/ 下的字体工具脚本）
 __pycache__/

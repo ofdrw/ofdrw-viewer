@@ -5,7 +5,9 @@
  * - `OFDDocument.open` 负责解包、页面与资源；CLI 注入 Node Canvas、编码器、
  *   图片解码插件与已读好的字体字节；
  * - `OFDPage.exportImage` 负责整页渲染与编码；
- * - `OFDPage.getTextContent` 返回 px 坐标文本项，CLI 扁平化为 JSON。
+ * - `OFDPage.getTextContent` 返回 px 坐标文本项，CLI 扁平化为 JSON；
+ * - `OFDDocument.getMediaResources`/`getMediaData` 列出并整块读取音视频资源，
+ *   由 CLI 落盘为 `media-<id>.<ext>`。
  *
  * 页级失败继续处理后续页；文档级失败（打开失败、页码越界、页面像素超限、
  * 文本 API 缺失）立即结束。SIGINT 通过 AbortSignal 取消当前导出。
@@ -20,6 +22,7 @@ import {
 } from '@ofdrw/ofdrw-viewer-engine';
 import type {
   Canvas2DLike,
+  MediaResource,
   OFDPage,
   OFDWarning,
   PageImageFormat,
@@ -33,14 +36,24 @@ import type { FontFile } from './fonts.js';
 import { loadFontInputs } from './fonts.js';
 import { nodeImageDecoders } from './image-decoder.js';
 import type { Logger } from './log.js';
+import { exportMediaFile, isValidMediaId, reserveMediaFilePath } from './media.js';
 import { buildImagePath, buildTextJsonPath, writeFileAtomic } from './output.js';
 import type { ImageFormat } from './output.js';
 import { NodeFileByteSource } from './node-file-source.js';
 import { resolvePageNumbers } from './pages.js';
+import { sanitizeDisplayText } from './safe-text.js';
 import { buildTextRecords } from './text.js';
 
 /** JPEG/WebP 固定编码质量。 */
 const IMAGE_QUALITY = 0.9;
+
+/** 音视频导出选项。 */
+export interface MediaExportOptions {
+  /** 只导出指定媒体类型；省略时导出音频与视频。 */
+  readonly kind: 'audio' | 'video' | undefined;
+  /** 只导出指定资源 ID；省略时导出全部匹配资源。 */
+  readonly id: string | undefined;
+}
 
 /** 图片转换所需的全部输入。 */
 export interface ConvertOptions {
@@ -58,6 +71,8 @@ export interface ConvertOptions {
   readonly fontFiles: readonly FontFile[];
   /** 是否额外导出空间文本 JSON。 */
   readonly text: boolean;
+  /** 音视频导出选项；未提供时不导出音视频。 */
+  readonly media?: MediaExportOptions;
   /**
    * 加密文档凭据；`undefined` 表示未提供。
    *
@@ -75,6 +90,10 @@ export interface ConvertSummary {
   readonly succeededPages: number;
   /** 失败页数。 */
   readonly failedPages: number;
+  /** 成功写出的音视频文件数；未启用 `--media` 时为 0。 */
+  readonly mediaWritten: number;
+  /** 导出失败的音视频资源数；未启用 `--media` 时为 0。 */
+  readonly mediaFailed: number;
   /** 是否因 SIGINT/取消信号中止。 */
   readonly interrupted: boolean;
   /** 结束时打印的单行摘要。 */
@@ -180,7 +199,9 @@ export async function convertDocument(
     }
 
     const pageNumbers = resolvePageNumbers(options.pageNumbers, document.pageCount);
-    const totalPages = pageNumbers.length;
+    // `--media` 是唯一产物时不做任何页面渲染：既不加载页面，也不产生图片/文本文件。
+    const renderPages = !isMediaOnly(options);
+    const totalPages = renderPages ? pageNumbers.length : 0;
     let succeededPages = 0;
     let failedPages = 0;
     let interrupted = false;
@@ -190,7 +211,7 @@ export async function convertDocument(
       await assertTextApiAvailable(document, pageNumbers[0]);
     }
 
-    for (const pageNumber of pageNumbers) {
+    for (const pageNumber of totalPages === 0 ? [] : pageNumbers) {
       if (isSignalAborted(runtime.signal)) {
         interrupted = true;
         break;
@@ -295,20 +316,31 @@ export async function convertDocument(
       runtime.onPageEnd?.(progress, pageOk);
     }
 
+    const mediaResult =
+      interrupted || options.media === undefined
+        ? { written: 0, failed: 0, interrupted: false }
+        : await exportMediaResources(document, options.media, options.outDir, runtime);
+    if (mediaResult.interrupted) interrupted = true;
+
     const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
     return {
       totalPages,
       succeededPages,
       failedPages,
+      mediaWritten: mediaResult.written,
+      mediaFailed: mediaResult.failed,
       interrupted,
       message: formatSummary({
         totalPages,
         succeededPages,
         failedPages,
+        mediaWritten: mediaResult.written,
+        mediaFailed: mediaResult.failed,
         interrupted,
         outDir: options.outDir,
         elapsedSeconds,
         text: options.text,
+        media: options.media !== undefined,
       }),
     };
   } finally {
@@ -334,6 +366,171 @@ export async function convertDocument(
       await closeCryptoByteSource(source, logger);
     }
   }
+}
+
+/**
+ * 判断本次是否只导出音视频。
+ *
+ * 仅当 `--media` 是唯一产物开关时成立：既未要求空间文本，也未显式指定页码。
+ * 页码、图片格式、DPI 与 `--font-dir` 都属于"要求产出页面"的显式意图，任一
+ * 出现即照常渲染逐页图片，避免用户以为加了 `-p 1` 会得到图片却只拿到音视频。
+ *
+ * @param options 转换输入
+ * @returns 仅导出音视频时为 true
+ */
+export function isMediaOnly(options: {
+  readonly text: boolean;
+  readonly pageNumbers: readonly number[] | undefined;
+  readonly media?: MediaExportOptions;
+}): boolean {
+  return options.media !== undefined && !options.text && options.pageNumbers === undefined;
+}
+
+/** 音视频导出结果。 */
+interface MediaExportResult {
+  /** 成功写出的文件数。 */
+  readonly written: number;
+  /** 失败资源数。 */
+  readonly failed: number;
+  /** 是否因取消而中止。 */
+  readonly interrupted: boolean;
+}
+
+/**
+ * 列出并导出文档级音视频资源。
+ *
+ * 资源清单来自 `getMediaResources()`（只含文档级资源，零内容 IO）；指定
+ * `--media-id` 时改为按 ID 精确查找，可命中页级 `PageRes` 中声明的资源。
+ * 单个资源失败不中断其余资源，逐个记入 `failed`。
+ *
+ * @param document 已打开的文档
+ * @param media 导出筛选条件
+ * @param outDir 输出目录绝对路径
+ * @param runtime 日志与取消信号
+ * @returns 成功/失败计数与取消标记
+ * @throws {OFDError} 取消、文档关闭或包损坏等文档级错误
+ */
+async function exportMediaResources(
+  document: OFDDocument,
+  media: MediaExportOptions,
+  outDir: string,
+  runtime: ConvertRuntime,
+): Promise<MediaExportResult> {
+  const { logger } = runtime;
+  const signal = runtime.signal;
+  const selected = await selectMediaResources(document, media, signal);
+  if (selected.length === 0) {
+    // 无资源可导出时明确告知用户：声明可能因路径非法/类型不符在索引阶段被跳过，
+    // 具体原因已由 engine 的 W_MEDIA_* warning 输出到 stderr。
+    logger.warn(
+      'W_MEDIA_NONE',
+      media.kind === undefined
+        ? '未发现可导出的音视频资源（声明可能缺少 MediaFile 或路径非法）'
+        : `未发现可导出的音视频资源（--media-kind ${media.kind}）`,
+    );
+  }
+  const taken = new Set<string>();
+  let written = 0;
+  let failed = 0;
+
+  for (const resource of selected) {
+    if (isSignalAborted(signal)) return { written, failed, interrupted: true };
+    const filePath = reserveMediaFilePath(outDir, resource.id, resource.mimeType, taken);
+    try {
+      const bytes = await exportMediaFile(
+        { id: resource.id, kind: resource.kind, mimeType: resource.mimeType, filePath },
+        async (id, abortSignal) =>
+          document.getMediaData(id, {
+            ...(abortSignal === undefined ? {} : { signal: abortSignal }),
+          }),
+        signal,
+      );
+      logger.info(
+        `多媒体 ${resource.id}（${resource.kind}，${bytes} byte）→ ${filePath}`,
+      );
+      written += 1;
+    } catch (error) {
+      if (isSignalAborted(signal) || isAbortError(error)) {
+        return { written, failed, interrupted: true };
+      }
+      // 单个资源失败只影响自身；错误码原样输出便于脚本匹配。
+      if (isCliError(error) && error.code === 'CLI_MEDIA_WRITE_FAILED') throw error;
+      failed += 1;
+      logger.error(errorCodeOf(error), errorMessage(error));
+    }
+  }
+  return { written, failed, interrupted: false };
+}
+
+/**
+ * 按筛选条件选出待导出的音视频资源。
+ *
+ * 未指定 `--media-id` 时使用 `getMediaResources()`（文档级资源，按 ID 升序）；
+ * 指定时按 ID 精确查找，命中才导出，未命中抛 `CLI_MEDIA_NOT_FOUND`。指定 ID
+ * 命中图片资源时抛 `CLI_MEDIA_UNSUPPORTED_TYPE`。
+ *
+ * @param document 已打开的文档
+ * @param media 筛选条件
+ * @param signal 取消信号
+ * @returns 待导出资源列表
+ * @throws {CliError} ID 不存在（退出码 1）或类型不符（退出码 1）
+ * @throws {OFDError} 取消或文档关闭
+ */
+async function selectMediaResources(
+  document: OFDDocument,
+  media: MediaExportOptions,
+  signal: AbortSignal | undefined,
+): Promise<readonly MediaResource[]> {
+  const options = signal === undefined ? {} : { signal };
+  const all = await document.getMediaResources(options);
+  if (media.id === undefined) {
+    return media.kind === undefined ? all : all.filter((item) => item.kind === media.kind);
+  }
+  if (!isValidMediaId(media.id)) {
+    throw new CliError(
+      'CLI_USAGE',
+      `--media-id 必须是十进制资源 ID，收到：${sanitizeDisplayText(media.id)}`,
+      EXIT_CODES.USAGE,
+    );
+  }
+  const found =
+    all.find((item) => item.id === media.id) ??
+    (await document.getMediaResource(media.id, options));
+  if (found === undefined) {
+    throw await describeMissingMediaId(document, media.id, options);
+  }
+  return media.kind === undefined || found.kind === media.kind ? [found] : [];
+}
+
+/**
+ * 为查找不到的音视频资源 ID 生成错误。
+ *
+ * `getMediaResource` 对"图片资源"与"不存在的 ID"都返回 `undefined`，因此再用
+ * `hasImageResource`（只查资源索引、不读内容）区分两者：图片资源报
+ * `CLI_MEDIA_UNSUPPORTED_TYPE`，其余报 `CLI_MEDIA_NOT_FOUND`。
+ *
+ * @param document 已打开的文档
+ * @param id 未命中的资源 ID
+ * @param options 取消信号
+ * @returns 待抛出的 CLI 错误
+ */
+async function describeMissingMediaId(
+  document: OFDDocument,
+  id: string,
+  options: { signal?: AbortSignal },
+): Promise<CliError> {
+  if (await document.hasImageResource(id, options)) {
+    return new CliError(
+      'CLI_MEDIA_UNSUPPORTED_TYPE',
+      `--media-id 指定的资源 ${sanitizeDisplayText(id)} 是图片而非音视频，无法通过 --media 导出`,
+      EXIT_CODES.USAGE,
+    );
+  }
+  return new CliError(
+    'CLI_MEDIA_NOT_FOUND',
+    `--media-id 指定的音视频资源不存在：${sanitizeDisplayText(id)}`,
+    EXIT_CODES.USAGE,
+  );
 }
 
 /**
@@ -448,20 +645,40 @@ function errorCodeOf(error: unknown): string {
 }
 
 /** 生成结束时打印的单行摘要。 */
+/**
+ * 生成结束时打印的单行摘要。
+ *
+ * 摘要只描述本次实际产出的产物：`--media` 跳过渲染时页进度显示为 0/0。
+ *
+ * @param summary 汇总数据
+ * @returns 单行摘要
+ */
 function formatSummary(summary: {
   totalPages: number;
   succeededPages: number;
   failedPages: number;
+  mediaWritten: number;
+  mediaFailed: number;
   interrupted: boolean;
   outDir: string;
   elapsedSeconds: string;
   text: boolean;
+  media: boolean;
 }): string {
-  const progress = `${summary.succeededPages}/${summary.totalPages} 页`;
+  const mediaOnly = summary.media && !summary.text && summary.totalPages === 0;
+  const progress = mediaOnly
+    ? `多媒体 ${summary.mediaWritten} 个`
+    : `${summary.succeededPages}/${summary.totalPages} 页${
+        summary.media ? `，多媒体 ${summary.mediaWritten} 个` : ''
+      }`;
   if (summary.interrupted) return `已取消：${progress} → ${summary.outDir}`;
   const mode = summary.text ? '（图片 + 文本）' : '';
-  if (summary.failedPages > 0) {
-    return `完成：${progress}${mode}，${summary.failedPages} 页失败 → ${summary.outDir}`;
+  const failed = summary.failedPages + summary.mediaFailed;
+  if (failed > 0) {
+    const detail = mediaOnly
+      ? `${summary.mediaFailed} 个多媒体失败`
+      : `${summary.failedPages} 页失败${summary.mediaFailed > 0 ? `，${summary.mediaFailed} 个多媒体失败` : ''}`;
+    return `完成：${progress}${mode}，${detail} → ${summary.outDir}`;
   }
   const arrow = mode === '' ? ' →' : '→';
   return `完成：${progress}${mode}${arrow} ${summary.outDir}（${summary.elapsedSeconds}s）`;

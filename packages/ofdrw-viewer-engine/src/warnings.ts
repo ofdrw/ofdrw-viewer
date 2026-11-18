@@ -27,7 +27,19 @@ export type WarningCode =
   | 'W_RADIAL_UNSUPPORTED'
   | 'W_GOURAUD_APPROX'
   | 'W_ANNOT_EMPTY'
-  | 'W_JBIG2_DECODE';
+  | 'W_JBIG2_DECODE'
+  | 'W_MEDIA_FORMAT'
+  | 'W_MEDIA_RESOURCE'
+  | 'W_MEDIA_LIMIT'
+  | 'W_MEDIA_SCOPE_AMBIGUOUS'
+  | 'W_ACTION_INVALID'
+  | 'W_ACTION_EVENT_MISMATCH'
+  | 'W_ACTION_MULTIPLE_BODY'
+  | 'W_ACTION_FIELD'
+  | 'W_ACTION_TARGET'
+  | 'W_ACTION_RESOURCE_MISSING'
+  | 'W_ACTION_REGION'
+  | 'W_ACTION_LIMIT';
 
 /** warning 码索引；顺序与上表一致，供文档/测试断言。 */
 export const WARNING_CODES: readonly WarningCode[] = Object.freeze([
@@ -51,6 +63,18 @@ export const WARNING_CODES: readonly WarningCode[] = Object.freeze([
   'W_GOURAUD_APPROX',
   'W_ANNOT_EMPTY',
   'W_JBIG2_DECODE',
+  'W_MEDIA_FORMAT',
+  'W_MEDIA_RESOURCE',
+  'W_MEDIA_LIMIT',
+  'W_MEDIA_SCOPE_AMBIGUOUS',
+  'W_ACTION_INVALID',
+  'W_ACTION_EVENT_MISMATCH',
+  'W_ACTION_MULTIPLE_BODY',
+  'W_ACTION_FIELD',
+  'W_ACTION_TARGET',
+  'W_ACTION_RESOURCE_MISSING',
+  'W_ACTION_REGION',
+  'W_ACTION_LIMIT',
 ]);
 
 /** 一条 warning。 */

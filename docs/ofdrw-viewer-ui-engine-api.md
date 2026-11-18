@@ -173,7 +173,11 @@ UI 的消费方式：
 
 - `getDocumentInfo()` 一次性并发聚合 `getMetadata()`/`getPermissions()`/`getAttachments()`/`getSignatureEntries()`/`getOutline()`/`getBookmarks()`，结果不写入 `ViewerState`；属性对话框与附件侧栏从该快照读取新字段与附件列表。
 - 附件侧栏只在引擎实现 `saveAttachment()` 且文档确有附件时出现；下载用 `saveAttachment()` 分块收集，大附件（声明大小超过 500 MB / 524288000 byte）不读内容，改为提示下载整个 OFD 原文件（走 UI 的 `readSourceBytes()`，与 `export` 门控一致）。
-- UI 不解析附件内容，附件从不进入 DOM，未知格式只提供下载。
+- 附件侧栏支持勾选：选中多项时打包为 ZIP 下载（`createStoreZip()`），只选一项时直接下载该附件；未勾选时“导出全部”等价于全选打包。
+- 附件下载与 ZIP 导出受文档 `Permissions/Export` 控制：为 `false` 时禁用下载、导出与全选按钮并提示禁止导出；预览不落盘，不受该权限限制。
+- 图片、视频、音频、纯文本四类附件支持弹框预览（挂到外壳对话框层，焦点陷阱 + Esc/遮罩关闭）；声明大小超过 20 MB（20971520 byte）或单附件超过 500 MB 阈值时不读取内容，改为提示下载。文本预览走 `textContent`，最多渲染 200000 字符。
+- UI 不解析附件内容（文本除外，仅按 UTF-8 解码后作为文本节点渲染），附件从不作为标记进入 DOM，未知格式只提供下载。
+- 附件图标按类型区分：PDF、Word、表格、演示文稿、图片、文本、XML、压缩包、视频、音频、代码，其余归入通用文件图标；同族格式共用图标（如 docx 与 doc、xlsx 与 csv、mp3 与 wav、mp4 与 webm）。
 
 ### 签章数据
 

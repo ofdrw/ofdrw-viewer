@@ -3,6 +3,9 @@
  *
  * 保持引擎返回的 XML 层级与顺序，默认展开第一层；支持展开/收起、方向键导航、
  * 当前页高亮与跳转。无效 `dest` 只报警并保留节点。
+ *
+ * 激活条目（鼠标点击与键盘激活同一入口）时，节点声明的动作经动作服务执行，跳转由其
+ * 中的 `Goto` 完成；没有动作时按 `dest` 直接跳转（UI 动作处理机制设计 §11.2）。
  */
 
 import { replaceChildren } from '../compat';
@@ -11,9 +14,9 @@ import type { OutlineNode } from '@ofdrw/ofdrw-viewer-engine';
 import type { Translator } from '../i18n';
 import type { ViewerState } from '../state';
 import {
+  activateNavigationEntry,
   createEmptyState,
   ensureNavigationStyle,
-  goToDestination,
   isJumpableDestination,
   reportNavigationWarning,
   type NavigationViewer,
@@ -250,20 +253,30 @@ export class OutlineView {
     entry.toggleButton.textContent = entry.expanded ? '▾' : '▸';
   }
 
-  /** 点击标题：按 dest 跳转；无效时告警。 */
+  /**
+   * 激活条目：鼠标点击与键盘激活共用。
+   *
+   * 节点声明了动作时交给动作服务执行（跳转由其中的 `Goto` 完成），否则按 `dest` 跳转；
+   * 两者都不可用时告警并保留节点。
+   *
+   * @param entry 被激活的条目。
+   */
   private activate(entry: OutlineEntry): void {
-    if (!entry.node.dest) {
+    const { node } = entry;
+    const hasActions = (node.actions?.length ?? 0) > 0;
+    if (!hasActions && !node.dest) {
       reportNavigationWarning(
         this.viewer,
         UI_WARNING_CODES.W_NAV_DEST,
-        `大纲“${entry.node.title}”缺少跳转目标`,
+        `大纲“${node.title}”缺少跳转目标`,
       );
       return;
     }
-    if (goToDestination(this.viewer, entry.node.dest)) {
+    void activateNavigationEntry(this.viewer, node.actions, node.dest).then((navigated) => {
+      if (this.destroyed || !navigated) return;
       this.currentPageIndex = this.viewer.getPageNumber() - 1;
       this.updateCurrent();
-    }
+    });
   }
 
   /** 树形方向键：展开/收起/移动/跳转。 */

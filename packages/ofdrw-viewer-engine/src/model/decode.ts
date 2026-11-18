@@ -9,6 +9,7 @@ import type { Box } from '../common/types';
 import type { XmlNode } from '../xml/types';
 import type { OFDWarning } from '../warnings';
 import type {
+  ActionInfo,
   Annotation,
   ColorSpaceDef,
   CommonData,
@@ -24,6 +25,7 @@ import { dirnameOf, resolvePackagePath } from '../container/path';
 import { normalizeResourceId } from './ids';
 import { attr, child, childText, children, emitWarning, normalizePathSeparators, parseBoxChild } from './decode-utils';
 import type { ContentDecodeContext } from './content';
+import type { PageObject } from './types';
 import { decodeAnnotationsNode, decodePageBlockNode, decodePageContentNode } from './content';
 import { decodeResourceSet } from './resource-decode';
 import { flattenPageTree } from './page-tree';
@@ -31,6 +33,8 @@ import { decodeDocumentNavigation } from './navigation';
 import { decodeDocInfo } from './doc-info';
 import { decodeDocumentHeader } from './document-header';
 import { decodePermissions } from './permissions';
+import { decodeActions } from './action-decode';
+import { buildPageIndex } from './navigation';
 
 /**
  * 解码函数通用选项。
@@ -45,6 +49,16 @@ export interface DecodeOptions {
   colorSpaces?: ReadonlyMap<ResourceId, ColorSpaceDef>;
   /** 默认颜色空间 ID（DefaultCS）；缺省回退 RGB。 */
   defaultColorSpaceId?: ResourceId;
+  /** 单节点动作条数上限，单位：个；缺省不限制。 */
+  maxActionsPerNode?: number;
+  /**
+   * 图元动作旁路收集回调；不设置时不解析图元动作。
+   *
+   * @param node 图元 XML 节点。
+   * @param path 图元在页内的嵌套路径（从 0 开始的下标序列）。
+   * @param objectId 图元 `ID`；无 ID 时 undefined。
+   */
+  collectActions?: (node: XmlNode, path: readonly number[], objectId: string | undefined) => void;
 }
 
 /** OFD.xml 解析结果。 */
@@ -190,6 +204,12 @@ export function decodeDocument(
   );
   const permissions = decodePermissions(child(root, 'Permissions'), options);
   const header = decodeDocumentHeader(root, options);
+  // 文档级动作是唯一在打开阶段解析的动作：UI 需要在打开后立即判断是否需要执行 DO 动作。
+  const actions = decodeActions(root, { kind: 'document' }, {
+    pageIndex: buildPageIndex(tree.pages.map((page) => page.id)),
+    ...(options?.onWarning ? { onWarning: options.onWarning } : {}),
+    ...(options?.maxActionsPerNode !== undefined ? { maxActionsPerNode: options.maxActionsPerNode } : {}),
+  });
   return {
     id: normalizeResourceId(attr(root, 'ID')),
     version,
@@ -206,6 +226,7 @@ export function decodeDocument(
     outlines: navigation.outlines,
     bookmarks: navigation.bookmarks,
     permissions,
+    ...(actions.length > 0 ? { actions } : {}),
   };
 }
 
@@ -330,6 +351,7 @@ export function decodePageContent(
     ...(options?.colorSpaces ? { colorSpaces: options.colorSpaces } : {}),
     ...(options?.defaultColorSpaceId ? { defaultColorSpaceId: options.defaultColorSpaceId } : {}),
     resolvePath: (raw: string) => resolveRelativePath(baseDir, raw, options?.onWarning),
+    ...(options?.collectActions ? { collectActions: options.collectActions } : {}),
   };
   context.decodePageBlock = (node) => decodePageBlockNode(node, context);
   return decodePageContentNode(root, pageId, context);

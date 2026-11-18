@@ -58,6 +58,11 @@
   --ofd-seal-text: #1f2328;
   --ofd-signature-hover-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 
+  /* 媒体层（内联播放器与播放失败提示） */
+  --ofd-media-bg: #000000;
+  --ofd-media-radius: 2px;
+  --ofd-media-error-bg: rgba(255, 255, 255, 0.94);
+
   /* 外壳层级与浮层 */
   --ofd-scrim: rgba(0, 0, 0, 0.35);
   --ofd-menu-bg: var(--ofd-toolbar-bg);
@@ -167,6 +172,9 @@
   --ofd-seal-border: #d8dbe0;
   --ofd-seal-text: #1f2328;
   --ofd-signature-hover-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+  /* 深色主题下的媒体层：播放器底色保持纯黑（视频本色），失败提示改用深底。 */
+  --ofd-media-bg: #000000;
+  --ofd-media-error-bg: rgba(27, 27, 31, 0.94);
   --ofd-scrim: rgba(0, 0, 0, 0.55);
   --ofd-menu-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
   --ofd-dialog-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
@@ -210,6 +218,9 @@
     --ofd-seal-border: #d8dbe0;
     --ofd-seal-text: #1f2328;
     --ofd-signature-hover-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+  /* 深色主题下的媒体层：播放器底色保持纯黑（视频本色），失败提示改用深底。 */
+  --ofd-media-bg: #000000;
+  --ofd-media-error-bg: rgba(27, 27, 31, 0.94);
     --ofd-scrim: rgba(0, 0, 0, 0.55);
     --ofd-menu-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
     --ofd-dialog-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
@@ -835,14 +846,162 @@
   background: var(--ofd-selection);
 }
 
-.ofd-page__signature-layer {
+/*
+ * 媒体层（音视频与动作方案设计 §7.1 / §7.2）。
+ *
+ * 层级：文字层 1、媒体层 2、选区层 2、签章层 2、查找层 3。媒体层 DOM 序位于签章层
+ * 之前，因此签章仍绘制在媒体之上（视频不遮挡签章）；媒体在文字层之上，视频区域
+ * 的点击直达播放器，空白处因 pointer-events: none 透传给文字层，文本选择不受影响。
+ *
+ * 定位与缩放沿用文本层模型：布局框尺寸 = 纸面尺寸 / 布局倍率（由 JS 写入），
+ * 再由 transform: scale(var(--scale-factor)) 放大；缩放只改 `--scale-factor`，
+ * 不逐帧重算子元素几何，旋转由外层 .ofd-page__surface 统一承担。
+ */
+.ofd-page__media-layer {
   position: absolute;
   top: 0;
-  right: 0;
-  bottom: 0;
   left: 0;
   z-index: 2;
+  overflow: visible;
+  transform: scale(var(--scale-factor, 1));
+  transform-origin: 0 0;
   pointer-events: none;
+}
+
+/* 内联媒体元素：坐标由动作模块写入 96 DPI 页面 px，自身可命中。 */
+.ofd-media {
+  position: absolute;
+  pointer-events: auto;
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background-color: var(--ofd-media-bg, #000000);
+  border-radius: var(--ofd-media-radius, 2px);
+  object-fit: contain;
+  overflow: hidden;
+}
+
+.ofd-media--video {
+  /* 视频盖住页面上的封面帧；结束后移除元素使封面重新可见。 */
+  z-index: 1;
+}
+
+.ofd-media--audio {
+  /* 音频无画面：内联状态下不占位，播放控件由弹出式浮层提供。
+     进入浮层后由 `.ofd-media-popup > .ofd-media--audio` 覆盖为可见。 */
+  display: none;
+}
+
+/* 渲染失败时的可读提示，替换无法播放的媒体元素。 */
+/* 内联媒体容器：与子元素同尺寸定位，移除时整块消失、封面帧重新可见。 */
+.ofd-media-wrapper {
+  position: absolute;
+  pointer-events: auto;
+  /* 裁剪圆角与溢出，视频严格贴合图元矩形。 */
+  overflow: hidden;
+  border-radius: var(--ofd-media-radius, 2px);
+}
+
+.ofd-media-wrapper > .ofd-media {
+  position: static;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* 弹出式播放浮层：挂在对话框层，覆盖在阅读器之上。 */
+.ofd-media-popup {
+  /* 固定定位：不依赖对话框层的尺寸，避免父容器高度为 0 时浮层被推出视口。 */
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: var(--ofd-z-dialog);
+  /* 对话框层整体 pointer-events:none（避免遮挡阅读区），浮层自身必须恢复可交互。 */
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 0;
+  color: var(--ofd-text);
+  background: var(--ofd-toolbar-bg);
+  border-radius: var(--ofd-radius);
+  box-shadow: var(--ofd-dialog-shadow);
+  transform: translate(-50%, -50%);
+  overflow: hidden;
+}
+
+.ofd-media-popup__header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ofd-border);
+}
+
+.ofd-media-popup__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ofd-media-popup__close {
+  flex: 0 0 auto;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0 6px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.ofd-media-popup__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px 12px;
+  background: var(--ofd-media-bg);
+}
+
+/* 浮层内的媒体元素占满可用宽度，由浏览器按比例布局。 */
+.ofd-media--popup {
+  position: static;
+  display: block;
+  width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+}
+
+/*
+ * 音频在浮层里必须可见：`.ofd-media--audio` 为内联隐藏规则（单类选择器），
+ * 这里用后代选择器提高优先级，避免与 `.ofd-media--popup` 依赖源码顺序。
+ */
+.ofd-media-popup__body > .ofd-media--audio {
+  display: block;
+  width: 100%;
+  min-height: 54px;
+}
+
+.ofd-media-popup__mute {
+  flex: 0 0 auto;
+  align-self: flex-end;
+  margin: 8px 12px 12px;
+}
+
+.ofd-media-error {
+  position: absolute;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  color: var(--ofd-danger);
+  background: var(--ofd-media-error-bg, rgba(255, 255, 255, 0.94));
+  border: 1px solid var(--ofd-danger);
+  border-radius: var(--ofd-media-radius, 2px);
+  font-size: 12px;
+  text-align: center;
 }
 
 .ofd-signature-box {
@@ -1383,6 +1542,15 @@
     display: none !important;
   }
 
+  /*
+   * 媒体层永不进入打印流（音视频与动作方案设计 §7.11）：打印的是 canvas 快照，
+   * 封面帧会正常印出，而 <video>/<audio> 不能被打印成静态内容。
+   */
+  .ofd-page__media-layer,
+  .ofd-media-popup {
+    display: none !important;
+  }
+
   .ofd-viewer__body,
   .ofd-viewer__main {
     display: block;
@@ -1913,6 +2081,37 @@
   color: var(--ofd-text-secondary);
 }
 
+/*
+ * 外部链接确认框（UI 动作处理机制设计 §8.3）。
+ *
+ * 完整 URL 用等宽块单独成行、允许折行，主机名单独加粗强调：用户需要看清目标域名
+ * 才能判断是否可信，长 URL 不能靠横向滚动隐藏后半段。
+ */
+.ofd-external-link__intro {
+  margin: 0 0 8px;
+  white-space: pre-line;
+}
+
+.ofd-external-link__url {
+  display: block;
+  max-width: 100%;
+  padding: 6px 8px;
+  color: var(--ofd-text);
+  background: var(--ofd-hover-bg);
+  border-radius: var(--ofd-radius);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.ofd-external-link__host {
+  display: block;
+  margin-top: 8px;
+  color: var(--ofd-text);
+  font-size: 14px;
+  word-break: break-all;
+}
+
 .ofd-dialog__footer {
   display: flex;
   flex: 0 0 auto;
@@ -2315,13 +2514,48 @@
 /* 附件侧栏（设计方案 §6.2）：卡片式，与签章列表保持同一视觉语言。 */
 .ofd-attachments__toolbar {
   display: flex;
+  gap: 8px;
   margin-bottom: 8px;
 }
 
-/* “导出全部”：带边框与 hover 反馈的整行按钮。 */
+/* 全选 / 取消全选：次要按钮，不抢“下载”入口的视觉权重。 */
+.ofd-attachments__select-all {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 10px;
+  color: var(--ofd-text-secondary);
+  background: var(--ofd-surface);
+  border: 1px solid var(--ofd-border);
+  border-radius: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.ofd-attachments__select-all:hover:not(:disabled) {
+  color: var(--ofd-accent);
+  border-color: var(--ofd-accent);
+}
+
+.ofd-attachments__select-all:focus-visible {
+  outline: 2px solid var(--ofd-accent);
+  outline-offset: 2px;
+}
+
+.ofd-attachments__select-all:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* “导出全部 / 下载选中”：带边框与 hover 反馈的整行按钮。 */
 .ofd-attachments__export {
+  flex: 1 1 auto;
   justify-content: center;
-  width: 100%;
+  min-width: 0;
   min-height: 32px;
   color: var(--ofd-text);
   background: var(--ofd-surface);
@@ -2376,7 +2610,7 @@
   list-style: none;
 }
 
-/* 附件卡片：左侧文件类型图标、中间名称与元信息、右侧图标下载按钮。 */
+/* 附件卡片：左侧勾选框与文件类型图标、中间名称与元信息、右侧图标按钮。 */
 .ofd-attachment {
   display: flex;
   align-items: center;
@@ -2394,6 +2628,33 @@
 .ofd-attachment:hover {
   background: var(--ofd-hover-bg);
   border-color: var(--ofd-accent);
+}
+
+/* 已勾选：加左侧强调边与底色，便于多选时一眼确认。 */
+.ofd-attachment[data-selected='true'] {
+  background: var(--ofd-hover-bg);
+  border-color: var(--ofd-accent);
+  box-shadow: inset 2px 0 0 var(--ofd-accent);
+}
+
+/* 勾选框：不参与卡片点击，只承担多选。 */
+.ofd-attachment__check {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--ofd-accent);
+  cursor: pointer;
+}
+
+.ofd-attachment__check:focus-visible {
+  outline: 2px solid var(--ofd-accent);
+  outline-offset: 2px;
+}
+
+.ofd-attachment__check:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .ofd-attachment__icon {
@@ -2426,12 +2687,36 @@
   color: var(--ofd-success, #067647);
 }
 
+.ofd-attachment__icon[data-kind='slide'] {
+  color: #c2410c;
+}
+
 .ofd-attachment__icon[data-kind='image'] {
   color: var(--ofd-warning, #a15c00);
 }
 
 .ofd-attachment__icon[data-kind='archive'] {
   color: var(--ofd-status-unknown);
+}
+
+.ofd-attachment__icon[data-kind='video'] {
+  color: #7a3edb;
+}
+
+.ofd-attachment__icon[data-kind='audio'] {
+  color: #0b7285;
+}
+
+.ofd-attachment__icon[data-kind='text'] {
+  color: var(--ofd-text-secondary);
+}
+
+.ofd-attachment__icon[data-kind='code'] {
+  color: #5c6f8c;
+}
+
+.ofd-attachment__icon[data-kind='xml'] {
+  color: #7c5c2e;
 }
 
 .ofd-attachment__body {
@@ -2471,8 +2756,17 @@
   white-space: nowrap;
 }
 
+/* 右侧操作区：预览与下载并排，图标按钮样式共用。 */
+.ofd-attachment__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  align-items: center;
+}
+
 /* 下载按钮：纯图标按钮，名称与动作由 aria-label/title 提供，hover 只换配色。 */
-.ofd-attachment__download {
+.ofd-attachment__download,
+.ofd-attachment__preview {
   flex: 0 0 auto;
   min-width: 30px;
   min-height: 30px;
@@ -2489,16 +2783,141 @@
 }
 
 .ofd-attachment__download:hover:not(:disabled),
-.ofd-attachment__download:focus-visible:not(:disabled) {
+.ofd-attachment__download:focus-visible:not(:disabled),
+.ofd-attachment__preview:hover:not(:disabled),
+.ofd-attachment__preview:focus-visible:not(:disabled) {
   color: var(--ofd-accent);
   background: var(--ofd-surface);
   border-color: var(--ofd-accent);
+}
+
+.ofd-attachment__download:disabled,
+.ofd-attachment__preview:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 /* 超过大附件阈值的条目：只提示改为下载整个 OFD。 */
 .ofd-attachment__download[data-large='true'] {
   border-color: var(--ofd-warning, #a15c00);
   color: var(--ofd-warning, #a15c00);
+}
+
+/* 超过预览阈值的条目：预览按钮给出警示色，点击后提示改为下载。 */
+.ofd-attachment__preview[data-large='true'] {
+  border-color: var(--ofd-warning, #a15c00);
+  color: var(--ofd-warning, #a15c00);
+}
+
+/* 附件预览弹框：挂在外壳对话框层，铺满并居中。 */
+.ofd-attachment-preview {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  padding: 12px;
+  background: rgba(17, 24, 39, 0.55);
+}
+
+.ofd-attachment-preview__header {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px 8px;
+}
+
+.ofd-attachment-preview__title {
+  overflow: hidden;
+  margin: 0;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ofd-attachment-preview__close {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.16);
+  border: 0;
+  border-radius: 8px;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ofd-attachment-preview__close:hover,
+.ofd-attachment-preview__close:focus-visible {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.ofd-attachment-preview__body {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  overflow: auto;
+  background: var(--ofd-surface);
+  border-radius: 12px;
+}
+
+/* 图片：等比缩放并限制在容器内，超出时容器滚动而不是撑破弹框。 */
+.ofd-attachment-preview__image {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.ofd-attachment-preview__video {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  background: #000;
+}
+
+.ofd-attachment-preview__audio {
+  width: min(520px, 90%);
+}
+
+/* 纯文本：等宽、保留换行，长行横向滚动，避免撑破布局。 */
+.ofd-attachment-preview__text {
+  align-self: stretch;
+  width: 100%;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  color: var(--ofd-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: left;
+}
+
+.ofd-attachment-preview__note {
+  flex: 0 0 auto;
+  margin: 8px 12px 12px;
+  color: var(--ofd-text-secondary);
+  font-size: 12px;
+}
+
+/* 文本预览时容器改为纵向排列，提示语与正文上下叠放。 */
+.ofd-attachment-preview__body[data-kind='text'] {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
 }
 
 /* “关于”中的链接（如开源许可入口）。 */

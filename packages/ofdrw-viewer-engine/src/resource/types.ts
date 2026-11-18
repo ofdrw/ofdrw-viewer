@@ -11,6 +11,7 @@ import type {
   DrawParam,
   FontResource,
   ImageResource,
+  MediaResource,
   PageModel,
   Pattern,
   ResourceId,
@@ -20,6 +21,8 @@ import type {
 export interface ResourceIndex {
   fonts: ReadonlyMap<ResourceId, FontResource>;
   images: ReadonlyMap<ResourceId, ImageResource>;
+  /** 音视频资源（`MultiMedia` 的 Audio/Video）；无音视频时为空 Map。 */
+  media: ReadonlyMap<ResourceId, MediaResource>;
   drawParams: ReadonlyMap<ResourceId, DrawParam>;
   compositeGraphicUnits: ReadonlyMap<ResourceId, CompositeGraphicUnit>;
   patterns: ReadonlyMap<ResourceId, Pattern>;
@@ -37,6 +40,7 @@ export interface PageResourceScope extends ResourceIndex {
   /** 找不到时返回 undefined，不抛错。 */
   getFont(id: ResourceId): FontResource | undefined;
   getImage(id: ResourceId): ImageResource | undefined;
+  getMedia(id: ResourceId): MediaResource | undefined;
   getDrawParam(id: ResourceId): DrawParam | undefined;
   getComposite(id: ResourceId): CompositeGraphicUnit | undefined;
   getPattern(id: ResourceId): Pattern | undefined;

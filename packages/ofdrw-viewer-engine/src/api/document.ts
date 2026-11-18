@@ -20,6 +20,9 @@ import type { ImageDecoderPlugin } from '../platform/image-decoder';
 import type { VirtualContainer } from '../platform/virtual-container';
 import type { Box, DecodedImage, Viewport } from '../common/types';
 import type {
+  ActionEvent,
+  ActionInfo,
+  ActionOwner,
   Annotation,
   AttachmentModel,
   ColorSpaceDef,
@@ -27,6 +30,7 @@ import type {
   DocInfo,
   FontResource,
   ImageResource,
+  MediaResource,
   PageModel,
   PageSize,
   ResourceId,
@@ -70,10 +74,12 @@ import type {
   DocumentMetadata,
   DocumentPageArea,
   DocumentPermissions,
+  MediaResourceQueryOptions,
   OFDDocumentApi,
   OutlineNode,
   PageInfo,
   PageInfoOptions,
+  ObjectActionTarget,
   OfdPackageInfo,
   PagePrepareOptions,
   SignatureEntryInfo,
@@ -115,6 +121,11 @@ import {
 } from '../model/decode';
 import { resolvePageArea, applyPageArea, isValidPageArea } from '../model/page-area';
 import { decodeAttachments } from '../model/attachments';
+import { decodeActions } from '../model/action-decode';
+import { collectPageActionGeometries } from './geometry';
+import type { ActionGeometryEntry } from './geometry';
+import type { ActionDecodeContext } from '../model/action-decode';
+import { buildPageIndex } from '../model/navigation';
 import {
   decodeSignature,
   decodeSignatureBundle,
@@ -173,6 +184,12 @@ interface PageEntry {
   resources: PageResourceScope;
   /** 按 `page.templates` 引用顺序成功解码的模板页。 */
   templates: PageModel[];
+  /** 页级动作（`Page.xml` 的 `Actions`）；无动作时为空数组。 */
+  actions: readonly ActionInfo[];
+  /** 图元动作：图元 ID 键 → 动作；无 ID 图元按其页内路径登记在 `pathActions`。 */
+  objectActions: ReadonlyMap<ResourceId, readonly ActionInfo[]>;
+  /** 无 ID 图元的动作：页内嵌套路径（`"0.2"`）→ 动作。 */
+  pathActions: ReadonlyMap<string, readonly ActionInfo[]>;
 }
 
 /** 文本 mm 缓存的规范化配置；不含 dpi。 */
@@ -487,6 +504,11 @@ export class OFDDocument {
   /** 本文档解码出的印章图片，关闭时释放 ImageBitmap。 */
   private readonly signatureSealImages = new Set<DecodedImage>();
   /** Attachments.xml 解码结果缓存；无附件时为已解析的空数组。 */
+  private mediaResourcesCache: readonly MediaResource[] | undefined;
+
+  /** 页 ID → 页索引映射；动作 `Goto/Dest@PageID` 解析使用。 */
+  private readonly pageIdIndex: ReadonlyMap<ResourceId, number>;
+
   private attachmentsCache: readonly AttachmentModel[] | undefined;
   /** 公开附件元信息缓存；与 attachmentsCache 对应。 */
   private attachmentsInfoCache: readonly AttachmentInfo[] | undefined;
@@ -535,6 +557,7 @@ export class OFDDocument {
     this.supplementaryFonts = init.supplementaryFonts;
     this.fontAliases = init.aliases;
     this.pageCount = init.document.pageCount;
+    this.pageIdIndex = buildPageIndex(init.document.pages.map((page) => page.id));
     this.xmlCache = new DisposableLruCache<string, XmlCacheEntry>({
       maxBytes: init.cacheOptions.xmlBytes,
       sizeOf: (entry) => entry.bytes,
@@ -2024,6 +2047,432 @@ export class OFDDocument {
 
 
   /**
+   * 读取文档内全部音视频资源（`MultiMedia` 中 `Type` 为 `Audio`/`Video`）。
+   *
+   * 只读资源索引，不读取媒体内容、零内容 IO；结果按资源 ID 数值升序并缓存到 `close()`。
+   * 资源索引在 `open()` 阶段建立（与图片/字体同一份索引），因此本方法不额外读取 XML。
+   * 条数超过 `limits.maxMediaResourceCount` 时忽略多余声明并上报 `W_MEDIA_LIMIT`。
+   *
+   * @param options 取消信号。
+   * @returns 音视频资源列表；无音视频时为空数组。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED。
+   */
+  async getMediaResources(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<readonly MediaResource[]> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    const cached = this.mediaResourcesCache;
+    if (cached) return cached;
+    const limit = normalizeMediaResourceCountLimit(this.limits.maxMediaResourceCount);
+    const collected = [...this.documentResources.media.values()].sort((a, b) =>
+      compareResourceIds(a.id, b.id),
+    );
+    const kept = limit > 0 ? collected.slice(0, limit) : collected;
+    if (collected.length > kept.length) {
+      this.documentWarningHandler({
+        code: 'W_MEDIA_LIMIT',
+        message: `音视频资源 ${collected.length} 个超过上限 ${limit} 个，多余声明被忽略`,
+      });
+    }
+    const result: readonly MediaResource[] = kept.map((item) => fillMediaSize(item, this.container));
+    this.mediaResourcesCache = result;
+    this.dispatcher.emit('media:index:end', { count: result.length });
+    return result;
+  }
+
+  /**
+   * 按资源 ID 查找音视频资源。
+   *
+   * 只读资源索引，不读内容；`options.pageIndex` 用于页级 `PageRes` 作用域解析。
+   * 无页上下文且只在页级资源中命中时上报 `W_MEDIA_SCOPE_AMBIGUOUS`。
+   * 资源存在但类型是图片时返回 undefined（不抛错）。
+   *
+   * @param resourceId 资源 ID；按资源 ID 规则规范化后匹配。
+   * @param options 取消信号与来源页索引。
+   * @returns 音视频资源；不存在或类型不符时 undefined。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED / OFD_PAGE_NOT_FOUND。
+   */
+  async getMediaResource(
+    resourceId: ResourceId,
+    options: MediaResourceQueryOptions = {},
+  ): Promise<MediaResource | undefined> {
+    const found = await this.findMediaResource(resourceId, options);
+    return found ? fillMediaSize(found, this.container) : undefined;
+  }
+
+  /**
+   * 读取音视频资源原始字节。
+   *
+   * 读取前按容器 `stat()` 的声明大小（byte）预检，超过 `limits.maxMediaBytes`（或
+   * `options.maxBytes`，取较小者）直接抛 `OFD_LIMIT_EXCEEDED`，不返回部分数据。
+   * 资源不存在或类型是图片时返回 undefined（不抛错）；包内文件缺失时上报
+   * `W_MEDIA_RESOURCE` 并返回 undefined。字节不缓存，归调用方所有。
+   *
+   * @param resourceId 资源 ID。
+   * @param options 取消信号、上限覆盖与来源页索引。
+   * @returns 媒体原始字节；不可用时 undefined。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED / OFD_LIMIT_EXCEEDED / OFD_PAGE_NOT_FOUND。
+   */
+  async getMediaData(
+    resourceId: ResourceId,
+    options: MediaResourceQueryOptions = {},
+  ): Promise<Uint8Array | undefined> {
+    const found = await this.findMediaResource(resourceId, options);
+    if (!found) return undefined;
+    const maxBytes = this.mediaSizeLimit(options.maxBytes);
+    const path = found.mediaFile;
+    const container = this.containerOrThrow();
+    const declared = container.stat(path)?.size;
+    if (declared !== undefined && declared > maxBytes) {
+      throw new OFDError(
+        'OFD_LIMIT_EXCEEDED',
+        `音视频资源 ${found.id} 声明大小 ${declared} byte 超过上限 ${maxBytes} byte`,
+      );
+    }
+    // 容器读取同时受打开时的 maxEntryBytes 限制，媒体读取需显式放宽到本次生效上限。
+    const readMaxBytes = Math.max(
+      maxBytes,
+      Number.isFinite(this.limits.maxEntryBytes) ? this.limits.maxEntryBytes : 0,
+    );
+    const combined = combineAbortSignals([options.signal, this.closeController.signal]);
+    const run = (async (): Promise<Uint8Array | undefined> => {
+      try {
+        throwIfAborted(combined.signal);
+        let bytes: Uint8Array;
+        try {
+          bytes = await container.read(path, {
+            maxBytes: readMaxBytes,
+            onWarning: this.documentWarningHandler,
+            signal: combined.signal,
+          });
+        } catch (error) {
+          if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭', { cause: error });
+          if (combined.signal.aborted) throw createAbortError();
+          // 限制/包损坏原样抛出；条目缺失归为资源不可用，warning 后返回 undefined。
+          if (isOFDError(error) && error.code !== 'OFD_ENTRY_NOT_FOUND') throw error;
+          this.documentWarningHandler({
+            code: 'W_MEDIA_RESOURCE',
+            message: `音视频资源 ${found.id} 读取失败：${path}（${errorMessage(error)}）`,
+            resourceId: found.id,
+            objectId: found.id,
+          });
+          return undefined;
+        }
+        if (this.closed) throw new OFDError('OFD_CLOSED', '文档已关闭');
+        throwIfAborted(combined.signal);
+        if (bytes.byteLength > maxBytes) {
+          throw new OFDError(
+            'OFD_LIMIT_EXCEEDED',
+            `音视频资源 ${found.id} 大小 ${bytes.byteLength} byte 超过上限 ${maxBytes} byte`,
+          );
+        }
+        return bytes;
+      } finally {
+        combined.dispose();
+      }
+    })();
+    this.trackActiveRun(run);
+    return run;
+  }
+
+  /**
+   * 在资源作用域内查找音视频资源。
+   *
+   * 查找顺序：给定 `pageIndex` 时为「页级 → 模板级 → 文档级」；未给定页索引时先查
+   * 「文档 → 公共」，未命中再回退到任意页资源并上报 `W_MEDIA_SCOPE_AMBIGUOUS`。
+   *
+   * @param resourceId 资源 ID 原文。
+   * @param options 取消信号与来源页索引。
+   * @returns 音视频资源；不存在或类型不符时 undefined。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED / OFD_PAGE_NOT_FOUND。
+   */
+  private async findMediaResource(
+    resourceId: ResourceId,
+    options: MediaResourceQueryOptions,
+  ): Promise<MediaResource | undefined> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    const normalizedId = normalizeResourceId(resourceId);
+    if (!normalizedId) return undefined;
+    const pageIndex = options.pageIndex;
+    if (pageIndex !== undefined) {
+      this.assertPageIndex(pageIndex);
+      const entry = await this.getPageEntry(pageIndex, options.signal);
+      this.assertOpen();
+      throwIfAborted(options.signal);
+      return entry.resources.getMedia(normalizedId);
+    }
+    const direct = this.documentResources.media.get(normalizedId);
+    if (direct) return direct;
+    const fallback = await this.findMediaInPageResources(normalizedId, options.signal);
+    if (fallback) {
+      this.documentWarningHandler({
+        code: 'W_MEDIA_SCOPE_AMBIGUOUS',
+        message: `音视频资源 ${normalizedId} 仅在页级资源中声明，未提供 pageIndex，作用域不确定`,
+        resourceId: normalizedId,
+      });
+    }
+    return fallback;
+  }
+
+  /**
+   * 遍历各页资源查找音视频资源；仅在未提供页索引时作为回退使用。
+   *
+   * @param normalizedId 已规范化的资源 ID。
+   * @param signal 取消信号。
+   * @returns 第一个命中的音视频资源；各页都没有时 undefined。
+   * @throws OFDError OFD_ABORTED / OFD_CLOSED。
+   */
+  private async findMediaInPageResources(
+    normalizedId: ResourceId,
+    signal?: AbortSignal,
+  ): Promise<MediaResource | undefined> {
+    for (let index = 0; index < this.pageCount; index += 1) {
+      throwIfAborted(signal);
+      let entry: PageEntry;
+      try {
+        entry = await this.getPageEntry(index, signal);
+      } catch (error) {
+        const fatal = fatalReadError(error, this.closed, signal);
+        if (fatal) throw fatal;
+        continue;
+      }
+      const found = entry.resources.getMedia(normalizedId);
+      if (found) return found;
+    }
+    return undefined;
+  }
+
+  /**
+   * 校验页索引范围。
+   *
+   * @param pageIndex 页索引，从 0 开始。
+   * @throws OFDError `OFD_PAGE_NOT_FOUND` 当页索引越界时。
+   */
+  private assertPageIndex(pageIndex: number): void {
+    if (!Number.isInteger(pageIndex) || pageIndex < 0 || pageIndex >= this.pageCount) {
+      throw new OFDError('OFD_PAGE_NOT_FOUND', `页索引越界：${pageIndex}`);
+    }
+  }
+
+  /**
+   * 单次音视频读取上限。
+   *
+   * @param override 调用方覆盖值，byte；省略或非法时忽略。
+   * @returns 上限，byte；`maxMediaBytes` 未配置或非法时回退 256 MiB，取与覆盖值的较小者。
+   */
+  private mediaSizeLimit(override: number | undefined): number {
+    const configured = normalizePositive(this.limits.maxMediaBytes, DEFAULT_MEDIA_BYTES);
+    if (override === undefined) return configured;
+    const requested = normalizePositive(override, configured);
+    return Math.min(configured, requested);
+  }
+
+  /**
+   * 判断资源 ID 是否为图片资源（`MultiMedia` 的 `Type=Image`）。
+   *
+   * 只查资源索引，不读取条目内容；音视频 ID 与不存在的 ID 均返回 false。
+   * `options.pageIndex` 用于页级 `PageRes` 作用域解析。
+   *
+   * @param resourceId 资源 ID（十进制字符串）。
+   * @param options 取消信号与来源页索引。
+   * @returns 是图片资源返回 true；非图片或 ID 不存在返回 false。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED / OFD_PAGE_NOT_FOUND。
+   */
+  async hasImageResource(
+    resourceId: ResourceId,
+    options: MediaResourceQueryOptions = {},
+  ): Promise<boolean> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    const normalizedId = normalizeResourceId(resourceId);
+    if (!normalizedId) return false;
+    const pageIndex = options.pageIndex;
+    if (pageIndex !== undefined) {
+      this.assertPageIndex(pageIndex);
+      const entry = await this.getPageEntry(pageIndex, options.signal);
+      this.assertOpen();
+      throwIfAborted(options.signal);
+      return entry.resources.images.has(normalizedId);
+    }
+    return this.documentResources.images.has(normalizedId);
+  }
+
+  /**
+   * 读取文档级动作（`Document.xml` 的 `Actions`）。
+   *
+   * 打开阶段已解析并缓存，同步返回、零 IO；无动作时返回空数组。
+   *
+   * @returns 动作列表，保持 XML 顺序。
+   */
+  getDocumentActions(): readonly ActionInfo[] {
+    return this.document.actions ?? [];
+  }
+
+  /**
+   * 读取页级动作（`Page.xml` 的 `Actions`）；按需加载 `Page.xml` 并按页缓存。
+   *
+   * @param pageIndex 页索引，从 0 开始。
+   * @param options 取消信号。
+   * @returns 页级动作；无动作时为空数组。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED / OFD_PAGE_NOT_FOUND。
+   */
+  async getPageActions(
+    pageIndex: number,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<readonly ActionInfo[]> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    this.assertPageIndex(pageIndex);
+    const entry = await this.getPageEntry(pageIndex, options.signal);
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    return entry.actions;
+  }
+
+  /**
+   * 读取图元动作。
+   *
+   * `target` 为 `{ objectId }` 时按图元 `ID` 精确定位；为 `{ path }` 时按页内嵌套路径
+   * 定位无 ID 图元（路径为图层内逐级子节点下标，与 `PageBlock` 嵌套一致）。
+   *
+   * @param pageIndex 页索引，从 0 开始。
+   * @param target 图元定位参数。
+   * @param options 取消信号。
+   * @returns 图元动作；未命中时为空数组。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED / OFD_PAGE_NOT_FOUND。
+   */
+  async getObjectActions(
+    pageIndex: number,
+    target: ObjectActionTarget,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<readonly ActionInfo[]> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    this.assertPageIndex(pageIndex);
+    const entry = await this.getPageEntry(pageIndex, options.signal);
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    if ('objectId' in target) {
+      const objectId = normalizeResourceId(target.objectId);
+      if (!objectId) return [];
+      return entry.objectActions.get(objectId) ?? [];
+    }
+    return entry.pathActions.get(pathKey(target.path)) ?? [];
+  }
+
+  /**
+   * 读取大纲节点动作。
+   *
+   * 大纲在打开阶段已解析；`path` 为从根开始的逐级下标（如 `[0, 2]`）。
+   *
+   * @param path 大纲节点路径。
+   * @param options 取消信号。
+   * @returns 节点动作；节点不存在或无动作时为空数组。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED。
+   */
+  async getOutlineActions(
+    path: readonly number[],
+    options: { signal?: AbortSignal } = {},
+  ): Promise<readonly ActionInfo[]> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    let nodes: readonly OutlineNode[] = this.document.outlines ?? [];
+    let node: OutlineNode | undefined;
+    for (const index of path) {
+      node = nodes[index];
+      if (!node) return [];
+      nodes = node.children;
+    }
+    return node?.actions ?? [];
+  }
+
+  /**
+   * 取某页全部「可定位」的动作及其页面像素几何，供宿主一次性构建命中表。
+   *
+   * 只返回能定位的动作：图元动作（`Boundary`/`CTM` 取自页模型，零额外 IO）与带
+   * `Region` 的页面级动作；文档级动作与无 `Region` 的页面级动作不在结果中。
+   * 返回顺序为页级动作在前（XML 顺序），其后图元按绘制序（层序 `Background → Body →
+   * Foreground → Custom`，层内按 XML 顺序）；命中时应反向遍历（后绘制者在上）。
+   *
+   * @param pageIndex 页索引，从 0 开始。
+   * @param options `dpi` 输出精度（单位 DPI，默认 96）与取消信号。
+   * @returns 动作与几何列表；无可定位动作时为空数组。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED / OFD_PAGE_NOT_FOUND。
+   */
+  async getPageActionGeometries(
+    pageIndex: number,
+    options: { dpi?: number; signal?: AbortSignal } = {},
+  ): Promise<readonly ActionGeometryEntry[]> {
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    this.assertPageIndex(pageIndex);
+    const entry = await this.getPageEntry(pageIndex, options.signal);
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    return collectPageActionGeometries(
+      entry.model,
+      entry.actions,
+      entry.objectActions,
+      entry.pathActions,
+      options.dpi,
+    );
+  }
+
+  /**
+   * 取本页某事件可触发的全部动作（含页级与图元动作），供宿主一次性建表。
+   *
+   * @param pageIndex 页索引，从 0 开始。
+   * @param event 动作事件。
+   * @param options 取消信号。
+   * @returns 动作列表：先页级、后图元（按图元 ID 与页内路径的首次出现顺序）。
+   * @throws OFDError OFD_CLOSED / OFD_ABORTED / OFD_PAGE_NOT_FOUND。
+   */
+  async getPageActionsByEvent(
+    pageIndex: number,
+    event: ActionEvent,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<readonly ActionInfo[]> {
+    const pageActions = await this.getPageActions(pageIndex, options);
+    const entry = await this.getPageEntry(pageIndex, options.signal);
+    this.assertOpen();
+    throwIfAborted(options.signal);
+    const result: ActionInfo[] = pageActions.filter((action) => action.event === event);
+    for (const group of entry.objectActions.values()) {
+      for (const action of group) {
+        if (action.event === event) result.push(action);
+      }
+    }
+    for (const group of entry.pathActions.values()) {
+      for (const action of group) {
+        if (action.event === event) result.push(action);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * 构造动作解码上下文。
+   *
+   * 资源存在性按文档级索引校验（页级声明在页面解码阶段已并入页作用域，且此处的
+   * 校验只用于「引用的资源缺失」提示，不承担作用域解析）。
+   *
+   * @param onWarning warning 回调。
+   * @returns 动作解码上下文。
+   */
+  private actionDecodeContext(onWarning: (warning: OFDWarning) => void): ActionDecodeContext {
+    return {
+      pageIndex: this.pageIdIndex,
+      onWarning,
+      maxActionsPerNode: normalizeActionsPerNode(this.limits.maxActionsPerNode),
+      hasResource: (resourceId: ResourceId) =>
+        this.documentResources.images.has(resourceId) ||
+        this.documentResources.media.has(resourceId),
+    };
+  }
+
+  /**
    * 读取签章 XML 元数据；按 Signatures.xml 顺序返回并缓存到 close。
    *
    * 只读取 Signatures.xml / Signature.xml；不读取 Seal.esl 或 SignedValue.dat，
@@ -2793,8 +3242,22 @@ export class OFDDocument {
       throw new OFDError('OFD_ENTRY_NOT_FOUND', `第 ${pageIndex} 页缺少 Content 文件`);
     }
     const pageWarning = createPageWarningHandler(this.warnings, pageIndex);
+    const objectActions = new Map<ResourceId, readonly ActionInfo[]>();
+    const pathActions = new Map<string, readonly ActionInfo[]>();
     const root = await this.readXml(ref.loc, pageWarning, signal);
-    let model = decodePageContent(root, ref.id, ref.loc, this.decodeOptions(pageWarning));
+    let model = decodePageContent(root, ref.id, ref.loc, {
+      ...this.decodeOptions(pageWarning),
+      collectActions: (node, path, objectId) => {
+        const actions = decodeActions(
+          node,
+          objectId ? { kind: 'object', pageIndex, objectId } : { kind: 'object', pageIndex },
+          this.actionDecodeContext(pageWarning),
+        );
+        if (actions.length === 0) return;
+        if (objectId) objectActions.set(objectId, actions);
+        else pathActions.set(pathKey(path), actions);
+      },
+    });
 
     // 用文档模板表补齐 TemplateRef.loc；模板页按引用顺序解码。
     model = { ...model, templates: model.templates.map((template) => this.withTemplateLoc(template)) };
@@ -2856,7 +3319,15 @@ export class OFDDocument {
       templateResources,
       onWarning: pageWarning,
     });
-    return { model, resources, templates: decodedTemplates };
+    const actions = decodeActions(
+      root,
+      { kind: 'page', pageIndex },
+      this.actionDecodeContext(pageWarning),
+    );
+    if (actions.length > 0) {
+      this.dispatcher.emit('action:page:end', { pageIndex, count: actions.length });
+    }
+    return { model, resources, templates: decodedTemplates, actions, objectActions, pathActions };
   }
 
   /**
@@ -3616,6 +4087,83 @@ export class OFDDocument {
   }
 }
 
+/**
+ * 把页内嵌套路径编码为稳定的字符串键。
+ *
+ * @param path 从 0 开始的下标序列。
+ * @returns 以 `.` 连接的路径键，例如 `0.2.1`。
+ */
+function pathKey(path: readonly number[]): string {
+  return path.join('.');
+}
+
+/**
+ * 规范化单节点动作条数上限。
+ *
+ * @param value 配置值，单位：个。
+ * @returns 非负整数上限；未配置或非法时返回 undefined（不限制）。
+ */
+function normalizeActionsPerNode(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isFinite(value) || value < 0) return undefined;
+  return Math.floor(value);
+}
+
+/** 音视频单次读取的默认上限：256 MiB（256 × 1024 × 1024 byte）。 */
+const DEFAULT_MEDIA_BYTES = 256 * 1024 * 1024;
+
+/**
+ * 规范化正数限制值。
+ *
+ * @param value 候选值。
+ * @param fallback 非法（未定义/非有限/<=0）时的回退值。
+ * @returns 合法正数或回退值。
+ */
+function normalizePositive(value: number | undefined, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return fallback;
+  return value;
+}
+
+/**
+ * 规范化音视频资源条数上限。
+ *
+ * @param value 配置值，单位：个。
+ * @returns 非负整数上限；`0` 表示不限制。
+ */
+function normalizeMediaResourceCountLimit(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value) || value < 0) return 0;
+  return Math.floor(value);
+}
+
+/**
+ * 按资源 ID 的数值升序比较，非数字 ID 排在其后按文本比较。
+ *
+ * @param a 资源 ID。
+ * @param b 资源 ID。
+ * @returns 比较结果。
+ */
+function compareResourceIds(a: ResourceId, b: ResourceId): number {
+  const left = Number(a);
+  const right = Number(b);
+  const leftNumeric = Number.isFinite(left);
+  const rightNumeric = Number.isFinite(right);
+  if (leftNumeric && rightNumeric && left !== right) return left - right;
+  if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * 用容器中声明的条目大小补齐音视频资源大小。
+ *
+ * @param resource 音视频资源定义。
+ * @param container 当前容器；已关闭时为 undefined，此时原样返回。
+ * @returns 补齐 `sizeBytes`（byte）后的资源；容器未声明大小时原样返回。
+ */
+function fillMediaSize(resource: MediaResource, container: VirtualContainer | undefined): MediaResource {
+  const size = container?.stat(resource.mediaFile)?.size;
+  if (size === undefined) return resource;
+  return { ...resource, sizeBytes: size };
+}
+
 /** 附件流式写出的默认单块字节数：64 KiB。 */
 const DEFAULT_ATTACHMENT_CHUNK_BYTES = 64 * 1024;
 
@@ -4001,6 +4549,7 @@ function emptyResourceSet(): ResourceDefinitionSet {
   return {
     fonts: [],
     images: [],
+    media: [],
     drawParams: [],
     compositeGraphicUnits: [],
     colorSpaces: [],

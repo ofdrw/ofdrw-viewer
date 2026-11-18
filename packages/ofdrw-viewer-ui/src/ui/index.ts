@@ -94,6 +94,12 @@ export interface UIShellHost {
   getDocumentInfo?(): Promise<ViewerDocumentInfo>;
   /** 读取本地字体状态；未启用该能力时省略。 */
   getLocalFontsStatus?(): LocalFontsStatus;
+  /** 读取动作自动执行开关；未挂载动作模块或开关不可用时省略（返回 undefined）。 */
+  getAutoExecuteActions?(): boolean | undefined;
+  /** 读取是否允许用户修改自动执行开关；未挂载动作模块时省略（返回 undefined）。 */
+  getAutoExecuteActionsToggleAllowed?(): boolean | undefined;
+  /** 设置动作自动执行开关；未挂载动作模块或禁止用户改动时省略。 */
+  setAutoExecuteActions?(enabled: boolean): void;
   /** 设置本地字体开关；核心未提供时「关于」里的开关不注册。 */
   setLocalFontsEnabled?(enabled: boolean): Promise<void>;
   /** 订阅本地字体状态变化。 */
@@ -126,6 +132,7 @@ const uiShells = new WeakMap<UIShellHost, UIShell>();
 function toShellState(
   state: ViewerState,
   localFonts?: LocalFontsStatus,
+  actions?: UIShellViewState['actions'],
 ): UIShellViewState {
   return {
     pageNumber: state.view.pageNumber,
@@ -141,6 +148,8 @@ function toShellState(
     documentStatus: state.document.status,
     documentTitle: state.document.metadata?.title,
     ...(localFonts ? { localFonts } : {}),
+    // 自动执行开关由核心的动作服务持有；未挂载动作模块时省略，「关于」里不出现该行。
+    ...(actions ? { actions } : {}),
   };
 }
 
@@ -210,6 +219,90 @@ export function askLocalFontsGrant(shell: UIShell, viewer: UIShellHost): Promise
       ],
     });
   });
+}
+
+/**
+ * 弹出「即将离开当前文档」外部链接确认框，并等待用户选择。
+ *
+ * 文档可携带任意 URL，静默跳转是钓鱼与钓鱼式重定向的典型载体；因此**每次**执行
+ * `URI` 动作都要让用户看到完整地址与主机名后再决定，不提供"记住选择"。
+ *
+ * 无障碍与防误触：
+ * - `role="alertdialog"`，让读屏立即播报；
+ * - **默认焦点落在「取消」**，防用户直接回车误确认危险操作；
+ * - Esc / 点遮罩 / 关闭按钮均按取消处理。
+ *
+ * 未挂载内置 UI 时无法展示确认框，按**取消**返回（宁可不打开，也不静默放行）。
+ *
+ * @param shell 当前外壳；未挂载时返回 undefined。
+ * @param request 确认请求（完整 URL、主机名、打开方式）。
+ * @returns 用户确认时 true。
+ */
+export function askExternalLinkGrant(
+  shell: UIShell | undefined,
+  request: { readonly url: string; readonly host: string; readonly target: '_self' | '_blank' },
+): Promise<boolean> {
+  if (!shell) return Promise.resolve(false);
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    /** 结算一次；`onClose` 与按钮回调可能先后触发。 */
+    const settleOnce = (confirmed: boolean): void => {
+      if (settled) return;
+      settled = true;
+      resolve(confirmed);
+    };
+    const translator = shell.translatorInstance;
+    const doc = shell.elements.root.ownerDocument;
+
+    // 正文：完整 URL 用等宽块单独展示，主机名单独强调，便于用户判断可信度。
+    const body = doc.createElement('div');
+    body.className = 'ofd-dialog__text';
+    const intro = doc.createElement('p');
+    intro.className = 'ofd-external-link__intro';
+    // 控制字符可伪造换行或颠倒显示顺序，误导用户对域名的判断，先清洗再展示。
+    intro.textContent = translator.t('actions.uri.body', {
+      url: sanitizeDisplayText(request.url),
+      host: sanitizeDisplayText(request.host),
+    });
+    const urlBlock = doc.createElement('code');
+    urlBlock.className = 'ofd-external-link__url';
+    urlBlock.textContent = sanitizeDisplayText(request.url);
+    const hostBlock = doc.createElement('strong');
+    hostBlock.className = 'ofd-external-link__host';
+    hostBlock.textContent = sanitizeDisplayText(request.host);
+    body.append(intro, urlBlock, hostBlock);
+
+    shell.openDialog({
+      name: 'externalLink',
+      title: translator.t('actions.uri.title'),
+      content: body,
+      role: 'alertdialog',
+      // 安全确认：焦点默认在「取消」。
+      initialFocus: 'cancel',
+      onClose: () => settleOnce(false),
+      actions: [
+        { label: translator.t('actions.uri.cancel') },
+        {
+          label: translator.t('actions.uri.confirm'),
+          primary: true,
+          onClick: () => settleOnce(true),
+        },
+      ],
+    });
+  });
+}
+
+/**
+ * 清洗展示文本：去掉控制字符（含双向文本控制符），保留可见字符与空白。
+ *
+ * URL 与主机名来自文档，属于不可信输入。
+ *
+ * @param text 原始文本。
+ * @returns 清洗后的文本。
+ */
+function sanitizeDisplayText(text: string): string {
+  // U+0000–U+001F 控制字符、U+007F、U+200B–U+200F 与 U+202A–U+202E 双向控制符。
+  return text.replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e]/g, '').trim();
 }
 
 /**
@@ -542,12 +635,81 @@ function showAboutDialog(shell: UIShell, viewer: UIShellHost): void {
   const localFontsRow = createAboutLocalFontsRow(shell, viewer);
   if (localFontsRow) list.append(localFontsRow);
 
+  // 自动执行文档动作开关同样放在「关于」里：它属于阅读行为设置而非阅读操作，
+  // 且只在宿主挂载了动作模块时出现（`actions` 缺省时整行不渲染）。
+  const actionsRow = createAboutActionsRow(shell, viewer);
+  if (actionsRow) list.append(actionsRow);
+
   shell.openDialog({
     name: 'about',
     title: translator.t('about.title'),
     content: list,
     actions: [{ label: translator.t('dialog.closeAction'), primary: true }],
   });
+}
+
+/**
+ * 构造「关于」对话框里的「自动执行文档动作」开关行。
+ *
+ * 与「本机字体」同构：核心推送开关值、用户切换后立即生效、**不持久化**（刷新后回到
+ * 宿主预设值），避免用户忘记曾开启而出现意外弹窗或自动播放。宿主以
+ * `actions.allowUserToggleAutoExecute: false` 禁止用户改动时，开关渲染为禁用态。
+ *
+ * @param shell 当前外壳。
+ * @param viewer 阅读器实例。
+ * @returns `dt`/`dd` 片段；动作模块未挂载时返回 null。
+ */
+function createAboutActionsRow(shell: UIShell, viewer: UIShellHost): DocumentFragment | null {
+  const current = shell.getState().actions;
+  if (!current) return null;
+  if (typeof viewer.setAutoExecuteActions !== 'function') return null;
+  const toggleAllowed = current.allowUserToggle !== false;
+
+  const translator = shell.translatorInstance;
+  const doc = shell.elements.root.ownerDocument;
+  const fragment = doc.createDocumentFragment();
+
+  const term = doc.createElement('dt');
+  term.textContent = translator.t('actions.autoExecute.toggle');
+  const description = doc.createElement('dd');
+  description.className = 'ofd-properties__local-fonts';
+
+  const toggle = doc.createElement('button');
+  toggle.type = 'button';
+  toggle.setAttribute('role', 'switch');
+  toggle.className = 'ofd-switch';
+  toggle.setAttribute('aria-label', translator.t('actions.autoExecute.toggle'));
+  setToggleVisual(toggle, current.autoExecute === true);
+  // 宿主禁止用户改动（受限展示场景）：开关保留当前值，但不可聚焦、点击无效。
+  if (!toggleAllowed) disableToggle(toggle);
+
+  const hint = doc.createElement('span');
+  hint.className = 'ofd-properties__hint';
+  hint.textContent = translator.t('actions.autoExecute.hint');
+
+  toggle.addEventListener('click', () => {
+    if (!toggleAllowed) return;
+    // 基准取核心的真实值：外壳状态要等下一次同步才更新，连续点击时不能依赖它。
+    const next = viewer.getAutoExecuteActions?.() !== true;
+    viewer.setAutoExecuteActions?.(next);
+    // 回读真实值：核心可能拒绝改动，此时按真实值刷新视觉，不留下错误的开关状态。
+    setToggleVisual(toggle, viewer.getAutoExecuteActions?.() === true);
+  });
+
+  description.append(toggle, hint);
+  fragment.append(term, description);
+  return fragment;
+}
+
+/**
+ * 把开关渲染为禁用态：不可聚焦、点击不生效，并保留 `aria-checked` 供读屏播报。
+ *
+ * @param toggle 开关按钮。
+ */
+function disableToggle(toggle: HTMLButtonElement): void {
+  toggle.setAttribute('aria-disabled', 'true');
+  toggle.disabled = true;
+  toggle.tabIndex = -1;
 }
 
 /**
@@ -1133,6 +1295,10 @@ function dispatchCommand(
     case 'localFonts.set':
       if (viewer.setLocalFontsEnabled) settle(viewer.setLocalFontsEnabled(command.value), shell);
       return;
+    case 'actions.setAutoExecute':
+      // 立即生效、不持久化；外壳随即通过 statechange 同步开关显示。
+      viewer.setAutoExecuteActions?.(command.value);
+      return;
     case 'document.properties':
       showDocumentProperties(viewer, shell);
       return;
@@ -1170,10 +1336,25 @@ export function attachUIShell(viewer: UIShellHost): () => void {
 
   /** 本地字体状态：由核心同源提供，面板与外壳共用一份（设计 §5.3）。 */
   let localFonts = viewer.getLocalFontsStatus?.();
+  /**
+   * 读取动作自动执行开关与它的可改状态。
+   *
+   * 两项都是选项而非状态，因此从宿主的公开读取方法取；未挂载动作模块时返回
+   * undefined，「关于」里不出现该行。
+   */
+  const readActions = (): UIShellViewState['actions'] => {
+    const value = viewer.getAutoExecuteActions?.();
+    if (value === undefined) return undefined;
+    const toggleAllowed = viewer.getAutoExecuteActionsToggleAllowed?.();
+    return {
+      autoExecute: value,
+      ...(toggleAllowed === undefined ? {} : { allowUserToggle: toggleAllowed }),
+    };
+  };
   const sync = (): void => {
     const next = viewer.getState();
     shell.setFeatureStates(next.ui.features);
-    shell.update(toShellState(next, localFonts));
+    shell.update(toShellState(next, localFonts, readActions()));
   };
 
 
@@ -1186,9 +1367,11 @@ export function attachUIShell(viewer: UIShellHost): () => void {
     viewer.on('findcurrent', sync),
     viewer.onLocalFontsStatusChange?.((status) => {
       localFonts = status;
-      shell.update(toShellState(viewer.getState(), status));
+      shell.update(toShellState(viewer.getState(), status, readActions()));
     }) ?? (() => undefined),
   ];
+  // 动作开关是选项而非状态：挂载时先投影一次，否则要等到首次 statechange 才出现。
+  sync();
 
   return () => {
     for (const off of offs) off();

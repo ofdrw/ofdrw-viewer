@@ -13,6 +13,7 @@ import {
 import type { CSSProperties } from 'react';
 import {
   OFDViewer as CoreOFDViewer,
+  type ActionOutcome,
   type CertificateSource,
   type CertificateSummary,
   type ExportImageOptions,
@@ -105,6 +106,25 @@ export interface OFDViewerHandle {
   setLocalFontsEnabled(enabled: boolean): Promise<void>;
   /** 订阅本机字体状态变化；返回退订函数。 */
   onLocalFontsStatusChange(handler: (status: LocalFontsStatus) => void): () => void;
+  /**
+   * 手动执行某页的指定事件动作（UI 动作处理机制设计 §14.1）。
+   *
+   * @param pageIndex 页索引，0-based。
+   * @param event 动作事件。
+   * @param options 取消信号。
+   * @returns 每个动作的执行结果。
+   */
+  executeActions(
+    pageIndex: number,
+    event: 'DO' | 'PO' | 'CLICK',
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<readonly ActionOutcome[]>;
+  /** 读取「自动执行文档动作」开关；动作模块未挂载时为 undefined。 */
+  getAutoExecuteActions(): boolean | undefined;
+  /** 设置「自动执行文档动作」开关（不持久化）。 */
+  setAutoExecuteActions(enabled: boolean): void;
+  /** 读取该开关是否允许用户修改；动作模块未挂载时为 undefined。 */
+  getAutoExecuteActionsToggleAllowed(): boolean | undefined;
 }
 
 /** React 组件属性。 */
@@ -267,6 +287,16 @@ export const OFDViewer = forwardRef<OFDViewerHandle, OFDViewerProps>(
         },
         onLocalFontsStatusChange: (handler) =>
           viewerRef.current?.onLocalFontsStatusChange(handler) ?? (() => undefined),
+        executeActions: async (pageIndex, event, options) => {
+          if (!viewerRef.current) throw new Error('阅读器尚未挂载');
+          return viewerRef.current.executeActions(pageIndex, event, options);
+        },
+        getAutoExecuteActions: () => viewerRef.current?.getAutoExecuteActions(),
+        setAutoExecuteActions: (enabled) => {
+          run(() => viewerRef.current?.setAutoExecuteActions(enabled));
+        },
+        getAutoExecuteActionsToggleAllowed: () =>
+          viewerRef.current?.getAutoExecuteActionsToggleAllowed(),
       }),
       [],
     );

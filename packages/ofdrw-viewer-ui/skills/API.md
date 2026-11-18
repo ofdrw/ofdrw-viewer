@@ -90,6 +90,7 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 | `crypto` | `CryptoViewerOptions` | 默认启用 | 加密文档与验签配置 |
 | `fonts` | `ViewerFontOptions` | 无 | 字体配置（`default`/`supplementary`/`loader`/`aliases`/`localFonts`），见下 |
 | `layerPanel` | `LayerPanelOptions` | `{ enabled: true, disabled: false, defaultVisibility: 六项全 true、注释类型全勾 }` | “图层”tab 开关与每页默认可见性（含注释类型）；**只在构造时生效**，见[图层侧栏](#图层侧栏layerpanel) |
+| `actions` | `ViewerActionsOptions` | `{ autoExecuteActions: false, allowUserToggleAutoExecute: true, maxActionDepth: 4, smoothGoto: true }` | 文档动作执行选项，见[动作与音视频](#动作与音视频)。**没有 `media` 选项**：媒体音量、静音重试与单资源读取上限为内部常量 |
 
 `container` 是唯一必填项。字符串选择器在构造时解析；找不到元素抛 `OFD_INVALID_OPTION`。
 
@@ -233,13 +234,14 @@ viewer.setLayerVisibility(1, { annotations: false });
 | 主题 | 码 | 触发点 |
 | --- | --- | --- |
 | 文档信息 | `W_METADATA`、`W_OUTLINE`、`W_BOOKMARKS` | 元数据/大纲/书签读取失败 |
-| 导航 | `W_NAV_DEST`、`W_NAV_JUMP`、`W_NAV_ZOOM` | 跳转目标无效、跳页/缩放失败 |
+| 导航 | `W_NAV_DEST`、`W_NAV_JUMP`、`W_NAV_ZOOM`、`W_NAV_ACTION` | 跳转目标无效、跳页/缩放失败、导航条目动作执行失败 |
 | 缩略图 | `W_THUMBNAIL`、`W_THUMBNAIL_JUMP` | 缩略图渲染/跳转失败 |
 | 文本 | `W_TEXT_LOAD`、`W_TEXT_EMPTY`、`W_TEXT_UNSUPPORTED`、`W_TEXT_LAYER_CAP` | 文本层加载失败、无可提取文字、引擎页无 `getTextContent`、单页 span 超限截断 |
 | 选区 | `W_SELECTION_RENDER`、`W_SELECTION_EVICTED`、`W_SELECTION_UNPINNABLE` | 高亮绘制异常回退 native、选区页数据缺失、pin 预算超限 |
 | 查找 | `W_FIND_FAILED`、`W_FIND_LIMIT`、`W_FIND_PAGE`、`W_FIND_PAGE_LIMIT` | 查找失败/超限/翻页 |
 | 导出打印 | `W_EXPORT_PARTIAL`、`W_EXPORT_PAGE`、`W_OUTPUT_LARGE_TASK`、`W_OUTPUT_DPI_REDUCED` | 部分导出、单页失败、大任务、DPI 降档 |
 | 签名与附件 | `W_SIGNATURE_ASN1`、`W_SIGNATURE_RESOURCE`、`W_SIGNATURE_TIMESTAMP`、`W_SIGNATURE_ENTRIES`、`W_ATTACHMENT_RESOURCE` | ASN.1、资源、时间戳、条目读取、附件资源 |
+| 动作与音视频 | `W_ACTION_LOAD`、`W_ACTION_EXECUTE`、`W_MEDIA_RESOURCE`、`W_MEDIA_PLAY` | 页动作加载失败、动作执行失败、媒体资源读取失败、媒体播放失败 |
 | 密码能力 | `W_CRYPTO_VERIFICATION_CALLBACK`、`W_CRYPTO_VERIFY_FAILED`、`W_CRYPTO_CERT_SOURCE_UNSUPPORTED` | 验证回调异常、自动/重新验证失败、根证书来源不支持 |
 | 界面 | `W_UI_LISTENER`、`W_UI_CLEANUP`、`W_ENGINE_EVENT`、`W_FULLSCREEN_FALLBACK` | 事件监听器异常、清理失败、引擎事件异常、全屏降级 |
 | 来源 | `W_QUERY_SOURCE` | 查询参数来源解析 |
@@ -439,7 +441,7 @@ interface LocalFontDeclaration {
 
 ### 功能键
 
-`ViewerFeature` 是以下 20 个键的联合；`ViewerFeatures` 是 `Partial<Record<ViewerFeature, boolean>>`，未出现的键默认开启。
+`ViewerFeature` 是以下 21 个键的联合；`ViewerFeatures` 是 `Partial<Record<ViewerFeature, boolean>>`，未出现的键默认开启。
 
 **“图层”不是功能键**：没有 `layers` 这个 `ViewerFeature`，图层 tab 的可见/禁用完全由 [`layerPanel`](#图层侧栏layerpanel) 决定；关闭 `sidebar` 时它与其它 tab 一起不可用。
 
@@ -465,6 +467,7 @@ interface LocalFontDeclaration {
 | `verification` | 验证面板与验签 | — |
 | `documentProperties` | 文档属性 | — |
 | `keyboardShortcuts` | 键盘快捷键 | — |
+| `actions` | 文档动作执行（DO/PO/CLICK 与音视频播放） | — |
 
 依赖不满足时，被依赖功能以 `reason: 'dependency'` 关闭，并可能继续级联（例如 `sidebar` 关闭会关闭缩略图/大纲/书签/附件）。`toolbar`/`sidebar` 关闭时，其内部控件即使自身开启也不可见。
 
@@ -553,8 +556,18 @@ viewer.setFeatureDisplay({ export: 'disable' });
 | `featureschange` | `FeaturesChangeEvent` | `ofd-features-change` | `onFeaturesChange` | `features-change` |
 | `statechange` | `StateChangeEvent` | `ofd-state-change` | `onStateChange` | `state-change` |
 | `local-fonts:change` | `LocalFontsChangeEvent`（等同 `LocalFontsStatus`） | `ofd-local-fonts-change` | `onLocalFontsChange` | `local-fonts-change` |
+| `action:executed` | `ActionExecutedEvent` | `ofd-action-executed` | `onActionExecuted` | `action-executed` |
+| `action:skipped` | `ActionSkippedEvent` | `ofd-action-skipped` | `onActionSkipped` | `action-skipped` |
+| `action:error` | `ActionErrorEvent` | `ofd-action-error` | `onActionError` | `action-error` |
+| `media:play` | `MediaStateEvent` | `ofd-media-play` | `onMediaPlay` | `media-play` |
+| `media:pause` | `MediaStateEvent` | `ofd-media-pause` | `onMediaPause` | `media-pause` |
+| `media:ended` | `MediaStateEvent` | `ofd-media-ended` | `onMediaEnded` | `media-ended` |
+| `media:stop` | `MediaStateEvent` | `ofd-media-stop` | `onMediaStop` | `media-stop` |
+| `media:error` | `MediaErrorEvent` | `ofd-media-error` | `onMediaError` | `media-error` |
 
 `signatureclick` 在类型和适配器桥接表中存在，但当前版本没有实际触发点；需要处理签章交互时，使用 `getSignatures()`/`showSignature()` 或内置侧栏的现有入口。
+
+动作与媒体事件共 8 条，全部登记在 `component/support.ts` 的 `VIEWER_EVENT_BRIDGES`（有编译期覆盖性断言，漏登记会 typecheck 失败）。载荷结构见[载荷类型](#载荷类型)与[动作与音视频](#动作与音视频)。
 
 ### 载荷类型
 
@@ -577,6 +590,13 @@ viewer.setFeatureDisplay({ export: 'disable' });
 - `FeaturesChangeEvent`：等同于 `ViewerFeatureStates`。
 - `StateChangeEvent`：等同于完整的 `ViewerState` 快照。
 - `LocalFontsChangeEvent`：等同于 `LocalFontsStatus`；本机字体开关/权限/加载状态变化时触发。核心可订阅 `viewer.on('local-fonts:change', …)` 或 `onLocalFontsStatusChange()`；Web Component 派发 `ofd-local-fonts-change`，React 为 `onLocalFontsChange`，Vue 为 `@local-fonts-change`。
+- `ActionExecutedEvent`：`{ type: ActionType; owner: ActionOwner; pageIndex?: number; target?: string }`。`target` 只在 URI 动作执行成功时出现（`'_self'` / `'_blank'`）。
+- `ActionSkippedEvent`：`{ type: ActionType; reason: ActionSkipReason; pageIndex?: number }`。
+- `ActionErrorEvent`：`{ type: ActionType; code: string; reason?: ActionErrorReason; message?: string; pageIndex?: number }`。
+- `MediaStateEvent`：`{ resourceId: string; kind: 'audio' | 'video'; pageIndex?: number }`。
+- `MediaErrorEvent`：`MediaStateEvent` + `{ code: 'unsupported' | 'decode' | 'load'; message?: string }`。
+
+`action:*` 与 `media:*` 的 `pageIndex` 都是 0-based，且**只在有页上下文时出现**：文档级（DO）与大纲级动作省略该字段，不是填 0。被取消的动作（`'cancelled'`）**不派发事件**。
 
 ### 订阅
 
@@ -881,6 +901,128 @@ viewer.resetLayerVisibility();
 
 打印失败抛 `OFD_PRINT_FAILED`；导出全部页失败抛 `OFD_EXPORT_FAILED`；单页失败降级为 `W_EXPORT_PAGE`/`W_EXPORT_PARTIAL` warning。取消通过 `signal` 传入：取消时统一转为 `AbortError`（`name='AbortError'`）拒绝；`OFD_INVALID_OPTION` 仅表示选项非法。
 
+### 动作与音视频
+
+OFD 文档可以声明动作（`Actions`），由引擎解析为 `ActionInfo`，由 UI 负责触发与执行。设计细节见 [`UI动作处理机制设计.md`](../../../docs/UI动作处理机制设计.md)，标准依据见 [`音视频与动作方案设计.md`](../../../docs/音视频与动作方案设计.md)。全部动作经同一入口 `ActionService.execute()` 执行；大纲、书签、图元点击与宿主 API 都不得绕过。
+
+#### 构造选项 `actions`
+
+```ts
+interface ViewerActionsOptions {
+  readonly autoExecuteActions?: boolean;          // 默认 false
+  readonly allowUserToggleAutoExecute?: boolean;  // 默认 true
+  readonly maxActionDepth?: number;               // 默认 4；非正数/非有限值回落 4
+  readonly smoothGoto?: boolean;                  // 默认 true
+}
+```
+
+| 字段 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `autoExecuteActions` | `boolean` | `false` | 是否自动执行 `DO`/`PO` 动作（与音视频自动播放共用这一个开关）；用户可在「更多 → 关于」临时开启，**不持久化** |
+| `allowUserToggleAutoExecute` | `boolean` | `true` | 是否允许用户改动该开关；`false` 时开关为禁用态、点击无效，「关于」该行给出说明 |
+| `maxActionDepth` | `number` | `4` | 动作嵌套深度上限；超限整组不执行并按 `action:error`（`code: 'OFD_ACTION_LOOP'`，`reason: 'loop'`）上报 |
+| `smoothGoto` | `boolean` | `true` | `Goto` 跳转是否平滑滚动（复用 `goToDestination()`） |
+
+**没有 `media` 选项**。媒体主音量、自动播放被拦截时的静音重试、单资源读取上限（256 MiB，与引擎 `defaultLimits.maxMediaBytes` 一致）都是 `src/actions/` 内部常量，宿主无法配置；超限时 UI 改为提示下载整个 OFD 原文件（沿用 `export` 功能与文档导出权限门控）。
+
+#### 触发与执行顺序
+
+| 事件 | 触发点 | 执行次数 | 受 `autoExecuteActions` 控制 |
+| --- | --- | --- | --- |
+| `DO` | `documentopen` 之后 | 全文档 1 次 | 是 |
+| `PO` | 页面首次进入可视区**且**渲染完成 | 每页 1 次（跨页淘汰持久） | 是 |
+| `CLICK` | 页面 `pointerup` 命中动作区域 | 每次点击 | 否 |
+
+- 自动执行关闭时，DO/PO 不执行，改派 `action:skipped`（`reason: 'autoplay-disabled'`）：**DO 按文档派发一条、PO 按页各派发一条**（载荷不带逐条明细，`type` 取该批首个动作；DO 不带 `pageIndex`），同时把被跳过动作的总条数累加到 `state.actions.pendingAutoActions`。用户在「关于」里打开开关后，此前被跳过的 DO/PO 会**补执行**，计数器归零。`features.actions = false` 时不执行也不派发该事件。
+- 顺序执行：一组动作按文档顺序依次 `await`；`Sound@Synchronous` 会阻塞到播放结束；`Movie` 不阻塞。
+- 单个动作失败不中断后续动作（错误隔离）；嵌套深度超限才整组失败。
+- 页被缓存淘汰时中止该页进行中的执行、销毁该页播放器并撤销 `ObjectURL`；文档关闭时中止全部并清空缓存。
+
+#### 命中口径
+
+命中判定**只使用 96 DPI 页面像素的外接矩形（bbox）**：`Action/Region` 的折线路径不参与精确判定，环形/凹形区域的挖空部分同样触发。同一图元上的多个 `CLICK` 动作共享同一外接矩形并一起命中。几何全部来自引擎（`getPageActionGeometries()`/`getActionGeometry()`），UI 不做毫米 → 像素换算。
+
+与既有交互的让位规则：拖拽（位移 > 4 px）不触发、有活动文本选区不触发、命中签章按钮或媒体元素时跳过；命中动作时不触发双击缩放。
+
+#### 五种动作的行为
+
+| 动作 | 行为 | 可能的 `reason` |
+| --- | --- | --- |
+| `Goto`（`Dest`/`Bookmark`） | 复用 `goToDestination()`；书签名经 `getBookmarks()` 索引解析 | `skipped: 'target-missing'` |
+| `URI` | 仅放行 `http:`/`https:`；**先弹确认框**（显示完整 URL 与主机名，默认焦点在「取消」），确认后按 `Target` 打开；不提供"记住选择" | `skipped: 'policy'`（协议被拒，**不弹框**）/ `'declined'` / `'target-missing'`（相对地址解析失败）；`error: 'popup-blocked'` |
+| `GotoA` | 复用附件下载流程；`NewWindow` 忽略 | `skipped: 'target-missing'`（附件不存在）/ `'unsupported'`（引擎无 `saveAttachment()`） |
+| `Sound` | 建立/复用 `<audio>`，按 `Volume` 设置音量后播放；`Synchronous` 阻塞后续动作 | `skipped: 'autoplay-blocked'` / `'resource-missing'` / `'unsupported'` |
+| `Movie` | 建立/复用 `<video>`；图元动作**内联**播放（播放器矩形 = 图元矩形），其余场景**弹出式**浮层；按 `Operator` 处理 `Play`/`Stop`/`Pause`/`Resume` | 同 `Sound` |
+
+播放器实例按 `resourceId` 建表复用，这是 `Pause`/`Resume` 成立的前提。弹出式浮层贴在核心根节点（`.ofd-viewer`）内，`Esc` 可关闭。
+
+#### 「关于」里的自动执行开关
+
+工具栏「更多」→「关于」新增「自动执行文档动作」一行（`role="switch"`）。开关值由核心经 `UIShellViewState.actions.autoExecute` 推送到外壳，用户切换时外壳发 `{ type: 'actions.setAutoExecute', value }` 命令，核心转调 `setAutoExecuteActions()`。`actions.allowUserToggleAutoExecute: false` 时该开关渲染为禁用态并给出说明。动作模块未挂载（`features.actions = false`）时该行不出现。
+
+#### 方法
+
+| 方法 | 说明 |
+| --- | --- |
+| `executeActions(pageIndex, event, options?): Promise<readonly ActionOutcome[]>` | 手动执行某页某事件（`'DO' \| 'PO' \| 'CLICK'`）的动作；与内部触发同一条路径，使用该页取消信号。`options.signal?: AbortSignal` 与之合并。`executeActions(i, 'PO')` **不消耗**自动执行机会。页索引越界抛 `OFD_PAGE_NOT_FOUND`；未挂载动作服务抛 `OFD_FEATURE_DISABLED`（`feature='actions'`）；未打开抛 `OFD_NOT_OPENED` |
+| `getAutoExecuteActions(): boolean \| undefined` | 读取自动执行开关；动作模块未挂载时返回 `undefined` |
+| `setAutoExecuteActions(enabled: boolean): void` | 设置开关（不持久化），立即生效；打开时补执行此前被跳过的 DO/PO。`allowUserToggleAutoExecute: false` 时无效 |
+| `getAutoExecuteActionsToggleAllowed(): boolean \| undefined` | 是否允许用户修改该开关（对应 `allowUserToggleAutoExecute`）；动作模块未挂载时返回 `undefined` |
+| `attachActionService(service): () => void` | 挂载动作服务（内置扩展使用），返回卸载函数 |
+| `getContentPointAtViewport(clientX, clientY)` | 视口坐标 → `{ pageIndex: number; xPx: number; yPx: number }`，96 DPI **未旋转**页面像素；坐标不落在任何页面上时返回 `undefined`。**纯读取**，不修改缩放锚点等内部状态 |
+
+```ts
+const outcomes = await viewer.executeActions(0, 'PO'); // ['executed', 'skipped']
+console.log(outcomes);
+
+const point = viewer.getContentPointAtViewport(event.clientX, event.clientY);
+if (point) console.log(point.pageIndex, point.xPx, point.yPx);
+```
+
+```ts
+// 受限展示：由宿主决定，用户不可改
+new OFDViewer({
+  container: '#viewer',
+  source: file,
+  actions: { autoExecuteActions: true, allowUserToggleAutoExecute: false },
+});
+```
+
+#### 状态
+
+`ViewerState.actions`：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `pendingAutoActions` | `number` | 因自动执行关闭而未执行的 DO/PO 动作数量；宿主可据此提示用户去「关于」开启 |
+| `activePlayers` | `number` | 当前活动播放器数量（未暂停、未销毁） |
+
+两个字段都是只读计数，**不承载字节与 ObjectURL**，可安全序列化。
+
+#### 媒体层
+
+`PageView` 提供 `.ofd-page__media-layer`：绝对定位于页面 surface 内，`z-index: 2`，`pointer-events: none`（只有媒体元素本身可命中），`transform: scale(var(--scale-factor))` 随缩放变化，位置在文本层之后、签章层之前。默认 `aria-hidden="true"`，挂入内联播放器后由动作模块移除。打印时媒体层与弹出浮层均隐藏（`@media print`）。UI 负责 `Blob`/`ObjectURL` 的创建与释放（`pause()` → 移除 `src` → `load()` → `revokeObjectURL()`），引擎不参与。
+
+#### 告警码
+
+| 码 | 触发点 |
+| --- | --- |
+| `W_ACTION_LOAD` | 某页动作集合加载失败，该页按无动作处理 |
+| `W_ACTION_EXECUTE` | 单个动作执行失败（同时派发 `action:error`） |
+| `W_MEDIA_RESOURCE` | 媒体资源缺失或字节读取失败 |
+| `W_MEDIA_PLAY` | 媒体播放失败（格式不支持/解码失败） |
+
+> 注意 `W_MEDIA_RESOURCE` 与引擎的 `W_MEDIA_RESOURCE` **同名但不同义**：引擎那条是解析期媒体声明不可用（`MediaFile` 缺失/路径无法解析），UI 这条是播放期资源读取失败。两者分属独立命名空间，UI 转发引擎码时保持原码，详见 [CONTRACTS §8.2.1](../../../docs/CONTRACTS.md)。
+
+#### i18n 词条
+
+| 前缀 | 用途 | 关键键 |
+| --- | --- | --- |
+| `actions.*` | 「关于」开关、未执行提示与 URI 确认框 | `actions.autoExecute.toggle`、`actions.autoExecute.hint`、`actions.autoExecute.enabled`/`disabled`、`actions.pendingHint`（含 `{count}`）、`actions.uri.title`/`body`（含 `{url}`/`{host}`）/`confirm`/`cancel`/`popupBlocked` |
+| `media.*` | 播放器控制条与降级提示 | `media.video`/`audio`、`media.play`/`pause`/`stop`、`media.mute`/`unmute`、`media.fullscreen`、`media.close`、`media.unsupported`（含 `{format}`）、`media.autoplayBlocked`、`media.tooLarge`（含 `{size}`）/`tooLargeTitle`/`downloadOfd`、`media.loadFailed`（含 `{message}`）、`media.ofdUnavailable` |
+
+`zh-CN` 与 `en-US` 键集合必须同构。
+
 ### 扩展与服务
 
 以下方法主要供内置能力和扩展作者使用，普通宿主通常不需要调用：
@@ -892,6 +1034,7 @@ viewer.resetLayerVisibility();
 | `attachSignatureService(service)` | 挂载签章服务 |
 | `attachPrintService(service)` | 挂载打印服务 |
 | `attachExportService(service)` | 挂载导出服务 |
+| `attachActionService(service)` | 挂载动作服务（`ViewerActionService`，由动作模块内部调用），返回卸载函数 |
 | `trackPageRenderStart(pageIndex, purpose)` | 登记一次页面渲染开始，返回 `{ drop() }`；`purpose` 为 `main`/`thumbnail`，页索引 0-based |
 
 同一类服务重复挂载时后挂载者生效；返回的卸载函数只移除对应服务。`trackPageRenderStart` 用于让扩展把引擎渲染事件与主页面/缩略图关联，普通宿主不需要使用。
@@ -905,6 +1048,7 @@ interface ViewerState {
   readonly document: DocumentState;
   readonly view: ViewState;
   readonly ui: UIState;
+  readonly actions: { readonly pendingAutoActions: number; readonly activePlayers: number };
 }
 ```
 
@@ -1638,7 +1782,9 @@ interface ResolvedLayerVisibility {
 
 **状态**：`ViewerState`、`DocumentState`、`ViewState`、`UIState`、`InitialViewerStateOptions`、`ViewerWarning`、`ViewerErrorInfo`、`ViewerToast`、`ToastLevel`、`DialogName`、`VisiblePageRange`、`FindState`、`ZoomMode`、`ScaleValue`、`Rotation`、`SidebarView`、`Theme`。
 
-**事件**：`ViewerEventMap`、`ViewerEventName`、`ViewerEventPayload`、`ViewerEventHandler`、`DocumentOpenEvent`、`DocumentCloseEvent`、`PageChangingEvent`、`PageRenderedEvent`、`PagesLoadedEvent`、`ScaleChangingEvent`、`RotationChangingEvent`、`SidebarViewChangedEvent`、`FindStartEvent`、`FindMatchesEvent`、`FindCurrentEvent`、`SelectionChangeEvent`、`SignatureClickEvent`、`VerificationCompletedEvent`、`PrintStartEvent`、`PrintProgressEvent`、`PrintEndEvent`、`ExportProgressEvent`、`WarningEvent`、`ErrorEvent`、`FeaturesChangeEvent`、`StateChangeEvent`、`LocalFontsChangeEvent`。
+**动作与音视频**：`ViewerActionsOptions`、`ViewerActionService`、`ActionOutcome`、`ActionExecutionContext`、`ActionSkipReason`、`ActionErrorReason`、`ActionExecutedEvent`、`ActionSkippedEvent`、`ActionErrorEvent`、`MediaStateEvent`、`MediaErrorEvent`。
+
+**事件**：`ViewerEventMap`、`ViewerEventName`、`ViewerEventPayload`、`ViewerEventHandler`、`DocumentOpenEvent`、`DocumentCloseEvent`、`PageChangingEvent`、`PageRenderedEvent`、`PagesLoadedEvent`、`ScaleChangingEvent`、`RotationChangingEvent`、`SidebarViewChangedEvent`、`FindStartEvent`、`FindMatchesEvent`、`FindCurrentEvent`、`SelectionChangeEvent`、`SignatureClickEvent`、`VerificationCompletedEvent`、`PrintStartEvent`、`PrintProgressEvent`、`PrintEndEvent`、`ExportProgressEvent`、`WarningEvent`、`ErrorEvent`、`FeaturesChangeEvent`、`StateChangeEvent`、`LocalFontsChangeEvent`、`ActionExecutedEvent`、`ActionSkippedEvent`、`ActionErrorEvent`、`MediaStateEvent`、`MediaErrorEvent`。
 
 **来源与预览**：`ViewerSource`、`PreviewLocation`、`PreviewSourceOptions`、`DEFAULT_MAX_BASE64_BYTES`、`readPreviewSourceFromLocation`、`HttpByteSource`、`HttpByteSourceOptions`。
 

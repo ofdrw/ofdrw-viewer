@@ -67,7 +67,13 @@ describe('decodePageResources', () => {
     expect(onWarning).toHaveBeenCalledWith(expect.objectContaining({ code: 'W_DUPLICATE_RESOURCE' }));
 
     expect(set.images.map((image) => image.id)).toEqual(['2', '5']);
-    expect(set.images[0]).toEqual({ id: '2', mediaFile: 'Doc_0/Res/Images/a.png', format: 'png' });
+    expect(set.images[0]).toEqual({
+      id: '2',
+      mediaFile: 'Doc_0/Res/Images/a.png',
+      format: 'png',
+      scope: 'page',
+      declaredIn: 'Doc_0/PageRes.xml',
+    });
     expect(set.images[1]?.mediaFile).toBe('Doc_0/absolute.jpg');
     expect(set.images[1]?.format).toBe('jpeg');
 

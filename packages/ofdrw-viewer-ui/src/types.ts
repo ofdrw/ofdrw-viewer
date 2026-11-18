@@ -11,6 +11,8 @@ import type {
   VerificationReport,
 } from '@ofdrw/ofdrw-viewer-crypto';
 import type {
+  ActionOwner,
+  ActionType,
   AttachmentInfo,
   DocumentMetadata,
   DocumentPermissions,
@@ -34,11 +36,24 @@ import type {
 // 引擎公共类型（UI 公共 API 会原样透出）
 // ---------------------------------------------------------------------------
 export type {
+  ActionEvent,
+  ActionInfo,
+  ActionOwner,
+  ActionPayload,
+  ActionRegion,
+  ActionRegionPath,
+  ActionType,
   AttachmentInfo,
   BookmarkItem,
   DocumentDestination,
   DocumentMetadata,
   DocumentPermissions,
+  GotoAActionPayload,
+  GotoActionPayload,
+  MediaResource,
+  MovieActionPayload,
+  MovieOperator,
+  ObjectActionTarget,
   OutlineNode,
   PageImageFormat,
   PageInfo,
@@ -47,11 +62,13 @@ export type {
   SignatureReferenceInfo,
   SignatureStampInfo,
   SignedValueFile,
+  SoundActionPayload,
   TextChar,
   TextContent,
   TextItem,
   TextQuad,
   TextRect,
+  UriActionPayload,
 } from '@ofdrw/ofdrw-viewer-engine';
 
 // ---------------------------------------------------------------------------
@@ -522,6 +539,96 @@ export type StateChangeEvent = ViewerState;
 /** 本地字体状态变化（本地字体加载方案设计 §5.3）。 */
 export type LocalFontsChangeEvent = LocalFontsStatus;
 
+// ---------------------------------------------------------------------------
+// 动作与媒体事件（UI 动作处理机制设计 §9.2）
+// ---------------------------------------------------------------------------
+
+/** 动作被跳过原因。 */
+export type ActionSkipReason =
+  /** `autoExecuteActions = false`，自动动作未执行。 */
+  | 'autoplay-disabled'
+  /** 浏览器拦截了自动播放。 */
+  | 'autoplay-blocked'
+  /** URI 协议不在白名单（不弹确认框）。 */
+  | 'policy'
+  /** 用户在外部访问确认框中取消。 */
+  | 'declined'
+  /** Goto 目标无效 / 附件不存在 / 媒体资源缺失。 */
+  | 'target-missing'
+  /** 浏览器不支持该媒体格式。 */
+  | 'unsupported'
+  /** 文档未声明该动作需要的资源。 */
+  | 'resource-missing';
+
+/** 动作失败原因。 */
+export type ActionErrorReason =
+  /** 超过 `maxActionDepth`。 */
+  | 'loop'
+  /** `window.open` 被浏览器拦截。 */
+  | 'popup-blocked'
+  /** 媒体格式/编解码不支持。 */
+  | 'unsupported'
+  /** 读取媒体字节失败。 */
+  | 'load';
+
+/** 动作已执行。 */
+export interface ActionExecutedEvent {
+  /** 动作类型。 */
+  readonly type: ActionType;
+  /** 动作宿主。 */
+  readonly owner: ActionOwner;
+  /** 关联页索引，0-based；文档级/大纲级动作省略。 */
+  readonly pageIndex?: number;
+  /**
+   * URI 动作的打开方式；仅 `type === 'uri'` 时出现。
+   *
+   * 宿主可据此判断阅读器是否会在当前窗口跳转（`_self` 会导致文档状态丢失）。
+   */
+  readonly target?: string;
+}
+
+/** 动作被跳过。 */
+export interface ActionSkippedEvent {
+  /** 动作类型。 */
+  readonly type: ActionType;
+  /** 跳过原因。 */
+  readonly reason: ActionSkipReason;
+  /** 关联页索引，0-based；文档级/大纲级动作省略。 */
+  readonly pageIndex?: number;
+}
+
+/** 动作执行失败。 */
+export interface ActionErrorEvent {
+  /** 动作类型。 */
+  readonly type: ActionType;
+  /** 稳定错误码，例如 `OFD_MEDIA_UNSUPPORTED`。 */
+  readonly code: string;
+  /** 失败原因分类；未知错误省略。 */
+  readonly reason?: ActionErrorReason;
+  /** 面向诊断的信息。 */
+  readonly message?: string;
+  /** 关联页索引，0-based；文档级/大纲级动作省略。 */
+  readonly pageIndex?: number;
+}
+
+/** 媒体播放状态变化。 */
+export interface MediaStateEvent {
+  /** 媒体资源 ID。 */
+  readonly resourceId: string;
+  /** 媒体类型。 */
+  readonly kind: 'audio' | 'video';
+  /** 关联页索引，0-based；弹出式播放且无来源页时省略。 */
+  readonly pageIndex?: number;
+}
+
+/** 媒体播放失败。 */
+export interface MediaErrorEvent extends MediaStateEvent {
+  /** 失败分类。 */
+  readonly code: 'unsupported' | 'decode' | 'load';
+  /** 面向诊断的信息。 */
+  readonly message?: string;
+}
+
 /** 全部事件名与载荷。 */
 export type ViewerEventMap = {
   documentopen: DocumentOpenEvent;
@@ -546,6 +653,14 @@ export type ViewerEventMap = {
   error: ErrorEvent;
   featureschange: FeaturesChangeEvent;
   'local-fonts:change': LocalFontsChangeEvent;
+  'action:executed': ActionExecutedEvent;
+  'action:skipped': ActionSkippedEvent;
+  'action:error': ActionErrorEvent;
+  'media:play': MediaStateEvent;
+  'media:pause': MediaStateEvent;
+  'media:ended': MediaStateEvent;
+  'media:stop': MediaStateEvent;
+  'media:error': MediaErrorEvent;
   statechange: StateChangeEvent;
 };
 

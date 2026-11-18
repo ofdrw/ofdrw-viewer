@@ -16,6 +16,7 @@ import {
 import type { PropType } from 'vue';
 import {
   OFDViewer as CoreOFDViewer,
+  type ActionOutcome,
   type CertificateSource,
   type CertificateSummary,
   type ExportImageOptions,
@@ -32,6 +33,7 @@ import {
   type ViewerState,
 } from '../index';
 import {
+  VIEWER_EVENT_BRIDGES,
   bindViewerEvents,
   isZoomMode,
   type FeatureDisplay,
@@ -39,6 +41,7 @@ import {
   type ScaleValue,
   type SidebarView,
   type Theme,
+  type VueViewerEventName,
   type ViewerFeatures,
 } from '../component/support';
 
@@ -60,60 +63,29 @@ const DISABLED_LOCAL_FONTS_STATUS: LocalFontsStatus = Object.freeze({
   loading: false,
 });
 
-/** Vue emits 名称；与核心事件一一对应。 */
-const EMITS = [
-  'ready',
-  'document-open',
-  'document-close',
-  'page-change',
-  'page-rendered',
-  'pages-loaded',
-  'scale-change',
-  'rotation-change',
-  'sidebar-view-change',
-  'find-start',
-  'find-matches',
-  'find-current',
-  'selection-change',
-  'signature-click',
-  'verification-completed',
-  'print-start',
-  'print-progress',
-  'print-end',
-  'export-progress',
-  'warning',
-  'error',
-  'features-change',
-  'local-fonts-change',
-  'state-change',
-] as const;
+/**
+ * Vue emits 名称。
+ *
+ * 由 {@link VIEWER_EVENT_BRIDGES} 派生：桥接表新增事件时自动进入 emits，不再维护
+ * 第二份手抄清单。
+ */
+const EMITS: string[] = ['ready', ...VIEWER_EVENT_BRIDGES.map((bridge) => bridge.vue)];
 
-/** 核心事件名到 Vue emit 名称的映射。 */
-const VUE_EVENT_NAMES: Readonly<Record<string, (typeof EMITS)[number]>> = {
-  documentopen: 'document-open',
-  documentclose: 'document-close',
-  pagechanging: 'page-change',
-  pagerendered: 'page-rendered',
-  pagesloaded: 'pages-loaded',
-  scalechanging: 'scale-change',
-  rotationchanging: 'rotation-change',
-  sidebarviewchanged: 'sidebar-view-change',
-  findstart: 'find-start',
-  findmatches: 'find-matches',
-  findcurrent: 'find-current',
-  selectionchange: 'selection-change',
-  signatureclick: 'signature-click',
-  verificationcompleted: 'verification-completed',
-  printstart: 'print-start',
-  printprogress: 'print-progress',
-  printend: 'print-end',
-  exportprogress: 'export-progress',
-  warning: 'warning',
-  error: 'error',
-  featureschange: 'features-change',
-  'local-fonts:change': 'local-fonts-change',
-  statechange: 'state-change',
-};
+/** 核心事件名到 Vue emit 名称的映射；由桥接表派生。 */
+const VUE_EVENT_NAMES: ReadonlyMap<string, string> = new Map(
+  VIEWER_EVENT_BRIDGES.map((bridge) => [bridge.event as string, bridge.vue]),
+);
+
+/**
+ * emits 覆盖性断言（编译期）。
+ *
+ * 桥接表里的每个 Vue 事件名都必须出现在 {@link EMITS} 中，否则 `emit` 会被 Vue 静默
+ * 丢弃；漏登记时此处的联合类型不可赋值给 `never`，typecheck 失败。
+ */
+type EmittedVueEventName = (typeof EMITS)[number];
+type UnemittedVueEventName = Exclude<VueViewerEventName, EmittedVueEventName>;
+const _assertAllVueEventsEmitted: UnemittedVueEventName extends never ? true : never = true;
+void _assertAllVueEventsEmitted;
 
 /** 执行同步/异步核心方法并吞掉受控同步错误。 */
 function run(action: () => unknown): void {
@@ -167,7 +139,7 @@ export const OFDViewer = defineComponent({
     /** 高级构造选项；公共 props 优先。 */
     options: { type: Object as PropType<AdvancedOptions>, default: undefined },
   },
-  emits: [...EMITS],
+  emits: EMITS,
   setup(props, { attrs, emit, expose }) {
     const container = shallowRef<HTMLElement | null>(null);
     const viewer = shallowRef<CoreOFDViewer | null>(null);
@@ -194,7 +166,7 @@ export const OFDViewer = defineComponent({
       viewer.value = markRaw(created);
       lastSource = props.source;
       bindViewerEvents(created, (event, payload) => {
-        const name = VUE_EVENT_NAMES[event];
+        const name = VUE_EVENT_NAMES.get(event);
         if (name) (emit as (event: string, ...args: unknown[]) => void)(name, payload);
       });
       void created.ready.then(
@@ -381,6 +353,32 @@ export const OFDViewer = defineComponent({
         handler: (status: LocalFontsStatus) => void,
       ): (() => void) =>
         viewer.value?.onLocalFontsStatusChange(handler) ?? (() => undefined),
+      /**
+       * 手动执行某页的指定事件动作（UI 动作处理机制设计 §14.1）。
+       *
+       * @param pageIndex 页索引，0-based。
+       * @param event 动作事件。
+       * @param options 取消信号。
+       * @returns 每个动作的执行结果。
+       */
+      executeActions: async (
+        pageIndex: number,
+        event: 'DO' | 'PO' | 'CLICK',
+        options?: { readonly signal?: AbortSignal },
+      ): Promise<readonly ActionOutcome[]> => {
+        if (!viewer.value) throw new Error('阅读器尚未挂载');
+        return viewer.value.executeActions(pageIndex, event, options);
+      },
+      /** 读取「自动执行文档动作」开关；动作模块未挂载时为 undefined。 */
+      getAutoExecuteActions: (): boolean | undefined =>
+        viewer.value?.getAutoExecuteActions(),
+      /** 设置「自动执行文档动作」开关（不持久化）。 */
+      setAutoExecuteActions: (enabled: boolean): void => {
+        run(() => viewer.value?.setAutoExecuteActions(enabled));
+      },
+      /** 读取该开关是否允许用户修改；动作模块未挂载时为 undefined。 */
+      getAutoExecuteActionsToggleAllowed: (): boolean | undefined =>
+        viewer.value?.getAutoExecuteActionsToggleAllowed(),
     });
 
     return () =>

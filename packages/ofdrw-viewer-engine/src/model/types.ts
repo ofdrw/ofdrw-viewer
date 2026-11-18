@@ -438,6 +438,8 @@ export interface ColorSpaceDef {
 export interface ResourceDefinitionSet {
   fonts: FontResource[];
   images: ImageResource[];
+  /** 音视频资源（`Type` 为 `Audio`/`Video`）；无音视频时为空数组。 */
+  media: MediaResource[];
   drawParams: DrawParam[];
   compositeGraphicUnits: CompositeGraphicUnit[];
   colorSpaces: ColorSpaceDef[];
@@ -495,6 +497,40 @@ export interface ImageResource {
   /** 包内图片文件路径。 */
   mediaFile: string;
   format: ImageFormat;
+  /** 声明来源：public 资源文件 / 文档资源文件 / 页资源文件；未标注时省略。 */
+  scope?: ResourceScope;
+  /** 声明它的资源文件包内路径；未标注时省略。 */
+  declaredIn?: string;
+}
+
+/** 资源声明来源（资源文件种类）。 */
+export type ResourceScope = 'public' | 'document' | 'page';
+
+/** 音视频多媒体类型；`image` 仅供消费方判断，`MediaResource.kind` 不会取该值。 */
+export type MediaKind = 'image' | 'audio' | 'video';
+
+/**
+ * 音视频资源（`MultiMedias/MultiMedia` 中 `Type` 为 `Audio`/`Video` 的条目）。
+ *
+ * 图片资源仍使用 `ImageResource`；两者共用同一次 `MultiMedias` 遍历，按 `Type` 分派。
+ */
+export interface MediaResource {
+  /** ST_ID，资源标识（十进制字符串归一化）。 */
+  id: ResourceId;
+  /** 多媒体类型；音视频资源恒为 `audio`/`video`。 */
+  kind: 'audio' | 'video';
+  /** 包内绝对路径（`BaseLoc` 已展开，无前导 `/`）。 */
+  mediaFile: string;
+  /** MIME 类型，例如 `video/mp4`；无法判定时为 `application/octet-stream`。 */
+  mimeType: string;
+  /** 声明的格式原文（`Format` 属性，去前后空白）；未声明时省略。 */
+  format?: string;
+  /** 字节大小，byte；索引阶段不读内容，省略。 */
+  sizeBytes?: number;
+  /** 声明来源：public 资源文件 / 文档资源文件 / 页资源文件。 */
+  scope: ResourceScope;
+  /** 声明它的资源文件包内路径，便于排障。 */
+  declaredIn: string;
 }
 
 /** 复合图形资源；Width/Height 使用 0.3528 mm 单位。 */
@@ -551,6 +587,130 @@ export interface DocumentDestination {
   zoom?: number;
 }
 
+// ---------------------------------------------------------------------------
+// 动作（CT_Action）
+// ---------------------------------------------------------------------------
+
+/** 动作事件类型，对应 `Action@Event`。 */
+export type ActionEvent = 'DO' | 'PO' | 'CLICK';
+
+/** 动作体类型，对应 `CT_Action` 的 `xs:choice`。 */
+export type ActionType = 'goto' | 'uri' | 'gotoa' | 'sound' | 'movie';
+
+/** 动作宿主（动作声明在哪种节点上）。 */
+export type ActionOwner =
+  | { kind: 'document' }
+  | { kind: 'page'; pageIndex: number }
+  | { kind: 'object'; pageIndex: number; objectId?: ResourceId }
+  | { kind: 'outline'; path: readonly number[] };
+
+/** 区域路径命令；坐标单位 mm，页面坐标系。 */
+export type ActionRegionPath =
+  | { type: 'moveTo'; x: number; y: number }
+  | { type: 'lineTo'; x: number; y: number }
+  | {
+      type: 'bezierCurveTo';
+      cp1x: number;
+      cp1y: number;
+      cp2x: number;
+      cp2y: number;
+      x: number;
+      y: number;
+    }
+  | { type: 'closePath' };
+
+/**
+ * 动作触发区域。
+ *
+ * 坐标单位 mm，页面坐标系；缺省区域（无 `Action/Region`）时整项不出现。
+ */
+export interface ActionRegion {
+  /**
+   * 区域路径集合：外层每个元素对应一个 `Area`，内层每条元素是一条路径的命令列表。
+   *
+   * 同一 `Area` 内多条路径按 even-odd 规则共同围成区域。
+   */
+  areas: ReadonlyArray<ReadonlyArray<ReadonlyArray<ActionRegionPath>>>;
+  /** 外接矩形（mm）；路径缺失或非法时退化为宿主图元 Boundary。 */
+  bbox: Box;
+}
+
+/** `Goto` 动作：文档内跳转。 */
+export interface GotoActionPayload {
+  type: 'goto';
+  /** 目标区域（`Dest`）；复用 `DocumentDestination`。 */
+  dest?: DocumentDestination;
+  /** 目标书签名称（`Bookmark` 元素或 `Bookmark@Name`）。 */
+  bookmarkName?: string;
+}
+
+/** `URI` 动作：打开外部链接。 */
+export interface UriActionPayload {
+  type: 'uri';
+  /** 目标 URI（`@URI`，可能为相对地址）。 */
+  uri: string;
+  /** 基础 URI（`@Base`）。 */
+  base?: string;
+  /** 打开方式提示（`@Target`，如 `_blank`）；标准正文未定义语义。 */
+  target?: string;
+}
+
+/** `GotoA` 动作：打开包内附件。 */
+export interface GotoAActionPayload {
+  type: 'gotoa';
+  /** 附件标识（`@AttachID`，`xs:IDREF`）；缺失时为空串。 */
+  attachId: string;
+  /** 是否新窗口打开（`@NewWindow`），缺省 true。 */
+  newWindow: boolean;
+}
+
+/** `Sound` 动作：播放音频。 */
+export interface SoundActionPayload {
+  type: 'sound';
+  /** 音频资源 ID。 */
+  resourceId: ResourceId;
+  /** 播放音量 0..100，默认 100。 */
+  volume: number;
+  /** 是否循环；为 true 时 `Synchronous` 无效。 */
+  repeat: boolean;
+  /** 是否阻塞后续动作，默认 false。 */
+  synchronous: boolean;
+}
+
+/** `Movie` 放映参数。 */
+export type MovieOperator = 'Play' | 'Stop' | 'Pause' | 'Resume';
+
+/** `Movie` 动作：播放/控制视频。 */
+export interface MovieActionPayload {
+  type: 'movie';
+  /** 视频资源 ID。 */
+  resourceId: ResourceId;
+  /** 放映参数，默认 `Play`。 */
+  operator: MovieOperator;
+}
+
+/** 动作 payload 判别联合；按 `type` 区分形状。 */
+export type ActionPayload =
+  | GotoActionPayload
+  | UriActionPayload
+  | GotoAActionPayload
+  | SoundActionPayload
+  | MovieActionPayload;
+
+/** 统一的动作结构；`type` 与 `payload.type` 恒等。 */
+export interface ActionInfo {
+  /** 事件类型。 */
+  event: ActionEvent;
+  /** 动作类型。 */
+  type: ActionType;
+  /** 宿主位置。 */
+  owner: ActionOwner;
+  /** 显式声明的启动区域（`Action/Region`）；缺省时省略，由宿主几何回退。 */
+  region?: ActionRegion;
+  /** 动作 payload。 */
+  payload: ActionPayload;
+}
+
 /** 大纲节点；children 保持 XML 顺序与层级。 */
 export interface OutlineNode {
   /** 标题。 */
@@ -561,6 +721,8 @@ export interface OutlineNode {
   children: OutlineNode[];
   /** 跳转目标；无效或缺失时省略。 */
   dest?: DocumentDestination;
+  /** 节点上的动作（`OutlineElem/Actions`）；无动作时省略。 */
+  actions?: readonly ActionInfo[];
 }
 
 /** 书签条目。 */
@@ -689,6 +851,8 @@ export interface DocumentModel {
   attachmentsFile?: string;
   /** Document.xml 头部声明；无可识别字段时缺省。 */
   header?: DocumentHeader;
+  /** Document.xml 的文档级动作（`Document/Actions`）；无动作时省略。 */
+  actions?: readonly ActionInfo[];
 }
 
 /** 页树前序遍历结果。 */

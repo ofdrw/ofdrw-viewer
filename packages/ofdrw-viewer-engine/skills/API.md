@@ -37,6 +37,16 @@
 | `document.getAttachmentSize(id, options?)` | `Promise<number \| undefined>` | 附件声明大小，byte |
 | `document.saveAttachment(id, sink, options?)` | `Promise<number>` | 分块回调写出附件内容，返回写出字节数 |
 | `document.getAttachmentData(id)` | `Promise<Uint8Array \| undefined>` | 附件原始字节 |
+| `document.getMediaResources(options?)` | `Promise<readonly MediaResource[]>` | 音视频资源清单，零内容 IO |
+| `document.getMediaResource(id, options?)` | `Promise<MediaResource \| undefined>` | 按 ID 查音视频资源 |
+| `document.getMediaData(id, options?)` | `Promise<Uint8Array \| undefined>` | 音视频资源原始字节（整块） |
+| `document.hasImageResource(id, options?)` | `Promise<boolean>` | 判断资源 ID 是否为图片资源 |
+| `document.getDocumentActions()` | `readonly ActionInfo[]` | 文档级动作（同步、零 IO） |
+| `document.getPageActions(i, options?)` | `Promise<readonly ActionInfo[]>` | 页级动作 |
+| `document.getObjectActions(i, target, options?)` | `Promise<readonly ActionInfo[]>` | 图元动作（按 ID 或页内路径） |
+| `document.getOutlineActions(path, options?)` | `Promise<readonly ActionInfo[]>` | 大纲节点动作 |
+| `document.getPageActionsByEvent(i, event, options?)` | `Promise<readonly ActionInfo[]>` | 本页某事件的全部动作 |
+| `document.getPageActionGeometries(i, options?)` | `Promise<readonly ActionGeometryEntry[]>` | 本页可定位动作 + 页面像素几何 |
 | `document.close()` | `Promise<void>` | 中止活动操作并释放资源 |
 | `document.events` | `OFDEventBus` | 文档/页面事件总线 |
 | `page.index` | `number` | 页索引，从 0 开始 |
@@ -50,6 +60,8 @@
 | `openZipVirtualContainer(source, options)` | `Promise<VirtualContainer>` | 构造默认 ZIP 容器 |
 | `getPageViewport(size, options)` | `Viewport` | 纯函数：mm → px |
 | `getPageTransform(area, dpi)` | `Matrix` | 纯函数：mm → 设备矩阵 |
+| `getActionGeometry(action, options)` | `ActionGeometry \| undefined` | 纯函数：动作区域 → 页面像素 |
+| `isPointInActionRegion(geometry, point)` | `boolean` | 纯函数：even-odd 命中判定 |
 | `OFDError` / `isOFDError` / `toOFDError` | 错误类型与工具 | 错误分类 |
 | `WarningCollector` / `WARNING_CODES` | warning 工具 | 收集与去重 |
 
@@ -332,6 +344,179 @@ const needed = fonts.filter((font) => font.fontFile === undefined).map((font) =>
 - 声明大小或实际大小超过 `limits.maxAttachmentBytes`（未配置回退 `maxEntryBytes`）时抛 `OFD_LIMIT_EXCEEDED`。
 - `OFD_LIMIT_EXCEEDED`/`OFD_INVALID_PACKAGE` 等不可降级错误原样抛出。
 - 每次调用按需读取，不缓存附件内容；返回字节归调用方所有。
+
+### 3.13.1 音视频资源查询
+
+```ts
+getMediaResources(options?: { signal?: AbortSignal }): Promise<readonly MediaResource[]>;
+
+getMediaResource(
+  resourceId: string,
+  options?: MediaResourceQueryOptions,
+): Promise<MediaResource | undefined>;
+
+getMediaData(
+  resourceId: string,
+  options?: MediaResourceQueryOptions,
+): Promise<Uint8Array | undefined>;
+
+interface MediaResourceQueryOptions {
+  signal?: AbortSignal;
+  pageIndex?: number;  // 来源页索引，从 0 开始；用于页级资源作用域解析
+  maxBytes?: number;   // 单次读取上限，byte；只在 getMediaData 生效
+}
+```
+
+`MediaResource` 描述 `MultiMedias/MultiMedia` 中 `Type` 为 `Audio`/`Video` 的资源；图片仍使用 `ImageResource`，两者共用同一次 `MultiMedias` 遍历、按 `Type` 分派。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `string` | 归一化后的十进制资源 ID（`ST_ID`） |
+| `kind` | `'audio' \| 'video'` | 多媒体类型；不会出现 `image` |
+| `mediaFile` | `string` | 包内绝对路径（`BaseLoc` 已展开，无前导 `/`） |
+| `mimeType` | `string` | MIME，如 `video/mp4`；无法判定时为 `application/octet-stream` |
+| `format` | `string?` | `Format` 属性原文；未声明时**字段不存在** |
+| `sizeBytes` | `number?` | 字节大小（byte）；索引阶段不读内容，查询时由容器声明大小补齐 |
+| `scope` | `'public' \| 'document' \| 'page'` | 声明来源（按资源文件名判定） |
+| `declaredIn` | `string` | 声明它的资源文件包内路径 |
+
+行为约定：
+
+- `getMediaResources()`：只读 `open()` 阶段已建立的资源索引，**零内容 IO**；结果按 `id` 数值升序，缓存到 `close()`；无音视频返回 `[]`。首次计算完成后派发 `media:index:end`（载荷 `{ count }`）；条数超过 `limits.maxMediaResourceCount`（默认 512 个）时忽略多余声明并上报 `W_MEDIA_LIMIT`。
+- `getMediaResource(id, options?)`：只读索引，不读内容；`options.pageIndex` 用于页级 `PageRes` 作用域解析（页级 → 模板级 → 文档级）。省略 `pageIndex` 时先查「文档 → 公共」，未命中再回退到任意页资源并上报 `W_MEDIA_SCOPE_AMBIGUOUS`。资源存在但类型是图片、或 ID 不存在时返回 `undefined`（不抛错）。`pageIndex` 越界抛 `OFD_PAGE_NOT_FOUND`。
+- `getMediaData(id, options?)`：读取整块原始字节，**不缓存**，返回字节归调用方所有。
+  - 读取前按容器 `stat()` 的声明大小（byte）预检，超过上限直接抛 `OFD_LIMIT_EXCEEDED`，不返回部分数据；
+  - 上限取 `limits.maxMediaBytes`（默认 256 MiB）与 `options.maxBytes` 的较小者；`maxMediaBytes` 独立取值，**不回退** `maxEntryBytes`；
+  - 资源不存在或类型是图片时返回 `undefined`（不抛错）；包内文件缺失时上报 `W_MEDIA_RESOURCE` 并返回 `undefined`；
+  - 取消抛 `OFD_ABORTED`，关闭后抛 `OFD_CLOSED`。
+- **不提供分块读取**：播放与 CLI 导出都走 `getMediaData()` 整块读取，大小由 `maxMediaBytes` 兜底；engine 不产生 `Blob`/ObjectURL，任何播放器 URL 都由宿主构造。
+- MIME 判定顺序：`MediaFile` 扩展名 → `Format` 为 MIME 形态（含 `/`）→ `Format` 为已知扩展名 → 兜底 `application/octet-stream` 并上报 `W_MEDIA_FORMAT`。
+
+```ts
+import { OFDDocument } from '@ofdrw/ofdrw-viewer-engine';
+
+const doc = await OFDDocument.open({ source: { kind: 'arraybuffer', data: bytes } });
+const media = await doc.getMediaResources();
+const video = media.find((item) => item.kind === 'video');
+if (video) {
+  const bytes = await doc.getMediaData(video.id); // Uint8Array；宿主转 Blob/ObjectURL
+}
+```
+
+### 3.13.2 动作查询
+
+```ts
+hasImageResource(
+  resourceId: string,
+  options?: { signal?: AbortSignal; pageIndex?: number },
+): Promise<boolean>;
+
+getDocumentActions(): readonly ActionInfo[];
+getPageActions(pageIndex: number, options?: { signal?: AbortSignal }): Promise<readonly ActionInfo[]>;
+getObjectActions(
+  pageIndex: number,
+  target: { objectId: string } | { path: readonly number[] },
+  options?: { signal?: AbortSignal },
+): Promise<readonly ActionInfo[]>;
+getOutlineActions(path: readonly number[], options?: { signal?: AbortSignal }): Promise<readonly ActionInfo[]>;
+getPageActionsByEvent(
+  pageIndex: number,
+  event: ActionEvent,
+  options?: { signal?: AbortSignal },
+): Promise<readonly ActionInfo[]>;
+```
+
+`ActionInfo` 是跨四种宿主（文档 / 页面 / 图元 / 大纲）的统一结构，`payload` 为判别联合：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `event` | `'DO' \| 'PO' \| 'CLICK'` | `Action@Event` |
+| `type` | `'goto' \| 'uri' \| 'gotoa' \| 'sound' \| 'movie'` | 动作体类型，恒等于 `payload.type` |
+| `owner` | `ActionOwner` | 宿主位置：`{kind:'document'}` / `{kind:'page',pageIndex}` / `{kind:'object',pageIndex,objectId?}` / `{kind:'outline',path}` |
+| `region` | `ActionRegion?` | 显式声明区域（mm）；缺省时省略，由宿主几何回退 |
+| `payload` | `ActionPayload` | `goto`（`dest?`/`bookmarkName?`）、`uri`（`uri`/`base?`/`target?`）、`gotoa`（`attachId`/`newWindow`）、`sound`（`resourceId`/`volume` 0..100/`repeat`/`synchronous`）、`movie`（`resourceId`/`operator` `Play\|Stop\|Pause\|Resume`） |
+
+行为约定：
+
+- **宽容解码**：动作是增强信息，单条解析失败只上报 warning 并跳过，绝不影响 `open()`、渲染、文本层与导出。缺 `Event`/非法 `Event`/无动作体/`Sound@ResourceID` 无效 → 跳过并报 `W_ACTION_INVALID`；多动作体取第一个并报 `W_ACTION_MULTIPLE_BODY`；`Event` 与宿主不匹配（如页面上的 `CLICK`）保留并报 `W_ACTION_EVENT_MISMATCH`；`Volume` 越界钳制、`Operator` 非法回退 `Play` 并报 `W_ACTION_FIELD`；`Goto/Dest` 无效省略 `dest` 并报 `W_ACTION_TARGET`；引用的资源不在文档级索引中保留动作并报 `W_ACTION_RESOURCE_MISSING`；`Region` 无有效路径时丢弃区域并报 `W_ACTION_REGION`；节点动作数超过 `limits.maxActionsPerNode`（默认 256 个）时忽略多余动作并报 `W_ACTION_LIMIT`。
+- **`Actions` 按子节点名查找**，不依赖顺序（实际包中它位于 `Border`/`AbbreviatedData` 之后）。
+- `getDocumentActions()`：`open()` 阶段已解析，同步零 IO；无动作返回 `[]`。
+- `getPageActions(i)`：按需加载 `Page.xml`，动作与页面模型一起缓存（随页缓存淘汰）；解析完成后派发 `action:page:end`（载荷 `{ pageIndex, count }`，`count` 只统计页级动作）。
+- `getObjectActions(i, target)`：图元动作不写入 `PageObject`，在页面块遍历时旁路收集。`{ objectId }` 按图元 `ID` 精确匹配；`{ path }` 按页内嵌套路径（图层内逐级子节点下标，如 `[0, 2]`）定位无 `ID` 图元。未命中原样返回 `[]`。
+- `getOutlineActions(path)`：大纲在 `open()` 阶段解析；`path` 为从根开始的逐级下标（如 `[0, 2]`）。`OutlineNode.actions` 与 `getOutline()` 返回同一份数据；既有的 `dest` 行为不变。
+- `getPageActionsByEvent(i, event)`：返回「页级动作（按 XML 顺序）+ 图元动作（按图元 ID、页内路径首次出现顺序）」中事件匹配的项，供宿主一次建命中表。
+- `hasImageResource(id, options?)`：只查资源索引、零 IO；是图片资源返回 `true`，音视频 ID 与不存在的 ID 返回 `false`。`options.pageIndex` 用于页级 `PageRes` 作用域解析。
+
+```ts
+const doc = await OFDDocument.open({ source: { kind: 'arraybuffer', data: bytes } });
+for (const action of await doc.getPageActionsByEvent(0, 'CLICK')) {
+  if (action.payload.type === 'movie') {
+    const url = await doc.getMediaResource(action.payload.resourceId); // 元信息
+  }
+}
+```
+
+### 3.13.3 `document.getPageActionGeometries(pageIndex, options?)`
+
+取某页**全部可定位动作**及其页面像素几何，供宿主一次性构建命中表与媒体层定位。
+
+```ts
+getPageActionGeometries(
+  pageIndex: number,
+  options?: { dpi?: number; signal?: AbortSignal },
+): Promise<readonly ActionGeometryEntry[]>;
+
+interface ActionGeometryEntry {
+  action: ActionInfo;
+  geometry: ActionGeometry;
+}
+```
+
+**返回范围**（只含能定位的动作）：
+
+| 动作来源 | 是否返回 | 几何来源 |
+| --- | --- | --- |
+| 图元动作（`owner.kind === 'object'`） | ✅ | 图元 `Boundary` × `CTM` × `M_page` |
+| 页面级动作带 `Action/Region` | ✅ | `Region` 折线 |
+| 页面级动作无 `Region` | ❌ | 页面整体不是有意义的命中区 |
+| 文档级动作（无 `Region`） | ❌ | 没有页面坐标 |
+| 大纲级动作 | ❌ | 由大纲视图自身触发，不参与页面命中 |
+
+**返回顺序（重要，决定命中优先级）**：
+
+1. 页级动作在前，保持 `Page.xml` 的 XML 顺序；
+2. 其后为图元动作，按**绘制序**：层序 `Background → Body → Foreground → Custom`，同一层内按 XML 顺序，嵌套 `PageBlock` 递归展开。
+
+绘制序即视觉叠放序，**后绘制者在上**。宿主命中时应**反向遍历**该数组，取第一个命中项，才能得到「最上层优先」的正确结果（与 `getPageActionsByEvent` 的返回顺序不同，后者不考虑 z 序）。
+
+**其它约定**：
+
+- **零额外 IO**：图元 `Boundary`/`CTM` 取自 `getPage` 已解析的页模型，与 `getPageActions` 共享同一份页缓存；不重新读取 XML、不加载字体或图片。
+- `dpi` 换算复用 `getPageTransform`，与 `toTextPagePx` 同一口径；输出为**未旋转页面像素**，缩放/旋转由宿主施加（见 §7.2.1「坐标口径」）。
+- 图元 `CTM` 含旋转/倾斜时，对应 `geometry.corners` 给出四角点（顺序「左上 → 右上 → 右下 → 左下」）；否则省略。
+- 无任何可定位动作返回 `[]`；页索引越界抛 `OFD_PAGE_NOT_FOUND`，关闭后抛 `OFD_CLOSED`。
+
+```ts
+// 构建命中表：按绘制序排列，命中时反向遍历
+const entries = await doc.getPageActionGeometries(pageIndex, { dpi: 96 });
+for (let index = entries.length - 1; index >= 0; index -= 1) {
+  const { action, geometry } = entries[index]!;
+  const point = { x: pointerPagePx, y: pointerPagePx }; // 与 dpi=96 同一坐标系
+  if (!isPointInActionRegion(geometry, point)) continue;
+  if (action.event !== 'CLICK') continue;
+  execute(action);
+  break;
+}
+
+// 内联播放器定位：直接用 bbox（未旋转页面 px，父容器承担 --scale-factor）
+const video = propertyOf(entries, 'movie');
+if (video) {
+  element.style.left = `${video.geometry.bbox.x}px`;
+  element.style.top = `${video.geometry.bbox.y}px`;
+  element.style.width = `${video.geometry.bbox.width}px`;
+  element.style.height = `${video.geometry.bbox.height}px`;
+}
+```
 
 ### 3.14 `document.close(): Promise<void>`
 
@@ -622,6 +807,76 @@ type EncodeImage = (
 
 `M_page = S(dpi / 25.4) × T(-PhysicalBox.x, -PhysicalBox.y)`，返回 2×3 列主序矩阵 `[scale, 0, 0, scale, tx, ty]`；`area` 单位 mm。
 
+### 7.2.1 动作几何 `getActionGeometry` / `isPointInActionRegion`
+
+```ts
+getActionGeometry(action: ActionInfo, options: ActionGeometryOptions): ActionGeometry | undefined;
+isPointInActionRegion(geometry: ActionGeometry, point: Point): boolean;
+
+interface ActionGeometryOptions {
+  area: Box;          // 页面 PhysicalBox，mm
+  dpi?: number;       // 输出 DPI，默认 96；非有限或 <=0 回退 96
+  object?: { boundary: Box; ctm?: Matrix };  // 图元几何，boundary 为对象空间 mm
+  pageIndex?: number; // 文档级/大纲级动作所在页；仅带显式 Region 时生效
+}
+
+interface ActionGeometry {
+  pageIndex: number;
+  bbox: PixelBox;                                  // 外接矩形，px
+  corners?: readonly [Point, Point, Point, Point]; // 旋转图元的四角点，px
+  areas?: readonly PixelPath[];                    // 显式 Region 的折线近似，px
+  source: 'region' | 'object' | 'page';
+}
+
+interface PixelBox { x: number; y: number; width: number; height: number }
+type PixelPath = readonly Point[];  // 闭合折线，首点不重复到末尾时按隐式闭合处理
+```
+
+**坐标口径（重要）**：
+
+- 输出为**未旋转的页面像素**：原点为页面 `PhysicalBox` 左上角（已按 `M_page` 做原点平移），y 向下。页面旋转与阅读器缩放**由宿主施加**（UI 的 `surface` CSS transform 与 `--scale-factor`），engine 不叠加。
+- mm → px 换算**直接复用 `getPageTransform(area, dpi)`**（`scale = dpi / 25.4`），与 `toTextPagePx` 逐字同一口径；不要手写第二份 dpi 换算。
+- **`isPointInActionRegion` 的 `point` 必须与 `getActionGeometry` 输出的坐标系一致**：即同一 `dpi` 下的未旋转页面 px，且传入的 `geometry` 必须是用**同一 dpi** 算出的结果。UI 把指针坐标（视口 px）换算到页面 px 时，同样要除以 `--scale-factor`。
+
+**几何来源优先级**：显式 `Action/Region` → 图元 `Boundary`（叠加 `CTM`）→ 无（返回 `undefined`）。
+
+| 情形 | 结果 |
+| --- | --- |
+| 图元动作（`owner.kind === 'object'`）+ `options.object` | `source='object'`，`bbox` 由 `Boundary × CTM × M_page` 得到 |
+| 图元动作但未提供 `options.object` | `bbox` 为对象空间零矩形（页面原点处 1 点），避免静默丢命中区 |
+| 页级动作（`owner.kind === 'page'`）无 `Region` | 返回 `undefined`（页面区域不是有意义的命中区，由宿主决定） |
+| 文档级/大纲级动作无 `Region` | 返回 `undefined` |
+| 文档级/大纲级动作带 `Region` 且给了 `options.pageIndex` | 返回 `source='region'` |
+| `Region` 存在但无有效折线 | 回退到图元/页面几何 |
+
+**`corners` 字段**：
+
+- 仅在图元 `CTM` 含旋转/倾斜（`b`、`c` 非 0）时给出，否则省略（宿主用 `bbox` 即可）。
+- 顺序固定为**「左上 → 右上 → 右下 → 左下」**（对象空间四角 `(0,0)`、`(w,0)`、`(w,h)`、`(0,h)` 经 `Boundary×CTM×M_page` 变换后的结果）。顺序用于推导仿射矩阵，错序会导致播放器镜像/翻转。
+
+**`Region` 离散**：
+
+- 贝塞尔（含由 `QuadraticBezier` 提升的）按**固定 8 段**离散为折线；`Arc` 在解码阶段已降级为直线。第一版不提供可配置精度。
+- 命中测试使用 **even-odd** 规则：同一点被奇数条闭合折线覆盖即命中（因此「外框 + 内框」可表达带孔区域）。无 `areas` 时退化为 `bbox` 包含判定（含边界）。
+- `areas` 中每个 `Area` 的子路径顺序与 XML 一致。
+
+**取值入口**：图元几何（`Boundary`/`CTM`）由 engine 掌握，宿主无法自行取得。日常使用
+`document.getPageActionGeometries()`（§3.13.3）一次性拿齐「动作 + 几何」；只有在宿主
+**自己**计算了几何（例如自定义布局、或已缓存 `corners`）时才单独调用纯函数版本：
+
+```ts
+import { getActionGeometry, isPointInActionRegion } from '@ofdrw/ofdrw-viewer-engine';
+
+const geometry = getActionGeometry(action, {
+  area,                                       // 页面 PhysicalBox，mm
+  dpi: 96,
+  object: { boundary, ctm },                  // 宿主自备；未自备时请改用 getPageActionGeometries
+});
+if (geometry && isPointInActionRegion(geometry, { x: pointerPx, y: pointerPx })) {
+  // 命中
+}
+```
+
 ### 7.3 常量
 
 - `DEFAULT_DPI = 96`：默认输出 DPI。
@@ -757,7 +1012,7 @@ interface OFDWarning {
 - warning 不中断渲染；同一 `(code, pageIndex, objectId)` 只上报一次（文档级与页级相同 code+上下文也会去重）。
 - `onWarning` 在产生 warning 的调用栈内同步执行，未提供时不打印；回调异常不会被隔离，可能中断当前操作或被包装为操作错误，宿主应自行 `try/catch`。
 - `WarningCollector` 供宿主/测试收集 warning：`new WarningCollector(handler?)`、`warn(code, message, context?)`、`warnings`（去重后按首次出现顺序）、`clear()`。
-- `WARNING_CODES` 是冻结数组，包含下列 20 个基础码；`WarningCode` 为对应联合类型。
+- `WARNING_CODES` 是冻结数组，包含下列 32 个基础码；`WarningCode` 为对应联合类型。
 
 | `code` | 含义 |
 | --- | --- |
@@ -781,6 +1036,18 @@ interface OFDWarning {
 | `W_GOURAUD_APPROX` | Gouraud/网格渐变近似 |
 | `W_ANNOT_EMPTY` | 注释索引读取/解析失败，本页注释被跳过 |
 | `W_JBIG2_DECODE` | JBIG2/TIFF 解码失败/超限，跳过 |
+| `W_MEDIA_FORMAT` | 多媒体 `Type` 非法/缺失（缺失时按 Image 处理），或音视频格式无法判定 |
+| `W_MEDIA_RESOURCE` | 音视频资源不可用（缺 `MediaFile`、路径无法解析、包内文件缺失）；查询返回 `undefined` |
+| `W_MEDIA_LIMIT` | 音视频资源条数超过 `maxMediaResourceCount`，多余声明被忽略 |
+| `W_MEDIA_SCOPE_AMBIGUOUS` | 未提供页上下文时命中了页级音视频资源，作用域不确定 |
+| `W_ACTION_INVALID` | 动作结构非法（缺/非法 `Event`、无动作体、缺必需属性），该动作被跳过 |
+| `W_ACTION_EVENT_MISMATCH` | 动作 `Event` 与宿主常用事件不一致，保留但提示 |
+| `W_ACTION_MULTIPLE_BODY` | 单个 `Action` 含多个动作体，取第一个 |
+| `W_ACTION_FIELD` | 动作字段非法（`Volume` 越界被钳制、`Operator` 非法回退 `Play`、布尔字段非法） |
+| `W_ACTION_TARGET` | `Goto` 目标无效（`PageID` 不存在、`Dest@Type` 未知），payload 省略 `dest` |
+| `W_ACTION_RESOURCE_MISSING` | 动作引用的资源 ID 不在资源索引中，保留动作 |
+| `W_ACTION_REGION` | `Region` 无可解析路径，丢弃区域并回退宿主矩形 |
+| `W_ACTION_LIMIT` | 单节点动作数超过 `maxActionsPerNode`，多余动作被忽略 |
 
 以下扩展码通过 `OFDWarning.code: string` 上报，不在冻结的 `WARNING_CODES` 中：
 
@@ -808,6 +1075,9 @@ interface OFDWarning {
 | `maxEntries` | 20,000 | 个 | ZIP 条目数 |
 | `maxEntryBytes` | 64 MiB | byte | 单条目解压后大小（附件上限回退值） |
 | `maxAttachmentBytes` | 未配置（回退 `maxEntryBytes`） | byte | 单附件读取大小上限 |
+| `maxMediaBytes` | 256 MiB | byte | 单个音视频资源读取上限；独立取值，不回退 `maxEntryBytes` |
+| `maxMediaResourceCount` | 512 | 个 | 音视频资源索引条数上限，超出后忽略多余声明 |
+| `maxActionsPerNode` | 256 | 个 | 单节点 `Actions` 条数上限，超出后忽略多余动作 |
 | `maxTotalUncompressedBytes` | 512 MiB | byte | 总解压大小 |
 | `maxCompressionRatio` | 200 | 倍 | 单条目最大压缩比 |
 | `maxXmlBytes` | 32 MiB | byte | 单个 XML 大小 |
@@ -837,6 +1107,9 @@ interface OFDWarning {
 - Viewport/画布/图片：**设备像素**；颜色 RGBA 0..255。
 - 文本层：**px**，由 mm 布局按 `dpi/25.4` 换算；`TextContent.unit` 固定 `'px'`，y 向下。
 - 附件：`AttachmentInfo.size` 为 **byte**；XML 的 `Size` 以 KB 声明，引擎按 ×1024 换算。
+- 动作：`ActionRegion`/`ActionRegionPath` 坐标与外接矩形均为 **mm**（页面坐标系）；动作本身不参与渲染。
+- 动作几何：`ActionGeometry`/`PixelBox`/`PixelPath` 为**未旋转页面 px**（`dpi` 由调用方指定，默认 96），与 `toTextPagePx` 同一口径；页面旋转/缩放由宿主施加。
+- 音视频：`MediaResource.sizeBytes` 为 **byte**；engine 只交付 `Uint8Array` 与 MIME 字符串，不产生 `Blob`/ObjectURL，播放器 URL 由宿主构造。
 - 日期/签章时间：保留 OFD 原文，不做时区推断。
 - 矩阵：2×3 列主序 `[a,b,c,d,e,f]`，`x' = a·x + c·y + e`，`y' = b·x + d·y + f`。
 - 生命周期：`open → getPage/getPageInfos/getOutline/getBookmarks/getMetadata/getPermissions/getAttachments/getSignatureEntries → getViewport/prepare/render/exportImage/getTextContent → close`；`close` 后不可复用。
@@ -854,7 +1127,7 @@ interface OFDWarning {
 
 | 名称 | 说明 |
 | --- | --- |
-| `OFDDocument` | 文档入口；`open/getPage/getPageInfos/getOutline/getBookmarks/getMetadata/getSignatureEntries/getSignedValue/getPermissions/getAttachments/getAttachmentByName/getAttachmentsByFormat/getAttachmentSize/saveAttachment/getAttachmentData/getFontResources/close` |
+| `OFDDocument` | 文档入口；`open/getPage/getPageInfos/getOutline/getBookmarks/getMetadata/getSignatureEntries/getSignedValue/getPermissions/getAttachments/getAttachmentByName/getAttachmentsByFormat/getAttachmentSize/saveAttachment/getAttachmentData/getFontResources/getMediaResources/getMediaResource/getMediaData/hasImageResource/getDocumentActions/getPageActions/getObjectActions/getOutlineActions/getPageActionsByEvent/getPageActionGeometries/close` |
 | `OFDPage` | 页面入口；`getSize/getViewport/prepare/getTextContent/render/exportImage` |
 | `RenderTask` | 渲染句柄；`id/promise/cancel` |
 | `OFDEventBus` | 事件总线实现 |
@@ -866,6 +1139,8 @@ interface OFDWarning {
 | `WARNING_CODES` | 冻结的基础 warning 码数组 |
 | `getPageViewport` | mm 页尺寸 → 设备像素 |
 | `getPageTransform` | mm → 设备矩阵 |
+| `getActionGeometry` | 动作区域 → 页面像素几何；复用 `getPageTransform` |
+| `isPointInActionRegion` | even-odd 命中判定（无 `areas` 时按 bbox） |
 | `openZipVirtualContainer` | 构造默认 ZIP 虚拟容器 |
 | `getVersion` | 返回引擎版本号（与 `VERSION` 相同） |
 | `VERSION` | 引擎版本号常量 |
@@ -962,6 +1237,28 @@ interface OFDWarning {
 | `DisplayList` | 显示列表 |
 | `DrawCommand` | 显示列表命令 |
 | `ResourceId` | 资源 ID 字符串 |
+| `MediaKind` | 多媒体类型：`'image' \| 'audio' \| 'video'`（`MediaResource.kind` 只会是后两者） |
+| `ActionGeometry` | 动作几何（`pageIndex/bbox/corners?/areas?/source`），px |
+| `ActionGeometryEntry` | 动作与其几何（`action`/`geometry`） |
+| `ActionGeometryOptions` | `getActionGeometry` 参数（`area`/`dpi?`/`object?`/`pageIndex?`） |
+| `ActionGeometrySource` | 几何来源：`'region' \| 'object' \| 'page'` |
+| `PixelBox` | 轴对齐矩形（`x/y/width/height`），未旋转页面 px |
+| `PixelPath` | 折线路径：点数组，未旋转页面 px |
+| `MediaResource` | 音视频资源（`id/kind/mediaFile/mimeType/format?/sizeBytes?/scope/declaredIn`） |
+| `ResourceScope` | 资源声明来源：`'public' \| 'document' \| 'page'` |
+| `ActionEvent` | 动作事件：`'DO' \| 'PO' \| 'CLICK'` |
+| `ActionType` | 动作体类型：`'goto' \| 'uri' \| 'gotoa' \| 'sound' \| 'movie'` |
+| `ActionOwner` | 动作宿主位置判别联合 |
+| `ActionPayload` | 动作 payload 判别联合 |
+| `ActionInfo` | 统一动作结构（`event/type/owner/region?/payload`） |
+| `ActionRegion` | 动作显式区域：`areas`（mm 路径命令）+ `bbox`（mm） |
+| `ActionRegionPath` | 区域路径命令（`moveTo`/`lineTo`/`bezierCurveTo`/`closePath`），mm |
+| `GotoActionPayload` | `Goto` payload（`dest?`/`bookmarkName?`） |
+| `UriActionPayload` | `URI` payload（`uri`/`base?`/`target?`） |
+| `GotoAActionPayload` | `GotoA` payload（`attachId`/`newWindow`） |
+| `SoundActionPayload` | `Sound` payload（`resourceId`/`volume`/`repeat`/`synchronous`） |
+| `MovieActionPayload` | `Movie` payload（`resourceId`/`operator`） |
+| `MovieOperator` | 放映参数：`'Play' \| 'Stop' \| 'Pause' \| 'Resume'` |
 
 ### 13.6 错误与 warning 类型
 
@@ -989,9 +1286,11 @@ interface OFDWarning {
 | `AttachmentInfo` | 附件元信息（`size` 单位 byte，含 contentType/description/submissionDate/isEncrypted） |
 | `AttachmentSink` | 附件分块写出回调 |
 | `AttachmentOperationOptions` | 附件查询/保存参数（`signal`、`chunkSize`） |
+| `MediaResourceQueryOptions` | 音视频查询参数（`signal`、`pageIndex`、`maxBytes`） |
+| `ObjectActionTarget` | 图元动作定位：`{ objectId }` 或 `{ path }` |
 | `DestinationType` | 大纲/书签目标类型 |
 | `DocumentDestination` | 跳转目标，mm/zoom |
-| `OutlineNode` | 大纲节点与子节点 |
+| `OutlineNode` | 大纲节点与子节点（可选 `actions`） |
 | `BookmarkItem` | 书签条目 |
 | `SignatureProvider` | 签章 Provider 元数据 |
 | `SignatureReferenceInfo` | 签章保护范围引用 |
@@ -1030,7 +1329,7 @@ interface OFDWarning {
 | 名称 | 说明 |
 | --- | --- |
 | `OFDEventBusOptions` | 总线选项（`onListenerError`） |
-| `OFDEventName` | 14 个事件名的联合 |
+| `OFDEventName` | 16 个事件名的联合 |
 | `OFDEventMap` | 事件名 → 载荷的映射 |
 | `OFDEventHandler` | 指定事件名的监听器类型 |
 | `OFDEventBase` | 公共字段（`type/timestamp/sequence`） |
@@ -1054,3 +1353,5 @@ interface OFDWarning {
 | `PageRenderEndEvent` | `page:render:end`：`pageIndex/durationMs` |
 | `PageRenderErrorEvent` | `page:render:error`：`pageIndex/error/durationMs` |
 | `PageRenderAbortEvent` | `page:render:abort`：`pageIndex/cause/reason?/durationMs` |
+| `MediaIndexEndEvent` | `media:index:end`：`count`（音视频资源数量） |
+| `ActionPageEndEvent` | `action:page:end`：`pageIndex/count`（页级动作数量） |

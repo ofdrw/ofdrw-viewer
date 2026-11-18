@@ -54,8 +54,22 @@ import { normalizeResourceId } from './ids';
 export interface ContentDecodeContext extends PaintDecodeContext {
   /** 当前 PageBlock 嵌套深度，0 为页面顶层。 */
   depth?: number;
+  /** 当前页块在页内的嵌套路径（从 0 开始的下标序列），动作宿主定位使用。 */
+  path?: readonly number[];
+  /**
+   * 图元动作旁路收集回调；不设置时不解析动作。
+   *
+   * 动作不写入 `PageObject`，由调用方按 `objectId`/页内路径自行索引。
+   */
+  collectActions?: (node: XmlNode, path: readonly number[], objectId: string | undefined) => void;
   /** 把 Content 内的相对路径解析为包内绝对路径；由 decode.ts 注入。 */
   resolvePath?: (raw: string) => string | undefined;
+  /**
+   * 当前资源 XML 的包内路径。
+   *
+   * 仅资源文件解码（`decodeResourceSet`）注入；页面内容解码不设置。
+   */
+  resourceDeclaredIn?: () => string;
 }
 
 /** PageBlock 最大嵌套深度；防止恶意/损坏文件无限递归。 */
@@ -385,8 +399,11 @@ export function decodePageBlockNode(node: XmlNode, context: ContentDecodeContext
   const childContext: ContentDecodeContext = { ...context, depth: depth + 1 };
   const result: PageBlock = { kind: 'block', children: [] };
   if (id) result.id = id;
-  for (const item of node.children) {
-    const decoded = decodePageObjectNode(item, childContext);
+  const basePath = context.path ?? [];
+  for (let index = 0; index < node.children.length; index += 1) {
+    const item = node.children[index] as XmlNode;
+    const itemPath = [...basePath, index];
+    const decoded = decodePageObjectNode(item, { ...childContext, path: itemPath });
     if (decoded) result.children.push(decoded);
   }
   return result;
@@ -400,6 +417,22 @@ export function decodePageBlockNode(node: XmlNode, context: ContentDecodeContext
  * @returns 页面对象；不支持/无效时返回 undefined。
  */
 export function decodePageObjectNode(
+  node: XmlNode,
+  context: ContentDecodeContext,
+): PageObject | undefined {
+  const decoded = decodePageObjectByKind(node, context);
+  if (decoded) collectGraphicUnitActions(node, decoded, context);
+  return decoded;
+}
+
+/**
+ * 按节点名解码页面图元。
+ *
+ * @param node XML 节点。
+ * @param context 内容上下文。
+ * @returns 页面对象；不支持/无效时返回 undefined。
+ */
+function decodePageObjectByKind(
   node: XmlNode,
   context: ContentDecodeContext,
 ): PageObject | undefined {
@@ -422,6 +455,24 @@ export function decodePageObjectNode(
 }
 
 /**
+ * 旁路收集图元上的动作；不写入图元模型。
+ *
+ * @param node 图元 XML 节点。
+ * @param decoded 已解码图元。
+ * @param context 内容上下文。
+ */
+function collectGraphicUnitActions(
+  node: XmlNode,
+  decoded: PageObject,
+  context: ContentDecodeContext,
+): void {
+  if (!context.collectActions) return;
+  if (!child(node, 'Actions')) return;
+  // 嵌套 PageBlock 的子图元由块遍历各自收集，这里只收集当前图元。
+  context.collectActions(node, context.path ?? [], decoded.id);
+}
+
+/**
  * 解码图层列表（Content 的直接 Layer 子节点）。
  *
  * @param contentNode `Content` 节点。
@@ -430,7 +481,9 @@ export function decodePageObjectNode(
  */
 export function decodeLayersNode(contentNode: XmlNode, context: ContentDecodeContext): Layer[] {
   const layers: Layer[] = [];
-  for (const layerNode of children(contentNode, 'Layer')) {
+  for (let layerIndex = 0; layerIndex < contentNode.children.length; layerIndex += 1) {
+    const layerNode = contentNode.children[layerIndex] as XmlNode;
+    if (layerNode.name !== 'Layer') continue;
     const id = normalizeResourceId(attr(layerNode, 'ID'));
     const layerContext = withObject(context, id || undefined);
     const typeRaw = (attr(layerNode, 'Type') ?? 'Body').trim().toLowerCase();
@@ -449,8 +502,9 @@ export function decodeLayersNode(contentNode: XmlNode, context: ContentDecodeCon
       const drawParam = normalizeResourceId(drawParamRaw);
       if (drawParam) layer.drawParam = drawParam;
     }
-    for (const item of layerNode.children) {
-      const decoded = decodePageObjectNode(item, layerContext);
+    for (let index = 0; index < layerNode.children.length; index += 1) {
+      const item = layerNode.children[index] as XmlNode;
+      const decoded = decodePageObjectNode(item, { ...layerContext, path: [layerIndex, index] });
       if (decoded) layer.children.push(decoded);
     }
     layers.push(layer);

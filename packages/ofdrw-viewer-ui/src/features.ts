@@ -33,6 +33,7 @@ export const VIEWER_FEATURES = [
   'verification',
   'documentProperties',
   'keyboardShortcuts',
+  'actions',
 ] as const;
 
 /** 功能键。 */

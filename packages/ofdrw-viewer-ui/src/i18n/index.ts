@@ -60,6 +60,7 @@ const FEATURE_LABEL_KEYS: Readonly<Record<ViewerFeature, MessageKey>> = Object.f
   verification: 'feature.verification',
   documentProperties: 'feature.documentProperties',
   keyboardShortcuts: 'feature.keyboardShortcuts',
+  actions: 'feature.actions',
 });
 
 /** 翻译器；UI 组件只依赖该接口，不直接读取字典。 */

@@ -109,6 +109,18 @@ export const zhCN = {
   'attachments.exportSummary': '已导出 {exported} 个附件，跳过 {skipped} 个（过大或读取失败）',
   'attachments.unsupported': '当前引擎不支持流式读取附件',
   'attachments.ofdUnavailable': '当前环境无法读取 OFD 原文件',
+  'attachments.previewNamed': '预览附件 {name}',
+  'attachments.previewTitle': '附件预览',
+  'attachments.previewClose': '关闭预览',
+  'attachments.previewTooLarge':
+    '附件“{name}”大小 {size}，超过 {threshold} 的预览上限，请下载后查看。',
+  'attachments.previewLoadFailed': '附件“{name}”预览失败，请下载后查看：{message}',
+  'attachments.previewTextTruncated': '内容超出预览上限，仅显示前 {length} 个字符',
+  'attachments.selectAll': '全选',
+  'attachments.clearSelection': '取消全选',
+  'attachments.select': '选择附件 {name}',
+  'attachments.downloadSelectedNamed': '下载选中的 {count} 个附件',
+  'attachments.exportDenied': '文档权限禁止导出附件',
 
   // 图层侧栏（图层控制与侧栏图标设计方案 §B.4）。
   'layers.title': '图层',
@@ -236,6 +248,7 @@ export const zhCN = {
   'feature.verification': '验证',
   'feature.documentProperties': '文档属性',
   'feature.keyboardShortcuts': '键盘快捷键',
+  'feature.actions': '文档动作',
   'feature.reason.host': '已被宿主禁用',
   'feature.reason.document': '当前文档不允许',
   'feature.reason.unsupported': '当前环境不支持',
@@ -267,4 +280,36 @@ export const zhCN = {
   'a11y.sidebarExpanded': '侧栏已展开',
   'a11y.sidebarCollapsed': '侧栏已收起',
   'a11y.menuOpened': '菜单已打开',
+
+  // 动作执行机制（UI 动作处理机制设计 §5 / §8 / §9）。
+  'actions.autoExecute.toggle': '自动执行文档动作',
+  'actions.autoExecute.hint': '打开文档与进入页面时自动执行文档声明的动作（默认关闭）',
+  'actions.autoExecute.enabled': '已开启',
+  'actions.autoExecute.disabled': '已关闭',
+  'actions.pendingHint': '此文档包含 {count} 个自动动作，可在「更多 → 关于」中开启',
+
+  // URI 动作确认框（§8.3）：仅 http/https，必须先确认。
+  'actions.uri.title': '即将离开当前文档',
+  'actions.uri.body': '文档请求打开外部链接，将访问以下地址：\n{url}\n主机名：{host}',
+  'actions.uri.confirm': '打开',
+  'actions.uri.cancel': '取消',
+  'actions.uri.popupBlocked': '浏览器阻止了弹出窗口，请允许弹出窗口后重试。',
+
+  // 音视频播放（音视频与动作方案设计 §7.10）。
+  'media.video': '视频',
+  'media.audio': '音频',
+  'media.unsupported': '当前浏览器不支持该媒体格式（{format}）',
+  'media.autoplayBlocked': '浏览器阻止了自动播放，请点击播放按钮',
+  'media.mute': '静音',
+  'media.unmute': '取消静音',
+  'media.play': '播放',
+  'media.pause': '暂停',
+  'media.stop': '停止',
+  'media.fullscreen': '全屏',
+  'media.close': '关闭播放器',
+  'media.tooLarge': '媒体文件过大（{size}），无法在阅读器中播放。是否下载原文件？',
+  'media.tooLargeTitle': '媒体文件过大',
+  'media.downloadOfd': '下载整个 OFD',
+  'media.loadFailed': '媒体加载失败：{message}',
+  'media.ofdUnavailable': '当前环境无法读取 OFD 原文件',
 };

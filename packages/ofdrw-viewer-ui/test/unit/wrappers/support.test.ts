@@ -1,7 +1,7 @@
 /**
  * 三种适配层共用的命名/解析规则与入口契约。
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   VIEWER_EVENT_BRIDGES,
   isSidebarView,
@@ -25,12 +25,26 @@ describe('wrapper 公共桥接', () => {
     expect(toDomEventName('pagechanging')).toBe('ofd-page-change');
     expect(toDomEventName('error')).toBe('ofd-error');
     expect(toDomEventName('local-fonts:change')).toBe('ofd-local-fonts-change');
-    expect(VIEWER_EVENT_BRIDGES).toHaveLength(23);
-    expect(new Set(VIEWER_EVENT_BRIDGES.map((item) => item.dom)).size).toBe(23);
+    // 动作与媒体事件（UI 动作处理机制设计 §9.2）。
+    expect(toDomEventName('action:executed')).toBe('ofd-action-executed');
+    expect(toDomEventName('media:play')).toBe('ofd-media-play');
+    expect(VIEWER_EVENT_BRIDGES).toHaveLength(31);
+    expect(new Set(VIEWER_EVENT_BRIDGES.map((item) => item.dom)).size).toBe(31);
     for (const item of VIEWER_EVENT_BRIDGES) {
       expect(item.react.startsWith('on')).toBe(true);
       expect(item.vue.includes('_')).toBe(false);
     }
+  });
+
+  it('未登记桥接的事件名告警一次并回退，同一事件名不重复告警', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    // 立即扫描器不依赖事件表：用一个运行期注入的伪造事件名模拟漏登记。
+    const unknown = 'unknown:event' as unknown as Parameters<typeof toDomEventName>[0];
+    expect(toDomEventName(unknown)).toBe('ofd-unknown:event');
+    expect(toDomEventName(unknown)).toBe('ofd-unknown:event');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toContain('VIEWER_EVENT_BRIDGES');
+    warn.mockRestore();
   });
 
   it('属性解析接受数字/模式并拒绝非法值', () => {

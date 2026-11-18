@@ -1494,6 +1494,123 @@ describe('OFDViewer 核心', () => {
     viewer.destroy();
   });
 
+  it('双击/轻点媒体元素不触发页面缩放（防误触选择器含 video/audio/[data-ofd-media]）', async () => {
+    stubPointerMedia(true);
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+      initialScale: 1,
+    });
+    await viewer.ready;
+    const main = viewer.getElements().main;
+    vi.spyOn(main, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 800,
+      bottom: 800,
+      width: 800,
+      height: 800,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    // 媒体层里的 <video>：双击应被防误触选择器拦下，缩放倍率与模式都不变。
+    const mediaLayer = viewer.getPageView(1)!.mediaLayer;
+    const video = document.createElement('video');
+    video.className = 'ofd-media';
+    mediaLayer.appendChild(video);
+
+    const zoomModeBefore = viewer.getState().view.zoomMode;
+    const dblclick = new MouseEvent('dblclick', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 300,
+      clientY: 300,
+    });
+    video.dispatchEvent(dblclick);
+    expect(dblclick.defaultPrevented).toBe(false);
+    expect(viewer.getState().view.zoomMode).toBe(zoomModeBefore);
+
+    // [data-ofd-media] 元素同样让位。
+    const wrapper = document.createElement('div');
+    wrapper.setAttribute('data-ofd-media', '');
+    mediaLayer.appendChild(wrapper);
+    const wrapperClick = new MouseEvent('dblclick', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 300,
+      clientY: 300,
+    });
+    wrapper.dispatchEvent(wrapperClick);
+    expect(wrapperClick.defaultPrevented).toBe(false);
+    expect(viewer.getState().view.zoomMode).toBe(zoomModeBefore);
+    viewer.destroy();
+  });
+
+  it('executeActions 在销毁后抛 OFD_DESTROYED，未打开时抛 OFD_NOT_OPENED', async () => {
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+    });
+    await viewer.ready;
+    // 关闭后处于「已打开流程结束、文档不在」：生命周期守卫给出 OFD_NOT_OPENED。
+    await viewer.close();
+    await expect(viewer.executeActions(0, 'DO')).rejects.toMatchObject({
+      code: 'OFD_NOT_OPENED',
+    });
+
+    await viewer.open(new ArrayBuffer(8));
+    const executed = vi.fn(async () => ['executed'] as const);
+    viewer.attachActionService({ executeActions: executed });
+    await expect(viewer.executeActions(0, 'PO')).resolves.toEqual(['executed']);
+    expect(executed).toHaveBeenCalledTimes(1);
+
+    viewer.destroy();
+    await expect(viewer.executeActions(0, 'PO')).rejects.toMatchObject({
+      code: 'OFD_DESTROYED',
+    });
+  });
+
+  it('动作命中时双击/轻点让位，不触发页面缩放', async () => {
+    stubPointerMedia(true);
+    const viewer = new OFDViewer({
+      crypto: { enabled: false },
+      container: document.body,
+      source: new ArrayBuffer(8),
+      initialScale: 1,
+    });
+    await viewer.ready;
+    const hitTestAt = vi.fn((clientX: number, clientY: number) => clientX === 300 && clientY === 300);
+    viewer.attachActionService({ hitTestAt });
+    const zoomModeBefore = viewer.getState().view.zoomMode;
+
+    const dblclick = new MouseEvent('dblclick', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 300,
+      clientY: 300,
+    });
+    viewer.getElements().main.dispatchEvent(dblclick);
+    expect(hitTestAt).toHaveBeenCalledWith(300, 300);
+    expect(dblclick.defaultPrevented).toBe(false);
+    expect(viewer.getState().view.zoomMode).toBe(zoomModeBefore);
+
+    const tap = new PointerEvent('pointerdown', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 300,
+      clientY: 300,
+      button: 0,
+    });
+    Object.defineProperty(tap, 'pointerType', { value: 'touch' });
+    viewer.getElements().main.dispatchEvent(tap);
+    expect(viewer.getState().view.zoomMode).toBe(zoomModeBefore);
+    viewer.destroy();
+  });
+
   it('readSourceBytes 复用 export 功能与文档导出权限门控', async () => {
     const bytes = new Uint8Array([1, 2, 3]);
     const allowed = new OFDViewer({

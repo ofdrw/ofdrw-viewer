@@ -20,7 +20,7 @@
 | `packages/ofdrw-viewer-cli` | 本地文件转图片、`info`、`verify`、SEA 可执行文件 | 是 |
 | `demo` | 演示站，消费已构建的包 | 是 |
 | `examples` | 独立示例工程，各自安装依赖 | 否 |
-| `ofd_pdf_match` | 回归样本与 PDF 参考 | 否，样本资产 |
+| `ofd_pdf_match` | 回归样本与 PDF 参考；另含 GB/T 33190—2016 条款样例（`gb-8.3.4-gradient.ofd`、`gb-12-video.ofd`），只供人眼比对、不入 manifest | 否，样本资产 |
 | `test/smoke` | 跨包架构与公共 API 文档同步检查 | 根级测试目录 |
 | `docs` | 跨包契约、设计方案、测试方案 | 文档 |
 
@@ -153,6 +153,9 @@
 - 字体声明：`OFDDocument` 新增 `getFontResources(options?)`，返回 `readonly DocumentFontResource[]`，类型 `DocumentFontResourcesOptions` 一并导出；只读打开阶段已解析的资源索引（零额外 IO、按 `id` 升序、不含页级声明），不反映运行时字体回退结果。这是引擎唯一新增的字体相关公开 API，签名与语义见 API.md §3.12.2。
 - 渲染器与视口：`Canvas2DLike`、`CanvasRenderingContext2DLike`、`PageRenderParameters`、`Viewport`、`getPageViewport`、`getPageTransform`。
 - 页级内容过滤：`PageContentFilter`、`DrawLayerOptions`、`AnnotationType`、`KnownAnnotationType`、`KNOWN_ANNOTATION_TYPES`；由 `render`/`exportImage`/`getTextContent` 的 `contentFilter` 使用，白名单语义与不继承规则见 API.md §4.10。
+- 音视频资源：`OFDDocument` 新增 `getMediaResources(options?)`、`getMediaResource(id, options?)`、`getMediaData(id, options?)`、`hasImageResource(id, options?)`；类型 `MediaResource`（`id`/`kind`/`mediaFile`/`mimeType`/`format?`/`sizeBytes?`/`scope`/`declaredIn`）、`MediaKind`、`ResourceScope`、`MediaResourceQueryOptions` 一并导出。**只提供整块读取，无分块 `saveMedia`**；`ResourceLimits` 新增 `maxMediaBytes`（byte，默认 256 MiB，独立取值不回退 `maxEntryBytes`）、`maxMediaResourceCount`、`maxActionsPerNode`。engine 不产生 `Blob`/`ObjectURL`，对象 URL 由 UI 创建。
+- OFD 动作：`OFDDocument` 新增 `getDocumentActions()`（同步）、`getPageActions(index, options?)`、`getObjectActions(index, target, options?)`、`getOutlineActions(path, options?)`、`getPageActionsByEvent(index, event, options?)`；类型 `ActionInfo`、`ActionEvent`、`ActionType`、`ActionOwner`、`ActionPayload`（5 种 payload 判别联合）一并导出；`OutlineNode` 新增可选 `actions`。
+- 动作几何：`getActionGeometry(action, options)`、`isPointInActionRegion(geometry, point)`、`getPageActionGeometries(index, options?)`；类型 `ActionGeometry`、`ActionGeometryEntry`、`ActionGeometryOptions`、`PixelBox` 一并导出。全部输出**未旋转页面像素**，dpi 换算复用 `getPageTransform`。图元 `Boundary`/`CTM` 由 engine 持有，宿主日常应使用批量入口 `getPageActionGeometries`。
 
 engine 的每个根导出名必须出现在自身 `skills/API.md` 附录中，由 `test/smoke/public-api-doc.test.ts` 检查。
 
@@ -179,7 +182,18 @@ crypto 可以重导出 engine 的 `ByteSource` 类型，但不得借此扩大 en
 - 包根同时透出引擎的 `AttachmentInfo`、`DocumentPermissions`、`DocumentMetadata` 及其新增子类型。
 - 本机字体（`queryLocalFonts`）：`OFDViewer` 新增 `getLocalFontsStatus()`、`setLocalFontsEnabled(enabled)`、`onLocalFontsStatusChange(handler)`；构造选项 `fonts.localFonts`（五字段 `enabled`/`defaultEnabled`/`remember`/`maxFonts`/`consentText`，默认关闭）；`FontSource` 新增 `{ local }` 第五态；事件新增 `local-fonts:change`；开关位于工具栏「更多」→「关于」对话框（**不新增侧栏视图、不新增功能键**）。三套框架适配层均已桥接该能力：Web Component 转发同名三方法并派发 `ofd-local-fonts-change`，React 命令句柄增加同名三方法并触发 `onLocalFontsChange`，Vue `expose` 增加同名三方法并触发 `local-fonts-change`。包根导出 `LocalFontsOptions`、`LocalFontStatus`、`LocalFontsStatus`、`LocalFontsChangeEvent`、`LocalFontDeclaration`。默认关闭、需宿主配置 + 用户授权双重开启；`LocalFontsStatus.enabled` 与浏览器授权状态同步（权限非 `granted` 时一律为 `false`），失败静默回退，详见 [本地字体加载方案设计](本地字体加载方案设计.md) 与 UI API.md「本机字体」。
 
-UI 的包根导入会安装 UI shell，并加载文本、导航、签章、打印、导出等副作用模块；React/Vue/Web Component 入口复用同一 `OFDViewer` 内核，不建立第二套文档生命周期。
+- 动作与音视频（详见 [UI动作处理机制设计](UI动作处理机制设计.md)）：
+  - **构造选项**：`ViewerOptions.actions?: ViewerActionsOptions`，四个字段——`autoExecuteActions`（boolean，默认 `false`）、`allowUserToggleAutoExecute`（boolean，默认 `true`）、`maxActionDepth`（正整数，默认 `4`，非法值回落 4）、`smoothGoto`（boolean，默认 `true`）。**`ViewerOptions` 没有 `media` 选项**：媒体音量、自动播放被拦截时静音重试、单资源读取上限（256 MiB，与引擎 `maxMediaBytes` 默认值一致）是 `src/actions/` 内部常量，不作为公共配置。
+  - **宿主 API**：`executeActions(pageIndex, event, options?)`（`event` 为 `'DO' | 'PO' | 'CLICK'`，`options.signal?: AbortSignal`，返回 `readonly ActionOutcome[]`；未挂载动作服务抛 `OFD_FEATURE_DISABLED`、未打开抛 `OFD_NOT_OPENED`、销毁后抛 `OFD_DESTROYED`）、`getAutoExecuteActions()`、`setAutoExecuteActions(enabled)`、`getAutoExecuteActionsToggleAllowed()`、`attachActionService(service)`（返回卸载函数）、`getContentPointAtViewport(clientX, clientY)`（视口坐标 → `{ pageIndex, xPx, yPx }`，96 DPI 页面像素，纯读取）。
+  - **状态**：`ViewerState.actions: { pendingAutoActions: number; activePlayers: number }`，只放可序列化计数，不承载字节与 URL。
+  - **外壳契约**：`UIShellCommand` 新增 `{ type: 'actions.setAutoExecute'; value: boolean }`；`UIShellViewState.actions?: { autoExecute: boolean; allowUserToggle?: boolean }`（省略表示动作模块未挂载，「关于」不出现该行）；`allowUserToggle === false` 时开关为禁用态、点击无效，「关于」该行给出说明。
+  - **事件**：8 条——`action:executed`（`ActionExecutedEvent`）、`action:skipped`（`ActionSkippedEvent`）、`action:error`（`ActionErrorEvent`）、`media:play`/`media:pause`/`media:ended`/`media:stop`（`MediaStateEvent`）、`media:error`（`MediaErrorEvent`），全部登记在 `VIEWER_EVENT_BRIDGES`（漏登记会 typecheck 失败）。
+  - **功能键**：`VIEWER_FEATURES` 新增 `actions`（共 21 个键），无跨功能依赖；关闭后 `executeActions()` 抛 `OFD_FEATURE_DISABLED`。
+  - **公开类型导出**（包根 `src/index.ts`，经 `export type * from './types'`）：事件与结果类型 `ActionOutcome`、`ActionExecutionContext`、`ActionSkipReason`、`ActionErrorReason`、`ActionExecutedEvent`、`ActionSkippedEvent`、`ActionErrorEvent`、`MediaStateEvent`、`MediaErrorEvent`；`ViewerActionsOptions` 与 `ViewerActionService` 从 `./options` / `./viewer` 导出。`ActionOutcome` 与 `ActionExecutionContext` 定义在 `src/actions/types.ts`，`ViewerActionsOptions` 在 `src/actions/action-service.ts`、`ViewerActionService` 在 `src/viewer.ts`，包根必须显式 re-export（`viewer.executeActions()` 的返回类型依赖它）。
+  - **行为**：自动执行（DO/PO）默认关闭，用户可在「更多 → 关于」开启（不持久化）；关闭时派发 `action:skipped`（`reason: 'autoplay-disabled'`），DO 按文档聚合、PO 按页聚合，并计入 `pendingAutoActions`。URI 动作仅放行 `http:`/`https:`，执行前弹 `alertdialog` 确认（默认焦点在取消），不提供"记住选择"；`Target="_self"` 尊重文档声明并经 `action:executed.target` 透出。命中判定**只做外接矩形粗判**，不做 `Region` 精确路径命中。
+- 媒体层：`PageView` 新增 `.ofd-page__media-layer`（`z-index:2`、`pointer-events:none`、随 `--scale-factor` 缩放），位于文本层之后、签章层之前；打印时媒体层与弹出浮层均隐藏。UI 侧负责 `Blob`/`ObjectURL` 的创建与释放（`pause()` → 移除 `src` → `load()` → `revokeObjectURL()`），engine 不参与。
+
+UI 的包根导入会安装 UI shell，并加载文本、导航、签章、打印、导出、动作与音视频等副作用模块；React/Vue/Web Component 入口复用同一 `OFDViewer` 内核，不建立第二套文档生命周期。
 
 ### 5.4 CLI
 
@@ -348,6 +362,39 @@ CLI 只提供可执行文件 `ofdrw-viewer-cli`，不导出库 API。命令、�
 | `W_GOURAUD_APPROX` | Gouraud 网格使用近似 |
 | `W_ANNOT_EMPTY` | 注释内容为空 |
 | `W_JBIG2_DECODE` | JBIG2 解码降级/失败 |
+| `W_MEDIA_FORMAT` | 多媒体 `Type` 非法/缺失，或音视频格式无法判定 |
+| `W_MEDIA_RESOURCE` | 媒体资源不可用（`MediaFile` 缺失/路径无法解析/包内文件缺失） |
+| `W_MEDIA_LIMIT` | 音视频资源条数超过 `maxMediaResourceCount`，多余声明被忽略 |
+| `W_MEDIA_SCOPE_AMBIGUOUS` | 无页上下文时命中页级资源，作用域不确定 |
+| `W_ACTION_INVALID` | 动作结构非法（缺 `Event`/无动作体/缺必需属性），该动作被跳过 |
+| `W_ACTION_EVENT_MISMATCH` | 动作 `Event` 与宿主不匹配，保留但提示 |
+| `W_ACTION_MULTIPLE_BODY` | 单个 `Action` 含多个动作体，取第一个 |
+| `W_ACTION_FIELD` | 动作字段非法（`Volume` 钳制、`Operator` 回退等） |
+| `W_ACTION_TARGET` | `Goto` 目标无效（`PageID` 不存在、`Dest@Type` 未知） |
+| `W_ACTION_RESOURCE_MISSING` | 动作引用的资源 ID 在索引中不存在 |
+| `W_ACTION_REGION` | `Region` 路径非法，退化为外接矩形 |
+| `W_ACTION_LIMIT` | 单节点动作数超过 `maxActionsPerNode`，多余动作被忽略 |
+
+### 8.2.1 UI warning 码（动作与媒体相关）
+
+UI 的自有 warning 码表在 `packages/ofdrw-viewer-ui/src/diagnostics.ts` 的 `UI_WARNING_CODES`（共 43 个码，完整表见 [警告与错误日志方案设计](警告与错误日志方案设计.md) §2.3 与 UI `skills/API.md`「诊断与日志」）。下表只登记本轮新增的 5 个动作/媒体/导航相关码：
+
+| 码 | 语义 |
+| --- | --- |
+| `W_ACTION_LOAD` | 某页动作集合加载失败（`getPageActionsByEvent`/`getPageActionGeometries` 抛错），该页按无动作处理，不重试 |
+| `W_ACTION_EXECUTE` | 单个动作执行失败并按 `action:error` 上报后再落一条诊断 |
+| `W_MEDIA_RESOURCE` | 媒体资源缺失或字节读取失败（资源未声明、读取超过 `maxMediaBytes` 等） |
+| `W_MEDIA_PLAY` | 媒体播放失败（解码失败、格式不支持、播放被拒绝） |
+| `W_NAV_ACTION` | 大纲/书签节点声明的动作执行失败，已回退到节点 `Dest` 跳转，导航不中断 |
+
+**归属说明（重要）**：UI 与 engine 各自维护独立的码命名空间，码值字符串可以同名但语义与上报方不同，宿主按 `ViewerWarning.code` 过滤时必须同时看 `source`/调用来源：
+
+| 码 | engine（`WARNING_CODES`） | UI（`UI_WARNING_CODES`） |
+| --- | --- | --- |
+| `W_MEDIA_RESOURCE` | 解析期媒体声明不可用：`MediaFile` 缺失、路径无法解析、包内文件缺失；由 `OFDDocument` 上报，UI 原样转发 | 播放期资源不可用：`getMediaResource()` 返回 `undefined`、`getMediaData()` 读字节失败；由动作模块上报 |
+| `W_ACTION_LOAD` / `W_ACTION_EXECUTE` / `W_MEDIA_PLAY` / `W_NAV_ACTION` | 不存在 | 仅 UI |
+
+因此**不得**把 UI 的 `W_MEDIA_RESOURCE` 当作 engine 码处理，也不得在 UI 转发 engine `W_MEDIA_RESOURCE` 时改写成 UI 码；两者的 `message` 与 `pageIndex` 语义各自独立。
 
 ### 8.3 crypto 错误码
 
@@ -384,6 +431,7 @@ CLI 的 `CliErrorCode` 按用途分组：
 
 - 用法/路径：`CLI_USAGE`、`CLI_INVALID_FORMAT`、`CLI_INVALID_DPI`、`CLI_INVALID_PAGES`、`CLI_INPUT_NOT_FOUND`、`CLI_INPUT_NOT_FILE`、`CLI_INPUT_UNREADABLE`、`CLI_OUTPUT_NOT_DIRECTORY`、`CLI_OUTPUT_CREATE_FAILED`、`CLI_FONT_DIR_INVALID`、`CLI_FONT_DIR_UNREADABLE`。
 - 输出：`CLI_IMAGE_WRITE_FAILED`、`CLI_TEXT_WRITE_FAILED`、`CLI_TEXT_UNSUPPORTED`、`CLI_PAGE_TOO_LARGE`。
+- 多媒体：`CLI_INVALID_MEDIA_KIND`、`CLI_MEDIA_NOT_FOUND`、`CLI_MEDIA_UNSUPPORTED_TYPE`（退出 1）；`CLI_MEDIA_TOO_LARGE`、`CLI_MEDIA_WRITE_FAILED`（退出 2）。
 - 凭据/根证书：`CLI_CREDENTIALS_INCOMPLETE`、`CLI_CREDENTIALS_CONFLICT`、`CLI_CREDENTIALS_REQUIRED`、`CLI_CREDENTIAL_FILE_NOT_FOUND`、`CLI_CREDENTIAL_FILE_UNREADABLE`、`CLI_ROOT_FILE_NOT_FOUND`、`CLI_ROOT_FILE_UNREADABLE`。
 - 未预期：`CLI_UNEXPECTED`。
 

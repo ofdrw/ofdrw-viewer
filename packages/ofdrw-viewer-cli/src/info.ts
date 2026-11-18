@@ -19,8 +19,10 @@ import type {
   CommonDataSummary,
   DocumentHeader,
   DocumentMetadata,
+  MediaResource,
   OFDWarning,
   OfdPackageInfo,
+  OutlineNode,
   PageInfo,
 } from '@ofdrw/ofdrw-viewer-engine';
 import { closeCryptoByteSource, openCryptoSource } from './credentials.js';
@@ -83,6 +85,40 @@ export interface CliDocumentInfo {
   readonly commonData?: CommonDataSummary;
   /** 附件元信息列表；无 Attachments.xml 时为空数组。 */
   readonly attachments: readonly CliAttachment[];
+  /** 音视频资源元信息列表；无音视频时省略。只含文档级资源，不含页级 PageRes。 */
+  readonly media?: readonly CliMedia[];
+  /** 动作计数摘要；仅当文档确实含文档级或大纲级动作时出现。 */
+  readonly actionSummary?: CliActionSummary;
+}
+
+/**
+ * 动作计数摘要。
+ *
+ * 只统计 `open()` 阶段已解析、零额外 IO 的两类宿主：文档级与大纲级。
+ * 页面级与图元动作需要逐页加载 `Page.xml`，为保持 `info` 的轻量定位而不计入，
+ * 对应字段因此**省略**（不写 0，避免被误读为“确实没有”）。
+ */
+export interface CliActionSummary {
+  /** 文档级动作数（`Document/Actions`）。 */
+  readonly document: number;
+  /** 大纲节点动作数（全部 `OutlineElem/Actions` 之和）。 */
+  readonly outline: number;
+}
+
+/** 音视频资源元信息摘要；只描述索引，不包含媒体内容。 */
+export interface CliMedia {
+  /** 资源 ID，十进制字符串。 */
+  readonly id: string;
+  /** 媒体类型：视频或音频。 */
+  readonly kind: 'audio' | 'video';
+  /** MIME 类型，例如 `video/mp4`。 */
+  readonly mimeType: string;
+  /** XML `Format` 原文；未声明时省略。 */
+  readonly format?: string;
+  /** 资源大小，单位 byte；未探测到时省略。 */
+  readonly sizeBytes?: number;
+  /** 声明来源：公共 / 文档 / 页资源文件。 */
+  readonly scope: 'public' | 'document' | 'page';
 }
 
 /** 附件元信息摘要；只描述索引，不包含附件内容。 */
@@ -221,7 +257,15 @@ async function readDocumentInfo(
     const metadata = await document.getMetadata(signalOptions);
     const pageInfos = await document.getPageInfos(signalOptions);
     const attachments = await document.getAttachments(signalOptions);
-    return toDocumentInfo(metadata, pageInfos, attachments);
+    const media = await document.getMediaResources(signalOptions);
+    return toDocumentInfo(
+      metadata,
+      pageInfos,
+      attachments,
+      media,
+      document,
+      runtime.signal,
+    );
   } finally {
     if (document !== undefined) {
       try {
@@ -239,13 +283,20 @@ async function readDocumentInfo(
  * @param metadata engine 文档元数据
  * @param pageInfos engine 页尺寸列表，单位 mm
  * @param attachments engine 附件元信息列表，保持 XML 顺序
+ * @param media engine 音视频资源元信息，按资源 ID 升序且只含文档级资源
+ * @param document 已打开的文档，用于读取零成本的动作计数
+ * @param signal 取消信号
  * @returns 缺失字段省略的文档信息
  */
-function toDocumentInfo(
+async function toDocumentInfo(
   metadata: DocumentMetadata,
   pageInfos: readonly PageInfo[],
   attachments: readonly AttachmentInfo[],
-): CliDocumentInfo {
+  media: readonly MediaResource[],
+  document: OFDDocument,
+  signal: AbortSignal | undefined,
+): Promise<CliDocumentInfo> {
+  const actionSummary = await countActions(document, signal);
   return {
     version: metadata.version,
     pageCount: metadata.pageCount,
@@ -276,6 +327,66 @@ function toDocumentInfo(
     ...(metadata.packageInfo === undefined ? {} : { packageInfo: metadata.packageInfo }),
     ...(metadata.commonData === undefined ? {} : { commonData: metadata.commonData }),
     attachments: attachments.map(toCliAttachment),
+    ...(media.length === 0 ? {} : { media: media.map(toCliMedia) }),
+    ...(actionSummary === undefined ? {} : { actionSummary }),
+  };
+}
+
+/**
+ * 统计动作数量，只覆盖零额外 IO 的宿主。
+ *
+ * - 文档级：`getDocumentActions()` 同步读取，`open()` 阶段已解析；
+ * - 大纲级：`getOutline()` 的节点树已在解析阶段建立，遍历 `actions` 即可。
+ *
+ * 页面级与图元动作需要逐页加载 `Page.xml`（大文档会显著拖慢 `info`），因此不计入；
+ * 两类都为 0 时返回 `undefined`，让 JSON 整体省略该字段。
+ *
+ * @param document 已打开的文档
+ * @param signal 取消信号
+ * @returns 动作计数；无任何动作时 `undefined`
+ * @throws {OFDError} 取消或文档关闭时
+ */
+async function countActions(
+  document: OFDDocument,
+  signal: AbortSignal | undefined,
+): Promise<CliActionSummary | undefined> {
+  const options = signal === undefined ? {} : { signal };
+  const documentCount = document.getDocumentActions().length;
+  const outline = await document.getOutline(options);
+  const outlineCount = countOutlineActions(outline);
+  if (documentCount === 0 && outlineCount === 0) return undefined;
+  return { document: documentCount, outline: outlineCount };
+}
+
+/**
+ * 递归统计大纲树上的动作数量。
+ *
+ * @param nodes 大纲节点列表
+ * @returns 全部节点 `actions` 条数之和
+ */
+function countOutlineActions(nodes: readonly OutlineNode[]): number {
+  let count = 0;
+  for (const node of nodes) {
+    count += node.actions?.length ?? 0;
+    count += countOutlineActions(node.children);
+  }
+  return count;
+}
+
+/**
+ * 将 engine 音视频资源元信息收敛为 info 的输出结构。
+ *
+ * @param media engine 音视频资源元信息
+ * @returns 缺失字段省略的音视频摘要
+ */
+function toCliMedia(media: MediaResource): CliMedia {
+  return {
+    id: media.id,
+    kind: media.kind,
+    mimeType: media.mimeType,
+    ...(media.format === undefined ? {} : { format: media.format }),
+    ...(media.sizeBytes === undefined ? {} : { sizeBytes: media.sizeBytes }),
+    scope: media.scope,
   };
 }
 
@@ -335,7 +446,43 @@ export function formatInfoText(info: CliInfoJson): string {
     `页面尺寸: ${formatPageSizes(document.pageSizes)}`,
     `附件: ${document.attachments.length} 个`,
   );
+  // 多媒体行只在文档确实含音视频时出现，既有无音视频文档的文本输出保持不变。
+  if (document.media !== undefined && document.media.length > 0) {
+    lines.push(`多媒体: ${formatMediaSummary(document.media)}`);
+  }
+  // 动作行紧跟多媒体行，同样仅在存在动作时出现。
+  if (document.actionSummary !== undefined) {
+    lines.push(`动作: ${formatActionSummary(document.actionSummary)}`);
+  }
   return lines.join('\n');
+}
+
+/**
+ * 生成动作计数摘要。
+ *
+ * 只输出文档级与大纲级两项；页面级与图元动作不计入（见 {@link CliActionSummary}）。
+ *
+ * @param summary 动作计数
+ * @returns 形如 `文档 1，大纲 2` 的单行文本
+ */
+function formatActionSummary(summary: CliActionSummary): string {
+  return `文档 ${summary.document}，大纲 ${summary.outline}`;
+}
+
+/**
+ * 生成多媒体资源的分类型计数摘要。
+ *
+ * @param media 音视频资源元信息
+ * @returns 形如 `视频 2 个，音频 1 个` 的单行文本
+ */
+function formatMediaSummary(media: readonly CliMedia[]): string {
+  let videos = 0;
+  let audios = 0;
+  for (const item of media) {
+    if (item.kind === 'video') videos += 1;
+    else audios += 1;
+  }
+  return `视频 ${videos} 个，音频 ${audios} 个`;
 }
 
 /**

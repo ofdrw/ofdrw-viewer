@@ -410,7 +410,10 @@ describe('ZIP 批量导出', () => {
 
   it('全部条目正常时不出现跳过提示', async () => {
     const records = stubDownloads();
-    const { viewer } = createViewer([{ id: 'a1', name: '唯一.pdf' }]);
+    const { viewer } = createViewer([
+      { id: 'a1', name: '唯一.pdf' },
+      { id: 'a2', name: '第二.pdf' },
+    ]);
     const { view, host } = mount(viewer);
     await flush();
 
@@ -419,8 +422,47 @@ describe('ZIP 批量导出', () => {
 
     expect(records).toHaveLength(1);
     const status = host.querySelector<HTMLElement>('.ofd-attachments__status');
-    expect(status?.textContent).toBe('已导出 1 个附件，跳过 0 个（过大或读取失败）');
+    expect(status?.textContent).toBe('已导出 2 个附件，跳过 0 个（过大或读取失败）');
     expect(status?.dataset.level).toBe('info');
+  });
+
+  it('只勾选一项时直接下载该文件，不生成 ZIP', async () => {
+    const records = stubDownloads();
+    const { viewer } = createViewer([
+      { id: 'a1', name: '甲.pdf' },
+      { id: 'a2', name: '乙.txt' },
+    ]);
+    const { view } = mount(viewer);
+    await flush();
+
+    view.toggleSelection('a2');
+    await view.exportSelection();
+    await flush();
+
+    expect(records).toHaveLength(1);
+    expect(records[0]!.name).toBe('乙.txt');
+    expect(records[0]!.blob.type).not.toBe('application/zip');
+  });
+
+  it('勾选多项时只打包选中项为 ZIP', async () => {
+    const records = stubDownloads();
+    const { viewer } = createViewer([
+      { id: 'a1', name: '甲.pdf' },
+      { id: 'a2', name: '乙.txt' },
+      { id: 'a3', name: '丙.pdf' },
+    ]);
+    const { view } = mount(viewer);
+    await flush();
+
+    view.toggleSelection('a1');
+    view.toggleSelection('a3');
+    await view.exportSelection();
+    await flush();
+
+    expect(records).toHaveLength(1);
+    expect(records[0]!.blob.type).toBe('application/zip');
+    const entries = await unzip(records[0]!.blob);
+    expect(Object.keys(entries).sort()).toEqual(['丙.pdf', '甲.pdf']);
   });
 });
 

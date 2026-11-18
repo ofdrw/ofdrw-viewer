@@ -13,9 +13,12 @@ import type {
   FontResource,
   ImageFormat,
   ImageResource,
+  MediaKind,
+  MediaResource,
   Pattern,
   ResourceDefinitionSet,
   ResourceId,
+  ResourceScope,
 } from './types';
 import { dirnameOf, normalizePackagePath, resolvePackagePath } from '../container/path';
 import { normalizeResourceId } from './ids';
@@ -91,6 +94,71 @@ function inferImageFormat(formatAttr: string | undefined, path: string): ImageFo
 }
 
 /**
+ * 音视频扩展名 → MIME 类型。
+ *
+ * 标准未枚举音视频格式，这里按实际文件扩展名兜底；`Format` 属性只在扩展名无法判定时使用。
+ */
+const MEDIA_MIME_TYPES: Readonly<Record<string, string>> = {
+  mp3: 'audio/mpeg',
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  m4a: 'audio/mp4',
+  webm: 'video/webm',
+  ogg: 'audio/ogg',
+  oga: 'audio/ogg',
+  ogv: 'video/ogg',
+  wav: 'audio/wav',
+  avi: 'video/x-msvideo',
+  wmv: 'video/x-ms-wmv',
+  flv: 'video/x-flv',
+  mov: 'video/quicktime',
+  aac: 'audio/aac',
+  avs: 'video/x-avs',
+};
+
+/** MIME 无法判定时的兜底值。 */
+const OCTET_STREAM = 'application/octet-stream';
+
+/**
+ * 规范化 `MultiMedia@Type`。
+ *
+ * @param raw `Type` 属性原文。
+ * @returns `image`/`audio`/`video`；缺失或非法时为 undefined。
+ */
+function normalizeMediaType(raw: string | undefined): MediaKind | undefined {
+  if (raw === undefined) return undefined;
+  const value = raw.trim().toLowerCase();
+  if (value === 'image') return 'image';
+  if (value === 'audio') return 'audio';
+  if (value === 'video') return 'video';
+  return undefined;
+}
+
+/**
+ * 按扩展名与 `Format` 推断音视频 MIME 类型。
+ *
+ * 判定顺序：`MediaFile` 扩展名 → `Format` 为 MIME 形态（含 `/`）→ `Format` 为已知扩展名。
+ *
+ * @param formatAttr `Format` 属性原文。
+ * @param path 包内媒体文件路径。
+ * @returns MIME 类型；无法判定时返回 `application/octet-stream`。
+ */
+function inferMediaMimeType(formatAttr: string | undefined, path: string): string {
+  const match = /\.([^./]+)$/.exec(path);
+  if (match) {
+    const mapped = MEDIA_MIME_TYPES[(match[1] as string).toLowerCase()];
+    if (mapped) return mapped;
+  }
+  const format = formatAttr?.trim().toLowerCase();
+  if (format) {
+    if (format.includes('/')) return format;
+    const mapped = MEDIA_MIME_TYPES[format];
+    if (mapped) return mapped;
+  }
+  return OCTET_STREAM;
+}
+
+/**
  * 构造包内路径解析器。
  *
  * @param filePath 资源 XML 的包内路径。
@@ -150,6 +218,7 @@ export function decodeResourceSet(
     ...(options?.defaultColorSpaceId ? { defaultColorSpaceId: options.defaultColorSpaceId } : {}),
     patterns,
     resolvePath: createPathResolver(filePath, attr(root, 'BaseLoc'), baseContext),
+    resourceDeclaredIn: () => filePath,
   };
   context.decodePageBlock = (node) => decodePageBlockNode(node, context);
 
@@ -190,18 +259,36 @@ export function decodeResourceSet(
 
   const images: ImageResource[] = [];
   const imageIds = new Set<ResourceId>();
+  const media: MediaResource[] = [];
+  const mediaIds = new Set<ResourceId>();
+  const scope = resolveResourceScope(root, filePath);
   for (const group of children(root, 'MultiMedias')) {
     for (const node of children(group, 'MultiMedia')) {
-      const decoded = decodeImage(node, context);
+      const type = classifyMultiMediaType(node, context);
+      if (type === undefined) continue;
+      if (type === 'image') {
+        const decoded = decodeImage(node, context, scope);
+        if (!decoded) continue;
+        if (imageIds.has(decoded.id)) {
+          emitWarning(context, 'W_DUPLICATE_RESOURCE', `MultiMedia ID 重复：${decoded.id}，保留先出现者`, {
+            resourceId: decoded.id,
+          });
+          continue;
+        }
+        imageIds.add(decoded.id);
+        images.push(decoded);
+        continue;
+      }
+      const decoded = decodeMedia(node, type, scope, context);
       if (!decoded) continue;
-      if (imageIds.has(decoded.id)) {
+      if (mediaIds.has(decoded.id)) {
         emitWarning(context, 'W_DUPLICATE_RESOURCE', `MultiMedia ID 重复：${decoded.id}，保留先出现者`, {
           resourceId: decoded.id,
         });
         continue;
       }
-      imageIds.add(decoded.id);
-      images.push(decoded);
+      mediaIds.add(decoded.id);
+      media.push(decoded);
     }
   }
 
@@ -239,7 +326,58 @@ export function decodeResourceSet(
     }
   }
 
-  return { fonts, images, drawParams, compositeGraphicUnits, colorSpaces: ownColorSpaces, patterns };
+  return { fonts, images, media, drawParams, compositeGraphicUnits, colorSpaces: ownColorSpaces, patterns };
+}
+
+/**
+ * 判断资源文件的声明来源。
+ *
+ * 以文件名为准：`PageRes.xml` 为页资源，`DocumentRes.xml` 为文档资源，其余（含 `PublicRes.xml`
+ * 与模板页资源）按公共资源处理。
+ *
+ * @param root 资源 XML 根节点。
+ * @param filePath 资源 XML 的包内路径。
+ * @returns 资源声明来源。
+ */
+function resolveResourceScope(root: XmlNode, filePath: string): ResourceScope {
+  const explicit = attr(root, 'Scope')?.trim().toLowerCase();
+  if (explicit === 'page' || explicit === 'document' || explicit === 'public') return explicit;
+  const fileName = (/([^/]+)$/.exec(filePath)?.[1] ?? filePath).toLowerCase();
+  if (fileName.startsWith('pageres')) return 'page';
+  if (fileName.startsWith('documentres')) return 'document';
+  return 'public';
+}
+
+/**
+ * 按 `Type` 分派 `MultiMedia` 的资源类别。
+ *
+ * `Type` 缺失时按图片处理（与历史行为一致）并上报 `W_MEDIA_FORMAT`；`Type` 非法时跳过该条。
+ *
+ * @param node `MultiMedia` 节点。
+ * @param context 解码上下文。
+ * @returns 资源类别；`Type` 非法时 undefined。
+ */
+function classifyMultiMediaType(node: XmlNode, context: ContentDecodeContext): MediaKind | undefined {
+  const raw = attr(node, 'Type');
+  const type = normalizeMediaType(raw);
+  if (type !== undefined) return type;
+  const id = normalizeResourceId(attr(node, 'ID'));
+  if (raw === undefined) {
+    emitWarning(
+      context,
+      'W_MEDIA_FORMAT',
+      `MultiMedia ${id ?? '（无 ID）'} 缺少 Type，按 Image 处理`,
+      id ? { resourceId: id } : {},
+    );
+    return 'image';
+  }
+  emitWarning(
+    context,
+    'W_MEDIA_FORMAT',
+    `MultiMedia ${id ?? '（无 ID）'} 的 Type 非法：${JSON.stringify(raw)}，已跳过`,
+    id ? { resourceId: id } : {},
+  );
+  return undefined;
 }
 
 /**
@@ -281,15 +419,20 @@ function decodeFont(node: XmlNode, context: ContentDecodeContext): FontResource 
 }
 
 /**
- * 解码图片资源（MultiMedia）。
+ * 解码图片资源（`MultiMedia` 中 `Type=Image` 的条目）。
+ *
+ * `Type` 分派由调用方完成；本函数只解析图片字段。
  *
  * @param node `MultiMedia` 节点。
  * @param context 解码上下文。
- * @returns 图片资源；非 Image 类型或缺少 ID/MediaFile 时返回 undefined。
+ * @param scope 声明来源。
+ * @returns 图片资源；缺少 ID/MediaFile 时返回 undefined。
  */
-function decodeImage(node: XmlNode, context: ContentDecodeContext): ImageResource | undefined {
-  const typeRaw = attr(node, 'Type');
-  if (typeRaw !== undefined && typeRaw.trim().toLowerCase() !== 'image') return undefined;
+function decodeImage(
+  node: XmlNode,
+  context: ContentDecodeContext,
+  scope: ResourceScope,
+): ImageResource | undefined {
   const id = normalizeResourceId(attr(node, 'ID'));
   if (!id) {
     emitWarning(context, 'W_BAD_NUMBER', 'MultiMedia 缺少 ID，已跳过');
@@ -310,7 +453,64 @@ function decodeImage(node: XmlNode, context: ContentDecodeContext): ImageResourc
     id,
     mediaFile,
     format: inferImageFormat(attr(node, 'Format'), mediaFile),
+    scope,
+    declaredIn: context.resourceDeclaredIn?.() ?? '',
   };
+}
+
+/**
+ * 解码音视频资源（`MultiMedia` 中 `Type=Audio|Video` 的条目）。
+ *
+ * MIME 按 `MediaFile` 扩展名优先推断；无法判定时上报 `W_MEDIA_FORMAT` 但不阻断。
+ *
+ * @param node `MultiMedia` 节点。
+ * @param kind 音视频类别。
+ * @param scope 声明来源。
+ * @param context 解码上下文。
+ * @returns 音视频资源；缺少 ID/MediaFile/路径非法时返回 undefined 并上报 `W_MEDIA_RESOURCE`。
+ */
+function decodeMedia(
+  node: XmlNode,
+  kind: 'audio' | 'video',
+  scope: ResourceScope,
+  context: ContentDecodeContext,
+): MediaResource | undefined {
+  const id = normalizeResourceId(attr(node, 'ID'));
+  if (!id) {
+    emitWarning(context, 'W_BAD_NUMBER', 'MultiMedia 缺少 ID，已跳过');
+    return undefined;
+  }
+  const mediaContext = { ...context, resourceId: id };
+  const mediaRaw = childText(node, 'MediaFile');
+  if (!mediaRaw) {
+    emitWarning(mediaContext, 'W_MEDIA_RESOURCE', `音视频资源 ${id} 缺少 MediaFile，已跳过`);
+    return undefined;
+  }
+  const mediaFile = context.resolvePath?.(mediaRaw);
+  if (!mediaFile) {
+    emitWarning(mediaContext, 'W_MEDIA_RESOURCE', `音视频资源 ${id} 的 MediaFile 路径无法解析，已跳过`);
+    return undefined;
+  }
+  const formatAttr = attr(node, 'Format');
+  const format = formatAttr?.trim();
+  const mimeType = inferMediaMimeType(formatAttr, mediaFile);
+  if (mimeType === OCTET_STREAM) {
+    emitWarning(
+      mediaContext,
+      'W_MEDIA_FORMAT',
+      `音视频资源 ${id} 的格式无法判定（${JSON.stringify(formatAttr ?? '')}），按 ${OCTET_STREAM} 处理`,
+    );
+  }
+  const result: MediaResource = {
+    id,
+    kind,
+    mediaFile,
+    mimeType,
+    scope,
+    declaredIn: context.resourceDeclaredIn?.() ?? '',
+  };
+  if (format) result.format = format;
+  return result;
 }
 
 /**

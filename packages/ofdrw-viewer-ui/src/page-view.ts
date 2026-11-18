@@ -101,6 +101,13 @@ export class PageView {
   readonly canvasWrapper: HTMLElement;
   /** 文字层容器；由文本模块填充。 */
   readonly textLayer: HTMLElement;
+  /**
+   * 媒体层容器；由动作模块填充内联播放器。
+   *
+   * DOM 序位于文字层之后、签章层之前；z-index 2、`pointer-events: none`，子元素各自
+   * 开启命中。签章层因其后绘制仍盖在媒体之上，而媒体在文字层之上，视频可点击。
+   */
+  readonly mediaLayer: HTMLElement;
   /** 签章覆盖层容器；由签章模块填充。 */
   readonly signatureLayer: HTMLElement;
 
@@ -207,6 +214,26 @@ export class PageView {
     } satisfies Partial<CSSStyleDeclaration>);
     this.textLayer.setAttribute('aria-hidden', 'false');
     this.surface.appendChild(this.textLayer);
+
+    // 媒体层：位于文字层之后、签章层之前（音视频与动作方案设计 §7.1）。
+    // 定位沿用文本层的坐标模型——布局框取「纸面尺寸 / 布局倍率」，再由
+    // `transform: scale(var(--scale-factor))` 放大回去；缩放时只改这一个 CSS 变量，
+    // 不做逐帧重算，页面旋转由外层 surface 承担。
+    // 层级取 pointer-events: none，只有媒体元素本身（pointer-events: auto）可命中；
+    // 空白处点击透传给下方文字层，文本选择不受影响。
+    this.mediaLayer = this.createElement('div', 'ofd-page__media-layer');
+    Object.assign(this.mediaLayer.style, {
+      position: 'absolute',
+      top: '0',
+      left: '0',
+      overflow: 'visible',
+      pointerEvents: 'none',
+      transformOrigin: '0 0',
+    } satisfies Partial<CSSStyleDeclaration>);
+    // 媒体层默认对辅助技术隐藏：空容器没有语义内容。
+    // 内联播放器挂入后由 `getMediaLayer()` 的调用方移除该属性（内含原生控件，需可聚焦）。
+    this.mediaLayer.setAttribute('aria-hidden', 'true');
+    this.surface.appendChild(this.mediaLayer);
 
     this.signatureLayer = this.createElement('div', 'ofd-page__signature-layer');
     Object.assign(this.signatureLayer.style, {
@@ -415,6 +442,7 @@ export class PageView {
     this.element.style.setProperty('--scale-factor', String(scale));
     this.surface.style.setProperty('--scale-factor', String(scale));
     this.element.dataset.rotation = String(rotation);
+    this.applyMediaLayerScale();
     if (this.canvasElement) {
       this.canvasElement.style.width = '100%';
       this.canvasElement.style.height = '100%';
@@ -440,6 +468,24 @@ export class PageView {
     };
     this.surface.style.width = `${this.surfaceSizeValue.width}px`;
     this.surface.style.height = `${this.surfaceSizeValue.height}px`;
+    this.applyMediaLayerScale();
+  }
+
+  /**
+   * 刷新媒体层布局框与缩放。
+   *
+   * 与文本层的 `applyLayerScale()` 完全同构：子元素坐标是 96 DPI 基准（不含倍率），
+   * 因此图层布局框必须等于「纸面尺寸 / 布局倍率」，再由 `transform: scale()` 放大
+   * 回来，才能与 canvas 恰好重合。缩放时只改这一个 transform，不重算子元素几何。
+   */
+  private applyMediaLayerScale(): void {
+    const factor = this.currentScale > 0 ? this.currentScale : 1;
+    const width = this.surfaceSizeValue.width;
+    const height = this.surfaceSizeValue.height;
+    const style = this.mediaLayer.style;
+    style.width = `${width > 0 ? width / factor : 0}px`;
+    style.height = `${height > 0 ? height / factor : 0}px`;
+    style.transform = `scale(${factor})`;
   }
 
   /**
@@ -821,6 +867,16 @@ export class PageView {
     this.signatureLayer.hidden = !visible;
   }
 
+  /**
+   * 清空本页媒体层 DOM；页被缓存淘汰或文档关闭时调用。
+   *
+   * 只移除节点，不负责销毁播放器与释放 ObjectURL——那是动作模块的职责
+   * （播放器实例按资源 ID 管理，需在 `pause()` + `load()` 之后再 `revokeObjectURL`）。
+   */
+  releaseMediaLayer(): void {
+    replaceChildren(this.mediaLayer);
+  }
+
   /** 销毁页视图并释放 canvas。 */
   destroy(): void {
     if (this.destroyed) return;
@@ -836,6 +892,7 @@ export class PageView {
     }
     this.element.remove();
     replaceChildren(this.textLayer);
+    replaceChildren(this.mediaLayer);
     replaceChildren(this.signatureLayer);
   }
 

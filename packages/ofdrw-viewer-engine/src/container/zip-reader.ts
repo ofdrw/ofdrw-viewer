@@ -90,7 +90,12 @@ export const DEFAULT_ZIP_LIMITS: Readonly<ZipLimits> = Object.freeze({
 
 /** 读取条目选项。 */
 export interface ReadEntryOptions {
-  /** 解压后大小上限，byte；缺省使用打开时的限制。 */
+  /**
+   * 解压后大小上限，byte；缺省使用打开时的 `maxEntryBytes`。
+   *
+   * 调用方显式给出时以该值为准（可高于打开时的 `maxEntryBytes`，用于按
+   * `maxMediaBytes` 读取大媒体条目），不高于上限时仍收紧。
+   */
   maxBytes?: number;
   /** 是否校验 CRC32，默认 true。 */
   verifyCrc?: boolean;
@@ -115,8 +120,8 @@ interface DirectoryInfo {
 /**
  * ZIP 随机读取器。
  *
- * 构造后中央目录常驻；`readEntry` 才读取局部头并解压。加密条目、非 0/8 压缩方法、
- * 路径穿越与超限条目必须拒绝。
+ * 构造后中央目录常驻；`readEntry` 才读取局部头并解压。加密条目、非 0/8 压缩方法
+ * 与路径穿越在打开阶段拒绝；条目解压大小在读取阶段按 `effectiveMaxBytes` 校验。
  */
 export class ZipReader {
   private readonly entries: Map<string, ZipEntryMeta>;
@@ -572,12 +577,9 @@ export class ZipReader {
       if (this.entries.has(name)) {
         throw new OFDError('OFD_INVALID_PACKAGE', `ZIP 条目规范化路径重复：${name}`);
       }
-      if (isOverLimit(uncompressedSize, this.limits.maxEntryBytes)) {
-        throw new OFDError(
-          'OFD_LIMIT_EXCEEDED',
-          `条目 ${name} 解压大小 ${uncompressedSize} 超过限制 ${this.limits.maxEntryBytes}`,
-        );
-      }
+      // 单条目上限不在打开阶段判定：放行后由 `readEntry` 按 `effectiveMaxBytes` 校验。
+      // 大媒体条目（`maxMediaBytes`）需要放宽上限读取，打开即拒绝会让整包不可读；
+      // 解压炸弹防护仍由压缩比与总解压大小校验承担。
       if (this.limits.maxCompressionRatio > 0 && uncompressedSize > 0) {
         if (compressedSize === 0) {
           throw new OFDError('OFD_LIMIT_EXCEEDED', `条目 ${name} 压缩大小非法为 0`);
@@ -729,20 +731,21 @@ function isOverLimit(value: number, limit: number | undefined): boolean {
 }
 
 /**
- * 计算实际生效的单条目上限；调用方覆盖不能突破打开时的全局上限。
+ * 计算实际生效的单条目上限。
  *
- * @param requested 调用方上限，byte。
- * @param global 全局上限，byte。
+ * 调用方显式给出上限时以调用方为准：既可用于收紧，也可在需要读取单个大条目
+ * （例如按 `maxMediaBytes` 读取音视频）时放宽到调用方自己的限制；未给出时使用
+ * 打开阶段的 `maxEntryBytes`。两种情况都不影响打开阶段的压缩比与总解压大小校验。
+ *
+ * @param requested 调用方上限，byte；非正或非有限值视为未给出。
+ * @param global 打开时的全局上限，byte；`0` 表示不限制。
  * @returns 生效上限；undefined 表示不限制。
  */
 function effectiveMaxBytes(requested: number | undefined, global: number): number | undefined {
-  const candidate =
-    requested !== undefined && Number.isFinite(requested) && requested > 0
-      ? Math.floor(requested)
-      : undefined;
-  if (global <= 0) return candidate;
-  if (candidate === undefined) return global;
-  return Math.min(candidate, global);
+  if (requested !== undefined && Number.isFinite(requested) && requested > 0) {
+    return Math.floor(requested);
+  }
+  return global > 0 ? global : undefined;
 }
 
 /**

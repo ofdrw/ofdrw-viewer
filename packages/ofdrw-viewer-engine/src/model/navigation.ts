@@ -16,6 +16,7 @@ import type {
 import type { DecodeOptions } from './decode';
 import { attr, child, childText, children, emitWarning } from './decode-utils';
 import { normalizeResourceId } from './ids';
+import { decodeActions } from './action-decode';
 
 /** 大纲递归深度上限，防止恶意深树。 */
 const MAX_OUTLINE_DEPTH = 64;
@@ -93,7 +94,7 @@ export function decodeOutlines(
 }
 
 /** 建立页 ID → 页索引映射。 */
-function buildPageIndex(pageIds: readonly ResourceId[]): Map<ResourceId, number> {
+export function buildPageIndex(pageIds: readonly ResourceId[]): Map<ResourceId, number> {
   const result = new Map<ResourceId, number>();
   pageIds.forEach((id, index) => {
     const normalized = normalizeResourceId(id);
@@ -142,18 +143,32 @@ function decodeOutlinesWithIndex(
   for (const bookmark of bookmarks) {
     if (!bookmarkIndex.has(bookmark.name)) bookmarkIndex.set(bookmark.name, bookmark.dest);
   }
-  return children(outlinesNode, 'OutlineElem').map((node) =>
-    decodeOutlineNode(node, pageIndex, bookmarkIndex, options, 0),
+  return children(outlinesNode, 'OutlineElem').map((node, index) =>
+    decodeOutlineNode(node, pageIndex, bookmarkIndex, options, 0, [index]),
   );
 }
 
-/** 递归解码单个 OutlineElem。 */
+/**
+ * 递归解码单个 OutlineElem。
+ *
+ * 节点上的 `Actions` 用统一的 `decodeActions` 解码并写入可选的 `actions`（保持 XML 顺序）；
+ * 既有 `findGoto → dest` 行为保持不变，保证 `getOutline()` 的既有结果兼容。
+ *
+ * @param node `OutlineElem` 节点。
+ * @param pageIndex 页 ID → 页索引映射。
+ * @param bookmarks 书签名称 → 目标映射。
+ * @param options 解码选项。
+ * @param depth 当前层级，从 0 开始。
+ * @param path 节点路径（顶层下标序列）。
+ * @returns 大纲节点。
+ */
 function decodeOutlineNode(
   node: XmlNode,
   pageIndex: ReadonlyMap<ResourceId, number>,
   bookmarks: ReadonlyMap<string, DocumentDestination | undefined>,
   options: DecodeOptions,
   depth: number,
+  path: readonly number[],
 ): OutlineNode {
   const rawTitle = attr(node, 'Title') ?? childText(node, 'Title');
   const result: OutlineNode = {
@@ -166,10 +181,17 @@ function decodeOutlineNode(
   if (depth >= MAX_OUTLINE_DEPTH) {
     emitWarning(options, 'W_OUTLINE_TARGET', `大纲层级超过 ${MAX_OUTLINE_DEPTH}，已截断子节点`);
   } else {
-    result.children = children(node, 'OutlineElem').map((childNode) =>
-      decodeOutlineNode(childNode, pageIndex, bookmarks, options, depth + 1),
+    result.children = children(node, 'OutlineElem').map((childNode, index) =>
+      decodeOutlineNode(childNode, pageIndex, bookmarks, options, depth + 1, [...path, index]),
     );
   }
+
+  const actions = decodeActions(node, { kind: 'outline', path }, {
+    pageIndex,
+    ...(options.onWarning ? { onWarning: options.onWarning } : {}),
+    ...(options.maxActionsPerNode !== undefined ? { maxActionsPerNode: options.maxActionsPerNode } : {}),
+  });
+  if (actions.length > 0) result.actions = actions;
 
   const gotoNode = findGoto(node);
   if (!gotoNode) return result;
@@ -217,12 +239,20 @@ function findGotoDest(node: XmlNode): XmlNode | undefined {
   return goto ? child(goto, 'Dest') : undefined;
 }
 
-/** 解码 Dest；无效时按 warningCode 上报并返回 undefined。 */
-function decodeDestination(
+/**
+ * 解码 Dest；无效时按 warningCode 上报并返回 undefined。
+ *
+ * @param node `Dest` 节点。
+ * @param pageIndex 页 ID → 页索引映射。
+ * @param options 解码选项（warning 回调）。
+ * @param warningCode 目标类 warning 码。
+ * @returns 跳转目标；无效时 undefined。
+ */
+export function decodeDestination(
   node: XmlNode,
   pageIndex: ReadonlyMap<ResourceId, number>,
   options: DecodeOptions,
-  warningCode: 'W_OUTLINE_TARGET' | 'W_BOOKMARK_TARGET',
+  warningCode: 'W_OUTLINE_TARGET' | 'W_BOOKMARK_TARGET' | 'W_ACTION_TARGET',
 ): DocumentDestination | undefined {
   const rawType = (attr(node, 'Type') ?? '').trim();
   const type = DEST_TYPES[rawType.toUpperCase()];
@@ -282,7 +312,7 @@ function readOptionalNumber(
   node: XmlNode,
   name: string,
   options: DecodeOptions,
-  warningCode: 'W_OUTLINE_TARGET' | 'W_BOOKMARK_TARGET',
+  warningCode: 'W_OUTLINE_TARGET' | 'W_BOOKMARK_TARGET' | 'W_ACTION_TARGET',
 ): number | undefined | typeof INVALID_NUMBER {
   const raw = attr(node, name);
   if (raw === undefined) return undefined;

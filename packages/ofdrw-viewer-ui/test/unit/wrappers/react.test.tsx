@@ -12,6 +12,10 @@ vi.mock('../../../src/index', async () => {
 });
 
 import {
+  VIEWER_EVENT_BRIDGES,
+  type ViewerEventBridge,
+} from '../../../src/component/support';
+import {
   OFDViewer,
   type OFDViewerHandle,
 } from '../../../src/react/index';
@@ -116,6 +120,48 @@ describe('React wrapper', () => {
     await waitFor(() => expect(onLocalFontsChange).toHaveBeenCalledTimes(1));
     expect(onLocalFontsChange.mock.calls[0]![0]).toMatchObject({ enabled: true });
     unsubscribe();
+  });
+
+  it('遍历桥接表逐个 emit 并调用对应 onXxx 回调', async () => {
+    const spies = new Map<ViewerEventBridge['event'], ReturnType<typeof vi.fn>>();
+    const props: Record<string, (payload: unknown) => void> = {};
+    for (const bridge of VIEWER_EVENT_BRIDGES) {
+      const spy = vi.fn();
+      spies.set(bridge.event, spy);
+      props[bridge.react] = spy;
+    }
+    const viewerProps = { source: 'a.ofd', ...props } as unknown as Parameters<
+      typeof OFDViewer
+    >[0];
+    render(<OFDViewer {...viewerProps} />);
+    await waitFor(() => expect(FakeViewer.instances).toHaveLength(1));
+    const viewer = FakeViewer.instances[0]!;
+
+    for (const bridge of VIEWER_EVENT_BRIDGES) {
+      const payload = { marker: bridge.event };
+      act(() => {
+        viewer.emit(bridge.event, payload);
+      });
+      const spy = spies.get(bridge.event)!;
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith(payload);
+    }
+  });
+
+  it('ref 句柄转发动作执行与自动执行开关方法', async () => {
+    const ref = createRef<OFDViewerHandle>();
+    render(<OFDViewer ref={ref} source="a.ofd" />);
+    await waitFor(() => expect(ref.current).not.toBeNull());
+    const viewer = FakeViewer.instances[0]!;
+
+    expect(await ref.current!.executeActions(1, 'CLICK')).toEqual(['executed']);
+    expect(viewer.executeActionsCalls).toEqual([[1, 'CLICK']]);
+
+    expect(ref.current!.getAutoExecuteActions()).toBe(false);
+    ref.current!.setAutoExecuteActions(true);
+    expect(viewer.autoExecuteCalls).toEqual([true]);
+    expect(ref.current!.getAutoExecuteActions()).toBe(true);
+    expect(ref.current!.getAutoExecuteActionsToggleAllowed()).toBe(true);
   });
 
   it('StrictMode 双挂载后只保留一个活跃实例，卸载全部销毁', async () => {

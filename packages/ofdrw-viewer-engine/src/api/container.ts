@@ -24,14 +24,20 @@ export interface OpenZipVirtualContainerOptions {
 /**
  * 把 `ResourceLimits` 中与 ZIP 相关的字段映射为容器限制。
  *
+ * `maxEntryBytes` 取 `maxEntryBytes` 与 `maxMediaBytes` 的较大者：单条目上限只在
+ * `readEntry` 时判定，而音视频读取会在该处显式传入 `maxMediaBytes`。容器打开时的
+ * 全局上限若小于它，会挡住按 `maxMediaBytes` 读取的大媒体条目。
+ *
  * @param limits 资源限制。
  * @returns ZIP 打开限制；大小单位 byte。
  */
 function toZipLimits(limits: ResourceLimits) {
+  const entryLimit = Number.isFinite(limits.maxEntryBytes) ? limits.maxEntryBytes : 0;
+  const mediaLimit = Number.isFinite(limits.maxMediaBytes) ? limits.maxMediaBytes : 0;
   return {
     maxPackageBytes: limits.maxPackageBytes,
     maxEntries: limits.maxEntries,
-    maxEntryBytes: limits.maxEntryBytes,
+    maxEntryBytes: Math.max(entryLimit, mediaLimit),
     maxTotalUncompressedBytes: limits.maxTotalUncompressedBytes,
     maxCompressionRatio: limits.maxCompressionRatio,
   };

@@ -3,18 +3,21 @@
  *
  * 扁平列表，按引擎返回的 XML 顺序渲染；点击按 `DocumentDestination` 跳转，
  * 当前页对应条目高亮。无效 `dest` 只报警并保留条目。
+ *
+ * 激活条目时，书签声明了动作则经动作服务执行，否则按 `dest` 直接跳转
+ * （UI 动作处理机制设计 §11.2）。
  */
 
 import { replaceChildren } from '../compat';
 
-import type { BookmarkItem } from '@ofdrw/ofdrw-viewer-engine';
+import type { ActionInfo, BookmarkItem } from '@ofdrw/ofdrw-viewer-engine';
 import type { Translator } from '../i18n';
 import type { ViewerState } from '../state';
 import {
+  activateNavigationEntry,
   createEmptyState,
   ensureNavigationStyle,
   formatPageLabel,
-  goToDestination,
   isJumpableDestination,
   reportNavigationWarning,
   type NavigationViewer,
@@ -185,9 +188,17 @@ export class BookmarkView {
     this.updateCurrent();
   }
 
-  /** 点击书签跳转。 */
+  /**
+   * 激活书签：鼠标点击与键盘回车共用。
+   *
+   * 经 `activateNavigationEntry()` 统一入口激活：书签带动作时由动作服务执行，否则按
+   * `dest` 跳转。引擎的 `BookmarkItem` 只声明跳转目标，当前总是走 `dest` 路径。
+   *
+   * @param item 被激活的书签。
+   */
   private activate(item: BookmarkItem): void {
-    if (!item.dest) {
+    const actions = (item as { readonly actions?: readonly ActionInfo[] }).actions;
+    if (!item.dest && (actions?.length ?? 0) === 0) {
       reportNavigationWarning(
         this.viewer,
         UI_WARNING_CODES.W_NAV_DEST,
@@ -195,10 +206,11 @@ export class BookmarkView {
       );
       return;
     }
-    if (goToDestination(this.viewer, item.dest)) {
+    void activateNavigationEntry(this.viewer, actions, item.dest).then((navigated) => {
+      if (this.destroyed || !navigated) return;
       this.currentPageIndex = this.viewer.getPageNumber() - 1;
       this.updateCurrent();
-    }
+    });
   }
 
   /** 当前页高亮：取 pageIndex ≤ 当前页的最后一个匹配。 */

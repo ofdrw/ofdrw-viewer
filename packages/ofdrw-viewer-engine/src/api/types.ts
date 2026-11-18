@@ -45,6 +45,20 @@ export interface ResourceLimits {
    * 只作用于附件接口（`getAttachmentData`/`saveAttachment`/`getAttachmentSize`）。
    */
   maxAttachmentBytes?: number;
+  /**
+   * 单个音视频资源读取上限，byte，默认 256 MiB。
+   *
+   * 独立取值，不回退 `maxEntryBytes`：音视频普遍大于普通条目，回退会让绝大多数包不可播。
+   * 只作用于音视频接口 `getMediaData`：读取前按中央目录声明的解压大小预检，
+   * 超限抛 `OFD_LIMIT_EXCEEDED` 且不返回部分数据。
+   */
+  maxMediaBytes: number;
+  /** 音视频资源索引条数上限，默认 512 个；超出后忽略多余声明并上报 `W_MEDIA_LIMIT`。 */
+  maxMediaResourceCount: number;
+  /**
+   * 单节点 `Actions` 条数上限，默认 256 个；超出后忽略多余动作并上报 `W_ACTION_LIMIT`。
+   */
+  maxActionsPerNode: number;
   /** 总解压大小上限，byte，默认 512 MiB。 */
   maxTotalUncompressedBytes: number;
   /** 单条目最大压缩比，默认 200。 */
@@ -88,6 +102,9 @@ export const DEFAULT_RESOURCE_LIMITS: Readonly<ResourceLimits> = Object.freeze({
   maxPackageBytes: 256 * 1024 * 1024,
   maxEntries: 20_000,
   maxEntryBytes: 64 * 1024 * 1024,
+  maxMediaBytes: 256 * 1024 * 1024,
+  maxMediaResourceCount: 512,
+  maxActionsPerNode: 256,
   maxTotalUncompressedBytes: 512 * 1024 * 1024,
   maxCompressionRatio: 200,
   maxXmlBytes: 32 * 1024 * 1024,

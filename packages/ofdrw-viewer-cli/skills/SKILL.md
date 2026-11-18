@@ -1,11 +1,11 @@
 ---
 name: ofdrw-viewer-cli
-description: Convert local OFD documents into per-page PNG/JPEG/WebP images with the ofdrw-viewer-cli executable, export pixel-coordinate text JSON with --text, query package/encryption/signature/integrity metadata with info, and verify anti-smuggling integrity plus every signature and certificate chain with verify. Use when an agent needs OFD page images, spatial text JSON, encrypted-document conversion with a password or SM2 private key, or signature/chain verification. Covers offline local-file input, system and --font-dir font discovery, memory-only decryption, JSON output, exit codes, and terminal-safety limits.
+description: Convert local OFD documents into per-page PNG/JPEG/WebP images with the ofdrw-viewer-cli executable, export pixel-coordinate text JSON with --text, extract embedded audio/video resources with --media, query package/encryption/signature/integrity metadata with info, and verify anti-smuggling integrity plus every signature and certificate chain with verify. Use when an agent needs OFD page images, spatial text JSON, encrypted-document conversion with a password or SM2 private key, or signature/chain verification. Covers offline local-file input, system and --font-dir font discovery, memory-only decryption, JSON output, exit codes, and terminal-safety limits.
 ---
 
 # OFD 转图片、查询与验签（ofdrw-viewer-cli）
 
-把单个本地 OFD 文件逐页转换为图片；加 `--text` 时同页再导出一份带像素坐标的文本 JSON。`info` 只读查询包结构、加密层、用户、签名与完整性摘要（明文包另含元数据与页尺寸），不解密、不验签；`verify` 一次性验证防夹带完整性、全部签名、证书链与印章，时间戳只解析、不验证；`version` 输出运行环境，排查问题时先收集。
+把单个本地 OFD 文件逐页转换为图片；加 `--text` 时同页再导出一份带像素坐标的文本 JSON；加 `--media` 时导出包内嵌的音视频资源。`info` 只读查询包结构、加密层、用户、签名与完整性摘要（明文包另含元数据与页尺寸），不解密、不验签；`verify` 一次性验证防夹带完整性、全部签名、证书链与印章，时间戳只解析、不验证；`version` 输出运行环境，排查问题时先收集。
 
 加密文档可用口令或 SM2 私钥在内存中解密后转图或验证：不写明文文件、不联网、没有 `decrypt` 子命令。
 
@@ -16,7 +16,8 @@ description: Convert local OFD documents into per-page PNG/JPEG/WebP images with
 - 需要 OFD 页面图片（预览、视觉检查、后续图像处理）；
 - 需要带像素坐标的文本（版面分析、区域定位、文本搜索高亮）→ 加 `--text`；
 - 需要判断是否加密、有哪些用户/签名/完整性保护 → `info`；需要签名有效性与是否被夹带、篡改、证书链是否可信 → `verify`；
-- 需要把加密 OFD 转成图片 → 带凭据转图片。
+- 需要把加密 OFD 转成图片 → 带凭据转图片；
+- 需要取出 OFD 内嵌的音频/视频文件 → `--media`（不配 `--text`/`--pages` 时只导出音视频，不渲染页面）。
 
 不适用：
 
@@ -55,6 +56,11 @@ CLI="${OFDRW_VIEWER_CLI:-ofdrw-viewer-cli}"
 "$CLI" verify signed.ofd
 "$CLI" verify signed.ofd --root root-ca.crt.pem --root root.der --json
 
+# 只导出音视频（未配 --text/--pages 时不渲染页面）
+"$CLI" media.ofd --media -o ./out
+"$CLI" media.ofd --media --media-kind video -o ./out
+"$CLI" media.ofd --media --media-id 12 -o ./out
+
 # 加密文档验证 / 转图片
 "$CLI" verify encrypted.ofd --password 'your-password' --root root-ca.crt.pem
 "$CLI" verify encrypted.ofd --key signer.key.pem --key-passphrase 'key-pass' --root root-ca.crt.pem
@@ -78,6 +84,9 @@ CLI="${OFDRW_VIEWER_CLI:-ofdrw-viewer-cli}"
 | `--font-dir <dir>` | 无 | 转图片 | 递归扫描 `ttf/otf/ttc/otc`，结果排在系统字体之前参与匹配 |
 | `--no-system-fonts` | 关闭 | 转图片 | 关闭系统字体自动发现，只使用 `--font-dir`（旧版行为） |
 | `--text` | 关闭 | 转图片 | 每页额外导出 `<stem>-p<NNN>.json` |
+| `--media` | 关闭 | 转图片 | 导出包内嵌音视频为 `media-<id>.<ext>`；未配 `--text`/`--pages` 时**跳过页面渲染** |
+| `--media-kind <kind>` | 全部 | 转图片 + `--media` | `video`/`audio`，只导出指定类型；必须与 `--media` 同用 |
+| `--media-id <id>` | 全部 | 转图片 + `--media` | 只导出指定资源 ID（十进制）；必须与 `--media` 同用 |
 | `--user <name>` | 无 | 转图片 / verify | 指定加密文档的 `UserInfo@UserName`；必须与 `--password` 或 `--key` 同用 |
 | `--password <password>` | 无 | 转图片 / verify | 口令用户；与 `--key` 互斥 |
 | `--key <path>` | 无 | 转图片 / verify | SM2 私钥文件（PEM/DER/PKCS#8） |
@@ -92,7 +101,8 @@ CLI="${OFDRW_VIEWER_CLI:-ofdrw-viewer-cli}"
 
 - 一次只接受一个输入文件；缺少输入、未知参数、缺参数值、多个输入都报用法错误；
 - `version` 不接受输入文件，也不接受除 `--json` 外的任何选项；`info` 只接受 `--json`，带凭据、`--root`、`--sm2-user-id` 或转图片参数都会报用法错误；
-- `verify` 接受凭据、`--root`、`--sm2-user-id`、`--json`，拒绝转图片参数（`-o`、`--format`、`--dpi`、`--pages`、`--font-dir`、`--no-system-fonts`、`--text`）；转图片拒绝 `--root`、`--sm2-user-id`、`--json`；
+- `verify` 接受凭据、`--root`、`--sm2-user-id`、`--json`，拒绝转图片参数（`-o`、`--format`、`--dpi`、`--pages`、`--font-dir`、`--no-system-fonts`、`--text`、`--media`、`--media-kind`、`--media-id`）；转图片拒绝 `--root`、`--sm2-user-id`、`--json`；`info` 拒绝全部 `--media` 系列参数；
+- `--media-kind` 与 `--media-id` 必须与 `--media` 同时使用，单独出现退出 1；`--media-kind` 只接受 `video`/`audio`（大小写不敏感，非法值报 `CLI_INVALID_MEDIA_KIND`）；`--media-id` 必须是十进制资源 ID，`abc`、`1.5`、`../etc` 等一律退出 1；
 - `--password` 与 `--key` 互斥；`--key-passphrase` 需要 `--key`；`--user` 需要 `--password` 或 `--key`；各路径选项不接受空值；
 - 页码范围语法非法、页号小于 1、区间倒置、单段或总计超过 100000 页、页号超过文档总页数，均退出 1 且不写图片；
 - 没有 `decrypt` 子命令：`"$CLI" decrypt` 固定退出 1，并提示改用 `verify` 或带凭据转图片。
@@ -123,6 +133,27 @@ OFD 版本: 1.0
 附件: 0 个
 ```
 
+含内嵌音视频的文档在 `附件:` 之后多出一行（无音视频时该行不出现）；含文档级或大纲级动作时再追加一行 `动作:`：
+
+```text
+附件: 0 个
+多媒体: 视频 1 个，音频 1 个
+动作: 文档 2，大纲 0
+```
+
+**`动作:` 行不是“动作总数”**，只统计两类零成本来源：
+
+| 项 | 含义 |
+| --- | --- |
+| `文档` | `Document.xml` 声明的文档级动作（`DO`，如打开即跳转/播放）条数 |
+| `大纲` | 全部大纲节点上的动作条数之和 |
+
+**点击类动作（图元上的 `CLICK`、页面上的 `PO`）不计入**，所以 `动作: 文档 0，大纲 0` 不代表文档没有可交互内容——只是没有文档级/大纲级动作；想知道某个图元有没有动作，需要逐个页面查看（`info` 不为此逐页加载）。两项都是 0 时整个 `动作:` 行不出现。
+
+看到 `多媒体:` 行说明文档内嵌了音频/视频：**用 `--media` 把它们导出成独立文件**（见下文「音视频导出（`--media`）」一节），`info --json` 的 `document.media[]` 还能看到每个资源的 ID、类型与大小。
+
+**多媒体统计只含文档级资源**：在 `PageRes`（页级资源文件）中声明的音视频不计入该行与 JSON 的 `media[]`，因为统计走零内容 IO 的 `getMediaResources()`；需要页级资源时用 `--media --media-id <id>` 显式指定。
+
 `文件:`–`完整性:` 是包摘要（加密包的 `加密:` 行显示 `是（N 层）`，`用户:` 行显示 `用户名 (方法)`；`文档类型:` 仅在明文包声明 `OFD@DocType` 时出现）；明文包继续输出 `文档用途:`、`标题:`、`作者:`、`主题:`、`创建时间:`、`修改时间:`、`创建工具:`、`文档根:`、`页数:`、`页面尺寸:`、`附件:`，缺失值显示 `无`。加密包不输出元数据行，改为 `元数据不可用（加密文档，需凭据）`。`页面尺寸` 最多展示前 5 页，超出时追加 `…（共 N 页，完整尺寸见 --json）`。
 
 `info --json` 固定字段：
@@ -133,6 +164,8 @@ OFD 版本: 1.0
 - `signatureCount`、`integrityPresent`、`warnings[]`；
 - `document?`：仅明文包，含 `version`、`pageCount`、`pageSizes[].widthMm/heightMm`、`title`、`author`、`subject`、`abstract`、`creationDate`、`modDate`、`creator`、`creatorVersion`、`keywords`、`docId`、`customData`、`docUsage`、`docType`、`documentHeader`、`packageInfo`、`commonData`、`attachments[]`；缺失字段省略（`attachments` 恒为数组，无附件时为空），加密包整体不输出；
 - `document.documentHeader`/`packageInfo`/`commonData` 与 engine `DocumentMetadata` 同名子对象整体平铺，不展开到顶层；`attachments[]` 只有 `id`、`name`、`format?`、`size?`（byte）、`modDate?`，不含附件内容。
+- `document.actionSummary?`：仅当存在文档级或大纲级动作时出现，字段为 `document`（文档级动作数）与 `outline`（大纲级动作数），**不含 `pages`/`objects`**（原因见上）；
+- `document.media?`：仅当文档含文档级音视频资源时出现，每项 `id`、`kind`（`video`/`audio`）、`mimeType`、`format?`、`sizeBytes?`（byte）、`scope`（`public`/`document`/`page`）；`format`/`sizeBytes` 缺失时省略，不含媒体内容。
 
 `info` 对加密包也退出 0，不需要口令：它不解密、不验签、不读私钥。包损坏或无法读取时才退出 2。
 
@@ -242,6 +275,7 @@ out/
   input-p002.png
 ```
 
+- `--media` 额外写入 `media-<id>.<ext>`（扩展名由 MIME 推导，见「音视频导出」），与页图共用同一输出目录；
 - 命名 `<输入 stem>-p<页号>.<扩展名>`；页号补零位数为 `max(3, 文档总页数位数)`（如 1000 页文档为 4 位）；扩展名按 `--format` 取 `.png`/`.jpg`/`.webp`；图片白底，JPEG/WebP 固定质量 0.9；
 - 每页图片与文本互相独立：一侧失败仍会尝试另一侧，该页计为失败；同名文件直接覆盖；写入采用同目录临时文件 + `fsync` + `rename` 原子替换，成功后不残留临时文件；
 - 逐页向 stderr 追加进度行 `[本次序号/本次总页数] 第 <文档页号> 页 开始|完成|失败`，每行独立保留，重定向到管道或日志文件时同样输出；
@@ -258,22 +292,47 @@ out/
 - `x/y/w/h` 的单位为 px；原点为页面左上角、y 向下，与同页图片同 DPI；
 - 空页写 `[]`；不含字体、字符、页号或页面尺寸，也不含注释/签章文字。
 
+## 音视频导出（`--media`）
+
+把 OFD 包内嵌的音频/视频原样取出为独立文件（不做解码、转码或播放）：
+
+```bash
+"$CLI" media.ofd --media -o ./out                     # 全部音视频（不渲染页面）
+"$CLI" media.ofd --media --media-kind video -o ./out  # 只导出视频
+"$CLI" media.ofd --media --media-id 12 -o ./out       # 只导出脚本指定资源
+"$CLI" media.ofd --media -o ./out -p 1                # 音视频 + 第 1 页图片（给了 --pages 就同时出图）
+```
+
+- **不新增子命令**：`--media` 与 `--text` 同属转图片命令的开关；`-o` 默认目录同样是 `./<输入 stem>/`；
+- **不做播放**：CLI 无 DOM，只做发现、摘要与导出；
+- 输出命名固定为 `media-<id>.<ext>`，扩展名由 MIME 推导（`video/mp4`→`.mp4`、`audio/mpeg`→`.mp3`、`audio/ogg`→`.ogg`、`video/webm`→`.webm` 等）；MIME 无法判定时用 `.bin`；
+- **文件名安全**：绝不使用包内原始 `MediaFile` 名。文件名只由十进制资源 ID 与推导扩展名组成，不含包内路径、`..` 或控制字符，因此不存在路径穿越；
+- 同目录已有同名文件时**不覆盖**，改用 `media-<id>-2.<ext>`、`media-<id>-3.<ext>`…；
+- 走 `getMediaData()` **整块读取**后原子写入（同目录临时文件 + `fsync` + `rename`）；单个资源的**解压后**大小受 engine `maxMediaBytes`（默认 256 MiB）约束，超限报 `CLI_MEDIA_TOO_LARGE` 并退出 2，且不写出任何部分数据。**这是可配置的资源上限，不是文件损坏**：CLI 固定使用 engine 默认值（256 MiB），无法从命令行调大；遇到该错误时可以（a）用 `--media-kind`/`--media-id` 确认是不是某一个大文件导致，或（b）改用宿主程序以自定义 `ResourceLimits.maxMediaBytes` 读取，或（c）直接取出完整包另行处理；
+- 只导出**文档级**资源：`--media` 的清单来自 `getMediaResources()`（零内容 IO），不含 `PageRes` 页级音视频；需要页级资源时用 `--media-id <id>` 显式指定（此时按 ID 精确查找，可命中页级资源）；
+- `--media` 只有在**不与 `--text`、`--pages` 共用**时才跳过逐页渲染（此时也不扫描字体），只产出音视频文件，摘要显示 `完成：多媒体 N 个 → 输出目录`；与 `--text` 或 `--pages` 共用时照常渲染页面，三者产物同时写出；
+- 每个导出资源向 stdout 输出一行 `多媒体 <id>（<kind>，<bytes> byte）→ <路径>`；
+- 单个资源导出失败不中断其余资源，全部处理完后按失败计数退出 3（摘要追加 `N 个多媒体失败`）；
+- 一个可导出资源都没有时输出 `W_MEDIA_NONE` 警告（**由 CLI 自身产生，不属于 engine 的 warning 码**），提示声明可能缺少 `MediaFile` 或路径非法，具体原因见 engine 的 `W_MEDIA_RESOURCE`/`W_MEDIA_FORMAT` 警告。
+
+`--media-id` 指向的是图片资源（`MultiMedia Type=Image`）时报 `CLI_MEDIA_UNSUPPORTED_TYPE`，指向不存在的 ID 时报 `CLI_MEDIA_NOT_FOUND`，两者都退出 1；判定只查资源索引，不读媒体内容。图片资源不能通过 `--media` 导出——需要图片请用转图片命令（`-p`/`--format`）。
+
 ## 退出码与错误
 
 | 码 | 含义 | 处理 |
 | --- | --- | --- |
 | `0` | 成功 | 图片全部导出、`info` 查询成功，或 `verify` 的 `overall=valid` |
 | `1` | 用法/参数/路径错误 | 修正命令后重试，不要原样重试 |
-| `2` | 文档级失败 | 非 OFD、包损坏、无法打开、文本 API 缺失、页面像素超限、SEA 资产失败等 |
-| `3` | 页级失败（部分或全部页） | 保留已产出文件，按 stderr 定位失败页；其他页结果仍可用 |
+| `2` | 文档级失败 | 非 OFD、包损坏、无法打开、文本 API 缺失、页面像素超限、SEA 资产失败、音视频超限（`CLI_MEDIA_TOO_LARGE`）、音视频写盘失败（`CLI_MEDIA_WRITE_FAILED`）等 |
+| `3` | 页级失败（部分或全部页）或部分音视频导出失败 | 保留已产出文件，按 stderr 定位失败项；其他页/资源结果仍可用 |
 | `4` | 加密/凭据失败 | 缺少凭据、用户名不存在、口令/私钥错误、解密失败；向用户确认凭据 |
 | `5` | 验证未通过 | `invalid`/`unknown`/`unsupported`/`not-applicable`；未配置根时链 `unknown` 仍可退出 0（只要 `overall=valid`），链状态在输出中单独展示 |
 | `130` | 用户中断（SIGINT/取消，如 `OFD_ABORTED`） | 已完成的页保留，可重跑 |
 
 常见错误码：
 
-- 用法/路径（退出 1）：`CLI_USAGE`、`CLI_INVALID_FORMAT`、`CLI_INVALID_DPI`、`CLI_INVALID_PAGES`、`CLI_INPUT_NOT_FOUND`、`CLI_INPUT_NOT_FILE`、`CLI_INPUT_UNREADABLE`、`CLI_OUTPUT_NOT_DIRECTORY`、`CLI_OUTPUT_CREATE_FAILED`、`CLI_FONT_DIR_INVALID`、`CLI_FONT_DIR_UNREADABLE`、`CLI_CREDENTIALS_CONFLICT`、`CLI_CREDENTIALS_INCOMPLETE`、`CLI_CREDENTIAL_FILE_NOT_FOUND`、`CLI_CREDENTIAL_FILE_UNREADABLE`、`CLI_ROOT_FILE_NOT_FOUND`、`CLI_ROOT_FILE_UNREADABLE`；
-- 文档级（退出 2）：`OFD_INVALID_PACKAGE`、`CRYPTO_INVALID_PACKAGE`、`CLI_TEXT_UNSUPPORTED`（去掉 `--text`）、`CLI_PAGE_TOO_LARGE`（降低 `--dpi`）、`CLI_SEA_EXTRACT_FAILED`（清理或更换 `TMPDIR`）、`CLI_UNEXPECTED`；`info`/`verify` 在参数校验通过后打开输入失败（`CLI_INPUT_UNREADABLE`）也按 2 处理；
+- 用法/路径（退出 1）：`CLI_USAGE`、`CLI_INVALID_FORMAT`、`CLI_INVALID_DPI`、`CLI_INVALID_PAGES`、`CLI_INVALID_MEDIA_KIND`、`CLI_MEDIA_NOT_FOUND`、`CLI_MEDIA_UNSUPPORTED_TYPE`、`CLI_INPUT_NOT_FOUND`、`CLI_INPUT_NOT_FILE`、`CLI_INPUT_UNREADABLE`、`CLI_OUTPUT_NOT_DIRECTORY`、`CLI_OUTPUT_CREATE_FAILED`、`CLI_FONT_DIR_INVALID`、`CLI_FONT_DIR_UNREADABLE`、`CLI_CREDENTIALS_CONFLICT`、`CLI_CREDENTIALS_INCOMPLETE`、`CLI_CREDENTIAL_FILE_NOT_FOUND`、`CLI_CREDENTIAL_FILE_UNREADABLE`、`CLI_ROOT_FILE_NOT_FOUND`、`CLI_ROOT_FILE_UNREADABLE`；
+- 文档级（退出 2）：`CLI_MEDIA_TOO_LARGE`、`CLI_MEDIA_WRITE_FAILED`、`OFD_INVALID_PACKAGE`、`CRYPTO_INVALID_PACKAGE`、`CLI_TEXT_UNSUPPORTED`（去掉 `--text`）、`CLI_PAGE_TOO_LARGE`（降低 `--dpi`）、`CLI_SEA_EXTRACT_FAILED`（清理或更换 `TMPDIR`）、`CLI_UNEXPECTED`；`info`/`verify` 在参数校验通过后打开输入失败（`CLI_INPUT_UNREADABLE`）也按 2 处理；
 - 加密/凭据（退出 4）：`CLI_CREDENTIALS_REQUIRED`、`CRYPTO_CREDENTIALS_REQUIRED`、`CRYPTO_USER_NOT_FOUND`、`CRYPTO_USER_AMBIGUOUS`、`CRYPTO_WRONG_PASSWORD`、`CRYPTO_PRIVATE_KEY_INVALID`、`CRYPTO_PRIVATE_KEY_PASSPHRASE_REQUIRED`、`CRYPTO_PRIVATE_KEY_MISMATCH`、`CRYPTO_UNSUPPORTED_ENCRYPTION`；
 - 页级（退出 3）：`CLI_IMAGE_WRITE_FAILED`、`CLI_TEXT_WRITE_FAILED`（检查输出目录权限与同名目录），以及 engine 的逐页错误码（如 `OFD_IMAGE_DECODE`）；
 - 验证（退出 5）：签名/完整性/印章问题通过报告状态体现而不抛错（证书链状态只单独展示，不决定退出码）；crypto 抛出的 ASN.1/算法/证书类错误（如 `CRYPTO_ASN1_INVALID`、`CRYPTO_CERTIFICATE_INVALID`）同样退出 5。
@@ -291,9 +350,10 @@ out/
 2. **先查询**：`info --json` 确认是否加密、有哪些用户与签名；需要渲染或验证时向用户索取口令或私钥，不要猜。
 3. **再验证**：`verify` 前向用户索取信任根；没有根时证书链状态单独显示 `unknown`，不改变 `overall`——签名与完整性通过时 `overall=valid` 并退出 0；无签名且无完整性为 `not-applicable`，签名/证书本身失效时仍为 `invalid`/`unsupported`；向用户说明“签名通过不等于证书链可信”，不得省略链状态。
 4. **小样本预览**：先 `--pages 1` 检查 PNG；需要坐标时加 `--text`，读取 JSON 按 `text` 搜索并用 `x/y/w/h` 定位。
-5. **处理缺字**：默认系统字体；仍有 `W_FONT_MISSING`/`W_GLYPH_MISSING` 时向用户询问字体目录并用 `--font-dir` 追加，不要下载字体。
-6. **大文档分批**：用 `--pages` 分段，避免一次生成过多图片与 JSON。
-7. **按退出码收尾**：1 修正命令；2/5 向用户说明原因；3 保留已产出并定位失败页；4 确认凭据；130 可直接重跑。
+5. **取音视频**：需要包内音频/视频文件时加 `--media`（可配 `--media-kind`/`--media-id`）；先用 `info --json` 看 `document.media[]` 有哪些资源与 `sizeBytes`。
+6. **处理缺字**：默认系统字体；仍有 `W_FONT_MISSING`/`W_GLYPH_MISSING` 时向用户询问字体目录并用 `--font-dir` 追加，不要下载字体。
+7. **大文档分批**：用 `--pages` 分段，避免一次生成过多图片与 JSON。
+8. **按退出码收尾**：1 修正命令；2/5 向用户说明原因；3 保留已产出并定位失败页；4 确认凭据；130 可直接重跑。
 
 ## 安全与限制
 

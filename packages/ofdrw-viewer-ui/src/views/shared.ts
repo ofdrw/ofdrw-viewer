@@ -9,6 +9,7 @@
  */
 
 import type {
+  ActionInfo,
   BookmarkItem,
   DocumentDestination,
   OutlineNode,
@@ -118,7 +119,44 @@ export interface NavigationViewer {
    * @param pageNumber 页码，1-based。
    */
   getLayerFilterKey?(pageNumber: number): string;
+  /**
+   * 直接执行一组已给定的动作（可选能力）。
+   *
+   * 供大纲节点、书签等「动作来源不是页/图元」的入口复用动作服务，使动作执行只有
+   * 一条路径；省略时入口回退到 {@link goToDestination}。
+   *
+   * @param actions 待执行的动作，按文档顺序。
+   * @param context `trigger` 固定为 `'HOST'`；`pageIndex` 为触发时的当前页索引，0-based。
+   * @returns 与 `actions` 等长的执行结果。
+   */
+  runActions?(
+    actions: readonly ActionInfo[],
+    context: { readonly trigger: 'HOST'; readonly pageIndex: number },
+  ): Promise<readonly string[]>;
+  /**
+   * 读取已挂载的动作服务（可选能力）。
+   *
+   * 优先于 {@link runActions} 使用：导航面板直接经服务执行，不依赖核心是否透传
+   * `runActions`。
+   *
+   * @returns 动作服务；未挂载时为 undefined。
+   */
+  getActionService?():
+    | { readonly runActions?: NavigationRunActions }
+    | undefined;
 }
+
+/**
+ * 执行一组已给定动作的能力（导航面板使用的最小面）。
+ *
+ * @param actions 待执行动作，按文档顺序。
+ * @param context `trigger` 固定为 `'HOST'`；`pageIndex` 为当前页索引，0-based。
+ * @returns 与 `actions` 等长的执行结果。
+ */
+export type NavigationRunActions = (
+  actions: readonly ActionInfo[],
+  context: { readonly trigger: 'HOST'; readonly pageIndex: number },
+) => Promise<readonly string[]>;
 
 /** 派发诊断 warning 所需的最小宿主；`OFDViewer` 与附件视图均结构兼容。 */
 export interface WarningHost {
@@ -240,6 +278,17 @@ export function isJumpableDestination(
   return validateDestination(dest, pageCount) === null;
 }
 
+/** `goToDestination` 的跳转选项。 */
+export interface GoToDestinationOptions {
+  /**
+   * 是否平滑滚动；默认 `true`。
+   *
+   * 既有的导航视图（大纲/书签/缩略图）不传该选项，保持原有平滑滚动；动作模块的
+   * `Goto` 按 `actions.smoothGoto` 传入，关闭时立即定位。
+   */
+  readonly smooth?: boolean;
+}
+
 /** 视图主区域可用尺寸，单位 px。 */
 function measureMain(viewer: NavigationViewer): { width: number; height: number } {
   const main = viewer.getElements().main;
@@ -307,18 +356,20 @@ function applyDestinationZoom(viewer: NavigationViewer, dest: DocumentDestinatio
  * 统一锚点跳转。
  *
  * 先按目标类型调整缩放，再按 `topMm` 换算页内偏移，最后交给 `goToPage` 用一次
- * 平滑滚动落到「页顶 + 偏移」。页内偏移必须与页顶合并成同一次滚动：分两步写会
+ * 滚动落到「页顶 + 偏移」。页内偏移必须与页顶合并成同一次滚动：分两步写会
  * 出现两套动画互相打断，缩放后的页顶也会让第一步算出的坐标过期。
  *
  * 无效目标只上报 warning 并返回 false，节点仍保留在列表中。
  *
  * @param viewer 阅读器。
  * @param dest 跳转目标。
+ * @param options 跳转选项；`smooth` 默认 `true`（与既有导航行为一致）。
  * @returns 是否完成跳转。
  */
 export function goToDestination(
   viewer: NavigationViewer,
   dest: DocumentDestination | undefined,
+  options: GoToDestinationOptions = {},
 ): boolean {
   const pageCount = viewer.getPageInfos().length || viewer.getState().document.pageCount;
   const reason = validateDestination(dest, pageCount);
@@ -329,7 +380,11 @@ export function goToDestination(
   applyDestinationZoom(viewer, dest);
   const offset = destinationOffsetPx(viewer, dest);
   try {
-    viewer.goToPage(dest.pageIndex + 1, { smooth: true, offsetPx: offset });
+    // 缺省平滑滚动：既有导航（大纲/书签/缩略图）不传该选项，行为保持不变。
+    viewer.goToPage(dest.pageIndex + 1, {
+      smooth: options.smooth !== false,
+      offsetPx: offset,
+    });
   } catch (error) {
     reportNavigationWarning(
       viewer,
@@ -340,6 +395,47 @@ export function goToDestination(
     return false;
   }
   return true;
+}
+
+/**
+ * 激活一个导航条目（大纲节点、书签）的跳转。
+ *
+ * 节点声明了动作时经 {@link NavigationViewer.runActions} 交给动作服务执行，跳转由其中
+ * 的 `Goto` 动作完成；没有动作或动作服务不可用时回退到
+ * {@link goToDestination}，保持既有导航行为。动作执行异常不影响导航：异常只上报
+ * warning，不向调用方抛出。
+ *
+ * @param viewer 阅读器。
+ * @param actions 条目声明的动作；无动作时为 undefined 或空数组。
+ * @param dest 条目的跳转目标。
+ * @returns 是否已开始导航：动作路径在动作服务接受执行时为 true，回退路径为
+ *   `goToDestination()` 的结果。
+ * @throws 仅当既不满足动作路径、`goToDestination()` 自身也抛错时向上抛出。
+ */
+export async function activateNavigationEntry(
+  viewer: NavigationViewer,
+  actions: readonly ActionInfo[] | undefined,
+  dest: DocumentDestination | undefined,
+): Promise<boolean> {
+  // 优先级：动作服务本身 → 核心透传的 runActions → 回退 goToDestination。
+  const service = viewer.getActionService?.();
+  const runActions = service?.runActions ?? viewer.runActions;
+  if (actions && actions.length > 0 && typeof runActions === 'function') {
+    const pageIndex = Math.max(0, viewer.getPageNumber() - 1);
+    try {
+      const target = service?.runActions ? service : viewer;
+      await runActions.call(target, actions, { trigger: 'HOST', pageIndex });
+      return true;
+    } catch (error) {
+      reportNavigationWarning(
+        viewer,
+        UI_WARNING_CODES.W_NAV_ACTION,
+        `执行导航条目动作失败：${error instanceof Error ? error.message : String(error)}`,
+        dest?.pageIndex,
+      );
+    }
+  }
+  return goToDestination(viewer, dest);
 }
 
 /**

@@ -9,6 +9,7 @@
 import { getGlobalObject, replaceChildren } from './compat';
 
 import type {
+  ActionInfo,
   AnnotationType,
   DocumentFontResource,
   DocumentPermissions,
@@ -43,6 +44,7 @@ import {
   OFDViewerError,
   type ViewerErrorCode,
 } from './errors';
+import type { ActionExecutionContext, ActionOutcome } from './actions/types';
 import { DiagnosticPrinter, resolveDiagnosticLevel } from './diagnostics';
 import { EventBus, type ViewerEventBus } from './event-bus';
 import { FeatureGate } from './feature-gate';
@@ -189,6 +191,16 @@ const TAP_ZOOM_INTERVAL_MS = 300;
 /** 判定双击的两点位置容差，单位 px。 */
 const TAP_ZOOM_SLOP_PX = 24;
 
+/**
+ * 双击/轻点缩放的防误触选择器：命中这些元素时不触发页面缩放。
+ *
+ * `video,audio,[data-ofd-media]` 是媒体元素（音视频与动作方案设计 §7.12 #1）：
+ * 播放器原生控件依赖自身点击，且嵌入播放窗口占满图元矩形，若仍触发双击缩放，
+ * 播放器的播放/暂停/进度拖动都会被抢走。
+ */
+const ZOOM_GUARD_SELECTOR =
+  'a,button,input,select,textarea,[contenteditable="true"],video,audio,[data-ofd-media]';
+
 /** 阅读器扩展：在实例创建/注册时执行，返回清理函数。 */
 export type ViewerExtension = (viewer: OFDViewer) => void | (() => void);
 
@@ -277,6 +289,53 @@ export interface ViewerExportService {
   exportOfd(options?: ExportOfdOptions): Promise<ExportOfdResult>;
 }
 
+/** 动作服务；由动作模块实现（UI 动作处理机制设计 §3.2）。 */
+export interface ViewerActionService {
+  /** 宿主手动执行某页某事件的动作。 */
+  executeActions?(
+    pageIndex: number,
+    event: 'DO' | 'PO' | 'CLICK',
+    options?: { signal?: AbortSignal },
+  ): Promise<readonly ActionOutcome[]>;
+  /**
+   * 执行一组已取得的动作；用于内部触发与命中测试后的执行。
+   *
+   * @param actions 待执行动作，按文档顺序。
+   * @param context 执行上下文；`pageIndex` 为 0-based。
+   * @returns 每个动作的执行结果。
+   */
+  runActions?(
+    actions: readonly ActionInfo[],
+    context: {
+      readonly trigger: 'HOST' | 'DO' | 'PO' | 'CLICK';
+      readonly pageIndex: number;
+      readonly signal?: AbortSignal;
+    },
+  ): Promise<readonly ActionOutcome[]>;
+  /**
+   * 命中测试：判断视口坐标是否落在可点击动作上。
+   *
+   * @param clientX 视口 x 坐标，单位 px。
+   * @param clientY 视口 y 坐标，单位 px。
+   * @returns 命中动作时返回 true。
+   */
+  hitTestAt?(clientX: number, clientY: number): boolean;
+  /** 设置自动执行开关（不持久化）。 */
+  setAutoExecute?(enabled: boolean): void;
+  /** 读取自动执行开关。 */
+  readonly autoExecute?: boolean;
+  /**
+   * 是否允许用户通过界面修改自动执行开关。
+   *
+   * 取自宿主选项 `actions.allowUserToggleAutoExecute`，默认 `true`。
+   */
+  readonly allowUserToggle?: boolean;
+  /** 页缓存淘汰时释放该页动作集合与播放器；页码 1-based。 */
+  releasePage?(pageNumber: number): void;
+  /** 销毁。 */
+  destroy?(): void;
+}
+
 /** 扩展服务集合。 */
 interface ViewerServices {
   find?: ViewerFindService;
@@ -284,6 +343,7 @@ interface ViewerServices {
   signature?: ViewerSignatureService;
   print?: ViewerPrintService;
   export?: ViewerExportService;
+  actions?: ViewerActionService;
 }
 
 /** 模块级扩展；先注册后创建的实例会在构造时应用。 */
@@ -1414,9 +1474,64 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     return this.pageInfos[Math.trunc(pageNumber) - 1];
   }
 
+  /**
+   * 视口坐标换算为 **96 DPI 页面像素**坐标（动作命中测试用）。
+   *
+   * 纯读取，不修改任何内部状态（不像内部的 `contentPointAtViewport()` 会记录缩放锚点）。
+   * 返回的坐标是**未旋转、未缩放**的页面像素，原点是页面左上角、y 向下，与文本层、
+   * `getActionGeometry({ dpi: 96 })` 同一口径；页面旋转由 `surface` 的 CSS transform
+   * 承担，缩放由 `--scale-factor` 承担，因此调用方无需再做逆变换。
+   *
+   * @param clientX 视口 x 坐标，单位 px（即事件对象的 `clientX`）。
+   * @param clientY 视口 y 坐标，单位 px（即事件对象的 `clientY`）。
+   * @returns 页索引（0-based）与页面像素坐标；坐标不落在任何页面上时返回 `undefined`。
+   */
+  getContentPointAtViewport(
+    clientX: number,
+    clientY: number,
+  ): { pageIndex: number; xPx: number; yPx: number } | undefined {
+    if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return undefined;
+    if (this.pageViews.length === 0) return undefined;
+    // 与 contentPointAtViewport() 同一坐标链，但把锚点记录动作去掉，保持纯读取。
+    const contentX = clientX - this.viewportLeft() + this.mainScrollLeft - this.contentLeft();
+    const point = this.layout.contentPointAt(
+      this.mainScrollTop + this.pointerOffsetY(clientY),
+      contentX,
+    );
+    if (point.pageIndex < 0 || point.pageIndex >= this.pageViews.length) return undefined;
+    // 页内偏移是布局倍率下的 px，除以倍率还原为 96 DPI 页面 px；横向同理。
+    const scale = this.state.view.scale > 0 ? this.state.view.scale : 1;
+    const box = this.layout.getBox(point.pageIndex);
+    if (!box) return undefined;
+    const offsetXInPage = point.offsetX - box.left;
+    return {
+      pageIndex: point.pageIndex,
+      xPx: offsetXInPage / scale,
+      yPx: point.pageOffset / scale,
+    };
+  }
+
   /** 全部页信息。 */
   getPageInfos(): readonly PageInfo[] {
     return this.pageInfos;
+  }
+
+  /**
+   * 当前翻译器；供扩展模块生成面向用户的文案。
+   *
+   * @returns 绑定当前语言的翻译器。
+   */
+  getTranslator(): Translator {
+    return this.translator;
+  }
+
+  /**
+   * 已解析的动作执行选项；供动作模块取宿主预设的自动执行开关等。
+   *
+   * @returns 动作选项（已补默认值）。
+   */
+  getActionOptions(): ResolvedViewerOptions['actions'] {
+    return this.options.actions;
   }
 
   /** 底层引擎文档；未打开时为 null。 */
@@ -2314,6 +2429,41 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   }
 
   /**
+   * 读取「自动执行文档动作」开关。
+   *
+   * 动作模块未挂载时返回 undefined（「关于」里不出现该行）。
+   *
+   * @returns 是否自动执行 `DO`/`PO` 动作。
+   */
+  getAutoExecuteActions(): boolean | undefined {
+    return this.services.actions?.autoExecute;
+  }
+
+  /**
+   * 读取「自动执行文档动作」开关是否允许用户修改。
+   *
+   * 取自宿主选项 `actions.allowUserToggleAutoExecute`；动作模块未挂载时返回
+   * undefined，此时「关于」里不出现该行。
+   *
+   * @returns 允许用户切换返回 true，受限展示场景返回 false。
+   */
+  getAutoExecuteActionsToggleAllowed(): boolean | undefined {
+    return this.services.actions?.allowUserToggle;
+  }
+
+  /**
+   * 设置「自动执行文档动作」开关（不持久化）。
+   *
+   * 切换后立即生效：开启时补执行此前跳过的 `DO`/`PO` 动作；关闭时后续自动动作全部跳过。
+   * 宿主可通过 `actions.allowUserToggleAutoExecute: false` 禁止该操作。
+   *
+   * @param enabled 目标开关值。
+   */
+  setAutoExecuteActions(enabled: boolean): void {
+    this.services.actions?.setAutoExecute?.(enabled === true);
+  }
+
+  /**
    * 设置「使用本机字体」开关。
    *
    * **开关即用户意向**，浏览器授权是它的前置条件。调用后：
@@ -3143,6 +3293,69 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
    */
   attachExportService(service: ViewerExportService): () => void {
     return this.attachService('export', service);
+  }
+
+  /**
+   * 挂载动作服务（UI 动作处理机制设计 §3.2）。
+   *
+   * @param service 动作服务。
+   * @returns 卸载函数。
+   */
+  attachActionService(service: ViewerActionService): () => void {
+    return this.attachService('actions', service);
+  }
+
+  /**
+   * 宿主手动执行动作（设计 §14.1）。
+   *
+   * 与内部触发走同一条路径；不修改 `PO` 的自动执行机会。文档未打开时抛
+   * `OFD_NOT_OPENED`，销毁后抛 `OFD_DESTROYED`，未挂载动作服务时抛
+   * `OFD_FEATURE_DISABLED`。
+   *
+   * @param pageIndex 页索引，0-based。
+   * @param event 动作事件。
+   * @param options 取消信号。
+   * @returns 每个动作的执行结果。
+   * @throws OFDViewerError 实例已销毁、文档未打开或动作功能不可用时抛出。
+   */
+  async executeActions(
+    pageIndex: number,
+    event: 'DO' | 'PO' | 'CLICK',
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<readonly ActionOutcome[]> {
+    this.assertNotDisposed();
+    this.assertOpen();
+    const service = this.services.actions;
+    if (!service?.executeActions) throw createFeatureDisabledError('actions');
+    return service.executeActions(pageIndex, event, options);
+  }
+
+  /**
+   * 读取已挂载的动作服务。
+   *
+   * @returns 动作服务；未挂载时为 undefined。
+   */
+  getActionService(): ViewerActionService | undefined {
+    return this.services.actions;
+  }
+
+  /**
+   * 直接执行一组给定动作（导航面板等入口，UI 动作处理机制设计 §11.2）。
+   *
+   * 与页/图元触发走同一条执行路径，不修改 `PO` 的自动执行机会。
+   *
+   * @param actions 待执行动作，按文档顺序。
+   * @param context 执行上下文；`pageIndex` 为 0-based。
+   * @returns 每个动作的结果。
+   * @throws OFDViewerError 未挂载动作服务时抛 `OFD_FEATURE_DISABLED`。
+   */
+  async runActions(
+    actions: readonly ActionInfo[],
+    context: ActionExecutionContext,
+  ): Promise<readonly ActionOutcome[]> {
+    const service = this.services.actions;
+    if (!service?.runActions) throw createFeatureDisabledError('actions');
+    return service.runActions(actions, context);
   }
 
   /** 内部：应用扩展；供 registerViewerExtension 调用。 */
@@ -4202,6 +4415,10 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     const pixels = pageView ? pageView.canvasPixelCount : 0;
     pageView?.releaseCanvas();
     pageView?.releaseTextLayer();
+    // 媒体层随页淘汰一起清空，并由动作服务销毁该页播放器、撤销 ObjectURL；
+    // 漏掉这一步会导致翻页后音频继续在后台播放。
+    pageView?.releaseMediaLayer();
+    this.services.actions?.releasePage?.(index + 1);
     const service = this.services.textLayer;
     service?.releasePage?.(index + 1);
     const position = this.renderOrder.indexOf(index);
@@ -4835,6 +5052,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
    * @param event 双击事件；clientX/clientY 单位 px。
    */
   private handleDoubleClick(event: MouseEvent): void {
+    // 命中文档动作时不缩放：让位给动作执行（设计 §6.2）。
+    if (this.services?.actions?.hitTestAt?.(event.clientX, event.clientY) === true) return;
     if (!this.touchGesturesEnabled) return;
     if (!this.featureGate.isEnabled('zoom')) return;
     if ((event as MouseEvent & { readonly pointerType?: string }).pointerType === 'touch') return;
@@ -4842,7 +5061,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     const target = event.target;
     if (
       target instanceof Element &&
-      target.closest('a,button,input,select,textarea,[contenteditable="true"]')
+      target.closest(ZOOM_GUARD_SELECTOR)
     ) {
       return;
     }
@@ -4862,11 +5081,13 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private handleTap(event: PointerEvent): void {
     // 鼠标双击由 dblclick 处理；这里只负责触摸双击，避免两条路径各切换一次。
     if (event.pointerType !== 'touch') return;
+    // 命中文档动作时不缩放：让位给动作执行（设计 §6.2）。
+    if (this.services?.actions?.hitTestAt?.(event.clientX, event.clientY) === true) return;
     if (event.button !== 0 || !this.featureGate.isEnabled('zoom')) return;
     const target = event.target;
     if (
       target instanceof Element &&
-      target.closest('a,button,input,select,textarea,[contenteditable="true"]')
+      target.closest(ZOOM_GUARD_SELECTOR)
     ) {
       return;
     }
@@ -5428,6 +5649,16 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /** 更新文档状态。 */
   private patchDocument(patch: Partial<ViewerState['document']>): void {
     this.state = { ...this.state, document: { ...this.state.document, ...patch } };
+  }
+
+  /**
+   * 更新动作状态（`ViewerState.actions`）。
+   *
+   * @internal 供动作模块回写待执行计数与活动播放器数量。
+   * @param patch 部分动作状态。
+   */
+  patchActions(patch: Partial<ViewerState['actions']>): void {
+    this.state = { ...this.state, actions: { ...this.state.actions, ...patch } };
   }
 
   /** 更新视图状态。 */

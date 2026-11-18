@@ -384,6 +384,47 @@ export class FakeViewer {
     };
   }
 
+  /** 记录 `executeActions` 的入参，单位次。 */
+  readonly executeActionsCalls: [number, string][] = [];
+
+  /** 记录 `setAutoExecuteActions` 的入参，单位次。 */
+  readonly autoExecuteCalls: boolean[] = [];
+
+  /** 当前自动执行开关。 */
+  autoExecute = false;
+
+  /**
+   * 手动执行某页某事件的动作。
+   *
+   * @param pageIndex 页索引，0-based。
+   * @param event 动作事件。
+   * @returns 每个动作的执行结果。
+   */
+  async executeActions(pageIndex: number, event: string): Promise<readonly string[]> {
+    this.executeActionsCalls.push([pageIndex, event]);
+    return ['executed'];
+  }
+
+  /**
+   * 设置自动执行开关。
+   *
+   * @param enabled 目标开关值。
+   */
+  setAutoExecuteActions(enabled: boolean): void {
+    this.autoExecuteCalls.push(enabled);
+    this.autoExecute = enabled;
+  }
+
+  /** 读取自动执行开关。 */
+  getAutoExecuteActions(): boolean | undefined {
+    return this.autoExecute;
+  }
+
+  /** 读取该开关是否允许用户修改。 */
+  getAutoExecuteActionsToggleAllowed(): boolean | undefined {
+    return true;
+  }
+
   /** 销毁实例。 */
   destroy(): void {
     if (this.destroyed) return;

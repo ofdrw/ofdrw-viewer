@@ -29,6 +29,7 @@ engine 只提供平台无关的页面渲染与文本内容 API，不负责读文
 - 单个本地 OFD 文件输入；输出 PNG（默认）、JPEG、WebP；
 - 全部页或指定页范围（`1-3,5`），输出 DPI 默认 96；
 - `--text` 时每页额外输出 `<stem>-p<NNN>.json`（`text` + `x/y/w/h`，px）；
+- `--media` 时导出包内嵌音视频为 `media-<id>.<ext>`，可用 `--media-kind`/`--media-id` 过滤；单独使用时不做页面渲染；`info` 的 JSON 与文本补充音视频摘要；
 - `--font-dir` 补充字体，默认自动发现白名单系统字体，`--no-system-fonts` 可关闭；
 - 人读日志；错误与 warning 直接打印到控制台；
 - SIGINT 取消、临时文件清理与原子写；
@@ -50,6 +51,7 @@ engine 只提供平台无关的页面渲染与文本内容 API，不负责读文
 - 并行渲染（固定串行）；
 - 图片 DPI 元数据（PNG pHYs / JPEG density）写入；
 - 纯文本模式（不渲染图片）；
+- 音视频解码/转码/播放（CLI 无 DOM，只做发现、摘要与导出）；`--media-sizes` 显式探测开关（`sizeBytes` 由 engine 索引给出时直接透传）；新增 `media` 子命令（并入 `--media` 标志）；
 - 独立 `decrypt` 子命令（加密文档直接带凭据转图片；`decrypt` 固定用法错误）；
 - 明文落盘、批量验签、CRL/OCSP 吊销检查；
 - Linux musl/Alpine 产物；
@@ -77,6 +79,11 @@ OFD 由 CLI 用 `fs` 随机读后以 `custom` 源传给 engine，或以 `{ kind:
 | Viewport 计算 | `page.getViewport({ dpi })` |
 | 空间文本 | `page.getTextContent({ dpi, includeChars: false })`，只取 `item.text/rect` |
 | 整页渲染与编码 | `page.exportImage({ dpi, format, quality, background, signal })` |
+| 音视频资源索引 | `document.getMediaResources({ signal })`（零内容 IO，只含文档级资源） |
+| 音视频资源查询 | `document.getMediaResource(id, { signal })`（按 ID 精确查找，可命中页级资源） |
+| 音视频原始字节 | `document.getMediaData(id, { signal })`（整块读取，受 `maxMediaBytes` 约束；不使用分块接口） |
+| 图片资源判定 | `document.hasImageResource(id, { signal })`（只查索引；用于 `--media-id` 区分图片与不存在） |
+| 动作摘要 | `document.getDocumentActions()`（同步，open 阶段已解析）与 `getOutline()` 的 `OutlineNode.actions`（零额外 IO） |
 | 字体补充 | `OFDOpenOptions.supplementaryFonts`（CLI 通过 `loadFontInputs()` 读取字节，传 `{ data }`） |
 | 图片解码插件 | `OFDOpenOptions.imageDecoders`（CLI 提供 PNG/JPEG/WebP；GIF/JBIG2/TIFF 由 engine 内置解码器按需加载） |
 | warning/error | `onWarning`、`OFDError` |
@@ -111,6 +118,7 @@ OFD 由 CLI 用 `fs` 随机读后以 `custom` 源传给 engine，或以 `{ kind:
 | `src/credentials.ts` | 口令/私钥/根证书读取，组装 crypto 公共类型，输入源打开与关闭 |
 | `src/node-file-source.ts` | 基于 `fs.FileHandle` 的只读随机访问 `ByteSource` |
 | `src/output.ts` | 输出目录、页号补零命名、原子写 |
+| `src/media.ts` | 音视频导出：MIME→扩展名推导、`media-<id>.<ext>` 安全命名与序号避让、整块读写 |
 | `src/pages.ts` | 页码范围解析、去重合并、越界与上限校验 |
 | `src/text.ts` | `getTextContent` 结果扁平化为 `text/x/y/w/h` |
 | `src/fonts.ts` | `--font-dir` 扫描、系统字体发现、字节读取与合并去重 |

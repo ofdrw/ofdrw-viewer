@@ -92,7 +92,8 @@ export class DialogManager {
 
     const dialog = doc.createElement('div');
     dialog.className = 'ofd-dialog';
-    dialog.setAttribute('role', 'dialog');
+    // 安全相关确认（如外部链接访问）用 alertdialog，让读屏立即播报而不是排队等待。
+    dialog.setAttribute('role', options.role ?? 'dialog');
     dialog.setAttribute('aria-modal', 'true');
     dialog.tabIndex = -1;
     dialog.setAttribute('aria-labelledby', `${id}-title`);
@@ -135,6 +136,8 @@ export class DialogManager {
     const footer = doc.createElement('div');
     footer.className = 'ofd-dialog__footer';
     const actions = options.actions ?? [];
+    /** 已创建的底部按钮，顺序与 `options.actions` 一致；用于 `initialFocus`。 */
+    const actionButtons: HTMLButtonElement[] = [];
     for (const action of actions) {
       const button = doc.createElement('button');
       button.type = 'button';
@@ -160,6 +163,7 @@ export class DialogManager {
         }
         this.close();
       });
+      actionButtons.push(button);
       footer.appendChild(button);
     }
 
@@ -172,13 +176,31 @@ export class DialogManager {
         if (dismissed) this.close();
       },
       initialFocus: () => {
+        // 安全确认默认落在「取消」：取首个非主按钮，避免回车误确认危险操作。
+        // 调用方的按钮顺序不固定（取消可能在首位或次位），因此按 `primary` 标记判定，
+        // 不能依赖「末个按钮是取消」这一位置约定。
+        if (options.initialFocus === 'cancel') {
+          const cancelIndex = actions.findIndex((action) => action.primary !== true);
+          const cancel = cancelIndex >= 0 ? actionButtons[cancelIndex] : undefined;
+          if (cancel) return cancel;
+        }
+        if (options.initialFocus === 'primary') {
+          const primaryIndex = actions.findIndex((action) => action.primary === true);
+          const primary = primaryIndex >= 0 ? actionButtons[primaryIndex] : undefined;
+          if (primary) return primary;
+        }
         const [first] = getFocusableElements(body);
         return first ?? null;
       },
       restoreFocus: false,
     });
     trap.activate({ moveFocus: true });
-    if (doc.activeElement === null || doc.activeElement === doc.body) {
+    // 焦点陷阱未能定位到按钮时，退回关闭按钮；默认焦点选项优先。
+    if (options.initialFocus === 'cancel' && actionButtons.length > 0) {
+      const cancelIndex = actions.findIndex((action) => action.primary !== true);
+      const target = actionButtons[cancelIndex >= 0 ? cancelIndex : actionButtons.length - 1];
+      target?.focus();
+    } else if (doc.activeElement === null || doc.activeElement === doc.body) {
       closeButton.focus();
     }
 

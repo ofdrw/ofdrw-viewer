@@ -111,6 +111,18 @@ export const enUS: MessageDictionary = {
   'attachments.exportSummary': 'Exported {exported} attachment(s), skipped {skipped} (too large or unreadable)',
   'attachments.unsupported': 'The current engine cannot stream attachment content',
   'attachments.ofdUnavailable': 'The OFD source file is not readable in this environment',
+  'attachments.previewNamed': 'Preview attachment {name}',
+  'attachments.previewTitle': 'Attachment preview',
+  'attachments.previewClose': 'Close preview',
+  'attachments.previewTooLarge':
+    'Attachment "{name}" is {size}, exceeding the {threshold} preview limit. Please download it to view.',
+  'attachments.previewLoadFailed': 'Failed to preview attachment "{name}". Please download it to view: {message}',
+  'attachments.previewTextTruncated': 'Content exceeds the preview limit; only the first {length} characters are shown',
+  'attachments.selectAll': 'Select all',
+  'attachments.clearSelection': 'Clear selection',
+  'attachments.select': 'Select attachment {name}',
+  'attachments.downloadSelectedNamed': 'Download {count} selected attachments',
+  'attachments.exportDenied': 'Document permissions forbid exporting attachments',
 
   // Layer sidebar (design §B.4).
   'layers.title': 'Layers',
@@ -238,6 +250,7 @@ export const enUS: MessageDictionary = {
   'feature.verification': 'Verification',
   'feature.documentProperties': 'Document properties',
   'feature.keyboardShortcuts': 'Keyboard shortcuts',
+  'feature.actions': 'Document actions',
   'feature.reason.host': 'disabled by the host',
   'feature.reason.document': 'not allowed by the document',
   'feature.reason.unsupported': 'not supported in this environment',
@@ -270,4 +283,40 @@ export const enUS: MessageDictionary = {
   'a11y.sidebarExpanded': 'Sidebar expanded',
   'a11y.sidebarCollapsed': 'Sidebar collapsed',
   'a11y.menuOpened': 'Menu opened',
+
+  // Action execution (UI action handling design §5 / §8 / §9).
+  'actions.autoExecute.toggle': 'Run document actions automatically',
+  'actions.autoExecute.hint':
+    'Runs actions declared by the document when it opens or when a page is entered (off by default)',
+  'actions.autoExecute.enabled': 'On',
+  'actions.autoExecute.disabled': 'Off',
+  'actions.pendingHint':
+    'This document contains {count} automatic actions; enable them in More → About',
+
+  // URI action confirmation (§8.3): http/https only, always confirmed first.
+  'actions.uri.title': 'Leaving this document',
+  'actions.uri.body':
+    'The document requests opening an external link:\n{url}\nHost: {host}',
+  'actions.uri.confirm': 'Open',
+  'actions.uri.cancel': 'Cancel',
+  'actions.uri.popupBlocked': 'The browser blocked the popup. Allow popups and try again.',
+
+  // Media playback (audio/video design §7.10).
+  'media.video': 'Video',
+  'media.audio': 'Audio',
+  'media.unsupported': 'This browser cannot play the media format ({format})',
+  'media.autoplayBlocked': 'The browser blocked autoplay; press play to start',
+  'media.mute': 'Mute',
+  'media.unmute': 'Unmute',
+  'media.play': 'Play',
+  'media.pause': 'Pause',
+  'media.stop': 'Stop',
+  'media.fullscreen': 'Fullscreen',
+  'media.close': 'Close player',
+  'media.tooLarge':
+    'The media file is too large ({size}) to play in the viewer. Download the original file?',
+  'media.tooLargeTitle': 'Media file too large',
+  'media.downloadOfd': 'Download whole OFD',
+  'media.loadFailed': 'Media failed to load: {message}',
+  'media.ofdUnavailable': 'This environment cannot read the original OFD file',
 };

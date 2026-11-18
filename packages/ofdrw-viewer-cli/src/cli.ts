@@ -15,8 +15,8 @@ import { stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { convertDocument } from './convert.js';
-import type { PageProgress } from './convert.js';
+import { convertDocument, isMediaOnly } from './convert.js';
+import type { MediaExportOptions, PageProgress } from './convert.js';
 import { buildCryptoCredential } from './credentials.js';
 import type { CliCredentialOptions } from './credentials.js';
 import {
@@ -32,6 +32,7 @@ import type { FontFile } from './fonts.js';
 import { runInfo } from './info.js';
 import { Logger } from './log.js';
 import type { OutputStream } from './log.js';
+import { isValidMediaId } from './media.js';
 import {
   IMAGE_FORMATS,
   prepareOutputDirectory,
@@ -94,6 +95,9 @@ export const HELP_TEXT = `${USAGE_LINE}
       --font-dir <dir>    补充字体目录；递归扫描 ttf/otf/ttc/otc
       --no-system-fonts   关闭系统字体自动发现，仅使用 --font-dir
       --text              每页额外导出空间文本 JSON（<stem>-p<NNN>.json）
+      --media             额外导出音视频资源（media-<id>.<ext>；未配 --text/--pages 时跳过页面渲染）
+      --media-kind <kind> 只导出指定媒体类型：video | audio（需配合 --media）
+      --media-id <id>     只导出指定资源 ID（需配合 --media）
 ${CREDENTIAL_HELP}
       --root <file>       信任根证书（PEM/DER/CER，可重复；仅 verify）
       --sm2-user-id <id>  自定义 SM2 签名 userId（仅 verify）
@@ -124,6 +128,8 @@ export interface CliOptions {
   readonly systemFonts: boolean;
   /** 是否额外导出空间文本 JSON。 */
   readonly text: boolean;
+  /** 音视频导出选项；未使用 `--media` 时为 `undefined`。 */
+  readonly media?: MediaExportOptions;
   /** 加密凭据原始参数；未提供时为 `undefined`。 */
   readonly credentials: CliCredentialOptions | undefined;
 }
@@ -287,6 +293,9 @@ const PARSE_OPTIONS = {
   'font-dir': { type: 'string' },
   'no-system-fonts': { type: 'boolean' },
   text: { type: 'boolean' },
+  media: { type: 'boolean' },
+  'media-kind': { type: 'string' },
+  'media-id': { type: 'string' },
   user: { type: 'string' },
   password: { type: 'string' },
   key: { type: 'string' },
@@ -307,6 +316,9 @@ interface RawCliValues {
   readonly 'font-dir'?: string;
   readonly 'no-system-fonts'?: boolean;
   readonly text?: boolean;
+  readonly media?: boolean;
+  readonly 'media-kind'?: string;
+  readonly 'media-id'?: string;
   readonly user?: string;
   readonly password?: string;
   readonly key?: string;
@@ -370,6 +382,9 @@ export function parseCliArgs(
       ['font-dir', '--font-dir'],
       ['no-system-fonts', '--no-system-fonts'],
       ['text', '--text'],
+      ['media', '--media'],
+      ['media-kind', '--media-kind'],
+      ['media-id', '--media-id'],
       ['user', '--user'],
       ['password', '--password'],
       ['key', '--key'],
@@ -412,6 +427,9 @@ export function parseCliArgs(
       ['font-dir', '--font-dir'],
       ['no-system-fonts', '--no-system-fonts'],
       ['text', '--text'],
+      ['media', '--media'],
+      ['media-kind', '--media-kind'],
+      ['media-id', '--media-id'],
       ['user', '--user'],
       ['password', '--password'],
       ['key', '--key'],
@@ -435,6 +453,9 @@ export function parseCliArgs(
       ['font-dir', '--font-dir'],
       ['no-system-fonts', '--no-system-fonts'],
       ['text', '--text'],
+      ['media', '--media'],
+      ['media-kind', '--media-kind'],
+      ['media-id', '--media-id'],
     ], 'verify 不接受转图片参数；需要导出图片时请不要使用 verify 子命令');
     return {
       help: false,
@@ -467,6 +488,8 @@ export function parseCliArgs(
       ? undefined
       : resolvePathOption(values['font-dir'], cwd, '--font-dir');
 
+  const media = parseMediaOptions(values);
+
   return {
     help: false,
     version: false,
@@ -481,10 +504,64 @@ export function parseCliArgs(
         fontDir,
         systemFonts: values['no-system-fonts'] !== true,
         text: values.text === true,
+        ...(media === undefined ? {} : { media }),
         credentials: parseCredentialOptions(values, cwd),
       },
     },
   };
+}
+
+/**
+ * 解析音视频导出参数。
+ *
+ * `--media` 是开关；`--media-kind`/`--media-id` 只在 `--media` 出现时合法，
+ * 单独使用报用法错误。`--media-id` 必须是十进制资源 ID。
+ *
+ * @param values 原始参数
+ * @returns 音视频导出选项；未使用 `--media` 时为 `undefined`
+ * @throws {CliError} 参数组合非法或 `--media-id` 不是十进制 ID 时抛出（退出码 1）
+ */
+function parseMediaOptions(values: RawCliValues): MediaExportOptions | undefined {
+  const kind = values['media-kind'];
+  const id = values['media-id'];
+  if (values.media !== true) {
+    if (kind !== undefined || id !== undefined) {
+      throw new CliError(
+        'CLI_USAGE',
+        '--media-kind 与 --media-id 需要与 --media 一起使用',
+        EXIT_CODES.USAGE,
+      );
+    }
+    return undefined;
+  }
+  const normalizedKind = parseMediaKind(kind);
+  const normalizedId = id === undefined ? undefined : id.trim();
+  if (normalizedId !== undefined && !isValidMediaId(normalizedId)) {
+    throw new CliError(
+      'CLI_USAGE',
+      `--media-id 必须是十进制资源 ID，收到：${normalizedId}`,
+      EXIT_CODES.USAGE,
+    );
+  }
+  return { kind: normalizedKind, id: normalizedId };
+}
+
+/**
+ * 校验 `--media-kind` 取值。
+ *
+ * @param raw 原始值
+ * @returns `audio`/`video`；未提供时为 `undefined`
+ * @throws {CliError} 取值不在白名单内时抛出（退出码 1）
+ */
+function parseMediaKind(raw: string | undefined): 'audio' | 'video' | undefined {
+  if (raw === undefined) return undefined;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === 'audio' || normalized === 'video') return normalized;
+  throw new CliError(
+    'CLI_INVALID_MEDIA_KIND',
+    `--media-kind 只支持 audio / video，收到：${raw}`,
+    EXIT_CODES.USAGE,
+  );
 }
 
 /**
@@ -757,13 +834,15 @@ export async function main(
       }
 
       const options = command.options;
-      if (options.dpi > HIGH_DPI_WARNING_THRESHOLD) {
+      const mediaOnly = isMediaOnly(options);
+      if (options.dpi > HIGH_DPI_WARNING_THRESHOLD && !mediaOnly) {
         logger.warn(
           'W_DPI_HIGH',
           `--dpi ${options.dpi} 超过建议上限 ${HIGH_DPI_WARNING_THRESHOLD}，可能占用大量内存`,
         );
       }
-      const fontFiles = await collectFontFiles(options, logger);
+      // 字体只参与页面渲染；`--media` 跳过渲染时不扫描字体，避免无谓的目录遍历。
+      const fontFiles = mediaOnly ? [] : await collectFontFiles(options, logger);
       await prepareOutputDirectory(options.outDir);
 
       const { credentials: credentialOptions, ...convertOptions } = options;
@@ -779,7 +858,9 @@ export async function main(
       logger.info(summary.message);
       logger.flushWarningSummary();
       if (summary.interrupted || interrupt.interrupted()) return EXIT_CODES.INTERRUPTED;
-      return summary.failedPages > 0 ? EXIT_CODES.PAGE : EXIT_CODES.OK;
+      return summary.failedPages > 0 || summary.mediaFailed > 0
+        ? EXIT_CODES.PAGE
+        : EXIT_CODES.OK;
     } finally {
       interrupt.dispose();
     }

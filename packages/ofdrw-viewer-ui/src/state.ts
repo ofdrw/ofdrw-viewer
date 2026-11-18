@@ -72,6 +72,7 @@ export type DialogName =
   | 'documentProperties'
   | 'signatureDetail'
   | 'localFonts'
+  | 'externalLink'
   | (string & {});
 
 /** Toast 级别。 */
@@ -206,6 +207,19 @@ export interface UIState {
   readonly layers: PageLayerState;
 }
 
+/** 动作执行状态（UI 动作处理机制设计 §9.1）。 */
+export interface ActionsState {
+  /**
+   * 已发现但未执行的自动动作数量（`DO` + `PO`）。
+   *
+   * `autoExecuteActions = false` 时累计跳过数，宿主可据此提示用户去「关于」开启；
+   * 页级动作惰性加载完成后才累加，因此该值会随翻页增长。
+   */
+  readonly pendingAutoActions: number;
+  /** 当前活动播放器数量（只读数，不承载字节与 URL）。 */
+  readonly activePlayers: number;
+}
+
 /** 对外只读的阅读器状态快照。 */
 export interface ViewerState {
   /** 文档状态。 */
@@ -214,6 +228,8 @@ export interface ViewerState {
   readonly view: ViewState;
   /** UI 状态。 */
   readonly ui: UIState;
+  /** 动作执行状态。 */
+  readonly actions: ActionsState;
 }
 
 /** 默认主题。 */
@@ -299,6 +315,10 @@ export function createInitialViewerState(
       warnings: [],
       features: options.features ?? createDefaultFeatureStates(),
       layers: options.layerVisibility ?? new PageLayerOverrides(createDefaultVisibility()).clone(),
+    },
+    actions: {
+      pendingAutoActions: 0,
+      activePlayers: 0,
     },
   };
 }
