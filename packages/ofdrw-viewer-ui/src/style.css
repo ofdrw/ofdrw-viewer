@@ -2610,13 +2610,18 @@
   list-style: none;
 }
 
-/* 附件卡片：左侧勾选框与文件类型图标、中间名称与元信息、右侧图标按钮。 */
+/*
+ * 附件卡片：勾选框 | 图标 + 正文 | 操作按钮。
+ *
+ * 顶部对齐而非居中：正文是两行（名称/元信息），按钮固定在右上角，
+ * 窄侧栏下正文可收缩到 ellipsis 而不会把按钮挤出卡片。
+ */
 .ofd-attachment {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: flex-start;
+  gap: 6px;
   min-width: 0;
-  padding: 8px 10px;
+  padding: 8px;
   background: var(--ofd-surface);
   border: 1px solid var(--ofd-border);
   border-radius: 10px;
@@ -2642,7 +2647,8 @@
   flex: 0 0 auto;
   width: 16px;
   height: 16px;
-  margin: 0;
+  /* 顶部对齐后下移，使勾选框与首行名称的视觉中线对齐。 */
+  margin: 4px 0 0;
   accent-color: var(--ofd-accent);
   cursor: pointer;
 }
@@ -2662,16 +2668,16 @@
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 26px;
+  height: 26px;
   color: var(--ofd-text-secondary);
   background: var(--ofd-hover-bg);
-  border-radius: 8px;
+  border-radius: 7px;
 }
 
 .ofd-attachment__icon .ofd-icon {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
 }
 
 /* 常见格式用可区分的主题色；具体格式仍由图标形状与名称区分。 */
@@ -2719,10 +2725,19 @@
   color: #7c5c2e;
 }
 
+/* 主体区：图标 + 正文横向排布；可收缩，但图标与按钮保持固有尺寸。 */
+.ofd-attachment__main {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 8px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
 .ofd-attachment__body {
   display: grid;
   flex: 1 1 auto;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
 }
 
@@ -2735,32 +2750,35 @@
   white-space: nowrap;
 }
 
-/* 侧栏较窄：类型/大小与日期分两行，避免截断成省略号。 */
+/*
+ * 元信息单行显示「格式 · 大小 · 日期」：两行会吃掉窄侧栏的正文高度，
+ * 超出时以省略号收尾，完整信息由 title 提供。
+ */
 .ofd-attachment__meta {
-  display: flex;
-  flex-direction: column;
+  display: block;
+  overflow: hidden;
   color: var(--ofd-text-secondary);
   font-size: 12px;
   line-height: 1.35;
-}
-
-/* chrome67: flex gap 不生效，改由日期行自带外边距。 */
-.ofd-attachment__meta-date {
-  margin-top: 2px;
-}
-
-.ofd-attachment__meta-size,
-.ofd-attachment__meta-date {
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* 右侧操作区：预览与下载并排，图标按钮样式共用。 */
+/* chrome67: flex gap 不生效，类型行与日期行之间用内联分隔符隔开。 */
+.ofd-attachment__meta-date::before {
+  content: ' · ';
+}
+
+.ofd-attachment__meta-size,
+.ofd-attachment__meta-date {
+  display: inline;
+}
+
+/* 右侧操作区：预览与下载并排，固定宽度不参与收缩。 */
 .ofd-attachment__actions {
   display: flex;
   flex: 0 0 auto;
-  gap: 6px;
+  gap: 4px;
   align-items: center;
 }
 
@@ -2768,9 +2786,9 @@
 .ofd-attachment__download,
 .ofd-attachment__preview {
   flex: 0 0 auto;
-  min-width: 30px;
-  min-height: 30px;
-  padding: 0 6px;
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0 3px;
   color: var(--ofd-text-secondary);
   background: transparent;
   border: 1px solid var(--ofd-border);
@@ -2809,16 +2827,68 @@
   color: var(--ofd-warning, #a15c00);
 }
 
+/*
+ * 极窄侧栏（≤767px 的移动端遮罩层或宿主自行收窄）：图标与按钮之外只保留
+ * 标题一行，元信息移到 title 提示里，避免三行内容把卡片撑高。
+ */
+.ofd-viewer[data-viewport='mobile'] .ofd-attachment__meta,
+.ofd-viewer[data-viewport='narrow'] .ofd-attachment__meta {
+  display: none;
+}
+
+.ofd-viewer[data-viewport='mobile'] .ofd-attachment__body,
+.ofd-viewer[data-viewport='narrow'] .ofd-attachment__body {
+  gap: 0;
+  align-self: center;
+}
+
+/*
+ * 触控设备：附件按钮放大到 44px 可点区域。
+ *
+ * 两个按钮并排时 44px × 2 会吃掉窄侧栏大半宽度，因此触控下按钮改为竖排，
+ * 卡片仍保持「图标 + 名称 | 两个按钮」的横向结构，正文不被挤扁。
+ */
+@media (pointer: coarse) {
+  .ofd-viewer .ofd-attachment__download,
+  .ofd-viewer .ofd-attachment__preview {
+    min-width: var(--ofd-touch-target);
+    min-height: var(--ofd-touch-target);
+  }
+
+  .ofd-viewer .ofd-attachment__actions {
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .ofd-viewer .ofd-attachment__check {
+    width: 20px;
+    height: 20px;
+    margin-top: 12px;
+  }
+}
+
+/*
+ * 窄侧栏：图标缩小、按钮收窄留白，保证「图标 + 名称 + 两个按钮」在
+ * 200px 侧栏内仍能共存。容器查询不可用时由宽度阈值兜底。
+ */
+.ofd-attachment__icon {
+  align-self: flex-start;
+}
+
 /* 附件预览弹框：挂在外壳对话框层，铺满并居中。 */
 .ofd-attachment-preview {
   position: absolute;
   inset: 0;
   z-index: 20;
+  /* 对话框层整体 pointer-events:none（避免遮挡阅读区），弹框自身必须恢复可交互。 */
+  pointer-events: auto;
   display: flex;
   flex-direction: column;
   width: 100%;
   height: 100%;
-  padding: 12px;
+  /* 移动端刘海/圆角区域留白，桌面端退化为普通 12px。 */
+  padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
   background: rgba(17, 24, 39, 0.55);
 }
 
@@ -2855,9 +2925,48 @@
   cursor: pointer;
 }
 
+/* 标题右侧操作组：下载与关闭并排，不参与标题收缩。 */
+.ofd-attachment-preview__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  align-items: center;
+}
+
+/* 下载按钮与关闭按钮同款描边图标按钮，保证标题栏视觉一致。 */
+.ofd-attachment-preview__download {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.16);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+/* 触控设备：关闭与下载按钮放大到 44px 可点区域。 */
+@media (pointer: coarse) {
+  .ofd-viewer .ofd-attachment-preview__close,
+  .ofd-viewer .ofd-attachment-preview__download {
+    width: var(--ofd-touch-target);
+    height: var(--ofd-touch-target);
+    font-size: 22px;
+  }
+}
+
 .ofd-attachment-preview__close:hover,
-.ofd-attachment-preview__close:focus-visible {
+.ofd-attachment-preview__close:focus-visible,
+.ofd-attachment-preview__download:hover:not(:disabled),
+.ofd-attachment-preview__download:focus-visible:not(:disabled) {
   background: rgba(255, 255, 255, 0.3);
+}
+
+/* 权限禁止导出：下载按钮置灰并给出禁用光标。 */
+.ofd-attachment-preview__download:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .ofd-attachment-preview__body {

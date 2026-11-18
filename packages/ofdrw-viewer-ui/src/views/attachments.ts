@@ -481,6 +481,24 @@ export class AttachmentView {
     heading.className = 'ofd-attachment-preview__title';
     heading.textContent = attachment.name;
     heading.title = attachment.name;
+    // 标题右侧操作组：下载 + 关闭。下载复用侧栏入口，权限与大附件阈值规则一致。
+    const actions = doc.createElement('div');
+    actions.className = 'ofd-attachment-preview__actions';
+
+    const downloadButton = doc.createElement('button');
+    downloadButton.type = 'button';
+    downloadButton.className = 'ofd-button ofd-attachment-preview__download';
+    setButtonGlyph(downloadButton, 'download', undefined, doc);
+    const downloadLabel = translator.t('attachments.downloadNamed', {
+      name: attachment.name,
+    });
+    downloadButton.setAttribute('aria-label', downloadLabel);
+    downloadButton.title = this.exportAllowed
+      ? downloadLabel
+      : translator.t('attachments.exportDenied');
+    downloadButton.disabled = !this.exportAllowed;
+    downloadButton.addEventListener('click', () => void this.download(attachment));
+
     const closeButton = doc.createElement('button');
     closeButton.type = 'button';
     closeButton.className = 'ofd-button ofd-attachment-preview__close';
@@ -488,7 +506,9 @@ export class AttachmentView {
     closeButton.setAttribute('aria-label', closeLabel);
     closeButton.title = closeLabel;
     closeButton.textContent = '×';
-    header.append(heading, closeButton);
+
+    actions.append(downloadButton, closeButton);
+    header.append(heading, actions);
 
     const body = doc.createElement('div');
     body.className = 'ofd-attachment-preview__body';
@@ -547,6 +567,9 @@ export class AttachmentView {
     element.append(header, body);
     const layer = this.viewer.getElements().dialogLayer ?? this.viewer.getElements().root;
     layer.appendChild(element);
+    // 对话框层空时由 CSS `:empty` 收起，插入子元素后必须显式解除隐藏，
+    // 与内置 DialogManager 的处理保持一致，否则弹框继承父层的 display:none。
+    layer.hidden = false;
 
     const trap = new FocusTrap(element, {
       onEscape: () => this.closePreview(),
@@ -569,7 +592,10 @@ export class AttachmentView {
     if (!current) return;
     this.preview = null;
     current.trap.deactivate({ restoreFocus: false });
+    const layer = current.element.parentElement;
     current.element.remove();
+    // 弹框是层内唯一内容时恢复隐藏，避免空层继续占位并拦截阅读区交互。
+    if (layer && layer.childElementCount === 0) layer.hidden = true;
     if (current.objectUrl) {
       const view = this.host.ownerDocument.defaultView;
       try {
@@ -785,6 +811,9 @@ export class AttachmentView {
     icon.setAttribute('aria-hidden', 'true');
     icon.appendChild(createGlyph(ICON_BY_KIND[kind], doc));
 
+    // 主体区：图标 + 正文。窄侧栏下只有正文收缩，图标与按钮都不参与压缩。
+    const main = doc.createElement('div');
+    main.className = 'ofd-attachment__main';
     const body = doc.createElement('div');
     body.className = 'ofd-attachment__body';
     const nameElement = doc.createElement('span');
@@ -808,6 +837,7 @@ export class AttachmentView {
     meta.append(sizeLine, dateLine);
     meta.title = `${sizeText} · ${dateText}`;
     body.append(nameElement, meta);
+    main.append(icon, body);
 
     const actions = doc.createElement('span');
     actions.className = 'ofd-attachment__actions';
@@ -840,7 +870,7 @@ export class AttachmentView {
     button.addEventListener('click', () => void this.download(attachment));
     actions.append(button);
 
-    item.append(checkbox, icon, body, actions);
+    item.append(checkbox, main, actions);
     return item;
   }
 

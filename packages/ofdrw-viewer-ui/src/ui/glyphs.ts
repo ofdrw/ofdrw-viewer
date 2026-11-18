@@ -61,9 +61,10 @@ const SPECS: Readonly<Record<GlyphName, GlyphSpec>> = Object.freeze({
   'file-pdf': { paths: [SHEET, FOLD, 'M7.6 13h1.2v5', 'M7.6 13v3h1.2a1 1 0 0 0 0-2H7.6'] },
   'file-doc': { paths: [SHEET, FOLD, 'M8 13h7', 'M8 15.5h7', 'M8 18h4.5'] },
   'file-sheet': { paths: [SHEET, FOLD, 'M3.5 12.5h15', 'M3.5 16.5h15', 'M10 12.5V20'] },
-  // 演示文稿：折角下方投影幕布 + 支架。
+  // 演示文稿：投影屏幕（仅上下边框 + 走势折线），与表格的网格线区分。
   'file-slide': {
-    paths: [SHEET, FOLD, 'M4 12.5h16v7.5H4z', 'M9 20.5l-1 2', 'M15 20.5l1 2', 'M7.5 16h9'],
+    paths: [SHEET, FOLD, 'M5 12.2h12', 'M5 18.4h12', 'M9 18.4v1.4', 'M13 18.4v1.4'],
+    polylines: ['6.4 16.9 9.2 14.9 11 16.1 13.6 14.3'],
   },
   'file-image': { paths: [SHEET, FOLD, 'M4.5 20l3.4-3.9 2.2 2.2 2.4-2.4 3 3.3'] },
   'file-text': { paths: [SHEET, FOLD, 'M8 13h8', 'M8 16h8', 'M8 19h5'] },
@@ -96,10 +97,11 @@ const SPECS: Readonly<Record<GlyphName, GlyphSpec>> = Object.freeze({
   'file-code': {
     paths: [SHEET, FOLD, 'M9.2 14l-2.4 2.6 2.4 2.6', 'M12.8 14l2.4 2.6-2.4 2.6'],
   },
-  // 标记语言：折角下方成对标签尖括号。
+  // 标记语言：折角下方成对标签，标签间用短斜杠点明 XML 的闭合关系。
   'file-xml': {
-    paths: [SHEET, FOLD, 'M8.4 13.6l-2 2.4 2 2.4', 'M13.6 13.6l2 2.4-2 2.4'],
-    polylines: ['13.2 12.8 10.8 19.2'],
+    paths: ['M6 2h7l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z', FOLD,
+      'M8.6 13.4l-1.8 2.4 1.8 2.4', 'M15.4 13.4l1.8 2.4-1.8 2.4'],
+    polylines: ['13 13.6 11 17.6'],
   },
   download: {
     paths: ['M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'],

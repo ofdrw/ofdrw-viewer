@@ -270,6 +270,46 @@ describe('勾选与全选', () => {
   });
 });
 
+describe('卡片结构（窄侧栏布局前提）', () => {
+  it('图标与正文包在主体区内，操作按钮独立成区', async () => {
+    const { viewer } = createViewer([
+      { id: 'a1', name: '甲.mp4', format: 'mp4' },
+      { id: 'a2', name: '乙.pdf', format: 'pdf' },
+    ]);
+    const { host } = mount(viewer);
+    await flush();
+
+    const cards = host.querySelectorAll<HTMLElement>('.ofd-attachment');
+    for (const card of cards) {
+      const main = card.querySelector('.ofd-attachment__main');
+      expect(main).not.toBeNull();
+      // 图标与正文都在主体区内，保证正文能独立收缩。
+      expect(main?.querySelector('.ofd-attachment__icon')).not.toBeNull();
+      expect(main?.querySelector('.ofd-attachment__body')).not.toBeNull();
+      // 操作区是主体区的兄弟节点，不参与正文收缩。
+      expect(main?.querySelector('.ofd-attachment__actions')).toBeNull();
+      expect(card.querySelector('.ofd-attachment__actions')).not.toBeNull();
+      // 勾选框在最外层，不进主体区。
+      expect(card.querySelector(':scope > .ofd-attachment__check')).not.toBeNull();
+      expect(main?.querySelector('.ofd-attachment__check')).toBeNull();
+    }
+  });
+
+  it('元信息为单行文本：类型、大小与日期共用一个节点', async () => {
+    const { viewer } = createViewer([
+      { id: 'a1', name: '甲.mp4', format: 'mp4', size: 2048, modDate: '2026-01-01' },
+    ]);
+    const { host } = mount(viewer);
+    await flush();
+
+    const meta = host.querySelector('.ofd-attachment__meta')!;
+    expect(meta.querySelector('.ofd-attachment__meta-size')?.textContent).toBe('mp4 · 2 KB');
+    expect(meta.querySelector('.ofd-attachment__meta-date')?.textContent).toBe('2026-01-01');
+    // 完整信息仍由 title 提供，窄侧栏下靠省略号收尾。
+    expect(meta.getAttribute('title')).toBe('mp4 · 2 KB · 2026-01-01');
+  });
+});
+
 describe('权限控制', () => {
   it('Export 为 false 时禁用下载与导出按钮，并提示禁止导出', async () => {
     const records = stubDownloads();
@@ -440,6 +480,114 @@ describe('预览弹框', () => {
     expect(dialogLayer.querySelector('.ofd-attachment-preview')).toBeNull();
     expect(records).toHaveLength(1);
     expect(records[0]!.name).toBe('文档.pdf');
+  });
+
+  it('弹框打开时解除对话框层的 hidden，关闭后在层空时恢复', async () => {
+    const dialogLayer = document.createElement('div');
+    // 复刻外壳的初始状态：层为空时被隐藏。
+    dialogLayer.hidden = true;
+    document.body.appendChild(dialogLayer);
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: () => 'blob:layer',
+      revokeObjectURL: () => undefined,
+    });
+
+    const { viewer } = createViewer([{ id: 'a1', name: '图.png' }], { dialogLayer });
+    const { view } = mount(viewer);
+    await flush();
+
+    await view.previewAttachment({ id: 'a1', name: '图.png' });
+    await flush();
+    // 层必须可见，否则弹框继承 display:none 用户看不到。
+    expect(dialogLayer.hidden).toBe(false);
+    expect(dialogLayer.querySelector('.ofd-attachment-preview')).not.toBeNull();
+
+    view.closePreview();
+    await flush();
+    expect(dialogLayer.childElementCount).toBe(0);
+    expect(dialogLayer.hidden).toBe(true);
+  });
+
+  it('对话框层内还有其它内容时不回收集合状态', async () => {
+    const dialogLayer = document.createElement('div');
+    document.body.appendChild(dialogLayer);
+    const other = document.createElement('div');
+    other.className = 'ofd-dialog';
+    dialogLayer.appendChild(other);
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: () => 'blob:other',
+      revokeObjectURL: () => undefined,
+    });
+
+    const { viewer } = createViewer([{ id: 'a1', name: '图.png' }], { dialogLayer });
+    const { view } = mount(viewer);
+    await flush();
+
+    await view.previewAttachment({ id: 'a1', name: '图.png' });
+    await flush();
+    view.closePreview();
+    await flush();
+
+    expect(dialogLayer.querySelector('.ofd-dialog')).not.toBeNull();
+    expect(dialogLayer.hidden).toBe(false);
+  });
+
+  it('预览弹框标题栏提供下载按钮，点击下载当前附件', async () => {
+    const records = stubDownloads();
+    const dialogLayer = document.createElement('div');
+    document.body.appendChild(dialogLayer);
+
+    const { viewer } = createViewer(
+      [{ id: 'a1', name: '图.png' }],
+      { dialogLayer, content: new Uint8Array([7, 7, 7]) },
+    );
+    const { view } = mount(viewer);
+    await flush();
+
+    await view.previewAttachment({ id: 'a1', name: '图.png' });
+    await flush();
+
+    const button = dialogLayer.querySelector<HTMLButtonElement>(
+      '.ofd-attachment-preview__download',
+    );
+    expect(button).not.toBeNull();
+    expect(button?.disabled).toBe(false);
+    expect(button?.getAttribute('aria-label')).toBe('下载附件 图.png');
+
+    button!.click();
+    await flush();
+    expect(records).toHaveLength(1);
+    expect(records[0]!.name).toBe('图.png');
+    view.closePreview();
+  });
+
+  it('导出权限禁止时预览内下载按钮禁用', async () => {
+    const dialogLayer = document.createElement('div');
+    document.body.appendChild(dialogLayer);
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: () => 'blob:denied',
+      revokeObjectURL: () => undefined,
+    });
+
+    const { viewer } = createViewer([{ id: 'a1', name: '图.png' }], {
+      dialogLayer,
+      permissions: { ...ALLOW_EXPORT, export: false },
+    });
+    const { view } = mount(viewer);
+    await flush();
+
+    await view.previewAttachment({ id: 'a1', name: '图.png' });
+    await flush();
+
+    const button = dialogLayer.querySelector<HTMLButtonElement>(
+      '.ofd-attachment-preview__download',
+    );
+    expect(button?.disabled).toBe(true);
+    expect(button?.title).toBe('文档权限禁止导出附件');
+    view.closePreview();
   });
 
   it('只有可预览类型渲染预览按钮', async () => {
