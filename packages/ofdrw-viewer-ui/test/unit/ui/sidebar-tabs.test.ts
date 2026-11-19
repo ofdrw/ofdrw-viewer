@@ -48,6 +48,7 @@ function createSidebar(options: Partial<SidebarOptions> = {}): Sidebar {
         rotation: state.view.rotation,
         sidebarView: state.view.sidebarView,
         fullscreen: false,
+        layout: state.view.layout,
         find: state.view.findState,
         theme: state.ui.theme,
         locale: state.ui.locale,

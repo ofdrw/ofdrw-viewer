@@ -55,6 +55,29 @@ export type {
 } from './options';
 
 // ---------------------------------------------------------------------------
+// 文档声明（Document.xml 的 VPreferences/Permissions）应用策略
+// ---------------------------------------------------------------------------
+export type { DocumentPolicyOptions, ResolvedDocumentPolicyOptions } from './document/policy';
+export {
+  DEFAULT_LAYOUT,
+  SPREAD_GUTTER,
+  layoutConfigFromPageLayout,
+  resolveLayoutConfig,
+} from './page-layout';
+export type {
+  LayoutConfig,
+  ScrollDirection,
+  ViewMode,
+} from './page-layout';
+export type {
+  ViewPageLayout,
+  ViewPageMode,
+  ViewPreferences,
+  ViewTabDisplay,
+  ViewZoomMode,
+} from './document/view-preferences';
+
+// ---------------------------------------------------------------------------
 // 图层可见性：六项模型、每页快照与 layerPanel 配置
 // ---------------------------------------------------------------------------
 export type {

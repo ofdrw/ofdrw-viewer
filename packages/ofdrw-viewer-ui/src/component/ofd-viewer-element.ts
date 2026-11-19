@@ -395,6 +395,7 @@ export class OFDViewerElement extends HTMLElement {
     const layerPanel = readLayerPanelOptions(this);
     this.instance = new OFDViewer({
       container: this,
+      // 文档声明（VPreferences/Permissions）默认全部应用，不提供属性开关。
       ...(source === null ? {} : { source }),
       ...(page === undefined ? {} : { initialPage: page }),
       ...(scale === undefined ? {} : { initialScale: scale }),

@@ -434,6 +434,9 @@ export class SelectionManager {
    * @throws {OFDViewerError} 功能关闭或剪贴板不可用时抛出。
    */
   async copySelection(): Promise<void> {
+    // 文档权限 `Permissions/PrintScreen=false` 表示禁止复制文本；功能已由核心按权限
+    // 关闭时这里再兜一次，覆盖绕过功能门控直接调用选区服务的路径。
+    this.host.assertCopyAllowed?.();
     this.assertSelection();
     // getSelectedText 优先返回快照；无快照时才回退 DOM。
     const text = this.getSelectedText();

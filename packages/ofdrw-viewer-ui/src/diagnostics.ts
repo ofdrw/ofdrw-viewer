@@ -19,6 +19,8 @@
 export const UI_WARNING_CODES = Object.freeze({
   // 文档信息
   W_METADATA: 'W_METADATA',
+  /** 文档声明（VPreferences/Permissions）解析失败或字段非法。 */
+  W_DOCUMENT_DECLARATIONS: 'W_DOCUMENT_DECLARATIONS',
   W_OUTLINE: 'W_OUTLINE',
   W_BOOKMARKS: 'W_BOOKMARKS',
   // 导航

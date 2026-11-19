@@ -32,7 +32,12 @@ export type IconName =
   | 'attachments'
   | 'layers'
   | 'restore'
-  | 'chevron-right';
+  | 'chevron-right'
+  | 'scroll-page'
+  | 'scroll-horizontal'
+  | 'view-single'
+  | 'view-spread'
+  | 'layout';
 
 /** 图标几何定义。 */
 interface IconSpec {
@@ -151,6 +156,28 @@ const ICONS: Readonly<Record<IconName, IconSpec>> = Object.freeze({
   },
   'chevron-right': {
     polylines: ['9 6 15 12 9 18'],
+  },
+  // 页面滚动：上下两页纵向衔接，箭头指向下。
+  'scroll-page': {
+    paths: ['M6 3h12v7H6z', 'M6 14h12v7H6z'],
+    polylines: ['12 9.5 12 11.5', '10.5 10 12 11.5 13.5 10'],
+  },
+  // 水平滚动：左右两页横向衔接，箭头指向右。
+  'scroll-horizontal': {
+    paths: ['M3 6h7v12H3z', 'M14 6h7v12h-7z'],
+    polylines: ['10 12 12 12', '11 10.5 12.5 12 11 13.5'],
+  },
+  // 单页视图：一页居中铺满。
+  'view-single': {
+    paths: ['M7 3h10v18H7z'],
+  },
+  // 双页视图：两页并排，中间留缝。
+  'view-spread': {
+    paths: ['M3 3h8v18H3z', 'M13 3h8v18h-8z'],
+  },
+  // 页面布局分组入口。
+  layout: {
+    paths: ['M3 4h18v16H3z', 'M3 9h18', 'M9 9v11'],
   },
 });
 

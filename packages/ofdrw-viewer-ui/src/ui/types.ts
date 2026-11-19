@@ -10,6 +10,7 @@ import type {
   ViewerFeatureStates,
 } from '../features';
 import type { LocalFontsStatus } from '../local-fonts-state';
+import type { LayoutConfig, ScrollDirection, ViewMode } from '../page-layout';
 import type {
   DialogName,
   FindState,
@@ -39,6 +40,11 @@ export type UIShellCommand =
   | { readonly type: 'zoom.out' }
   | { readonly type: 'zoom.set'; readonly scale: number | ZoomMode }
   | { readonly type: 'rotate.clockwise' }
+  | {
+      readonly type: 'layout.set';
+      readonly direction?: ScrollDirection;
+      readonly viewMode?: ViewMode;
+    }
   | { readonly type: 'find.open' }
   | { readonly type: 'find.close' }
   | {
@@ -84,6 +90,8 @@ export interface UIShellViewState {
   readonly sidebarView: SidebarView | null;
   /** 是否全屏/沉浸。 */
   readonly fullscreen: boolean;
+  /** 当前版式：滚动方向与视图模式。 */
+  readonly layout: LayoutConfig;
   /** 查找状态。 */
   readonly find: FindState;
   /** 当前主题。 */

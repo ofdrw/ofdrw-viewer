@@ -156,15 +156,16 @@ function createPropertiesHost(
 }
 
 /**
- * 点击工具栏“文档属性”并等待异步快照渲染完成。
+ * 点击「更多」菜单中的“文档属性”并等待异步快照渲染完成。
  *
  * @param host 宿主。
  * @returns 属性对话框元素。
  */
 async function openProperties(host: PropertiesHost): Promise<HTMLElement> {
   const shell = getUIShell(host)!;
-  const button = shell.elements.toolbar.querySelector<HTMLButtonElement>(
-    '[data-ofd-control="document-properties"]',
+  // 文档属性已从工具栏移入「更多」菜单，这里直接点菜单项。
+  const button = shell.root.querySelector<HTMLButtonElement>(
+    '.ofd-more-menu [data-ofd-control="menu-document-properties"]',
   );
   expect(button).not.toBeNull();
   button!.click();

@@ -13,6 +13,8 @@ import type {
   PageInfo,
   SignatureEntryInfo,
 } from '@ofdrw/ofdrw-viewer-engine';
+import type { LayoutConfig } from './page-layout';
+import type { ViewPreferences } from './document/view-preferences';
 import { createDefaultFeatureStates } from './features';
 import type { ViewerFeatureStates } from './features';
 import {
@@ -137,6 +139,36 @@ export interface FindState {
   readonly highlightAll: boolean;
 }
 
+/**
+ * 文档声明（`Document.xml` 的 `VPreferences`/`Permissions`）在阅读器中的生效结果。
+ *
+ * 只保留阅读器实际采用的部分；未声明或未启用的项缺省。
+ */
+export interface DocumentPolicyState {
+  /** 视图首选项是否已应用（宿主 `documentPolicy.viewPreferences=false` 时为 false）。 */
+  readonly viewPreferencesApplied: boolean;
+  /** 是否由文档声明隐藏了工具栏（`VPreferences/HideToolbar`）。 */
+  readonly hideToolbar: boolean;
+  /** 是否由文档声明隐藏了主窗口之外的窗体组件（`VPreferences/HideWindowUI`）。 */
+  readonly hideWindowUI: boolean;
+  /** 标题是否采用文档标题（`VPreferences/TabDisplay=DocTitle`）。 */
+  readonly documentTitle: boolean;
+  /** 视图首选项原文；供属性面板展示。 */
+  readonly viewPreferences?: ViewPreferences;
+  /** 是否禁止打印（`Permissions/Print`）。 */
+  readonly printBlocked: boolean;
+  /** 允许的打印份数；省略表示不限。 */
+  readonly printCopies?: number;
+  /** 是否允许复制文本/截屏（`Permissions/PrintScreen`）。 */
+  readonly allowCopy: boolean;
+  /** 是否允许电子签章（`Permissions/Signature`）。 */
+  readonly allowSignature: boolean;
+  /** 是否允许添加水印（`Permissions/Watermark`）。 */
+  readonly allowWatermark: boolean;
+  /** 文档有效期是否已过期（`Permissions/ValidPeriod`）。 */
+  readonly expired: boolean;
+}
+
 /** 文档状态。 */
 export interface DocumentState {
   /** 规范化后的引擎来源；未打开时为 null。 */
@@ -157,6 +189,8 @@ export interface DocumentState {
   readonly bookmarks?: readonly BookmarkItem[];
   /** 生命周期状态。 */
   readonly status: DocumentStatus;
+  /** 文档声明的生效结果；未读取或文档没有声明时省略。 */
+  readonly policy?: DocumentPolicyState;
 }
 
 /** 视图状态。 */
@@ -173,6 +207,8 @@ export interface ViewState {
   readonly sidebarView: SidebarView | null;
   /** 是否处于全屏/沉浸模式。 */
   readonly fullscreen: boolean;
+  /** 当前版式：滚动方向与视图模式。 */
+  readonly layout: LayoutConfig;
   /** 主区域滚动位置，单位 px。 */
   readonly scrollTop: number;
   /** 可见页范围。 */
@@ -267,6 +303,8 @@ export interface InitialViewerStateOptions {
   rotation?: Rotation;
   /** 初始侧栏；默认关闭。 */
   sidebarView?: SidebarView | null;
+  /** 初始版式；默认单页 + 纵向滚动。 */
+  layout?: Partial<LayoutConfig>;
   /** 主题；默认 `auto`。 */
   theme?: Theme;
   /** 语言；默认 `zh-CN`。 */
@@ -301,6 +339,10 @@ export function createInitialViewerState(
       rotation: options.rotation ?? 0,
       sidebarView: options.sidebarView ?? null,
       fullscreen: false,
+      layout: {
+        direction: options.layout?.direction ?? 'page',
+        viewMode: options.layout?.viewMode ?? 'single',
+      },
       scrollTop: 0,
       visiblePageRange: { start: 0, end: -1 },
       selectedText: '',

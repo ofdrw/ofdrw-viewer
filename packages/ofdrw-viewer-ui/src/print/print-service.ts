@@ -147,8 +147,19 @@ export class PrintService {
     if (!state.enabled) throw createFeatureDisabledError('print');
   }
 
-  /** 文档权限禁止打印时按功能关闭处理。 */
+  /**
+   * 文档权限禁止打印时按功能关闭处理。
+   *
+   * 引擎权限与阅读器补全的 `Permissions` 声明（含 `Copies=0`）合并判断；宿主关闭
+   * `documentPolicy.permissions` 时阅读器不再把文档侧限制计入功能可用性，此处只在
+   * 功能已被关闭时拒绝，不另行拦截。
+   *
+   * @throws {OFDViewerError} 文档禁止打印时抛 `OFD_FEATURE_DISABLED`。
+   */
   private async assertPermission(): Promise<void> {
+    if (this.host.getFeatureState('print').enabled === false) {
+      throw createFeatureDisabledError('print');
+    }
     let permissions: DocumentPermissions | null = null;
     try {
       permissions = await this.host.getPermissions();

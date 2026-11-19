@@ -126,6 +126,7 @@ export class UIShell {
           ? patch.sidebarView
           : (options.sidebarView ?? null),
       fullscreen: patch.fullscreen ?? false,
+      layout: patch.layout ?? { direction: 'page', viewMode: 'single' },
       find: patch.find ?? createFindState(),
       theme: patch.theme ?? initialTheme,
       locale: patch.locale ?? this.translator.locale,

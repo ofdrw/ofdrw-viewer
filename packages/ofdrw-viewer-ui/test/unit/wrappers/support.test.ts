@@ -28,8 +28,10 @@ describe('wrapper 公共桥接', () => {
     // 动作与媒体事件（UI 动作处理机制设计 §9.2）。
     expect(toDomEventName('action:executed')).toBe('ofd-action-executed');
     expect(toDomEventName('media:play')).toBe('ofd-media-play');
-    expect(VIEWER_EVENT_BRIDGES).toHaveLength(31);
-    expect(new Set(VIEWER_EVENT_BRIDGES.map((item) => item.dom)).size).toBe(31);
+    // 新增 layoutchange（页面布局模式切换）。
+    expect(toDomEventName('layoutchange')).toBe('ofd-layout-change');
+    expect(VIEWER_EVENT_BRIDGES).toHaveLength(32);
+    expect(new Set(VIEWER_EVENT_BRIDGES.map((item) => item.dom)).size).toBe(32);
     for (const item of VIEWER_EVENT_BRIDGES) {
       expect(item.react.startsWith('on')).toBe(true);
       expect(item.vue.includes('_')).toBe(false);

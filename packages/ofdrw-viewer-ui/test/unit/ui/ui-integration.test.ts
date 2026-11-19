@@ -455,16 +455,15 @@ describe('内置 UI 接线', () => {
     dispose();
   });
 
-  it('文档属性常驻按钮打开本地对话框，销毁时解绑事件', () => {
+  it('「更多」菜单里的文档属性打开本地对话框，销毁时解绑事件', () => {
     const host = createFakeHost(400);
     const dispose = attachUIShell(host);
     const shell = getUIShell(host)!;
-    const properties = shell.elements.toolbar.querySelector<HTMLButtonElement>(
-      '[data-ofd-control="document-properties"]',
+    const properties = shell.root.querySelector<HTMLButtonElement>(
+      '.ofd-more-menu [data-ofd-control="menu-document-properties"]',
     );
     expect(properties).not.toBeNull();
-    expect(properties!.getAttribute('aria-label')).toBe('文档属性');
-    expect(shell.root.querySelector('[data-ofd-control="menu-properties"]')).toBeNull();
+    expect(shell.elements.toolbar.querySelector('[data-ofd-control="document-properties"]')).toBeNull();
     properties!.click();
     expect(shell.dialogs.isOpen).toBe(true);
     expect(shell.dialogs.currentName).toBe('documentProperties');

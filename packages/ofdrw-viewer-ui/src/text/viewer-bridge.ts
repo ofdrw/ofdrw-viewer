@@ -89,6 +89,14 @@ export interface TextViewerHost extends LayerFilterHost {
    * 应在此清空，避免用户看到已失效的高亮。
    */
   textLayerPinBudgetExceeded?(): void;
+  /**
+   * 断言文档允许复制文本（`Permissions/PrintScreen`）。
+   *
+   * 可选：旧宿主未实现时按允许处理。
+   *
+   * @throws {OFDViewerError} 文档禁止复制时抛 `OFD_FEATURE_DISABLED`。
+   */
+  assertCopyAllowed?(): void;
 }
 
 /** 核心内部可用的写入口；仅做“存在即使用”的运行时探测。 */

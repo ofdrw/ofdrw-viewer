@@ -713,6 +713,20 @@
   scrollbar-gutter: stable;
 }
 
+.ofd-viewer[data-scroll='horizontal'] .ofd-viewer__main {
+  /*
+   * 横向滚动：页面排成一行，主滚动轴是水平方向。放大后页面可能比视口高，此时仍需
+   * 纵向滚动条查看上下内容，因此两个方向都允许滚动（不再 `overflow-y: hidden`）。
+   */
+  overflow-x: auto;
+  overflow-y: auto;
+}
+
+.ofd-viewer[data-scroll='horizontal'] .ofd-viewer__pages {
+  /* 横向排布时页面不换行，宽度由内容撑开。 */
+  white-space: nowrap;
+}
+
 .ofd-viewer {
   /*
    * 文档级缩放变量（与 pdf.js 的 `--scale-factor` 等价）：页盒宽高由它乘以 96 DPI 单位
@@ -1713,6 +1727,40 @@
 
 .ofd-more-menu--fixed {
   position: fixed;
+}
+
+/* 分组标题：不可聚焦，仅作视觉与语义分隔。 */
+.ofd-more-menu__group-title {
+  flex: 0 0 auto;
+  padding: 6px 10px 2px;
+  color: var(--ofd-text-secondary);
+  font-size: 0.75em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* 分组之间的分隔线：标题上方加细线，首组标题上方不加（由 :first-child 排除）。 */
+.ofd-more-menu__group-title:not(:first-child) {
+  margin-top: 2px;
+  border-top: 1px solid var(--ofd-border);
+}
+
+/* 可勾选菜单项（页面布局）：左端展示勾选标记，右侧留白对齐。 */
+/* 带图标的菜单项：图标 + 文案；勾选项图标以强调色描边表达选中。 */
+.ofd-more-menu__item .ofd-icon {
+  flex: 0 0 auto;
+  margin-right: 8px;
+  color: var(--ofd-text-secondary);
+}
+
+.ofd-more-menu__item[role='menuitemradio'][aria-checked='true'] .ofd-icon {
+  color: var(--ofd-accent);
+}
+
+.ofd-more-menu__item[role='menuitemradio'][aria-checked='true'] {
+  color: var(--ofd-text);
+  font-weight: 600;
 }
 
 .ofd-more-menu__item {

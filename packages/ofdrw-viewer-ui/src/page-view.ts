@@ -83,6 +83,8 @@ export interface PageViewLayout {
   readonly scale: number;
   /** 内容整体居中偏移（内容窄于可视区时生效），单位 px；省略视为 0。 */
   readonly offsetLeft?: number;
+  /** 内容整体垂直居中偏移（横向滚动、内容矮于可视区时生效），单位 px；省略视为 0。 */
+  readonly offsetTop?: number;
   /** 设备像素比，用于把页盒与画布尺寸对齐到设备像素网格；省略视为 1。 */
   readonly devicePixelRatio?: number;
 }
@@ -421,7 +423,8 @@ export class PageView {
       width: box.surfaceWidth,
       height: box.surfaceHeight,
     };
-    this.element.style.top = `${box.top}px`;
+    // 顶部偏移 = 垂直居中偏移（横向滚动时由阅读器给出）+ 页盒自身纵向坐标。
+    this.element.style.top = `${box.top + (layout.offsetTop ?? 0)}px`;
     // 页盒左缘 = 居中排版偏移（内容窄于可视区时由阅读器给出）+ 本页相对最宽页的居中量，
     // 与 pdf.js 的 `.page { margin: 0 auto }` 等价但直接写数值，不依赖百分比/自动边距。
     this.element.style.left = `${box.left + (layout.offsetLeft ?? 0)}px`;
@@ -804,6 +807,16 @@ export class PageView {
   get canvasPixelCount(): number {
     const canvas = this.canvasElement;
     return canvas ? canvas.width * canvas.height : 0;
+  }
+
+  /**
+   * 当前是否有可见 canvas。
+   *
+   * 供阅读器判断“页在可见范围内却没有画面”（如 pin 页滚出后被释放、像素预算回收），
+   * 需要强制重绘而不是按渲染 key 命中跳过。
+   */
+  get hasCanvas(): boolean {
+    return this.canvasElement !== null;
   }
 
   /** 释放 canvas；用于 LRU 淘汰与关闭。 */

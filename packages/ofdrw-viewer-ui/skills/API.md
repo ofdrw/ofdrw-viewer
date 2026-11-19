@@ -68,6 +68,7 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 | `initialScale` | `number / ZoomMode` | `'auto'` | 数字为倍率（0.25–10）；字符串为缩放模式 |
 | `rotation` | `0 / 90 / 180 / 270` | `0` | 初始顺时针旋转角度 |
 | `sidebar` | `SidebarView / null` | `null` | 初始侧栏；`null` 表示关闭 |
+| `layout` | `{ direction?, viewMode? }` | `{ direction: 'page', viewMode: 'single' }` | 初始版式。`direction`：`page` 页面滚动（纵向衔接）/ `horizontal` 水平滚动（单行横滑）；`viewMode`：`single` 单页 / `spread` 双页。可只给一个维度，省略的维度取文档 `VPreferences/PageLayout` |
 | `features` | `ViewerFeatures` | 全部开启 | 功能开关补丁，只需写要关闭的键 |
 | `featureDisplay` | `FeatureDisplay` | `'hide'` | 被关闭功能的展示方式 |
 | `theme` | `'light' / 'dark' / 'auto'` | `'auto'` | `auto` 跟随 `prefers-color-scheme` |
@@ -91,6 +92,7 @@ function registerViewerExtension(extension: ViewerExtension): () => void;
 | `fonts` | `ViewerFontOptions` | 无 | 字体配置（`default`/`supplementary`/`loader`/`aliases`/`localFonts`），见下 |
 | `layerPanel` | `LayerPanelOptions` | `{ enabled: true, disabled: false, defaultVisibility: 六项全 true、注释类型全勾 }` | “图层”tab 开关与每页默认可见性（含注释类型）；**只在构造时生效**，见[图层侧栏](#图层侧栏layerpanel) |
 | `actions` | `ViewerActionsOptions` | `{ autoExecuteActions: false, allowUserToggleAutoExecute: true, maxActionDepth: 4, smoothGoto: true }` | 文档动作执行选项，见[动作与音视频](#动作与音视频)。**没有 `media` 选项**：媒体音量、静音重试与单资源读取上限为内部常量 |
+| `documentPolicy` | `DocumentPolicyOptions` | `{ viewPreferences: true, permissions: true }` | 文档声明（`Document.xml` 的 `VPreferences`/`Permissions`）应用策略，见[文档声明](#文档声明vpreferences--permissions) |
 
 `container` 是唯一必填项。字符串选择器在构造时解析；找不到元素抛 `OFD_INVALID_OPTION`。
 
@@ -900,6 +902,73 @@ viewer.resetLayerVisibility();
 `exportOfd()` 与图片导出共用 `export` 功能开关和文档导出权限；公开的 `readSourceBytes()` 使用同一门控。URL 来源会按打开时的请求头重新读取；ArrayBuffer/Uint8Array/Blob 直接复用；自定义随机读源按顺序读取，实际读取长度必须等于声明的 `size`，短读不再静默截断而是抛 `OFD_EXPORT_FAILED`。导出过程不渲染、不解密、不重建 OFD，文件名默认 `{docName}.ofd`，可由 `filename` 覆盖并自动补 `.ofd`。读取失败、短读、空文件或宿主不支持时映射为 `OFD_EXPORT_FAILED`；取消仍保留 `AbortError`。
 
 打印失败抛 `OFD_PRINT_FAILED`；导出全部页失败抛 `OFD_EXPORT_FAILED`；单页失败降级为 `W_EXPORT_PAGE`/`W_EXPORT_PARTIAL` warning。取消通过 `signal` 传入：取消时统一转为 `AbortError`（`name='AbortError'`）拒绝；`OFD_INVALID_OPTION` 仅表示选项非法。
+
+### 文档声明（VPreferences / Permissions）
+
+阅读器按 GB/T 33190-2016 §7.5 读取 `Document.xml` 的视图首选项（表 9）与权限声明（表 8），用于初始化视图并对入口做门控。引擎不解码 `VPreferences`，阅读器在打开流程中从包内 `Document.xml` 补齐（不额外渲染、不改包内容）；解析失败只降级为“无声明”。
+
+#### 视图首选项 `VPreferences`
+
+| 字段 | 阅读器行为 |
+| --- | --- |
+| `ZoomMode` | `FitWidth` → 适合宽度；`FitHeight`/`FitRect` → 适合整页；`Default` → 按 `Zoom` 或宿主 `initialScale` |
+| `Zoom` | 固定倍率（0.25–10 夹取），仅当 `ZoomMode` 为 `Default` 或未声明时生效 |
+| `PageMode` | `UseOutlines`/`UseThumbs`/`UseBookmarks`/`UseAttaches`/`UseLayers` 自动打开对应侧栏；`FullScreen` 请求全屏（浏览器要求用户手势，失败即放弃）；`None`/`UseCustomTags` 不施加要求 |
+| `TabDisplay` | `DocTitle` 且文档有 `DocInfo/Title` 时把标题写入根节点 `aria-label`；无标题按 `FileName` 处理 |
+| `HideToolbar` | 隐藏内置工具栏（与 `features.toolbar` 关闭等效） |
+| `HideWindowUI` | 隐藏对话框层与 Toast 层（主窗口之外的窗体组件） |
+| `HideMenubar`/`HideMenuBar` | 只写入状态供宿主使用；内置 UI 没有独立菜单栏 |
+| `PageLayout` | `OneColumn` → 页面滚动 + 单页；`OnePage` → 水平滚动 + 单页；`TwoColumnL/R` → 页面滚动 + 双页；`TwoPageL/R` → 水平滚动 + 双页 |
+
+**优先级**：宿主显式配置（非默认的 `initialScale`/`sidebar`）优先，文档声明覆盖默认值；`documentPolicy.viewPreferences=false` 时完全忽略该节点。
+
+**生效来源**：视图首选项在打开流程中读取一次包内 `Document.xml`。内存来源（`ArrayBuffer`/`Uint8Array`/`Blob`）与加密文档（复用已解密容器）支持；URL/自定义随机读源不二次读取——引擎容器与声明容器会共享同一字节源实例，额外打开会改变其可读状态，这类来源请用 `initialScale`/`sidebar` 配置初始视图。
+
+#### 版式：滚动方式 × 视图模式
+
+工具栏「更多」`...` 菜单分为四组：**滚动方式**、**视图模式**（均带 SVG 图标与勾选状态）、低频操作，以及**文档信息**（「文档属性」「关于」）。工具栏不再保留文档属性常驻入口。
+
+| 分组 | 选项 | 含义 |
+| --- | --- | --- |
+| 滚动方式 | 页面滚动 `page` | 页与页上下衔接，纵向连续滚动，一列到底 |
+| 滚动方式 | 水平滚动 `horizontal` | 页与页左右衔接，横向单行，一页接一页向右滑动 |
+| 视图模式 | 单页 `single` | 一次推进一页 |
+| 视图模式 | 双页 `spread` | 一次推进一组两页；两页之间保留固定间隔（`SPREAD_GUTTER`），整组作为整体缩放 |
+
+- 默认是**单页 + 页面滚动**。两个维度正交，可自由组合（单页/双页 × 纵向/横向）。
+- 双页模式下 `nextPage()`/`previousPage()` 按组翻页（一次两页），`goToPage(n)` 落到 `n` 所在组的起点；当前页取“与视口重叠最多的组”。
+- 滚动停顿约 120ms 后吸附到最近的组边界（单页=整页，双页=整组）：只在**接近边界**（距边界不超过半个页间距）时吸附，停在页面中段不会被强行拉回；已顶到内容两端（`scrollTop/scrollLeft` 为 0 或最大值）时不吸附，避免“拖到顶部被弹回”。吸附写入位置后不会再触发自身，杜绝闪烁。
+- 首尾留白补足一屏：最后一组能滚到贴齐视口起点，滚到底不会被夹住再也回不来。
+- 双页纵向：内容宽度按整组（两页 + 间隔）计算，小倍率下整组在视口中左右对称居中；水平滚动时整组垂直居中。
+- 横向滚动时主区域以水平滚动为主（`data-scroll="horizontal"`）；放大后页面可能高于视口，此时**纵向仍可滚动**，不会被裁掉上下内容。
+- 页盒尺寸始终按缩放倍率推导，缩放会同步放大页面与组内间隔（组间 `gap` 固定不缩放）。
+- 可见页按**滚动方向**判定（纵向看 `top`/高度，横向看 `left`/宽度）：横向滚动不会把全部页当成可见，避免整本页被同时构建。可见页若因缓存回收、选区 pin 滚出等原因失去 canvas，重新进入可见范围时会**强制重绘**，不会留下空白页（选区、复制与滚动不会擦除画面）。
+- 文档 `VPreferences/PageLayout` 映射：`OneColumn`/`OnePage`/`TwoColumn*`/`TwoPage*` 分别对应上述四种组合；宿主 `layout` 中显式给出的维度优先于文档声明，`documentPolicy.viewPreferences=false` 时忽略文档声明。
+- 运行时：`viewer.setLayout({ direction?, viewMode? })`、`viewer.getLayout()`；切换时派发 `layoutchange`（`{ layout, previous }`，Web Component 为 `ofd-layout-change`）。
+
+#### 权限声明 `Permissions`
+
+| 字段 | 阅读器行为 |
+| --- | --- |
+| `Export` | `false` 时 `export` 功能按文档关闭（`reason='document'`），导出与 `readSourceBytes()` 抛 `OFD_FEATURE_DISABLED` |
+| `Print@Printable` / `Print@Copies` | `Printable=false` 或 `Copies=0` 时关闭 `print` 功能；正数份数写入 `state.document.policy.printCopies`，负数表示不限 |
+| `PrintScreen` | `false` 时关闭 `selection` 与 `find`，`copySelection()` 抛 `OFD_FEATURE_DISABLED`，原生 `copy` 事件不写入剪贴板 |
+| `Signature` | `false` 时关闭 `verification`（签名验证/验签入口） |
+| `Watermark` | 写入 `state.document.policy.allowWatermark`，供宿主禁用“添加水印”入口（阅读器不提供水印功能） |
+| `ValidPeriod@StartDate/@EndDate` | 过期结论写入 `state.document.policy.expired`；阅读器不阻断打开，由宿主决定是否提示或关闭 |
+| `Edit`/`Annot` | 写入状态供宿主使用；阅读器本身不是编辑器，没有对应入口 |
+
+权限是**入口门控**而不是 DRM：宿主仍可直接调用引擎；`documentPolicy.permissions=false` 时阅读器不做任何限制，只在属性面板展示文档原声明。
+
+#### 状态与诊断
+
+```ts
+const { policy } = viewer.getState().document;
+// policy?.viewPreferencesApplied / hideToolbar / hideWindowUI / documentTitle / viewPreferences
+// policy?.printBlocked / printCopies / allowCopy / allowSignature / allowWatermark / expired
+```
+
+文档属性对话框新增「视图首选项」分组展示 `VPreferences` 原声明；非法字段通过 `W_DOCUMENT_DECLARATIONS` warning 上报（不阻断打开）。
 
 ### 动作与音视频
 

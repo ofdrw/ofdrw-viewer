@@ -17,6 +17,7 @@
  */
 import { createTranslator, type Translator } from '../i18n';
 import type { LocalFontsStatus } from '../local-fonts-state';
+import type { LayoutConfig, ScrollDirection, ViewMode } from '../page-layout';
 import type { ViewerState, Rotation, SidebarView, ZoomMode } from '../state';
 import type {
   ExportImageOptions,
@@ -63,6 +64,8 @@ export interface UIShellHost {
   setZoomMode(mode: ZoomMode): unknown;
   /** 顺时针旋转 90°。 */
   rotateClockwise(): unknown;
+  /** 切换版式（滚动方向 / 视图模式）；核心未提供时“更多”菜单里的布局项不可用。 */
+  setLayout?(layout: Partial<LayoutConfig>): unknown;
   /** 执行查找。 */
   find(
     query: string,
@@ -142,6 +145,7 @@ function toShellState(
     rotation: state.view.rotation,
     sidebarView: state.view.sidebarView,
     fullscreen: state.view.fullscreen,
+    layout: state.view.layout,
     find: state.view.findState,
     theme: state.ui.theme,
     locale: state.ui.locale,
@@ -408,6 +412,29 @@ function formatPermission(translator: Translator, allowed: boolean): string {
 }
 
 /**
+ * 构造“是/否”开关一行的文本；未声明时返回 undefined（该行不展示）。
+ *
+ * @param translator 翻译器。
+ * @param value 文档声明值。
+ * @returns “是”/“否”，或 undefined。
+ */
+function formatSwitch(translator: Translator, value: boolean | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return value ? translator.t('properties.yes') : translator.t('properties.no');
+}
+
+/**
+ * 构造缩放率文本。
+ *
+ * @param translator 翻译器。
+ * @param ratio 缩放率，1 = 100%。
+ * @returns 百分数文本。
+ */
+function formatPercent(translator: Translator, ratio: number): string {
+  return `${translator.formatNumber(ratio * 100, { maximumFractionDigits: 1 })}%`;
+}
+
+/**
  * 收集文档属性对话框的六个分组（设计方案 §6.3）。
  *
  * 分组顺序与设计一致；任一分组内全部字段缺失时由 `createPropertySections` 隐藏。
@@ -496,6 +523,24 @@ function collectPropertyGroups(
       ]
     : [];
 
+  // 视图首选项（VPreferences）：只读展示文档声明，便于核对初始视图来源。
+  const view = documentState.policy?.viewPreferences;
+  const viewRows: PropertyRow[] = view
+    ? [
+        [t('properties.viewPageMode'), view.pageMode],
+        [t('properties.viewPageLayout'), view.pageLayout],
+        [t('properties.viewTabDisplay'), view.tabDisplay],
+        [t('properties.viewZoomMode'), view.zoomMode],
+        [
+          t('properties.viewZoom'),
+          view.zoom === undefined ? undefined : formatPercent(translator, view.zoom),
+        ],
+        [t('properties.hideToolbar'), formatSwitch(translator, view.hideToolbar)],
+        [t('properties.hideMenuBar'), formatSwitch(translator, view.hideMenuBar)],
+        [t('properties.hideWindowUI'), formatSwitch(translator, view.hideWindowUI)],
+      ]
+    : [];
+
   const securityRows: PropertyRow[] = [
     ...permissionRows,
     [t('properties.signatureCount'), toStringOrUndefined(documentState.signaturesSummary?.length)],
@@ -519,6 +564,7 @@ function collectPropertyGroups(
     { title: t('properties.groupPackage'), rows: packageRows },
     { title: t('properties.groupPageSettings'), rows: pageRows },
     { title: t('properties.groupResources'), rows: resourceRows },
+    { title: t('properties.groupView'), rows: viewRows },
     { title: t('properties.groupSecurity'), rows: securityRows },
     { title: t('properties.groupAttachments'), rows: attachmentRows },
   ];
@@ -1252,6 +1298,15 @@ function dispatchCommand(
       return;
     case 'rotate.clockwise':
       settle(viewer.rotateClockwise(), shell);
+      return;
+    case 'layout.set':
+      settle(
+        viewer.setLayout?.({
+          ...(command.direction ? { direction: command.direction } : {}),
+          ...(command.viewMode ? { viewMode: command.viewMode } : {}),
+        }),
+        shell,
+      );
       return;
     case 'find.open':
     case 'find.close':

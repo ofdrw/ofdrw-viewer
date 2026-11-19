@@ -11,6 +11,9 @@ import type {
   VerificationReport,
 } from '@ofdrw/ofdrw-viewer-crypto';
 import type { FeatureDisplay, ViewerFeatures } from './features';
+import { resolveLayoutConfig, type LayoutConfig } from './page-layout';
+import type { DocumentPolicyOptions, ResolvedDocumentPolicyOptions } from './document/policy';
+import { resolveDocumentPolicyOptions } from './document/policy';
 import type { DiagnosticLevel } from './diagnostics';
 import type { ViewerFontOptions } from './font';
 import {
@@ -312,6 +315,12 @@ export interface OFDViewerOptions {
   readonly rotation?: Rotation;
   /** 初始侧栏；默认关闭（null）。 */
   readonly sidebar?: SidebarView | null;
+  /**
+   * 初始版式：滚动方向（`page` 纵向 / `horizontal` 横向）与视图模式（`single` 单页 /
+   * `spread` 双页）。省略时由文档 `VPreferences/PageLayout` 决定，两者都没有时为
+   * 单页 + 纵向滚动。可只给一个维度。
+   */
+  readonly layout?: Partial<LayoutConfig>;
   /** 功能开关补丁；false 表示不可用，默认全部开启。 */
   readonly features?: ViewerFeatures;
   /** 被关闭功能的展示方式；默认全局 `hide`。 */
@@ -421,6 +430,14 @@ export interface OFDViewerOptions {
    * 打断阅读。用户可通过「更多 → 关于」临时开启，不持久化。
    */
   readonly actions?: ViewerActionsOptions;
+  /**
+   * 文档声明（Document.xml 的 `VPreferences`/`Permissions`）的应用策略。
+   *
+   * 默认全部应用：视图首选项决定打开后的初始视图，权限声明决定打印/导出/复制等入口
+   * 是否可用。宿主可用 `viewPreferences: false` 忽略初始视图、用
+   * `permissions: false` 只展示不门控。
+   */
+  readonly documentPolicy?: DocumentPolicyOptions;
 }
 
 /** 动作选项；类型定义在 `actions/action-service.ts`，这里再导出供子路径使用。 */
@@ -437,6 +454,10 @@ export interface ResolvedViewerOptions {
   readonly initialScale: ScaleValue;
   readonly rotation: Rotation;
   readonly sidebar: SidebarView | null;
+  /** 已解析的初始版式（两维齐全）；宿主未指定时取默认值。 */
+  readonly layout: LayoutConfig;
+  /** 宿主显式给出的版式维度；用于区分“未指定”与“指定为默认值”。 */
+  readonly layoutOverrides: Partial<LayoutConfig>;
   readonly features: ViewerFeatures;
   readonly featureDisplay: FeatureDisplay;
   readonly theme: Theme;
@@ -470,6 +491,8 @@ export interface ResolvedViewerOptions {
   readonly layerPanel: ResolvedLayerPanelOptions;
   /** 已解析的动作执行选项。 */
   readonly actions: ResolvedViewerActionsOptions;
+  /** 已解析的文档声明应用策略。 */
+  readonly documentPolicy: ResolvedDocumentPolicyOptions;
 }
 
 /** 解析默认值时可用的宿主环境信息。 */
@@ -506,6 +529,11 @@ export function resolveViewerOptions(
     initialScale: options.initialScale ?? DEFAULT_INITIAL_SCALE,
     rotation: options.rotation ?? DEFAULT_ROTATION,
     sidebar: options.sidebar ?? null,
+    layout: resolveLayoutConfig(options.layout),
+    layoutOverrides: {
+      ...(options.layout?.direction !== undefined ? { direction: options.layout.direction } : {}),
+      ...(options.layout?.viewMode !== undefined ? { viewMode: options.layout.viewMode } : {}),
+    },
     features: { ...options.features },
     featureDisplay,
     theme: options.theme ?? DEFAULT_THEME,
@@ -548,6 +576,7 @@ export function resolveViewerOptions(
     crypto: options.crypto,
     fonts: options.fonts,
     layerPanel: resolveLayerPanelOptions(options.layerPanel),
+    documentPolicy: resolveDocumentPolicyOptions(options.documentPolicy),
     actions: resolveViewerActionsOptions(options.actions),
   };
 }

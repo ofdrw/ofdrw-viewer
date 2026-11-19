@@ -5,6 +5,7 @@
  * 隐藏的控件会出现在这里，保证核心操作不丢失。菜单项同样受 FeatureState 控制。
  */
 import { setExpanded } from '../a11y';
+import { createIcon, type IconName } from './icons';
 import type { ViewerFeature, ViewerFeatureStates } from '../features';
 import type { MessageKey, Translator } from '../i18n';
 import type { SidebarView } from '../state';
@@ -33,10 +34,26 @@ interface MenuItemSpec {
   readonly feature?: ViewerFeature;
   /** 在哪些断点显示。 */
   readonly visibility: MenuVisibility;
+  /** 可选图标。 */
+  readonly icon?: IconName;
   /** 根据当前状态构造命令。 */
   readonly command: (state: UIShellViewState) => UIShellCommand;
   /** 文档未打开时是否禁用；默认 true。 */
   readonly requiresDocument?: boolean;
+  /**
+   * 是否为可勾选项（`role="menuitemradio"`）。
+   *
+   * 传入判定函数，返回 true 表示当前选中；用于页面布局这类“多选一”的菜单组。
+   */
+  readonly checked?: (state: UIShellViewState) => boolean;
+}
+
+/** 菜单分组定义：一个可选的组标题与若干菜单项。 */
+interface MenuGroupSpec {
+  /** 组标题（可选）；标题行不可聚焦。 */
+  readonly titleKey?: MessageKey;
+  /** 组内菜单项，按声明顺序排列。 */
+  readonly items: readonly MenuItemSpec[];
 }
 
 /** 菜单项实例。 */
@@ -46,6 +63,54 @@ interface MenuItem {
   gate: FeatureGate;
   stateDisabled: boolean;
 }
+
+/**
+ * 滚动方向菜单项（页面滚动 / 水平滚动）。
+ *
+ * 决定页面之间如何衔接：页面滚动上下衔接、纵向连续；水平滚动左右衔接、单行横滑。
+ */
+const DIRECTION_ITEMS: readonly MenuItemSpec[] = [
+  {
+    id: 'menu-scroll-page',
+    labelKey: 'toolbar.scrollPage',
+    icon: 'scroll-page',
+    visibility: 'always',
+    command: () => ({ type: 'layout.set', direction: 'page' }),
+    checked: (state) => state.layout.direction === 'page',
+  },
+  {
+    id: 'menu-scroll-horizontal',
+    labelKey: 'toolbar.scrollHorizontal',
+    icon: 'scroll-horizontal',
+    visibility: 'always',
+    command: () => ({ type: 'layout.set', direction: 'horizontal' }),
+    checked: (state) => state.layout.direction === 'horizontal',
+  },
+];
+
+/**
+ * 视图模式菜单项（单页 / 双页）。
+ *
+ * 决定一次滚动/翻页推进多少页：单页一次一页；双页一组两页（组内保留间隔）。
+ */
+const VIEW_MODE_ITEMS: readonly MenuItemSpec[] = [
+  {
+    id: 'menu-view-single',
+    labelKey: 'toolbar.viewSingle',
+    icon: 'view-single',
+    visibility: 'always',
+    command: () => ({ type: 'layout.set', viewMode: 'single' }),
+    checked: (state) => state.layout.viewMode === 'single',
+  },
+  {
+    id: 'menu-view-spread',
+    labelKey: 'toolbar.viewSpread',
+    icon: 'view-spread',
+    visibility: 'always',
+    command: () => ({ type: 'layout.set', viewMode: 'spread' }),
+    checked: (state) => state.layout.viewMode === 'spread',
+  },
+];
 
 /** 菜单项定义（顺序即菜单顺序）。 */
 const MENU_ITEMS: readonly MenuItemSpec[] = [
@@ -138,6 +203,13 @@ const MENU_ITEMS: readonly MenuItemSpec[] = [
     requiresDocument: false,
   },
   {
+    id: 'menu-document-properties',
+    labelKey: 'toolbar.documentProperties',
+    feature: 'documentProperties',
+    visibility: 'always',
+    command: () => ({ type: 'document.properties' }),
+  },
+  {
     id: 'menu-about',
     labelKey: 'toolbar.about',
     visibility: 'always',
@@ -145,6 +217,42 @@ const MENU_ITEMS: readonly MenuItemSpec[] = [
     requiresDocument: false,
   },
 ];
+
+/** 信息类分组（文档属性 / 关于）：单独成组，排在操作分组之后。 */
+const INFO_ITEM_IDS: ReadonlySet<string> = new Set([
+  'menu-document-properties',
+  'menu-about',
+]);
+
+/** 布局菜单项 id 集合；用于把布局项从主列表里剔除。 */
+const LAYOUT_ITEM_IDS: ReadonlySet<string> = new Set(
+  [...DIRECTION_ITEMS, ...VIEW_MODE_ITEMS].map((item) => item.id),
+);
+
+/**
+ * 菜单分组（顺序即菜单顺序）：布局模式在最上方，其余为低频操作。
+ *
+ * 用函数返回而不是顶层常量：菜单项常量在同模块内声明顺序靠后，顶层引用会触发
+ * 暂时性死区。
+ *
+ * @returns 分组列表。
+ */
+function buildMenuGroups(): readonly MenuGroupSpec[] {
+  return [
+    { titleKey: 'toolbar.scrollGroup', items: DIRECTION_ITEMS },
+    { titleKey: 'toolbar.viewGroup', items: VIEW_MODE_ITEMS },
+    {
+      // 低频操作（翻页/缩放/打印等）：不带标题，保持原有紧凑排列。
+      items: MENU_ITEMS.filter(
+        (item) => !LAYOUT_ITEM_IDS.has(item.id) && !INFO_ITEM_IDS.has(item.id),
+      ),
+    },
+    {
+      titleKey: 'toolbar.infoGroup',
+      items: MENU_ITEMS.filter((item) => INFO_ITEM_IDS.has(item.id)),
+    },
+  ];
+}
 
 /** “更多”菜单选项。 */
 export interface MoreMenuOptions {
@@ -289,11 +397,21 @@ export class MoreMenu {
       item.stateDisabled = this.isStateDisabled(item.spec, state);
     }
     this.refreshDisabled();
+    for (const item of this.items) {
+      if (!item.spec.checked) continue;
+      item.element.setAttribute(
+        'aria-checked',
+        item.spec.checked(state) ? 'true' : 'false',
+      );
+    }
     const fullscreenItem = this.items.find((item) => item.spec.id === 'menu-fullscreen');
     if (fullscreenItem) {
-      fullscreenItem.element.textContent = this.translator.t(
+      const text = this.translator.t(
         state.fullscreen ? 'toolbar.exitFullscreen' : 'toolbar.fullscreen',
       );
+      const label = fullscreenItem.element.querySelector('.ofd-more-menu__label');
+      if (label) label.textContent = text;
+      else fullscreenItem.element.textContent = text;
     }
     // 全屏文案等变化可能改变菜单高度，打开时重新夹紧到视口内。
     if (this.menuOpen) this.positionMenu();
@@ -320,7 +438,9 @@ export class MoreMenu {
     this.translator = translator;
     this.element.setAttribute('aria-label', translator.t('toolbar.more'));
     for (const item of this.items) {
-      item.element.textContent = translator.t(item.spec.labelKey);
+      const label = item.element.querySelector('.ofd-more-menu__label');
+      if (label) label.textContent = translator.t(item.spec.labelKey);
+      else item.element.textContent = translator.t(item.spec.labelKey);
     }
     this.applyFeatureStates();
     this.update(this.viewState);
@@ -378,16 +498,48 @@ export class MoreMenu {
     this.element.style.top = `${Math.round(top - origin.top - this.portal.clientTop)}px`;
   }
 
-  /** 创建菜单项。 */
+  /** 创建菜单分组与菜单项。 */
   private buildItems(): void {
-    for (const spec of MENU_ITEMS) {
+    for (const [index, group] of buildMenuGroups().entries()) {
+      if (group.titleKey) {
+        const title = this.doc.createElement('div');
+        title.className = 'ofd-more-menu__group-title';
+        title.setAttribute('role', 'presentation');
+        title.dataset.menuGroup = String(index);
+        title.textContent = this.translator.t(group.titleKey);
+        this.element.appendChild(title);
+      }
+      for (const spec of group.items) this.buildItem(spec);
+    }
+    this.element.addEventListener('keydown', this.handleMenuKeydown);
+  }
+
+  /**
+   * 创建单个菜单项。
+   *
+   * 可勾选项使用 `menuitemradio` 语义，勾选状态由 `aria-checked` 表达，样式由
+   * CSS 读取该属性驱动。
+   *
+   * @param spec 菜单项定义。
+   */
+  private buildItem(spec: MenuItemSpec): void {
+    {
       const item = this.doc.createElement('button');
       item.type = 'button';
       item.className = 'ofd-more-menu__item';
-      item.setAttribute('role', 'menuitem');
+      if (spec.checked) {
+        item.setAttribute('role', 'menuitemradio');
+        item.setAttribute('aria-checked', 'false');
+      } else {
+        item.setAttribute('role', 'menuitem');
+      }
       item.dataset.ofdControl = spec.id;
       item.dataset.menuVisibility = spec.visibility;
-      item.textContent = this.translator.t(spec.labelKey);
+      if (spec.icon) item.appendChild(createIcon(spec.icon));
+      const label = this.doc.createElement('span');
+      label.className = 'ofd-more-menu__label';
+      label.textContent = this.translator.t(spec.labelKey);
+      item.appendChild(label);
       item.addEventListener('click', () => {
         // 先关闭并把焦点还给触发按钮，后续对话框/侧栏关闭时可恢复到该按钮。
         this.close();
@@ -401,7 +553,6 @@ export class MoreMenu {
         stateDisabled: false,
       });
     }
-    this.element.addEventListener('keydown', this.handleMenuKeydown);
   }
 
   /** 应用功能门控。 */

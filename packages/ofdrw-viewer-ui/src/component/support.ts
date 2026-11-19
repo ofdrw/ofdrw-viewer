@@ -149,6 +149,7 @@ export const VIEWER_EVENT_BRIDGES = [
   { event: 'media:ended', dom: 'ofd-media-ended', react: 'onMediaEnded', vue: 'media-ended' },
   { event: 'media:stop', dom: 'ofd-media-stop', react: 'onMediaStop', vue: 'media-stop' },
   { event: 'media:error', dom: 'ofd-media-error', react: 'onMediaError', vue: 'media-error' },
+  { event: 'layoutchange', dom: 'ofd-layout-change', react: 'onLayoutChange', vue: 'layout-change' },
   { event: 'statechange', dom: 'ofd-state-change', react: 'onStateChange', vue: 'state-change' },
 ] as const satisfies readonly ViewerEventBridge[];
 

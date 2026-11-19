@@ -432,19 +432,8 @@ export class Toolbar {
     });
     viewGroup.appendChild(this.fullscreenButton);
 
+    // 文档属性与页面布局都收进“更多”菜单，工具栏只保留高频操作。
     const moreGroup = this.createGroup('toolbar.groupDocument');
-    // 文档属性作为常驻信息入口，不再隐藏在“更多”菜单中。
-    const properties = this.createButton(
-      'document-properties',
-      'info',
-      'toolbar.documentProperties',
-      'documentProperties',
-    );
-    properties.addEventListener('click', () => {
-      this.options.onCommand({ type: 'document.properties' });
-    });
-    moreGroup.appendChild(properties);
-
     const moreContainer = this.element.ownerDocument.createElement('div');
     moreContainer.className = 'ofd-toolbar__item ofd-toolbar__item--more';
     const moreButton = this.element.ownerDocument.createElement('button');

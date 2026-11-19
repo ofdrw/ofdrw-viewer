@@ -35,6 +35,85 @@ export const DEFAULT_PAGE_PADDING = 24;
  */
 export const SCROLL_TOP_TOLERANCE = 1;
 
+/**
+ * 滚动方向：决定页面之间如何衔接。
+ *
+ * - `page`（页面滚动）：页与页上下衔接，纵向连续滚动，一列到底；
+ * - `horizontal`（水平滚动）：页与页左右衔接，横向单行，一页接一页向右滑动。
+ */
+export type ScrollDirection = 'page' | 'horizontal';
+
+/**
+ * 视图模式：决定一次“滚动/翻页”推进多少页。
+ *
+ * - `single`（单页）：一次推进一页；
+ * - `spread`（双页）：一次推进一组两页，两页之间保留间隔，整组作为一个整体缩放。
+ *
+ * 默认是 `single` + `page`（单页纵向滚动）。
+ */
+export type ViewMode = 'single' | 'spread';
+
+/**
+ * 阅读器版式配置（滚动方式与视图模式两个正交维度）。
+ */
+export interface LayoutConfig {
+  /** 滚动方向；默认 `page`（纵向）。 */
+  readonly direction: ScrollDirection;
+  /** 视图模式；默认 `single`（单页）。 */
+  readonly viewMode: ViewMode;
+}
+
+/** 默版式：单页 + 纵向滚动。 */
+export const DEFAULT_LAYOUT: LayoutConfig = Object.freeze({
+  direction: 'page',
+  viewMode: 'single',
+});
+
+/** 双页模式下两页之间的间隔，单位 px。 */
+export const SPREAD_GUTTER = 16;
+
+/**
+ * 把 GB/T 33190-2016 表 9 的 `PageLayout` 取值换算为版式配置。
+ *
+ * 阅读器只有“单页/双页 × 纵向/横向”两种维度，因此：
+ * - `OneColumn` → 单页 + 纵向；`OnePage` → 单页 + 横向（一屏一页，左右切换）；
+ * - `TwoColumnL/R` → 双页 + 纵向；`TwoPageL/R` → 双页 + 横向。
+ *
+ * @param value 文档声明的 `PageLayout` 取值。
+ * @returns 版式配置；未声明或非法时 undefined。
+ */
+export function layoutConfigFromPageLayout(
+  value: string | undefined,
+): LayoutConfig | undefined {
+  switch (value) {
+    case 'OneColumn':
+      return { direction: 'page', viewMode: 'single' };
+    case 'OnePage':
+      return { direction: 'horizontal', viewMode: 'single' };
+    case 'TwoColumnL':
+    case 'TwoColumnR':
+      return { direction: 'page', viewMode: 'spread' };
+    case 'TwoPageL':
+    case 'TwoPageR':
+      return { direction: 'horizontal', viewMode: 'spread' };
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * 规范化版式配置；非法值回落到默认值。
+ *
+ * @param config 部分版式配置。
+ * @returns 完整版式配置。
+ */
+export function resolveLayoutConfig(config: Partial<LayoutConfig> | undefined): LayoutConfig {
+  const direction =
+    config?.direction === 'horizontal' ? 'horizontal' : ('page' as ScrollDirection);
+  const viewMode = config?.viewMode === 'spread' ? 'spread' : ('single' as ViewMode);
+  return { direction, viewMode };
+}
+
 /** 默认 A4 页宽，单位 mm。 */
 export const A4_WIDTH_MM = 210;
 
@@ -91,6 +170,8 @@ export interface PageLayoutOptions {
   readonly gap?: number;
   /** 首尾留白，单位 px；默认 24。 */
   readonly padding?: number;
+  /** 版式配置（滚动方向 + 视图模式）；默认单页 + 纵向滚动。 */
+  readonly layout?: Partial<LayoutConfig>;
   /**
    * 设备像素比，默认 1。
    *
@@ -149,6 +230,10 @@ export class PageLayout {
   private previousWidth = 0;
   /** 设备像素比；页盒尺寸按它取整到设备像素网格。 */
   private devicePixelRatio = 1;
+  /** 版式配置。 */
+  private layoutConfig: LayoutConfig;
+  /** 当前列数：单页 1、双页 2。 */
+  private columnCount = 1;
 
   /**
    * @param options 页信息与初始缩放/旋转。
@@ -161,6 +246,7 @@ export class PageLayout {
     this.gapPx = Math.max(0, options.gap ?? DEFAULT_PAGE_GAP);
     this.paddingPx = Math.max(0, options.padding ?? DEFAULT_PAGE_PADDING);
     this.devicePixelRatio = normalizeDevicePixelRatio(options.devicePixelRatio);
+    this.layoutConfig = resolveLayoutConfig(options.layout);
     this.rebuild();
   }
 
@@ -228,7 +314,22 @@ export class PageLayout {
    * @returns 内容左缘相对可视区左缘的偏移，单位 px；不小于 0。
    */
   centeredOffset(viewportWidth: number): number {
-    return this.snapToDevicePixel(Math.max(0, (viewportWidth - this.width) / 2));
+    const contentWidth =
+      this.horizontal && this.viewportSize.width > 0
+        ? Math.max(this.width, this.viewportSize.width)
+        : this.width;
+    return this.snapToDevicePixel(Math.max(0, (viewportWidth - contentWidth) / 2));
+  }
+
+  /**
+   * 横向滚动时整组在视口中垂直居中所需的偏移，单位 px。
+   *
+   * 横向滚动只有一行，页面比视口矮时贴顶部会显得头上重下轻；这里给出让该行内容
+   * 垂直居中的顶部偏移（内容高于视口时为 0）。
+   */
+  verticalCenteredOffset(viewportHeight: number): number {
+    if (!this.horizontal || viewportHeight <= 0) return 0;
+    return this.snapToDevicePixel(Math.max(0, (viewportHeight - this.height) / 2));
   }
 
   /**
@@ -391,6 +492,39 @@ export class PageLayout {
   }
 
   /**
+   * 计算“最近一组”的首页索引。
+   *
+   * 双页模式下一组两页共享同一位置，普通命中只能得到组内首列，因此这里按组定位。
+   *
+   * @param offset 沿滚动方向的坐标，单位 px。
+   * @param viewportExtent 视口在滚动方向上的长度，单位 px；大于 0 时按“重叠最多”的组判定。
+   * @returns 组的首页索引，0-based；无页时 0。
+   */
+  groupStartAtOffset(offset: number, viewportExtent = 0): number {
+    if (this.boxes.length === 0) return 0;
+    const pageIndex = this.getPageAtOffset(offset);
+    const rowStart = this.groupRangeOf(pageIndex).start;
+    if (viewportExtent <= 0) return rowStart;
+    // 视角落在两组交界时以“与视口重叠最多”的组为准；只看命中组会把刚滚到下一组
+    // 的情况判成上一组。
+    const top = Math.max(0, offset);
+    const bottom = top + viewportExtent;
+    let best = rowStart;
+    let bestOverlap = -1;
+    for (let index = 0; index < this.boxes.length; index += this.columnCount) {
+      const box = this.boxes[index]!;
+      const start = this.horizontal ? box.left : box.top;
+      const extent = this.horizontal ? box.width : box.height;
+      const overlap = Math.min(bottom, start + extent) - Math.max(top, start);
+      if (overlap > bestOverlap) {
+        bestOverlap = overlap;
+        best = index;
+      }
+    }
+    return best;
+  }
+
+  /**
    * 计算可见页范围。
    *
    * @param scrollTop 主区域滚动位置，单位 px。
@@ -399,21 +533,73 @@ export class PageLayout {
    * @returns 0-based 闭区间；无页时 `end < start`。
    */
   getVisibleRange(scrollTop: number, viewportHeight: number, overscan = 0): VisiblePageRange {
+    return this.visibleRangeIn(scrollTop, viewportHeight, overscan, false);
+  }
+
+  /**
+   * 计算可见页范围（沿当前滚动方向）。
+   *
+   * 纵向滚动按 `top`/高度判定、横向滚动按 `left`/宽度判定：横向布局下所有页 top 相同，
+   * 若仍按纵向判定会把全部页都算作可见，导致文本层与图层被全量构建。
+   *
+   * @param position 沿滚动方向的滚动位置，单位 px。
+   * @param extent 视口在滚动方向上的长度，单位 px。
+   * @param overscan 前后额外扩展页数；默认 0。
+   * @returns 0-based 闭区间；无页时 `end < start`。
+   */
+  getVisibleRangeAlong(
+    position: number,
+    extent: number,
+    overscan = 0,
+  ): VisiblePageRange {
+    return this.visibleRangeIn(position, extent, overscan, true);
+  }
+
+  /**
+   * 可见页范围的统一实现。
+   *
+   * @param position 沿滚动方向的滚动位置，单位 px。
+   * @param extent 视口在滚动方向上的长度，单位 px。
+   * @param overscan 额外扩展页数。
+   * @param along 是否按当前布局的滚动方向（否则强制按纵向）。
+   * @returns 0-based 闭区间。
+   */
+  private visibleRangeIn(
+    position: number,
+    extent: number,
+    overscan: number,
+    along: boolean,
+  ): VisiblePageRange {
     if (this.boxes.length === 0) return { start: 0, end: -1 };
-    const top = Math.max(0, scrollTop);
-    const bottom = top + Math.max(0, viewportHeight);
-    const startIndex = this.getPageAtOffset(top);
-    let endIndex = startIndex;
-    while (
-      endIndex + 1 < this.boxes.length &&
-      this.boxes[endIndex + 1]!.top < bottom
-    ) {
-      endIndex += 1;
+    const byAxis = along && this.horizontal;
+    const startOf = (index: number): number =>
+      byAxis ? this.boxes[index]!.left : this.boxes[index]!.top;
+    const sizeOf = (index: number): number =>
+      byAxis ? this.boxes[index]!.width : this.boxes[index]!.height;
+    const start = Math.max(0, position);
+    const end = start + Math.max(0, extent);
+    // 首个与区间相交的页：按起点排序后用线性扫描（页数有限且常驻可见范围很小）。
+    let first = -1;
+    for (let index = 0; index < this.boxes.length; index += 1) {
+      const boxStart = startOf(index);
+      if (boxStart + sizeOf(index) > start && boxStart < end) {
+        first = index;
+        break;
+      }
+    }
+    if (first === -1) {
+      // 落在全部页之后：取最后一页。
+      return { start: this.boxes.length - 1, end: this.boxes.length - 1 };
+    }
+    let last = first;
+    for (let index = first + 1; index < this.boxes.length; index += 1) {
+      if (startOf(index) >= end) break;
+      last = index;
     }
     const extra = Math.max(0, Math.trunc(overscan));
     return {
-      start: Math.max(0, startIndex - extra),
-      end: Math.min(this.boxes.length - 1, endIndex + extra),
+      start: Math.max(0, first - extra),
+      end: Math.min(this.boxes.length - 1, last + extra),
     };
   }
 
@@ -537,39 +723,215 @@ export class PageLayout {
     return Math.min(Math.max(0, Math.trunc(pageNumber) - 1), this.boxes.length - 1);
   }
 
-  /** 重建页盒与偏移。 */
+  /** 当前版式配置。 */
+  get layout(): LayoutConfig {
+    return this.layoutConfig;
+  }
+
+  /** 当前滚动方向：纵向衔接（`page`）或横向衔接（`horizontal`）。 */
+  get direction(): ScrollDirection {
+    return this.layoutConfig.direction;
+  }
+
+  /** 当前视图模式：单页或双页。 */
+  get viewMode(): ViewMode {
+    return this.layoutConfig.viewMode;
+  }
+
+  /** 是否双页模式（两页一组，组间与组内均有间隔）。 */
+  get spread(): boolean {
+    return this.layoutConfig.viewMode === 'spread';
+  }
+
+  /** 是否横向滚动（单行、左右衔接）。 */
+  get horizontal(): boolean {
+    return this.layoutConfig.direction === 'horizontal';
+  }
+
+  /** 当前布局的列数：单页 1、双页 2。 */
+  get columns(): number {
+    return this.columnCount;
+  }
+
+  /** 一组包含的页数：单页 1、双页 2。 */
+  get groupSize(): number {
+    return this.columnCount;
+  }
+
+  /**
+   * 设置版式配置并重建排版。
+   *
+   * @param layout 目标版式（可只给一个维度，另一维度保持不变）。
+   */
+  setLayout(layout: Partial<LayoutConfig>): void {
+    const next = resolveLayoutConfig({ ...this.layoutConfig, ...layout });
+    if (next.direction === this.layoutConfig.direction && next.viewMode === this.layoutConfig.viewMode) {
+      return;
+    }
+    this.layoutConfig = next;
+    this.rebuild();
+  }
+
+  /**
+   * 上次已知的视口尺寸，单位 px。
+   *
+   * 用于给滚动内容末端补足“一屏”留白：只有补足后，最后一组才能滚动到与中间组相同
+   * 的位置（贴齐视口起点），否则滚动到底时末端被夹住，吸附又把它拉回组起点，表现为
+   * “被弹回、无法继续滚动”。
+   */
+  private viewportSize = { width: 0, height: 0 };
+
+  /**
+   * 更新滚动视口尺寸。
+   *
+   * @param width 视口宽，单位 px。
+   * @param height 视口高，单位 px。
+   */
+  setViewport(width: number, height: number): void {
+    const nextWidth = Math.max(0, Number.isFinite(width) ? width : 0);
+    const nextHeight = Math.max(0, Number.isFinite(height) ? height : 0);
+    if (nextWidth === this.viewportSize.width && nextHeight === this.viewportSize.height) return;
+    this.viewportSize = { width: nextWidth, height: nextHeight };
+    this.rebuild();
+  }
+
+  /** 组数：单页 1 页一组、双页 2 页一组。 */
+  get groupCount(): number {
+    if (this.boxes.length === 0) return 0;
+    return Math.ceil(this.boxes.length / this.columnCount);
+  }
+
+  /**
+   * 页索引所在分组的首末页索引。
+   *
+   * @param pageIndex 页索引，0-based。
+   * @returns 0-based 闭区间；无页时 `end < start`。
+   */
+  groupRangeOf(pageIndex: number): { readonly start: number; readonly end: number } {
+    if (this.boxes.length === 0) return { start: 0, end: -1 };
+    const count = Math.max(1, this.columnCount);
+    const index = Math.min(Math.max(0, Math.trunc(pageIndex)), this.boxes.length - 1);
+    const start = Math.floor(index / count) * count;
+    return { start, end: Math.min(this.boxes.length - 1, start + count - 1) };
+  }
+
+  /**
+   * 页索引所在分组的序号（单页即页序号，双页为 `floor(页索引 / 2)`）。
+   *
+   * 供翻页使用：双页一次翻两页、单页一次翻一页。
+   *
+   * @param pageIndex 页索引，0-based。
+   * @returns 组序号，0-based。
+   */
+  groupIndexOf(pageIndex: number): number {
+    const count = Math.max(1, this.columnCount);
+    return Math.floor(Math.max(0, Math.trunc(pageIndex)) / count);
+  }
+
+  /**
+   * 组在原点的位置（沿滚动方向的偏移）。
+   *
+   * @param groupIndex 组序号，0-based。
+   * @returns 偏移，单位 px；无内容时为留白。
+   */
+  groupOffset(groupIndex: number): number {
+    const box = this.boxes[groupIndex * this.columnCount];
+    if (!box) return this.paddingPx;
+    return this.horizontal ? box.left : box.top;
+  }
+
+  /**
+   * 重建页盒与偏移。
+   *
+   * 两个维度决定排布：
+   * - **滚动方向**：`page` 逐组向下堆叠（纵向连续），`horizontal` 逐组向右排开（单行横滑）；
+   * - **视图模式**：`single` 每组一页，`spread` 每组两页并排、组内保留间隔。
+   *
+   * 页盒尺寸始终按 `scale` 推导（与缩放模式一致），不做任何“按视口整体缩放”。
+   * 组内两页横向间隔为 {@link SPREAD_GUTTER}，组与组之间使用 `gap`。
+   */
   private rebuild(): void {
-    const boxes: PageBox[] = [];
-    let top = this.paddingPx;
-    const scale = this.currentScale;
-    // 记录重建前的页高：锚点里的“页内像素”是按旧布局量的，换回坐标时要按页高
-    // 等比换算（见 {@link offsetForContentPoint}）。
+    // 记录重建前的页高/内容宽度：锚点里的“页内像素”是按旧布局量的，换回坐标时要按
+    // 页高与内容宽度等比换算（见 {@link offsetForContentPoint} / {@link leftForContentPoint}）。
     this.previousHeights = this.boxes.map((box) => box.height);
     this.previousWidth = this.width;
+
+    const columns = this.spread ? 2 : 1;
+    this.columnCount = columns;
+    const horizontal = this.horizontal;
     const quarter = isQuarterTurn(this.currentRotation);
-    // 内容宽度取最宽页，窄页相对它居中（混排不同尺寸的页时不贴左边）。
-    let widest = 0;
-    let widestUnit = 0;
+    const scale = this.currentScale;
+
+    // 组内一行的宽高：双页时两页并排，行高取组内较高者。
+    const slots = measureSlots(this.infos, columns, quarter);
+    const rowWidth = slots.columnWidths.reduce((sum, value) => sum + value, 0);
+    const rowHeight = slots.rowHeight;
+    // 组沿滚动方向占据的长度：横向为整组宽度（含组内间隔），纵向为组高。
+    const groupAdvance =
+      columns > 1 && horizontal
+        ? rowWidth * scale + SPREAD_GUTTER * (columns - 1) * scale
+        : (horizontal ? rowWidth : rowHeight) * scale;
+
+    // 纵向单页的逐页顶部偏移（每页高度各自对齐设备像素后累加）。
+    const rowTops: number[] = [];
+    {
+      let cursor = this.paddingPx;
+      for (let index = 0; index < this.infos.length; index += 1) {
+        rowTops.push(cursor);
+        const { widthMm, heightMm } = normalizePageSize(this.infos[index]!);
+        const unitWidth = widthMm * MM_TO_CSS_PX;
+        const unitHeight = heightMm * MM_TO_CSS_PX;
+        cursor +=
+          this.snapToDevicePixel(scale * (quarter ? unitWidth : unitHeight)) + this.gapPx;
+      }
+    }
+
+    const boxes: PageBox[] = [];
     for (let index = 0; index < this.infos.length; index += 1) {
       const info = this.infos[index]!;
       const { widthMm, heightMm } = normalizePageSize(info);
-      // 与 pdf.js 一致：页宽高以 96 DPI 的“单位尺寸”为准，实际尺寸 = 单位尺寸 × 倍率；
-      // 缩放只改倍率，尺寸在每次取值时按倍率推导，避免“布局尺寸/视觉尺寸”两套坐标。
+      // 与 pdf.js 一致：页宽高以 96 DPI 的“单位尺寸”为准，实际尺寸 = 单位尺寸 × 倍率。
       const unitWidth = widthMm * MM_TO_CSS_PX;
       const unitHeight = heightMm * MM_TO_CSS_PX;
-      // 尺寸取整到设备像素网格：幅面恰好覆盖整数个物理像素，画布位图与屏幕像素一一对应，
-      // 整页不再落在半像素上（否则全页包括文字都会被重采样而均匀发虚）。
-      const width = this.snapToDevicePixel(quarter ? unitHeight * scale : unitWidth * scale);
-      const height = this.snapToDevicePixel(quarter ? unitWidth * scale : unitHeight * scale);
+      // 尺寸取整到设备像素网格：幅面恰好覆盖整数个物理像素，画布位图与屏幕像素一一对应。
+      const width = this.snapToDevicePixel(scale * (quarter ? unitHeight : unitWidth));
+      const height = this.snapToDevicePixel(scale * (quarter ? unitWidth : unitHeight));
       const surfaceWidth = quarter ? height : width;
       const surfaceHeight = quarter ? width : height;
-      widest = Math.max(widest, width);
-      widestUnit = Math.max(widestUnit, unitWidth);
+
+      const group = Math.floor(index / columns);
+      const column = index % columns;
+      // 组起点沿滚动方向累加：横向滚动按组宽向右，纵向滚动按组高向下。
+      // 组内第 2 页只在“横向”坐标上偏移（跳过第 1 页宽度 + 组内间隔），
+      // 沿滚动方向的坐标与组内第 1 页完全一致，保证同组两页落在同一行/列。
+      const groupOffset = group * (groupAdvance + this.gapPx);
+      let columnOffset = 0;
+      for (let slot = 0; slot < column; slot += 1) {
+        columnOffset += slots.columnWidths[slot]! * scale + SPREAD_GUTTER * scale;
+      }
+      // 横向坐标（left）与纵向坐标（top）：
+      // - 横向滚动：left = 留白 + 组起点 + 组内偏移，top = 留白 + 组内垂直居中；
+      // - 纵向滚动：top = 留白 + 组起点，left = 留白 + 组内偏移（单页居中由末段统一处理）。
+      const crossExtent = rowHeight * scale;
+      const crossOffset = columns > 1 ? Math.max(0, (crossExtent - height) / 2) : 0;
+      // 纵向单页按“逐页高度累加”定位：页高各自对齐设备像素，累计误差按页线性增长，
+      // 与历史行为一致；双页按组起点定位，保证同组两页严格同行。
+      const top = horizontal
+        ? this.paddingPx + crossOffset
+        : columns === 1
+          ? rowTops[index]!
+          : this.paddingPx + groupOffset;
+      const left = horizontal
+        ? this.paddingPx + groupOffset + columnOffset
+        : columns === 1
+          ? 0
+          : this.paddingPx + columnOffset;
+
       boxes.push({
         index,
         pageNumber: index + 1,
         top,
-        left: width,
+        left,
         width,
         height,
         surfaceWidth,
@@ -579,23 +941,53 @@ export class PageLayout {
         unitWidth,
         unitHeight,
       });
-      // 页高已对齐设备像素，页间距与留白为整数 px，纵向累加不会产生小数偏移。
-      top += height + this.gapPx;
     }
-    const total =
-      boxes.length === 0
-        ? this.paddingPx * 2
-        : top - this.gapPx + this.paddingPx;
-    this.height = Math.max(total, this.paddingPx * 2);
-    this.width = widest;
-    this.unitWidth = widestUnit;
-    this.maxUnitArea = boxes.reduce((area, box) => {
-      return Math.max(area, box.unitWidth * box.unitHeight);
-    }, 0);
-    // 与 pdf.js 的 `.page { margin: 0 auto }` 等价：每页相对内容左缘居中；内容整体比可视区
-    // 窄时的偏移由 {@link centeredOffset} 补。
-    for (const box of boxes) {
-      box.left = this.snapToDevicePixel((widest - box.width) / 2);
+
+    const groups = Math.max(0, Math.ceil(this.infos.length / columns));
+    // 最后一组沿滚动方向的实际长度（用于末端留白）。
+    const lastGroupBoxes = boxes.slice(Math.max(0, (groups - 1) * columns));
+    const lastGroupExtent = lastGroupBoxes.length === 0
+      ? 0
+      : horizontal
+        ? Math.max(...lastGroupBoxes.map((box) => box.left + box.width)) -
+          Math.min(...lastGroupBoxes.map((box) => box.left))
+        : Math.max(...lastGroupBoxes.map((box) => box.top + box.height)) -
+          Math.min(...lastGroupBoxes.map((box) => box.top));
+    const contentExtent =
+      groups === 0 ? 0 : groups * (groupAdvance + this.gapPx) - this.gapPx;
+    const widest = boxes.length > 0 ? Math.max(...boxes.map((box) => box.width)) : 0;
+    // 纵向双页：内容宽度 = 整组右缘（组内坐标已含左侧留白）+ 右侧留白。
+    // 居中偏移用 `centeredOffset()` 按该宽度补足，保证左右留白相等。
+    const widestGroupWidth = boxes.length === 0
+      ? 0
+      : Math.max(...boxes.map((box) => box.left + box.width)) + this.paddingPx;
+    const tallest = boxes.length > 0 ? Math.max(...boxes.map((box) => box.height)) : 0;
+    // 末端补足一屏留白：分页/双页布局下每组应能滚到“贴齐视口起点”，否则最后一组
+    // 被滚动范围夹住、无法对齐（吸附会把它拉回组起点，表现为弹回）。
+    const tail = (extent: number): number =>
+      extent > 0 ? Math.max(this.paddingPx, extent - lastGroupExtent) : this.paddingPx;
+    this.height = Math.max(
+      horizontal
+        ? this.paddingPx * 2 + tallest
+        : this.paddingPx + contentExtent + tail(this.viewportSize.height),
+      this.paddingPx * 2,
+    );
+    this.width = Math.max(
+      horizontal
+        ? this.paddingPx + contentExtent + tail(this.viewportSize.width)
+        : // 纵向滚动：单页取最宽页；双页取整组宽度（两页 + 组内间隔），否则居中偏移
+          // 会按单页宽度计算，导致整组偏左。
+          (widestGroupWidth ?? widest),
+      this.paddingPx * 2,
+    );
+    this.unitWidth = slots.widestUnitWidth;
+    this.maxUnitArea = boxes.reduce(
+      (area, box) => Math.max(area, box.unitWidth * box.unitHeight),
+      0,
+    );
+    // 单页纵向：与 pdf.js 的 `.page { margin: 0 auto }` 等价，每页相对内容左缘居中。
+    if (columns === 1 && !horizontal) {
+      for (const box of boxes) box.left = this.snapToDevicePixel((this.width - box.width) / 2);
     }
     this.boxes = boxes;
   }
@@ -656,6 +1048,50 @@ export function scrollTopForZoomAnchor(
   nextOffset: number,
 ): number {
   return nextOffset - (offsetBefore - scrollTop) * ratio;
+}
+
+/**
+ * 计算布局槽位：每列宽度、行高与最宽页单位宽度。
+ *
+ * 列宽取该列所有页的最大宽度（双页时两列独立），行高取全表最高页，使双页的两页
+ * 在组内对齐。尺寸单位为 96 DPI CSS 像素（不含缩放倍率）。
+ *
+ * @param infos 页信息，按索引升序。
+ * @param columnCount 列数：单页 1、双页 2。
+ * @param quarter 是否 90/270 旋转（交换宽高）。
+ * @returns 列宽数组、行高与最宽页的单位宽度。
+ */
+function measureSlots(
+  infos: readonly PageInfo[],
+  columnCount: number,
+  quarter: boolean,
+): {
+  readonly columnWidths: number[];
+  readonly rowHeight: number;
+  readonly widestUnitWidth: number;
+} {
+  const columnWidths: number[] = new Array<number>(columnCount).fill(0);
+  let rowHeight = 0;
+  let widestUnitWidth = 0;
+  for (let index = 0; index < infos.length; index += 1) {
+    const { widthMm, heightMm } = normalizePageSize(infos[index]!);
+    const unitWidth = widthMm * MM_TO_CSS_PX;
+    const unitHeight = heightMm * MM_TO_CSS_PX;
+    const slotWidth = quarter ? unitHeight : unitWidth;
+    const slotHeight = quarter ? unitWidth : unitHeight;
+    const column = index % columnCount;
+    columnWidths[column] = Math.max(columnWidths[column]!, slotWidth);
+    rowHeight = Math.max(rowHeight, slotHeight);
+    widestUnitWidth = Math.max(widestUnitWidth, unitWidth);
+  }
+  if (infos.length === 0) {
+    return {
+      columnWidths,
+      rowHeight: A4_HEIGHT_MM * MM_TO_CSS_PX,
+      widestUnitWidth: 0,
+    };
+  }
+  return { columnWidths, rowHeight, widestUnitWidth };
 }
 
 /**

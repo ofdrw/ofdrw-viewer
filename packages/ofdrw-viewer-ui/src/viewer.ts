@@ -12,6 +12,7 @@ import type {
   ActionInfo,
   AnnotationType,
   DocumentFontResource,
+  DocumentMetadata,
   DocumentPermissions,
   DocumentOpenAbortEvent,
   DocumentOpenErrorEvent,
@@ -78,8 +79,19 @@ import { probeAnnotationTypesForPage } from './layers/annotation-probe';
 import { createTranslator, type MessageKey, type Translator } from './i18n';
 import { KeyboardController } from './keyboard';
 import {
+  declarationSourceOf,
+  declarationSourceOfContainer,
+  readDocumentDeclarations,
+  resolveDocumentPolicy,
+  type DeclarationSource,
+  type DocumentDeclarations,
+  type ResolvedDocumentPolicy,
+} from './document/declarations';
+import { resolvePermissionEffects, type PermissionEffects } from './document/view-preferences';
+import {
   DEFAULT_MOBILE_RENDER_CONCURRENCY,
   DEFAULT_RENDER_CONCURRENCY,
+  DEFAULT_INITIAL_SCALE,
   MAX_CANVAS_BASE_DPR,
   MAX_SCALE,
   MIN_SCALE,
@@ -98,7 +110,11 @@ import {
 import {
   DEFAULT_PAGE_GAP,
   DEFAULT_PAGE_PADDING,
+  MM_TO_CSS_PX,
   PageLayout,
+  layoutConfigFromPageLayout,
+  resolveLayoutConfig,
+  type LayoutConfig,
   scrollTopForZoomAnchor,
   type ContentPoint,
   type PageBox,
@@ -108,6 +124,7 @@ import { PageView } from './page-view';
 import { RenderQueue, type RenderQueueStats } from './render-queue';
 import {
   createInitialViewerState,
+  type DocumentPolicyState,
   type FindState,
   type Rotation,
   type ScaleValue,
@@ -354,6 +371,21 @@ const activeViewers = new Set<OFDViewer>();
 /** 浮点页顶的舍入容差，避免整数页顶因浮点误差多进 1px。单位：px。 */
 const SCROLL_TOP_EPSILON = 1e-6;
 
+/**
+ * 单页/对开模式滚动吸附的等待时长，单位毫秒。
+ *
+ * 滚动事件连续触发时不断重置，直到用户停顿该时长后才吸附到整组，避免打断惯性滚动。
+ */
+const SNAP_DELAY_MS = 120;
+
+/**
+ * 吸附容差，单位 px。
+ *
+ * 滚动位置与组边界相差不超过该值时视为已对齐，不再写入滚动位置；避免“写入 → scroll
+ * 事件 → 再次吸附”的回环造成画面闪烁。
+ */
+const SNAP_TOLERANCE = 2;
+
 /** 平滑滚动的最短时长，单位：毫秒。 */
 export const MIN_SMOOTH_SCROLL_MS = 150;
 
@@ -399,6 +431,34 @@ function resolveSmoothScrollDuration(durationMs: number | undefined, distance: n
   const derived = MIN_SMOOTH_SCROLL_MS + ratio * span;
   if (typeof durationMs !== 'number' || !Number.isFinite(durationMs)) return Math.round(derived);
   return Math.round(Math.min(MAX_SMOOTH_SCROLL_MS, Math.max(MIN_SMOOTH_SCROLL_MS, durationMs)));
+}
+
+/**
+ * 把已解析的文档策略投影为公开状态。
+ *
+ * @param policy 已解析的文档策略。
+ * @returns 状态快照；策略为空时 undefined。
+ */
+function toDocumentPolicyState(
+  policy: ResolvedDocumentPolicy | null,
+): DocumentPolicyState | undefined {
+  if (!policy) return undefined;
+  const intents = policy.intents;
+  return {
+    viewPreferencesApplied: policy.applyViewPreferences && policy.viewPreferences !== undefined,
+    hideToolbar: intents.hideToolbar === true,
+    hideWindowUI: intents.hideWindowUI === true,
+    documentTitle: intents.useDocumentTitle === true,
+    ...(policy.viewPreferences ? { viewPreferences: policy.viewPreferences } : {}),
+    printBlocked: policy.applyPermissions && policy.permissionEffects.printBlocked,
+    ...(policy.applyPermissions && policy.permissionEffects.printCopies !== undefined
+      ? { printCopies: policy.permissionEffects.printCopies }
+      : {}),
+    allowCopy: !policy.applyPermissions || policy.permissionEffects.allowCopy,
+    allowSignature: !policy.applyPermissions || policy.permissionEffects.allowSignature,
+    allowWatermark: !policy.applyPermissions || policy.permissionEffects.allowWatermark,
+    expired: policy.applyPermissions && policy.permissionEffects.expired,
+  };
 }
 
 /** 判断是否为 PromiseLike。 */
@@ -610,6 +670,23 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private activeHttpSource: HttpByteSource | null = null;
   /** 最近一次打开准备结果；用于自动验证与错误映射。 */
   private cryptoPreparation: CryptoOpenPreparation | null = null;
+  /**
+   * 当前文档声明（Document.xml 的视图首选项与权限）；未读取时为 null。
+   *
+   * 由 `applyAvailability()` 在打开流程中读取一次并缓存，重新打开时清空。
+   */
+  private documentDeclarations: DocumentDeclarations | null = null;
+  /**
+   * 当前文档声明的生效结果；未打开或未读取时为 null。
+   *
+   * 由 `applyAvailability()` 填充，`loadSideData()` 读取元数据后按 `TabDisplay`
+   * 可能再更新一次标题。
+   */
+  private documentPolicy: ResolvedDocumentPolicy | null = null;
+  /** 当前文档标题是否已按 `TabDisplay=DocTitle` 应用。 */
+  private appliedDocumentTitle = false;
+  /** 单页/对开模式下滚动吸附的定时器句柄；无待处理时为 null。 */
+  private snapTimer: number | null = null;
   /** 本地字体状态订阅者（`onLocalFontsStatusChange`）。 */
   private readonly localFontsListeners = new Set<(status: LocalFontsStatus) => void>();
   /** 当前权限态；`prompt` 表示尚未申请或已被浏览器重置（C12：不缓存否定结果）。 */
@@ -860,6 +937,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       gap: DEFAULT_PAGE_GAP,
       padding: DEFAULT_PAGE_PADDING,
       devicePixelRatio: this.devicePixelRatio(),
+      layout: this.options.layout,
     });
     this.layerOverrides = new PageLayerOverrides(this.options.layerPanel.defaultVisibility);
     this.state = createInitialViewerState({
@@ -868,6 +946,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       zoomMode: initialZoomMode,
       rotation: this.options.rotation,
       sidebarView: this.options.sidebar,
+      layout: this.options.layout,
       theme: this.options.theme,
       locale: this.options.locale,
       features: this.featureGate.getStates(),
@@ -1642,6 +1721,8 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     // 使 `getState().ui.warnings` 只反映当前这次打开（含本机字体切换后的重开）。
     this.diagnostics.reset();
     this.patchUI({ warnings: [] });
+    this.documentDeclarations = null;
+    this.documentPolicy = null;
     this.queue.cancelAll();
     const hasPreviousDocument = this.state.document.status === 'ready';
     this.patchDocument({ status: 'opening', source: null, origin: undefined });
@@ -1708,6 +1789,13 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         httpSource = null;
       }
       this.cryptoService.setTarget(toVerificationTarget(preparation));
+      // 文档声明（VPreferences/Permissions）。加密路径复用宿主持有的明文容器（此时仍
+      // 未关闭）；内存来源重新打开容器读取。失败只降级为“无声明”。
+      this.documentDeclarations = await readDocumentDeclarations(
+        this.declarationSourceFor(preparation),
+        { onWarning: (message) => this.warn(UI_WARNING_CODES.W_DOCUMENT_DECLARATIONS, message) },
+      ).catch(() => ({}));
+
       const infos = await this.controller.getPageInfos();
       if (token !== this.openToken || abort.signal.aborted) throw createAbortError();
       this.pageInfos = infos;
@@ -1722,23 +1810,24 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         status: 'ready',
         signaturesSummary: [],
       });
+      this.applyDocumentPolicy();
+      this.applyDocumentLayout();
       const initialIndex = this.layout.indexOfPageNumber(this.options.initialPage);
+      // 声明已就绪：宿主显式配置优先，文档要求覆盖默认初始视图。
+      const initialView = this.resolveInitialView();
       const initialScale =
-        typeof this.options.initialScale === 'number'
-          ? clampScale(this.options.initialScale)
-          : this.layout.scaleForMode(
-              this.options.initialScale,
-              this.measureViewport(),
-              initialIndex,
-            );
+        typeof initialView.scale === 'number'
+          ? clampScale(initialView.scale)
+          : this.layout.scaleForMode(initialView.scale, this.measureViewport(), initialIndex);
       const initialMode: ZoomMode =
-        typeof this.options.initialScale === 'string' ? this.options.initialScale : 'page-actual';
+        typeof initialView.scale === 'string' ? initialView.scale : 'page-actual';
       this.layout.setZoom(initialScale, initialMode);
       this.patchView({
         pageNumber: initialIndex + 1,
         scale: initialScale,
         zoomMode: initialMode,
         rotation: this.options.rotation,
+        sidebarView: initialView.sidebar,
       });
       this.reflow();
       this.scrollToPageInternal(initialIndex, { smooth: false });
@@ -1753,6 +1842,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       this.renderVisible(true);
       void this.loadSideData(token);
       this.syncHash();
+      this.applyDeclaredFullscreen();
       this.maybeAutoVerify();
       // 首次打开时声明未知，读到这里才知道是否要用本机字体。需要时在本轮收尾处补一次
       // 重开：重开会重建字节源（两次打开不能共享同一个已关闭的源），并恢复阅读位置。
@@ -2079,7 +2169,12 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   }
 
   /** 销毁阅读器，释放 DOM、渲染任务、监听与扩展。 */
+  /** 释放事件与 DOM。 */
   destroy(): void {
+    if (this.snapTimer !== null) {
+      clearTimeout(this.snapTimer);
+      this.snapTimer = null;
+    }
     if (this.disposed) return;
     this.disposed = true;
     this.openToken += 1;
@@ -2139,24 +2234,36 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.assertOpen();
     const index = this.toIndex(pageNumber);
     this.scrollToPageInternal(index, options);
+    // `scrollToPageInternal()` 末尾的滚动状态刷新会按滚动位置重算页码；分组布局下
+    // 滚动位置与目标页码可能不在同一行判定内，这里显式回写目标页。
     this.patchView({ pageNumber: index + 1 });
     this.commit();
     this.renderVisible();
     this.syncHash();
   }
 
-  /** 下一页。 */
+  /**
+   * 下一页；单页/对开模式下按“一屏/一组”翻页（对开一次翻两页）。
+   */
   nextPage(): void {
     this.assertFeature('pageNavigation');
-    const next = this.state.view.pageNumber + 1;
+    const current = this.state.view.pageNumber;
+    // 对开/单页按组翻页：取“当前组序号 + 1”的首个页索引。
+    const next = (this.layout.groupIndexOf(current - 1) + 1) * this.layout.columns + 1;
     if (next <= this.state.document.pageCount) this.goToPage(next);
   }
 
-  /** 上一页。 */
+  /**
+   * 上一页；单页/对开模式下按“一屏/一组”翻页。
+   */
   previousPage(): void {
     this.assertFeature('pageNavigation');
-    const previous = this.state.view.pageNumber - 1;
-    if (previous >= 1) this.goToPage(previous);
+    const current = this.state.view.pageNumber;
+    // 当前组的首页；上一组 = 该组首页的前一页所在组。
+    const start = this.layout.groupRangeOf(current - 1).start;
+    if (start <= 0) return;
+    const previous = this.layout.groupRangeOf(start - 1).start;
+    this.goToPage(previous + 1);
   }
 
   /** 第一页。 */
@@ -2237,6 +2344,36 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /** 顺时针旋转 90°。 */
   rotateClockwise(): void {
     this.setRotation(((this.state.view.rotation + 90) % 360) as Rotation);
+  }
+
+  /**
+   * 切换版式（滚动方向 / 视图模式）并保持阅读位置。
+   *
+   * 可只给一个维度，另一维度保持不变。切换后滚动到当前页所在组的起点，重新排版并渲染。
+   *
+   * @param layout 目标版式（部分字段）。
+   */
+  setLayout(layout: Partial<LayoutConfig>): void {
+    this.assertOpen();
+    const previous = this.layout.layout;
+    const next = resolveLayoutConfig({ ...previous, ...layout });
+    if (next.direction === previous.direction && next.viewMode === previous.viewMode) return;
+    const index = this.toIndex(this.state.view.pageNumber);
+    this.layout.setLayout(next);
+    // 版式变化会改变页盒坐标与滚动轴，必须重新落位并刷新 `data-scroll`。
+    this.patchView({ layout: this.layout.layout });
+    this.reflow();
+    this.scrollToPageInternal(index, { smooth: false });
+    this.patchView({ pageNumber: this.layout.groupRangeOf(index).start + 1 });
+    this.commit();
+    this.renderVisible(true);
+    this.syncHash();
+    this.emit('layoutchange', { layout: this.layout.layout, previous });
+  }
+
+  /** 当前版式。 */
+  getLayout(): LayoutConfig {
+    return this.layout.layout;
   }
 
   /** 逆时针旋转 90°。 */
@@ -2964,9 +3101,21 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     return this.services.find?.getSelectedText?.() ?? this.state.view.selectedText;
   }
 
+  /**
+   * 断言文档允许复制文本（`Permissions/PrintScreen=false` 时拒绝）。
+   *
+   * @throws {OFDViewerError} 文档禁止复制时抛 `OFD_FEATURE_DISABLED`。
+   */
+  assertCopyAllowed(): void {
+    if (!this.declaredPermissionEffects().allowCopy) {
+      throw createFeatureDisabledError('selection', '当前文档不允许复制文本');
+    }
+  }
+
   /** 复制当前选区。 */
   async copySelection(): Promise<void> {
     this.assertFeature('selection');
+    this.assertCopyAllowed();
     const service = this.services.find;
     if (service?.copySelection) {
       await service.copySelection();
@@ -3457,18 +3606,24 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   private reflow(anchor?: ScrollAnchor): void {
     // 排版变化会让原目标偏移失效，平滑滚动必须先中断。
     this.cancelSmoothScroll();
+    const viewport = this.measureViewport();
+    // 先把视口尺寸交给排版：末端留白与横向居中都依赖它，重建后页盒才是最终坐标。
+    this.layout.setViewport(viewport.width, viewport.height);
     const boxes = this.layout.getBoxes();
-    this.pagesElement.style.height = `${Math.max(0, this.layout.totalHeight)}px`;
-    // 内容比可视区窄时页面水平居中：偏移按当前可视宽度算出并逐页写入左缘；内容比可视区
-    // 宽时为 0，此时能看到哪一段由横向滚动位置决定。
+    const horizontal = this.horizontalLayout;
+    // CSS 按 `data-scroll` 切换主区域的滚动轴（纵向 auto / 横向 x）。
+    this.root.dataset.scroll = horizontal ? 'horizontal' : 'vertical';
     const viewportWidth = this.viewportWidth();
-    const offsetLeft = this.layout.centeredOffset(viewportWidth);
-    // 页盒是绝对定位，不参与容器的尺寸计算；容器宽度必须显式写出，否则会收缩到 0，
-    // 横向滚动范围与内容宽度对不上。内容窄于可视区时取可视宽度，避免多出 15px 的
-    // 滚动条槽位撑出无意义的横向滚动。
+    // 页盒绝对定位，不参与容器尺寸计算：两个方向都必须显式写出内容尺寸，否则滚动范围
+    // 与内容对不上。沿滚动方向取内容尺寸（排版已按视口补足末端留白，保证最后一组能
+    // 贴齐视口起点）；另一方向取内容自身的最大尺寸。
     this.pagesElement.style.width = `${this.layout.snapToDevicePixel(
-      Math.max(this.layout.totalWidth, viewportWidth),
+      Math.max(this.layout.totalWidth, horizontal ? 0 : viewportWidth),
     )}px`;
+    this.pagesElement.style.height = `${Math.max(0, this.layout.totalHeight)}px`;
+    // 居中偏移：内容窄于视口时整体居中（纵向水平居中、横向垂直居中），否则为 0。
+    const offsetLeft = horizontal ? this.layout.centeredOffset(viewportWidth) : this.layout.centeredOffset(viewportWidth);
+    const offsetTop = horizontal ? this.layout.verticalCenteredOffset(viewport.height) : 0;
     const devicePixelRatio = this.devicePixelRatio();
     for (let index = 0; index < this.pageViews.length; index += 1) {
       const box = boxes[index];
@@ -3478,17 +3633,47 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
         rotation: this.state.view.rotation,
         scale: this.state.view.scale,
         offsetLeft,
+        ...(offsetTop > 0 ? { offsetTop } : {}),
         devicePixelRatio,
       });
     }
     if (anchor) {
-      this.mainScrollTop = this.layout.getOffsetForAnchor(anchor);
+      this.mainScrollPos = this.layout.getOffsetForAnchor(anchor);
     }
     // 纸面尺寸与布局倍率刚写入，同步刷新文字层与查找高亮层：二者的布局框按“纸面尺寸
     // / 布局倍率”换算、再以 scale 放大，必须与 canvas 在同一次样式计算里完成，否则
     // 文字层会晚画布一帧，缩放提交瞬间出现文字错位闪动。
     this.services.textLayer?.refresh?.();
     this.scheduleScrollUpdate();
+  }
+
+  /** 是否横向滚动（页与页左右衔接）。 */
+  private get horizontalLayout(): boolean {
+    return this.layout.layout.direction === 'horizontal';
+  }
+
+  /**
+   * 沿滚动方向的滚动位置：纵向模式取 `scrollTop`，横向模式取 `scrollLeft`。
+   *
+   * 布局、翻页与吸附都以“沿滚动方向”的坐标计算，两种滚动方式共用同一套逻辑。
+   */
+  private get mainScrollPos(): number {
+    return this.horizontalLayout ? this.elements.main.scrollLeft : this.mainScrollTop;
+  }
+
+  /** 写入沿滚动方向的滚动位置（整数像素，负值钳到 0）。 */
+  private set mainScrollPos(value: number) {
+    if (!this.horizontalLayout) {
+      this.mainScrollTop = value;
+      return;
+    }
+    this.elements.main.scrollLeft = Math.max(0, Math.ceil(value - SCROLL_TOP_EPSILON));
+  }
+
+  /** 视口在滚动方向上的长度，单位 px。 */
+  private viewportExtent(): number {
+    const viewport = this.measureViewport();
+    return this.horizontalLayout ? viewport.width : viewport.height;
   }
 
   /** 主区域滚动位置。 */
@@ -3699,7 +3884,19 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   ): void {
     const offset = options.offsetPx;
     const usable = typeof offset === 'number' && Number.isFinite(offset) ? offset : 0;
-    this.scrollToOffsetInternal(this.layout.getPageTop(index) + usable, options);
+    // 落到“一组”的起点（组内各页沿滚动方向位置一致），保证整组可见。
+    // 位置无变化时（例如双页第 2 页与第 1 页同组）仍需刷新可见页，页码由 `goToPage()`
+    // 回写目标页，避免 `handleScroll()` 因位置未变而跳过整个刷新。
+    const target = this.layout.groupRangeOf(index).start;
+    const box = this.layout.getBox(target);
+    const along = box ? (this.horizontalLayout ? box.left : box.top) : 0;
+    const next = along + usable;
+    if (Math.abs(Math.ceil(next) - this.mainScrollPos) < 0.5) {
+      this.patchView({ scrollTop: this.mainScrollPos });
+      this.renderVisible();
+      return;
+    }
+    this.scrollToOffsetInternal(next, options);
   }
 
   /**
@@ -3717,18 +3914,21 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     options: { smooth?: boolean; durationMs?: number },
   ): void {
     const target = toIntegerScrollTop(top);
+    const horizontal = this.horizontalLayout;
     const animate = options.smooth === true && !this.prefersReducedMotion();
     this.cancelSmoothScroll();
     if (!animate) {
-      this.mainScrollTop = target;
+      // 沿滚动方向写入：纵向模式写 scrollTop，横向模式写 scrollLeft。
+      if (horizontal) this.mainScrollPos = target;
+      else this.mainScrollTop = target;
       // 直接定位没有后续帧：在这里同步刷新页码与可见范围，避免状态滞后一帧。
       this.handleScroll();
       return;
     }
-    const start = this.mainScrollTop;
+    const start = this.mainScrollPos;
     const distance = target - start;
     if (Math.abs(distance) < 1) {
-      this.mainScrollTop = target;
+      this.mainScrollPos = target;
       return;
     }
     this.smoothScroll = {
@@ -3753,7 +3953,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     const progress = Math.min(1, Math.max(0, (now - scroll.startedAt) / scroll.duration));
     // 二次缓出：起步快、收尾稳，短距离也不会显得迟滞。
     const eased = 1 - (1 - progress) * (1 - progress);
-    this.mainScrollTop =
+    this.mainScrollPos =
       progress >= 1 ? scroll.target : scroll.start + (scroll.target - scroll.start) * eased;
     if (progress >= 1) this.smoothScroll = null;
     else this.smoothScrollFrame = requestAnimationFrame(this.stepSmoothScroll);
@@ -3788,9 +3988,11 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /** 计算当前可见页并调度渲染。 */
   private renderVisible(force = false): void {
     if (this.pageViews.length === 0) return;
-    const viewportHeight = this.measureViewport().height;
-    const range = this.layout.getVisibleRange(this.mainScrollTop, viewportHeight, 1);
-    const visible = this.layout.getVisibleRange(this.mainScrollTop, viewportHeight, 0);
+    // 可见范围按当前滚动方向计算：横向滚动时按 left/宽度判定，否则全部页都会被当作可见。
+    const position = this.mainScrollPos;
+    const extent = this.viewportExtent();
+    const range = this.layout.getVisibleRangeAlong(position, extent, 1);
+    const visible = this.layout.getVisibleRangeAlong(position, extent, 0);
     this.lastVisibleRange = visible;
     this.patchView({ visiblePageRange: visible });
     const wanted = new Set<number>();
@@ -3801,7 +4003,11 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.queue.cancelWhere((task) => task.key.startsWith('page:') && !wanted.has(task.pageIndex));
     for (let index = range.start; index <= range.end; index += 1) {
       const priority = index >= visible.start && index <= visible.end ? 0 : 1;
-      this.renderPage(index, force, priority);
+      // 页在可见范围内却已没有 canvas（例如选区 pin 页滚出后又滚回、或像素预算释放过）：
+      // 必须强制重绘，否则 `renderPage` 会因渲染 key 仍命中而跳过，画布永久空白。
+      const pageView = this.pageViews[index];
+      const missingCanvas = pageView !== undefined && !pageView.hasCanvas;
+      this.renderPage(index, force || missingCanvas, priority);
     }
     // 视口内没有任何可渲染页时，页内骨架不会出现，全屏 loading 直接收尾。
     if (range.start > range.end) this.finishDocumentLoading();
@@ -4452,8 +4658,9 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /** 按当前滚动位置立即更新页码/可见范围。 */
   private updateScrollState(): void {
     if (this.pageViews.length === 0) return;
-    const scrollTop = this.mainScrollTop;
-    const pageIndex = this.layout.getPageAtOffset(scrollTop);
+    const scrollTop = this.mainScrollPos;
+    // 单页/双页都以“一组”为单位：当前页取该组首页，滚动不到一组不会跳到下一组。
+    const pageIndex = this.layout.groupStartAtOffset(scrollTop, this.viewportExtent());
     const pageNumber = pageIndex + 1;
     if (pageNumber !== this.state.view.pageNumber) {
       const previous = this.state.view.pageNumber;
@@ -4463,8 +4670,106 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       this.patchView({ scrollTop });
     }
     this.patchView({
-      visiblePageRange: this.layout.getVisibleRange(scrollTop, this.viewportHeight(), 0),
+      visiblePageRange: this.layout.getVisibleRangeAlong(
+        scrollTop,
+        this.viewportExtent(),
+        0,
+      ),
     });
+  }
+
+  /**
+   * 滚动停止后把滚动位置吸附到“整组”边界。
+   *
+   * 页与页之间留有间隔，停在两组之间会露出上一组的下半截与下一组的上半截。停顿
+   * {@link SNAP_DELAY_MS} 后落到最近的一组起点。吸附目标以**当前命中组**（滚动位置上
+   * 缘所在的组）与**相邻组**中的最近边界为准，而不是视口中点：页面比视口小时中点会
+   * 落在已经滚过的组上，导致“往回弹”。
+   *
+   * 仅在滚动确实超出边界容差时才写入，且写入后清除吸附定时器，避免“写位置 → 触发
+   * scroll 事件 → 再吸附”的回环（表现为闪烁）。
+   */
+  private scheduleScrollSnap(): void {
+    if (this.snapTimer !== null) {
+      clearTimeout(this.snapTimer);
+      this.snapTimer = null;
+    }
+    this.snapTimer = setTimeout(() => {
+      this.snapTimer = null;
+      if (this.disposed || this.smoothScroll !== null) return;
+      this.snapToNearestGroup();
+    }, SNAP_DELAY_MS) as unknown as number;
+  }
+
+  /**
+   * 把滚动位置吸附到最近的组边界。
+   *
+   * 只考虑“当前命中组及其前后相邻组”的起点，取与当前位置距离最近者；已在边界
+   * {@link SNAP_TOLERANCE} 内时不做任何处理。
+   */
+  private snapToNearestGroup(): void {
+    if (this.pageViews.length === 0) return;
+    const scrollPos = this.mainScrollPos;
+    const box = this.layout.getBox(scrollPos >= 0 ? this.hitPageIndex(scrollPos) : 0);
+    if (!box) return;
+    const groupIndex = this.layout.groupIndexOf(box.index);
+    const candidates: number[] = [];
+    for (const index of [groupIndex - 1, groupIndex, groupIndex + 1]) {
+      if (index < 0 || index >= this.layout.groupCount) continue;
+      const groupStart = this.layout.groupRangeOf(index * this.layout.columns).start;
+      const head = this.layout.getBox(groupStart);
+      if (head) candidates.push(this.horizontalLayout ? head.left : head.top);
+    }
+    if (candidates.length === 0) return;
+    let target = candidates[0]!;
+    for (const candidate of candidates) {
+      if (Math.abs(candidate - scrollPos) < Math.abs(target - scrollPos)) target = candidate;
+    }
+    // 只在“已越过组边界一半以上”时吸附：吸附是让快对齐的位置对齐，不是把用户从
+    // 一组的中段强行拉回起点。组间距远大于容差，这里以组间距的一半为判定阈值。
+    const nearest = Math.min(...candidates.map((value) => Math.abs(value - scrollPos)));
+    if (nearest > this.snapTolerance()) return;
+    // 已在边界容差内，或已顶到内容两端（滚动被浏览器夹到 0 / 最大值）时不写位置：
+    // 强行吸附会把“拖到最顶部/最底部”改写成留白偏移，用户会感到被弹回。
+    if (Math.abs(target - scrollPos) <= SNAP_TOLERANCE) return;
+    if (scrollPos <= SNAP_TOLERANCE) return;
+    this.cancelSnap();
+    this.mainScrollPos = target;
+    this.updateScrollState();
+    this.renderVisible();
+    this.commit();
+  }
+
+  /**
+   * 吸附阈值：超过组间距一半即认为用户仍在该组中段，不做吸附。
+   *
+   * @returns 阈值，单位 px。
+   */
+  private snapTolerance(): number {
+    return Math.max(SNAP_TOLERANCE, this.layout.gap / 2);
+  }
+
+  /** 取消待执行的吸附。 */
+  private cancelSnap(): void {
+    if (this.snapTimer === null) return;
+    clearTimeout(this.snapTimer);
+    this.snapTimer = null;
+  }
+
+  /**
+   * 滚动位置上缘命中的页索引。
+   *
+   * @param position 沿滚动方向的滚动位置，单位 px。
+   * @returns 页索引，0-based。
+   */
+  private hitPageIndex(position: number): number {
+    if (!this.horizontalLayout) return this.layout.getPageAtOffset(position);
+    // 横向布局：`getPageAtOffset` 按 top 命中，同组两页 top 相同；这里按 left 查找。
+    const boxes = this.layout.getBoxes();
+    for (let index = boxes.length - 1; index >= 0; index -= 1) {
+      if (boxes[index]!.left <= position + SNAP_TOLERANCE) return index;
+    }
+    return 0;
   }
 
   /** 处理滚动。 */
@@ -4472,11 +4777,12 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     if (this.pageViews.length === 0) return;
     // 手动写入滚动位置后浏览器（含 jsdom）会同步回抛 scroll 事件：位置与状态一致时
     // 说明是自身写入的回声，跳过即可，否则会用手势中途的位置覆盖锚点换算结果。
-    if (Math.abs(this.mainScrollTop - this.state.view.scrollTop) < 0.5) return;
+    if (Math.abs(this.mainScrollPos - this.state.view.scrollTop) < 0.5) return;
     this.updateScrollState();
     this.renderVisible();
     this.commit();
     this.syncHash();
+    this.scheduleScrollSnap();
   }
 
   /**
@@ -5229,7 +5535,10 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
   /** 应用功能状态到核心 DOM。 */
   private applyFeatureStates(): void {
     const states = this.featureGate.getStates();
-    this.elements.toolbar.hidden = !states.toolbar.visible;
+    // 文档 `VPreferences/HideToolbar` 与宿主功能开关取并集：文档要求隐藏时不再展示工具栏。
+    this.elements.toolbar.hidden =
+      !states.toolbar.visible || this.documentPolicy?.intents.hideToolbar === true;
+    this.applyDeclaredWindowUI();
     if (!states.sidebar.enabled) {
       this.elements.sidebar.hidden = true;
       this.elements.sidebarMask.hidden = true;
@@ -5250,14 +5559,61 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.updateSidebarVisibility();
   }
 
+  /**
+   * 应用文档 `VPreferences/HideWindowUI`：隐藏主窗口之外的窗体组件。
+   *
+   * 阅读器内可视为“主窗口之外的窗体组件”的是对话框与 Toast 浮层；它们在隐藏期间
+   * 不再展示（保留节点与无障碍语义），工具栏等主窗口部件由 `HideToolbar` 单独控制。
+   */
+  private applyDeclaredWindowUI(): void {
+    const hidden = this.documentPolicy?.intents.hideWindowUI === true;
+    for (const element of [this.elements.dialogLayer, this.elements.toastLayer]) {
+      element.hidden = hidden;
+    }
+  }
+
+  /** 补全后的权限声明原文；未读取或文档未声明时 undefined。 */
+  private declaredPermissions(): DocumentPermissions | undefined {
+    return this.documentDeclarations?.permissions;
+  }
+
+  /**
+   * 文档权限声明（`Permissions`）的生效结论。
+   *
+   * 宿主关闭 `documentPolicy.permissions` 时返回全允许，保证只展示不门控。
+   *
+   * @returns 权限生效结论。
+   */
+  private declaredPermissionEffects(): PermissionEffects {
+    const policy = this.documentPolicy;
+    if (!policy || !policy.applyPermissions) {
+      return resolvePermissionEffects(undefined);
+    }
+    return policy.permissionEffects;
+  }
+
   /** 读取文档权限与引擎能力，更新功能可用性。 */
   private async applyAvailability(token: number): Promise<void> {
     if (token !== this.openToken) return;
     const permissions = await this.controller.getPermissions().catch(() => null);
+    if (token !== this.openToken) return;
     const documentAvailability: Partial<Record<ViewerFeature, boolean>> = {};
     const unsupported: Partial<Record<ViewerFeature, boolean>> = {};
-    if (permissions?.print?.printable === false) documentAvailability.print = false;
-    if (permissions?.export === false) documentAvailability.export = false;
+    // 权限门控合并两处来源：引擎已解出的部分（打印/导出）与阅读器补全的权限声明
+    // （`Copies=0`、复制/签章/水印）。宿主 `documentPolicy.permissions=false` 时只展示不门控。
+    const declared = this.declaredPermissionEffects();
+    if (permissions?.print?.printable === false || declared.printBlocked) {
+      documentAvailability.print = false;
+    }
+    // 导出：引擎权限与补全的 `Permissions/Export` 任一禁止即关闭。
+    if (permissions?.export === false || this.declaredPermissions()?.export === false) {
+      documentAvailability.export = false;
+    }
+    if (!declared.allowCopy) {
+      documentAvailability.selection = false;
+      documentAvailability.find = false;
+    }
+    if (!declared.allowSignature) documentAvailability.verification = false;
     let page: EnginePage | null = null;
     try {
       page = await this.controller.getPage(0);
@@ -5294,21 +5650,159 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.emit('featureschange', cloneFeatureStates(states));
   }
 
+  // -------------------------------------------------------------------------
+  // 文档声明（VPreferences / Permissions）
+  // -------------------------------------------------------------------------
+
+  /**
+   * 把已读取的文档声明换算为阅读器策略并写入状态。
+   *
+   * 需在页壳建立前调用：初始视图（缩放/侧栏）依赖换算结果。
+   */
+  private applyDocumentPolicy(): void {
+    const declarations = this.documentDeclarations;
+    this.documentPolicy = declarations
+      ? resolveDocumentPolicy(declarations, {
+          hasTitle: true,
+          applyViewPreferences: this.options.documentPolicy.viewPreferences,
+          applyPermissions: this.options.documentPolicy.permissions,
+        })
+      : null;
+    this.ensureDeclaredPageInfo();
+    this.patchDocument({ policy: toDocumentPolicyState(this.documentPolicy) });
+  }
+
+  /**
+   * 选择读取文档声明的来源。
+   *
+   * - 加密路径直接复用宿主持有的明文容器；
+   * - 内存来源（`arraybuffer`/`blob`）直接复用；
+   * - 自定义随机读源（URL/宿主字节源）不二次读取：引擎容器与声明容器会共享同一个
+   *   字节源实例，额外的容器打开会改变其可读状态。这类来源的权限由引擎解码路径提供，
+   *   视图首选项由宿主通过 `initialScale`/`sidebar` 配置。
+   *
+   * @param preparation 本次打开准备结果。
+   * @returns 声明来源。
+   */
+  private declarationSourceFor(
+    preparation: CryptoOpenPreparation,
+  ): DeclarationSource | undefined {
+    if (preparation.kind === 'decrypted') {
+      return declarationSourceOfContainer(preparation.container);
+    }
+    const source = this.controller.source;
+    if (!source) return undefined;
+    if (source.kind === 'custom') return undefined;
+    return declarationSourceOf(source);
+  }
+
+  /**
+   * 应用文档声明的版式（`VPreferences/PageLayout`）。
+   *
+   * 优先级：宿主 `layout` 选项（任一维度显式给出即生效）> 文档声明 > 默认（单页 + 纵向）。
+   */
+  private applyDocumentLayout(): void {
+    const override = this.options.layoutOverrides;
+    const declared = layoutConfigFromPageLayout(this.documentPolicy?.intents.pageLayout);
+    const current = this.layout.layout;
+    // 逐维度优先：宿主显式给出 > 文档声明 > 当前值（默认值）。
+    this.layout.setLayout({
+      direction: override.direction ?? declared?.direction ?? current.direction,
+      viewMode: override.viewMode ?? declared?.viewMode ?? current.viewMode,
+    });
+  }
+
+  /**
+   * 文档没有任何页时，按文档声明的物理页面区补一页初始排版。
+   *
+   * 页壳在声明读取之前建立，`PageLayout` 当时按空页表排版；声明读取完成后补一次，
+   * 使缩放模式与滚动位置有可用尺寸。已有页面时不做任何改动。
+   */
+  private ensureDeclaredPageInfo(): void {
+    if (this.pageInfos.length > 0) return;
+    const pageArea = this.documentPolicy?.pageAreaPx;
+    if (!pageArea) return;
+    this.pageInfos = [
+      {
+        index: 0,
+        widthMm: pageArea.width / MM_TO_CSS_PX,
+        heightMm: pageArea.height / MM_TO_CSS_PX,
+      },
+    ];
+    this.layout.setPageInfos(this.pageInfos);
+    this.reflow();
+  }
+
+  /**
+   * 计算打开后的初始视图。
+   *
+   * 宿主显式配置（非默认的 `initialScale`/`sidebar`）优先；默认值由文档
+   *  `VPreferences` 换算的 `ZoomMode`/`Zoom`/`PageMode` 覆盖。
+   *
+   * @returns 初始缩放与侧栏。
+   */
+  private resolveInitialView(): {
+    readonly scale: ScaleValue;
+    readonly sidebar: SidebarView | null;
+  } {
+    const intents = this.documentPolicy?.intents ?? {};
+    const hostScale = this.options.initialScale;
+    const scale: ScaleValue =
+      typeof hostScale === 'number' || hostScale !== DEFAULT_INITIAL_SCALE
+        ? hostScale
+        : intents.zoom !== undefined
+          ? intents.zoom
+          : (intents.zoomMode ?? hostScale);
+    const hostSidebar = this.options.sidebar;
+    const sidebar: SidebarView | null =
+      hostSidebar !== null
+        ? hostSidebar
+        : (intents.sidebar && this.isSidebarViewUsable(intents.sidebar) ? intents.sidebar : null);
+    return { scale, sidebar };
+  }
+
+  /** `PageMode=FullScreen` 时在首屏就绪后请求全屏（浏览器要求用户手势，失败即放弃）。 */
+  private applyDeclaredFullscreen(): void {
+    if (this.documentPolicy?.intents.fullscreen !== true) return;
+    if (this.state.view.fullscreen) return;
+    void Promise.resolve(this.setFullscreen(true)).catch(() => undefined);
+  }
+
+  /**
+   * 按 `TabDisplay` 更新文档标题。
+   *
+   * `DocTitle` 且文档存在 `DocInfo/Title` 时采用标题，否则回退文件名（表 9）。
+   *
+   * @param metadata 已读取的元数据。
+   */
+  private applyDocumentTitlePolicy(metadata: DocumentMetadata | undefined): void {
+    if (this.documentPolicy?.intents.useDocumentTitle !== true) return;
+    const title = metadata?.title?.trim();
+    const applied = (title ?? '') !== '';
+    if (applied === this.appliedDocumentTitle) return;
+    this.appliedDocumentTitle = applied;
+    if (applied) this.root.setAttribute('aria-label', title!);
+    else this.root.removeAttribute('aria-label');
+    this.patchDocument({ policy: toDocumentPolicyState(this.documentPolicy) });
+    this.commit();
+  }
+
   /** 异步加载侧栏数据，不阻塞首屏。 */
   private async loadSideData(token: number): Promise<void> {
     const jobs: Array<Promise<void>> = [];
-    if (this.featureGate.isEnabled('documentProperties')) {
-      jobs.push(
-        this.controller
-          .getMetadata()
-          .then((metadata) => {
-            if (token !== this.openToken) return;
-            this.patchDocument({ metadata });
-            this.commit();
-          })
-          .catch((error) => this.reportWarningError(error, UI_WARNING_CODES.W_METADATA, '文档属性读取失败')),
-      );
-    }
+    // 元数据同时服务于文档属性面板与 `TabDisplay=DocTitle`，因此不看 `documentProperties`
+    // 功能开关：关闭属性面板时标题仍按文档声明显示。
+    jobs.push(
+      this.controller
+        .getMetadata()
+        .then((metadata) => {
+          if (token !== this.openToken) return;
+          this.patchDocument({ metadata });
+          this.applyDocumentTitlePolicy(metadata);
+          this.commit();
+        })
+        .catch((error) => this.reportWarningError(error, UI_WARNING_CODES.W_METADATA, '文档属性读取失败')),
+    );
     if (this.featureGate.isEnabled('outline')) {
       jobs.push(
         this.controller
@@ -5353,7 +5847,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     if (this.pageInfos.length === 0) return;
     if (hash.page !== undefined) {
       const index = this.toIndex(hash.page);
-      this.mainScrollTop = this.layout.getPageTop(index);
+      this.mainScrollPos = this.layout.getPageTop(index);
       this.patchView({ pageNumber: index + 1 });
     }
     if (hash.zoom !== undefined) {

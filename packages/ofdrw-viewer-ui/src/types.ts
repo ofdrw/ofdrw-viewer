@@ -21,6 +21,7 @@ import type {
   SignatureEntryInfo,
 } from '@ofdrw/ofdrw-viewer-engine';
 import type { ViewerFeatureStates } from './features';
+import type { LayoutConfig, ScrollDirection, ViewMode } from './page-layout';
 import type { LocalFontsStatus } from './local-fonts-state';
 import type {
   Rotation,
@@ -469,6 +470,14 @@ export interface RotationChangingEvent {
   readonly previous: Rotation;
 }
 
+/** 版式（滚动方向 / 视图模式）切换。 */
+export interface LayoutChangeEvent {
+  /** 新版式。 */
+  readonly layout: LayoutConfig;
+  /** 旧版式。 */
+  readonly previous: LayoutConfig;
+}
+
 /** 侧栏切换。 */
 export interface SidebarViewChangedEvent {
   /** 当前侧栏；关闭时为 null。 */
@@ -638,6 +647,7 @@ export type ViewerEventMap = {
   pagesloaded: PagesLoadedEvent;
   scalechanging: ScaleChangingEvent;
   rotationchanging: RotationChangingEvent;
+  layoutchange: LayoutChangeEvent;
   sidebarviewchanged: SidebarViewChangedEvent;
   findstart: FindStartEvent;
   findmatches: FindMatchesEvent;
