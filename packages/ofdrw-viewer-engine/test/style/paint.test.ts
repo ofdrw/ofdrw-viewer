@@ -3,7 +3,7 @@ import type { Paint } from '../../src/model/types';
 import { resolvePaint } from '../../src/style/paint';
 
 describe('resolvePaint', () => {
-  it('径向渐变 v1 降级为平均色并 warning', () => {
+  it('径向渐变产出 gradient/radial，几何与离心率/倾角原样透传', () => {
     const onWarning = vi.fn();
     const paint: Paint = {
       type: 'radial',
@@ -12,8 +12,10 @@ describe('resolvePaint', () => {
         startRadius: 1,
         end: { x: 10, y: 10 },
         endRadius: 20,
+        eccentricity: 0.6,
+        angle: 45,
         mapType: 'Direct',
-        extend: 0,
+        extend: 1,
         segments: [
           { position: 0, color: { r: 255, g: 0, b: 0, a: 255 } },
           { position: 1, color: { r: 0, g: 0, b: 255, a: 255 } },
@@ -21,10 +23,25 @@ describe('resolvePaint', () => {
       },
     };
     expect(resolvePaint(paint, onWarning)).toEqual({
-      kind: 'color',
-      rgba: { r: 128, g: 0, b: 128, a: 255 },
+      kind: 'gradient',
+      spec: {
+        kind: 'radial',
+        start: { x: 0, y: 0 },
+        startRadius: 1,
+        end: { x: 10, y: 10 },
+        endRadius: 20,
+        eccentricity: 0.6,
+        angle: 45,
+        mapType: 'Direct',
+        extend: 1,
+        segments: [
+          { position: 0, color: { r: 255, g: 0, b: 0, a: 255 } },
+          { position: 1, color: { r: 0, g: 0, b: 255, a: 255 } },
+        ],
+      },
     });
-    expect(onWarning).toHaveBeenCalledWith('W_RADIAL_UNSUPPORTED', expect.any(String));
+    // 不再降级为平均色，也不再上报 W_RADIAL_UNSUPPORTED。
+    expect(onWarning).not.toHaveBeenCalled();
   });
 
   it('轴向渐变产出 gradient/axial', () => {

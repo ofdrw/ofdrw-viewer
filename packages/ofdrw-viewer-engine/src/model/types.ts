@@ -384,12 +384,20 @@ export interface AxialShade {
   segments: { position: number; color: Rgba }[];
 }
 
-/** 径向渐变资源；v1 不实现绘制，仅保留模型。 */
+/** 径向渐变资源（GB/T 33190—2016 表 30）。 */
 export interface RadialShade {
+  /** 起始椭圆中心，对象空间单位（通常 mm）。 */
   start: { x: number; y: number };
+  /** 起始椭圆长半轴，对象空间单位（通常 mm）。 */
   startRadius: number;
+  /** 结束椭圆中心，对象空间单位（通常 mm）。 */
   end: { x: number; y: number };
+  /** 结束椭圆长半轴，对象空间单位（通常 mm）。 */
   endRadius: number;
+  /** 两个椭圆的离心率，[0,1)；0 时退化为圆。 */
+  eccentricity: number;
+  /** 长轴与 x 轴正向夹角，单位度。 */
+  angle: number;
   mapType: 'Direct' | 'Repeat' | 'Reflect';
   mapUnit?: number;
   /** 0=两端裁剪，1=终点外延伸，2=起点外延伸，3=不裁剪。 */

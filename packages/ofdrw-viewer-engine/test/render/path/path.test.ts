@@ -249,7 +249,7 @@ describe('drawPathObject', () => {
     expect(warnings.codes).toContain('W_BAD_PATH');
   });
 
-  it('渐变/底纹描边 v1 降级为平均色并 warning', () => {
+  it('渐变描边不降级：Paint 原样交给渲染器，且附带描边采样范围', () => {
     const renderer = new FakeRenderer();
     const binder = createPaintBinder(renderer);
     const warnings = warningCollector();
@@ -276,13 +276,72 @@ describe('drawPathObject', () => {
       pathObject('M 0 0 L 10 0 L 10 10 C'),
       style,
     );
+    expect(warnings.codes).not.toContain('W_UNSUPPORTED_PAINT');
+    const paint = renderer.callsOf('stroke')[0]!.args[1] as {
+      kind: string;
+      strokeBounds: { x: number; y: number; w: number; h: number };
+    };
+    expect(paint.kind).toBe('gradient');
+    // 线宽向外扩的二倍：10×10 的路径包围盒扩到 1.412 × 1.412 的偏移。
+    expect(paint.strokeBounds.x).toBeCloseTo(-0.706, 3);
+    expect(paint.strokeBounds.y).toBeCloseTo(-0.706, 3);
+    expect(paint.strokeBounds.w).toBeCloseTo(11.412, 3);
+    expect(paint.strokeBounds.h).toBeCloseTo(11.412, 3);
+  });
+
+  it('底纹描边仍降级为平均色并 warning', () => {
+    const renderer = new FakeRenderer();
+    const binder = createPaintBinder(renderer);
+    const warnings = warningCollector();
+    const style: ResolvedStyle = {
+      ...BASE_STYLE,
+      fill: false,
+      strokePaint: { kind: 'color', rgba: { r: 0, g: 0, b: 0, a: 255 } },
+    };
+    // 用带 tile 的底纹 PaintSpec 直接走 binder，模怕“底纹描边”。
+    const patternSpec: ResolvedStyle['strokePaint'] = {
+      kind: 'pattern',
+      spec: {
+        width: 1,
+        height: 1,
+        xStep: 1,
+        yStep: 1,
+        reflect: 'Normal',
+        relativeTo: 'Object',
+        cell: {} as never,
+        styleRoot: BASE_STYLE,
+        tile: {
+          commands: [
+            {
+              op: 'fill',
+              style: {
+                lineWidth: 1,
+                lineCap: 'Butt',
+                lineJoin: 'Miter',
+                miterLimit: 10,
+                dashOffset: 0,
+                dashPattern: [],
+              },
+              paint: { kind: 'color', rgba: { r: 20, g: 40, b: 60, a: 255 } },
+              rule: 'nonzero',
+            },
+          ],
+          bounds: { x: 0, y: 0, w: 1, h: 1 },
+        },
+      },
+    };
+    drawPathObject(
+      { renderer, binder, onWarning: warnings.warnings },
+      pathObject('M 0 0 L 10 0 L 10 10 C'),
+      { ...style, strokePaint: patternSpec },
+    );
     expect(warnings.codes).toContain('W_UNSUPPORTED_PAINT');
     const paint = renderer.callsOf('stroke')[0]!.args[1] as {
       kind: string;
       rgba: { r: number; g: number; b: number; a: number };
     };
     expect(paint.kind).toBe('color');
-    expect(paint.rgba).toEqual({ r: 128, g: 0, b: 128, a: 255 });
+    expect(paint.rgba).toEqual({ r: 20, g: 40, b: 60, a: 255 });
   });
 
   it('轴向渐变 Extend=3 不裁剪，0/1/2 构造 band 裁剪', () => {

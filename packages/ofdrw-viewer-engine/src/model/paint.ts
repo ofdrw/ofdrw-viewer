@@ -321,18 +321,10 @@ function decodeSegments(shadeNode: XmlNode, context: PaintDecodeContext): { posi
   if (count === 1) {
     positions[0] = clamp01(positions[0] ?? 0);
   } else {
-    if (positions[0] === undefined) positions[0] = 0;
-    if (positions[count - 1] === undefined) positions[count - 1] = 1;
-    let previousAnchor = 0;
-    for (let index = 1; index < count; index += 1) {
-      if (positions[index] === undefined) continue;
-      const start = positions[previousAnchor] as number;
-      const end = positions[index] as number;
-      const gap = index - previousAnchor;
-      for (let step = 1; step < gap; step += 1) {
-        positions[previousAnchor + step] = start + ((end - start) * step) / gap;
-      }
-      previousAnchor = index;
+    // 缺少 Position 的段落在颜色表中保持其「均分位置」：n 个段按索引均分 0..1，
+    // 得到 i/(n−1)；有 Position 的段以给定值覆盖该默认位置（表 29）。
+    for (let index = 0; index < count; index += 1) {
+      if (positions[index] === undefined) positions[index] = index / (count - 1);
     }
   }
   let previous = -Infinity;
@@ -381,11 +373,11 @@ export function decodeAxialShade(node: XmlNode, context: PaintDecodeContext): Ax
 }
 
 /**
- * 解码径向渐变（v1 只保留模型，渲染阶段降级）。
+ * 解码径向渐变（表 30）。
  *
  * @param node `RadialShd` 节点。
  * @param context Paint 上下文。
- * @returns 径向渐变模型；坐标/半径位于对象空间。
+ * @returns 径向渐变模型；坐标与半径位于对象空间（通常 mm），角度单位度。
  */
 export function decodeRadialShade(node: XmlNode, context: PaintDecodeContext): RadialShade {
   const start = parsePoint(attr(node, 'StartPoint'), { x: 0, y: 0 }, context, 'StartPoint');
@@ -393,6 +385,13 @@ export function decodeRadialShade(node: XmlNode, context: PaintDecodeContext): R
   const startRadius = numberAttr(node, 'StartRadius', 0, context, 'StartRadius');
   const endRadius = numberAttr(node, 'EndRadius', 0, context, 'EndRadius');
   if (endRadius <= 0) emitWarning(context, 'W_BAD_NUMBER', 'EndRadius 缺失或非正，径向渐变可能无效');
+  // 离心率取值 [0,1)；越界时 clamp 并 warning，避免短半轴退化为 0 或虚数。
+  const rawEccentricity = numberAttr(node, 'Eccentricity', 0, context, 'Eccentricity');
+  const eccentricity = Math.max(0, Math.min(0.999999, rawEccentricity));
+  if (eccentricity !== rawEccentricity) {
+    emitWarning(context, 'W_BAD_NUMBER', `Eccentricity 超出 [0,1)：${rawEccentricity}，已修正为 ${eccentricity}`);
+  }
+  const angle = numberAttr(node, 'Angle', 0, context, 'Angle');
   const mapUnitRaw = attr(node, 'MapUnit');
   let mapUnit: number | undefined;
   if (mapUnitRaw !== undefined) {
@@ -405,6 +404,8 @@ export function decodeRadialShade(node: XmlNode, context: PaintDecodeContext): R
     startRadius,
     end,
     endRadius,
+    eccentricity,
+    angle,
     mapType: parseMapType(attr(node, 'MapType'), context),
     mapUnit,
     extend: parseExtend(attr(node, 'Extend'), context),

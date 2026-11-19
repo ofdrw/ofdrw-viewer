@@ -56,23 +56,24 @@ BODY_FONT_CANDIDATES = (
     ("/mnt/c/Windows/Fonts/msyh.ttc", "Microsoft YaHei"),
 )
 
-#: 素材文件名与附件描述；顺序即 Attachments.xml 中的声明顺序。
-#: 每项为 (素材名, 附件名, Format, ContentType, 说明)。
+#: 附件声明；顺序即 Attachments.xml 中的声明顺序。
+#: 每项为 (附件名, Format, ContentType, 说明)；附件名不含扩展名。
+#: 包内实体文件名为 ``<附件名>.<Format>``。
 ATTACHMENTS = (
-    ("演示文稿说明.docx", "演示文稿说明.docx", "docx",
+    ("演示文稿说明", "docx",
      "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "Word 文档附件"),
-    ("销售数据.xlsx", "销售数据.xlsx", "xlsx",
+    ("销售数据", "xlsx",
      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Excel 表格附件"),
-    ("演示幻灯片.pptx", "演示幻灯片.pptx", "pptx",
+    ("演示幻灯片", "pptx",
      "application/vnd.openxmlformats-officedocument.presentationml.presentation", "PowerPoint 幻灯片附件"),
-    ("说明.txt", "说明.txt", "txt", "text/plain", "纯文本附件"),
-    ("样例数据.csv", "样例数据.csv", "csv", "text/csv", "逗号分隔数据附件"),
-    ("配置示例.xml", "配置示例.xml", "xml", "application/xml", "XML 结构化数据附件"),
-    ("配置示例.json", "配置示例.json", "json", "application/json", "JSON 结构化数据附件"),
-    ("示意图.png", "示意图.png", "png", "image/png", "PNG 位图附件"),
-    ("照片.jpg", "照片.jpg", "jpeg", "image/jpeg", "JPEG 位图附件"),
-    ("音频样例.mp3", "音频样例.mp3", "mp3", "audio/mpeg", "MP3 音频附件"),
-    ("视频样例.mp4", "视频样例.mp4", "mp4", "video/mp4", "MP4 视频附件"),
+    ("说明", "txt", "text/plain", "纯文本附件"),
+    ("样例数据", "csv", "text/csv", "逗号分隔数据附件"),
+    ("配置示例", "xml", "application/xml", "XML 结构化数据附件"),
+    ("配置示例", "json", "application/json", "JSON 结构化数据附件"),
+    ("示意图", "png", "image/png", "PNG 位图附件"),
+    ("照片", "jpeg", "image/jpeg", "JPEG 位图附件"),
+    ("音频样例", "mp3", "audio/mpeg", "MP3 音频附件"),
+    ("视频样例", "mp4", "video/mp4", "MP4 视频附件"),
 )
 
 
@@ -86,7 +87,7 @@ class AttachEntry:
     pack_path: str
     #: 素材字节。
     data: bytes
-    #: 附件显示名（含扩展名）。
+    #: 附件显示名（不含扩展名）。
     name: str
     #: 格式标识，小写扩展名词，例如 ``png``。
     fmt: str
@@ -432,15 +433,16 @@ def make_docx() -> bytes:
     document.add_heading("一、附件清单", level=1)
     table = document.add_table(rows=1, cols=3)
     table.style = "Light Grid Accent 1"
-    for cell, title in zip(table.rows[0].cells, ("格式", "文件", "说明")):
+    for cell, title in zip(table.rows[0].cells, ("格式", "附件名", "说明")):
         cell.text = title
-    for _, name, fmt, _, desc in ATTACHMENTS:
+    for name, fmt, _, desc in ATTACHMENTS:
         cells = table.add_row().cells
         cells[0].text, cells[1].text, cells[2].text = fmt, name, desc
     document.add_heading("二、说明", level=1)
     for line in (
         "附件与正文同处一个 OFD 容器，通过 Doc_0/Attachments.xml 索引。",
         "每条附件由 ID、Name、Format、Size 与 FileLoc 描述。",
+        "附件名不含扩展名，格式由 Format 属性声明。",
         "Size 以 KB 为单位声明，与附件实体大小保持一致。",
     ):
         document.add_paragraph(line, style="List Bullet")
@@ -957,11 +959,11 @@ def collect_attachments() -> list[AttachEntry]:
         "png": "PNG 图片", "jpeg": "JPEG 图片", "mp3": "MP3 音频", "mp4": "MP4 视频",
     }
     entries: list[AttachEntry] = []
-    for index, (asset_name, name, fmt, content_type, desc) in enumerate(ATTACHMENTS, start=1):
+    for index, (name, fmt, content_type, desc) in enumerate(ATTACHMENTS, start=1):
         data = builders[fmt]()
         entries.append(AttachEntry(
             attach_id=index,
-            pack_path=f"Doc_0/Res/{asset_name}",
+            pack_path=f"Doc_0/Res/{name}.{fmt}",
             data=data,
             name=name,
             fmt=fmt,

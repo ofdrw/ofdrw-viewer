@@ -24,6 +24,13 @@ export interface PathDrawContext {
   onWarning?: (code: string, message: string, objectId?: string) => void;
   /** 页索引，仅用于 warning。 */
   pageIndex?: number;
+  /**
+   * 对象摆放原点（Boundary 左上角），单位 mm。
+   *
+   * 渲染器进入对象时会 `translate(该原点)`，而轴向渐变的 StartPoint/EndPoint 位于
+   * 对象外层空间（页面原点）。Extend 裁剪带需要减掉该原点才能与路径命令同空间。
+   */
+  origin?: Point;
 }
 
 /** 词法单元：命令、数值或无法解析的字符。 */
@@ -581,11 +588,46 @@ function splitPathCommands(
 }
 
 /**
+ * 给描边 Paint 附加外扩后的采样范围。
+ *
+ * 描边像素覆盖路径两侧各半个线宽（miter/round join 时投影更远，最多半个线宽乘
+ * MiterLimit），渐变与网格渐变要据此确定 MapType 周期与离屏光栅化范围，否则描边
+ * 落在路径外时采样值会被 clamp 成端点色。
+ *
+ * @param paint 已绑定的渐变/网格 Paint。
+ * @param bounds 路径包围盒，对象空间单位（通常 mm）。
+ * @param lineWidth 线宽，对象空间单位（通常 mm）；0 表示 hairline。
+ * @returns 带 `strokeBounds` 的新 Paint；纯色 Paint 原样返回。
+ */
+function withStrokeBounds(
+  paint: ResolvedPaint,
+  bounds: Box,
+  lineWidth: number,
+): ResolvedPaint {
+  if (paint.kind === 'color') return paint;
+  // hairline 在设备空间恒为 1 像素，用户空间的等效外扩量由渲染器按 CTM 换算，这里取 0。
+  const reach = lineWidth > 0 ? Math.max(lineWidth, 1e-6) * 2 : 0;
+  return {
+    ...paint,
+    strokeBounds: {
+      x: bounds.x - reach,
+      y: bounds.y - reach,
+      w: bounds.w + reach * 2,
+      h: bounds.h + reach * 2,
+    },
+  };
+}
+
+/**
  * 绘制路径对象（填充/描边/规则）。
  *
  * 调用方负责 Boundary 平移、Clips 与对象 CTM；本函数只处理路径数据与最终样式。
  * 轴向渐变的 Extend band 裁剪在这里用路径包围盒构造裁剪区，保证 `Extend=0/1/2`
  * 不会把不该延伸的一侧也填上。
+ *
+ * 渐变描边与填充共用同一份 Paint：band 裁剪是路径级裁剪，同时约束填充与描边；
+ * 描边像素落在路径外侧，MapType 的周期展开必须覆盖描边区域，因此描边 Paint 额外
+ * 带一个 `strokeBounds`（路径包围盒按线宽向外扩），由渲染器据此确定采样范围。
  *
  * @param context 渲染器与 PaintBinder。
  * @param object 路径对象。
@@ -607,17 +649,37 @@ export function drawPathObject(
       : undefined;
   let strokePaint =
     style.stroke && style.strokePaint ? context.binder.bind(style.strokePaint, bounds) : undefined;
-  if (strokePaint && (strokePaint.kind === 'gradient' || strokePaint.kind === 'pattern')) {
-    // v1 不支持渐变/底纹描边（需要描边掩码）；按设计方案 13.6 用平均色近似。
-    context.onWarning?.(
-      'W_UNSUPPORTED_PAINT',
-      '渐变/底纹描边 v1 不支持，已降级为平均色',
-      object.id,
-    );
+  if (strokePaint && strokePaint.kind === 'pattern') {
+    // 底纹描边需要按描边掩码逐像素平铺，渲染器只实现了渐变的掩码绘制；这里保持
+    // 设计方案 13.6 的平均色近似。渐变（AxialShd/RadialShd）与网格渐变
+    // （GouraudShd/LaGouraudShd）描边由渲染器真实绘制（GB/T 33190—2016 §8.3.4.1：
+    // 渐变可用于图形的填充与勾边）。
+    context.onWarning?.('W_UNSUPPORTED_PAINT', '底纹描边暂不支持，已降级为平均色', object.id);
     strokePaint = { kind: 'color', rgba: getAveragePaintColor(strokePaint) };
   }
+  // 渲染器绘制渐变/网格描边时要先 clip 路径并分两次填/描；填充与描边共用同一份
+  // PaintSpec 时 binder 返回同一对象，这种情况（同一 DrawParam 的 FillColor 与
+  // StrokeColor 共用资源）保持原有降级，避免同一路径在一个裁剪上下文里画两遍。
+  const maskedStroke = !!strokePaint && strokePaint.kind === 'shading';
+  if (maskedStroke && fillPaint && isVisiblePaint(fillPaint)) {
+    if (fillPaint === strokePaint) {
+      // 同一份 Paint 同时用于填充与描边：保持降级。
+      context.onWarning?.(
+        'W_UNSUPPORTED_PAINT',
+        '渐变填充与网格渐变描边共用同一 Paint，描边已降级为平均色',
+        object.id,
+      );
+      strokePaint = { kind: 'color', rgba: getAveragePaintColor(strokePaint!) };
+    }
+  }
   const visibleFill = fillPaint && isVisiblePaint(fillPaint) ? fillPaint : undefined;
-  const visibleStroke = strokePaint && isVisiblePaint(strokePaint) ? strokePaint : undefined;
+  // 渐变/网格描边的采样范围必须覆盖描边像素（路径外侧各半个线宽）。
+  const visibleStroke =
+    strokePaint && isVisiblePaint(strokePaint)
+      ? strokePaint.kind === 'color'
+        ? strokePaint
+        : withStrokeBounds(strokePaint, bounds, drawStyle.lineWidth)
+      : undefined;
   if (style.fill && !visibleFill) {
     // 透明/无法绑定的填充按设计“缺失 FillColor = 不画”处理，不报错。
   }
@@ -625,8 +687,11 @@ export function drawPathObject(
     context.onWarning?.('W_UNSUPPORTED_PAINT', '描边 Paint 不可用，已跳过描边', object.id);
   }
 
+  // Extend 裁剪带：渐变坐标位于对象外层空间，而渲染器进入对象时已 translate 到
+  // Boundary 左上角；传入 origin 让带顶点减掉该位移，才能与路径命令处于同一空间
+  // （否则带平移的文档中 band 会整体偏移，Extend=0 的端点不再截断）。
   const axial = getAxialPaint(visibleFill);
-  const band = axial ? getAxialExtendBand(axial, bounds) : null;
+  const band = axial ? getAxialExtendBand(axial, bounds, context.origin) : null;
 
   if (band) {
     context.renderer.save();

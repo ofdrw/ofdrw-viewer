@@ -162,15 +162,16 @@ describe('H5Canvas2DRenderer 轴向渐变', () => {
     renderer.close();
   });
 
-  it('径向渐变 v1 降级为平均色，不崩溃', () => {
+  it('径向渐变按椭圆几何绘制：沿中心连线由起始色过渡到结束色', () => {
     const { context } = createNodeCanvas(10, 10);
     const renderer = new H5Canvas2DRenderer({ createCanvas: createCountingFactory().createCanvas });
     renderer.beginPage(context, viewport(10, 10));
+    // 起始椭圆 (1,5) 半径 0 → 结束椭圆 (9,5) 半径 4，离心率 0。
     const radial: RadialGradientSpec = {
       kind: 'radial',
-      start: { x: 5, y: 5 },
-      startRadius: 1,
-      end: { x: 5, y: 5 },
+      start: { x: 1, y: 5 },
+      startRadius: 0,
+      end: { x: 9, y: 5 },
       endRadius: 4,
       mapType: 'Direct',
       extend: 0,
@@ -181,14 +182,15 @@ describe('H5Canvas2DRenderer 轴向渐变', () => {
     };
     fillAll(renderer, { kind: 'gradient', spec: radial }, 10, 10);
 
-    const pixel = readPixel(context, 5, 5);
-    expect(pixel[3]).toBe(255);
-    expect(pixel[0]).toBeGreaterThan(100);
-    expect(pixel[0]).toBeLessThan(160);
-    expect(pixel[2]).toBeGreaterThan(100);
-    expect(pixel[2]).toBeLessThan(160);
+    // 椭圆族内：色彩沿中心连线插值——中段偏红、靠近结束椭圆偏蓝。
+    const middle = readPixel(context, 5, 5);
+    const nearEnd = readPixel(context, 8, 5);
+    expect(middle[3]).toBe(255);
+    expect(middle[0]).toBeGreaterThan(nearEnd[0]);
+    expect(nearEnd[2]).toBeGreaterThan(middle[2]);
+    // 起点（半径 0 的洞）不属于椭圆族，Extend=0 时不绘制。
+    expect(readPixel(context, 1, 5)[3]).toBe(0);
     renderer.endPage();
-    renderer.close();
   });
 
   it('轴向渐变可用于描边', () => {

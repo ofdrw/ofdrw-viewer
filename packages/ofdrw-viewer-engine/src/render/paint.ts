@@ -2,8 +2,8 @@
  * PaintSpec → ResolvedPaint 绑定。
  *
  * 绑定发生在样式结算之后、绘制之前：样式层只产出 PaintSpec，本层把渐变段归一化、
- * 把底纹 cell 显示列表挂到 PatternPaint 上、把径向渐变降级为纯色。渲染器不接触
- * OFD 结构，也不负责判断 Extend band。
+ * 把底纹 cell 显示列表挂到 PatternPaint 上、并把对象外层空间的渐变坐标换算回对象空间。
+ * 渲染器不接触 OFD 结构，Extend band 与径向渐变的 MapUnit 折叠由渲染器负责。
  */
 
 import type {
@@ -17,6 +17,7 @@ import type {
   PatternPaint,
   PatternSpec,
   Point,
+  RadialGradientSpec,
   ResolvedPaint,
   Rgba,
 } from '../common/types';
@@ -159,7 +160,10 @@ function normalizeRgba(color: Rgba): Rgba {
 }
 
 /**
- * 解析渐变；径向渐变 v1 降级为平均色 + `W_RADIAL_UNSUPPORTED`。
+ * 解析渐变：轴向与径向都归一化 stop 后原样交给渲染器。
+ *
+ * 渲染器需要归一化后的 stop 才能按位置插值；径向渐变的 MapUnit 折叠由渲染器
+ * 在逐像素采样时完成，这里不做周期展开。
  *
  * @param spec 渐变描述。
  * @param warn warning 回调。
@@ -170,11 +174,36 @@ function resolveGradient(
   warn: (code: string, message: string) => void,
 ): ResolvedPaint {
   if (spec.kind === 'radial') {
-    warn('W_RADIAL_UNSUPPORTED', '径向渐变 v1 未实现，已降级为平均色');
-    const average = averageColor(spec.segments);
-    return { kind: 'color', rgba: average };
+    return { kind: 'gradient', spec: resolveRadialGradient(spec, warn) };
   }
   return { kind: 'gradient', spec: resolveAxialGradient(spec, warn) };
+}
+
+/**
+ * 归一化径向渐变：补齐/排序 stop，并保证 stop 数不超过上限。
+ *
+ * 径向渐变的 MapUnit 折叠发生在渲染器的逐像素采样阶段（与轴向渐变的 stop 展开不同），
+ * 因此这里只归一化 stop，几何与 MapType/Extend 原样透传。
+ *
+ * @param spec 原始径向渐变；坐标与半径单位同对象空间（通常 mm），角度单位度。
+ * @param warn warning 回调。
+ * @returns 位置单调、带两端点的径向渐变描述。
+ */
+function resolveRadialGradient(
+  spec: RadialGradientSpec,
+  warn: (code: string, message: string) => void,
+): RadialGradientSpec {
+  let segments = withEndpoints(normalizeStops(spec.segments, warn));
+  if (segments.length > MAX_GRADIENT_STOPS) {
+    warn('W_UNSUPPORTED_PAINT', `渐变 stop 数超过 ${MAX_GRADIENT_STOPS}，已截断（径向渐变）`);
+    const last = segments[segments.length - 1]!;
+    segments = segments.slice(0, MAX_GRADIENT_STOPS - 1);
+    segments.push(last);
+  }
+  const startRadius =
+    Number.isFinite(spec.startRadius) && spec.startRadius > 0 ? spec.startRadius : 0;
+  const endRadius = Number.isFinite(spec.endRadius) && spec.endRadius > 0 ? spec.endRadius : 0;
+  return { ...spec, startRadius, endRadius, segments };
 }
 
 /**
@@ -206,17 +235,21 @@ function resolveAxialGradient(
     return { ...spec, segments: withEndpoints(base) };
   }
 
+  // 展开为 Canvas 可消费的绝对 stop：第 k 个周期覆盖 [k/cycles, (k+1)/cycles]，
+  // 周期内位置 = (k + p) / cycles。Reflect 的偶数周期正序、奇数周期镜像（p → 1−p），
+  // 与 sampleGradientColor 的 `wrapped <= 1 ? wrapped : 2 - wrapped` 同一定义。
+  // 相邻周期在接缝处写入同一位置的两个 stop（前一周期的末段与后一周期的首段），
+  // 两者必须都保留：Canvas 用这一对重合 stop 形成周期边界处的颜色硬跳变。
   const segments: GradientStop[] = [];
   const maxCycles = Math.min(Math.ceil(cycles) + 1, MAX_GRADIENT_STOPS);
   for (let cycle = 0; cycle < maxCycles; cycle += 1) {
+    const mirror = spec.mapType === 'Reflect' && cycle % 2 === 1;
     for (const stop of base) {
-      const folded = spec.mapType === 'Reflect' && cycle % 2 === 1 ? 1 - stop.position : stop.position;
+      const folded = mirror ? 1 - stop.position : stop.position;
       const t = (cycle + folded) / cycles;
       if (t < 0 || t > 1) continue;
       segments.push({ position: t, color: stop.color });
-      if (segments.length > MAX_GRADIENT_STOPS) break;
     }
-    if (segments.length > MAX_GRADIENT_STOPS) break;
   }
   // 用 sample 补齐两端，保证 Canvas 在 t∈[0,1] 内不会因端点缺失而错误 clamp。
   const firstColor = sampleGradientColor(base, 0, spec.mapType);
@@ -227,6 +260,7 @@ function resolveAxialGradient(
   if (segments[segments.length - 1]!.position < 1) {
     segments.push({ position: 1, color: lastColor });
   }
+  // 稳定排序：同一位置的接缝对保持「前一周期末段在前、后一周期首段在后」的写入顺序。
   segments.sort((a, b) => a.position - b.position);
   if (segments.length > MAX_GRADIENT_STOPS) {
     warn(
@@ -397,28 +431,54 @@ export function getAveragePaintColor(paint: ResolvedPaint): Rgba {
 }
 
 /**
- * 把轴向渐变坐标从对象外层空间换回对象空间（CTM 之前的图元空间）。
+ * 把渐变坐标从对象外层空间换回对象空间（CTM 之前的图元空间）。
  *
- * OFD 的 Shading 坐标（StartPoint/EndPoint/MapUnit）位于对象外层空间：坐标原点与
- * `Boundary` 左上角重合、单位为对象外层单位，等价于已经乘过对象 `CTM` 的图元坐标；
+ * OFD 的 Shading 坐标（StartPoint/EndPoint/MapUnit 与半径）位于对象外层空间：坐标原点
+ * 与 `Boundary` 左上角重合、单位为对象外层单位，等价于已经乘过对象 `CTM` 的图元坐标；
  * 而路径点与文字轮廓仍在 `CTM` 之前的对象空间。渲染器把渐变坐标当作当前用户空间
  * 坐标使用，因此非单位 `CTM` 时必须先用 `CTM` 的逆矩阵换算回对象空间，否则渐变
- * 轴线会被放大后的图元坐标完全包住的一小段，整块图元退化为近似起始色。
+ * 轴线/椭圆中心会被放大后的图元坐标完全包住的一小段，整块图元退化为近似起始色。
+ *
+ * 半径是长度，按 `CTM` 的平均缩放比换算（`√|det CTM⁻¹|`）；`CTM` 为相似变换时与
+ * 沿任意方向的换算结果一致。角度在相似变换下保持不变。
  *
  * 该换算与具体对象/样本无关；`CTM` 缺省或不可逆时保持原样。
  *
  * @param paint 样式层 PaintSpec。
  * @param ctm 当前对象 CTM（对象外层空间 → 对象空间）。
- * @returns 轴向渐变坐标已换算的 PaintSpec；其他 Paint 原样返回。
+ * @returns 渐变坐标已换算的 PaintSpec；其他 Paint 原样返回。
  */
 export function mapPaintToObjectSpace(
   paint: PaintSpec,
   ctm: Matrix | null | undefined,
 ): PaintSpec {
-  if (paint.kind !== 'gradient' || paint.spec.kind !== 'axial' || !ctm) return paint;
+  if (paint.kind !== 'gradient' || !ctm) return paint;
   const inverse = invertMatrix(ctm);
   if (!inverse || isIdentityMatrix(inverse)) return paint;
   const spec = paint.spec;
+
+  if (spec.kind === 'radial') {
+    const start = transformPoint(inverse, spec.start);
+    const end = transformPoint(inverse, spec.end);
+    const determinant = Math.abs(inverse[0] * inverse[3] - inverse[1] * inverse[2]);
+    const lengthScale = Math.sqrt(Number.isFinite(determinant) ? determinant : 1);
+    const mapUnit =
+      spec.mapUnit !== undefined && Number.isFinite(lengthScale)
+        ? spec.mapUnit * lengthScale
+        : spec.mapUnit;
+    return {
+      ...paint,
+      spec: {
+        ...spec,
+        start,
+        end,
+        startRadius: spec.startRadius * lengthScale,
+        endRadius: spec.endRadius * lengthScale,
+        ...(mapUnit !== undefined ? { mapUnit } : {}),
+      },
+    };
+  }
+
   const start = transformPoint(inverse, spec.start);
   const end = transformPoint(inverse, spec.end);
   const axisLength = Math.hypot(spec.end.x - spec.start.x, spec.end.y - spec.start.y);
@@ -440,7 +500,7 @@ export function mapPaintToObjectSpace(
 }
 
 /**
- * 计算颜色段平均色；径向渐变降级与底纹超限降级使用。
+ * 计算颜色段平均色；渐变/底纹描边降级与底纹超限降级使用。
  *
  * @param segments 颜色段。
  * @returns 平均 RGBA；空段返回透明。
@@ -473,13 +533,19 @@ function averageColor(segments: readonly GradientStop[]): Rgba {
  * Extend 语义：0=仅 t∈[0,1]，1=t≤1，2=t≥0，3=不裁剪。返回的多边形用于
  * `clip()`，比在渲染器里硬编码渐变边界更贴近设计图 32/33。
  *
+ * 渐变坐标（StartPoint/EndPoint）位于对象外层空间，而渲染器进入对象时已
+ * `translate(Boundary.x, Boundary.y)`，裁剪多边形与路径命令须从同一原点起算；
+ * 调用方传入 `origin`（对象在页面中的摆放点）即可把顶点换算到对象空间。
+ *
  * @param spec 轴向渐变；使用 start/end 与 extend。
- * @param bounds 对象包围盒，用于确定 band 的垂直/轴向延展范围；单位同坐标。
- * @returns 多边形顶点；`null` 表示不需要裁剪（Extend=3 或轴退化）。
+ * @param bounds 对象坐标下的包围盒，用于确定 band 的垂直/轴向延展范围。
+ * @param origin 对象摆放原点（Boundary 左上角），单位 mm；缺省不换算。
+ * @returns 多边形顶点（对象空间）；`null` 表示不需要裁剪（Extend=3 或轴退化）。
  */
 export function getAxialExtendBand(
   spec: AxialGradientSpec,
   bounds: Box,
+  origin?: Point,
 ): Point[] | null {
   if (spec.extend === 3) return null;
   const dx = spec.end.x - spec.start.x;
@@ -491,9 +557,11 @@ export function getAxialExtendBand(
   const nx = -uy;
   const ny = ux;
   const reach = Math.max(1, Math.hypot(bounds.w, bounds.h) + length);
-  const vertex = (origin: Point, along: number, across: number): Point => ({
-    x: origin.x + ux * along + nx * across,
-    y: origin.y + uy * along + ny * across,
+  const shiftX = origin?.x ?? 0;
+  const shiftY = origin?.y ?? 0;
+  const vertex = (point: Point, along: number, across: number): Point => ({
+    x: point.x + ux * along + nx * across - shiftX,
+    y: point.y + uy * along + ny * across - shiftY,
   });
   const start = spec.start;
   const end = spec.end;
@@ -631,7 +699,9 @@ function paintCacheKey(spec: PaintSpec, dpi: number, bounds?: Box): string {
         .map((stop) => `${roundKey(stop.position)}:${stop.color.r},${stop.color.g},${stop.color.b},${stop.color.a}`)
         .join(';');
       if (gradient.kind === 'radial') {
-        return `gr|${roundKey(gradient.start.x)},${roundKey(gradient.start.y)},${roundKey(gradient.startRadius)},${roundKey(gradient.end.x)},${roundKey(gradient.end.y)},${roundKey(gradient.endRadius)}|${gradient.mapType}|${roundKey(gradient.mapUnit ?? 0)}|${gradient.extend}|${stops}|${dpi}`;
+        // 离心率与倾角同样决定径向渐变的几何，必须计入缓存键，否则参数不同的
+        // 两个径向渐变会互相复用已解析结果。
+        return `gr|${roundKey(gradient.start.x)},${roundKey(gradient.start.y)},${roundKey(gradient.startRadius)},${roundKey(gradient.end.x)},${roundKey(gradient.end.y)},${roundKey(gradient.endRadius)},${roundKey(gradient.eccentricity ?? 0)},${roundKey(gradient.angle ?? 0)}|${gradient.mapType}|${roundKey(gradient.mapUnit ?? 0)}|${gradient.extend}|${stops}|${dpi}`;
       }
       return `ga|${roundKey(gradient.start.x)},${roundKey(gradient.start.y)},${roundKey(gradient.end.x)},${roundKey(gradient.end.y)}|${gradient.mapType}|${roundKey(gradient.mapUnit ?? 0)}|${gradient.extend}|${stops}|${dpi}`;
     }

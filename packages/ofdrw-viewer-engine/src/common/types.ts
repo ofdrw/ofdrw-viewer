@@ -101,24 +101,33 @@ export interface AxialGradientSpec {
 }
 
 /**
- * 渲染器可消费的径向渐变描述（v1 仅用于类型与降级标记，不要求 H5 渲染器实现）。
+ * 渲染器可消费的径向渐变描述（对应 OFD `RadialShd`，GB/T 33190—2016 §8.3.4.3 / 表 30）。
  *
- * 坐标与半径均位于对象空间；v1 样式层遇到径向渐变会发 `W_RADIAL_UNSUPPORTED`
- * 并改用平均色/透明降级。
+ * 坐标与半径均位于对象空间（通常 mm），参与当前 CTM；`angle` 单位为度，
+ * 是椭圆长轴与 x 轴正向的夹角。`segments` 已按位置排序并保证单调不减。
  */
 export interface RadialGradientSpec {
   kind: 'radial';
+  /** 起始椭圆中心。 */
   start: Point;
+  /** 起始椭圆长半轴，对象空间单位（通常 mm）。 */
   startRadius: number;
+  /** 结束椭圆中心。 */
   end: Point;
+  /** 结束椭圆长半轴，对象空间单位（通常 mm）。 */
   endRadius: number;
+  /** 两个椭圆的离心率，[0,1)；0 时退化为圆。 */
+  eccentricity?: number;
+  /** 长轴与 x 轴正向的夹角，单位度；两个中心点不重合时长轴由中心连线决定。 */
+  angle?: number;
   mapType: GradientMapType;
+  /** 一个渐变区间的长度，对象空间单位（通常 mm）；缺省为中心连线长度。 */
   mapUnit?: number;
   extend: GradientExtend;
   segments: GradientStop[];
 }
 
-/** 渐变描述联合；v1 渲染器至少支持 `axial`。 */
+/** 渐变描述联合；渲染器需同时支持 `axial` 与 `radial`。 */
 export type GradientSpec = AxialGradientSpec | RadialGradientSpec;
 
 /** Gouraud/LaGouraud 网格顶点颜色；`edgeFlag` 仅对四边形对角线选择有意义。 */
@@ -187,6 +196,8 @@ export type PaintSpec =
 /** 底纹绑定结果：tile 必须是目标无关的 DisplayList，engine 不持有 tile surface。 */
 export interface PatternPaint {
   kind: 'pattern';
+  /** 描边采样范围（对象空间，通常 mm）；只在 Paint 用于描边时出现。 */
+  strokeBounds?: Box;
   tile: DisplayList;
   /** tile 宽度，对象空间单位（通常 mm）。 */
   width: number;
@@ -206,12 +217,15 @@ export interface PatternPaint {
  *
  * 由 `render/paint.ts` 的 PaintBinder 从 `PaintSpec` 绑定得到；渲染器只认这个联合，
  * 不需要理解 OFD 的颜色空间、渐变 XML 或底纹资源结构。
+ *
+ * `strokeBounds` 只在 Paint 用于描边时出现：它是路径包围盒按线宽外扩后的矩形
+ * （对象空间，通常 mm），渐变描边据此确定 MapType 周期展开范围与离屏光栅化范围。
  */
 export type ResolvedPaint =
-  | { kind: 'color'; rgba: Rgba }
-  | { kind: 'gradient'; spec: GradientSpec }
+  | { kind: 'color'; rgba: Rgba; strokeBounds?: Box }
+  | { kind: 'gradient'; spec: GradientSpec; strokeBounds?: Box }
   | PatternPaint
-  | { kind: 'shading'; spec: MeshShadingSpec };
+  | { kind: 'shading'; spec: MeshShadingSpec; strokeBounds?: Box };
 
 /** 渲染器内部图像句柄；核心只依赖宽高，不假设底层是 Canvas/ImageBitmap/纹理。 */
 export interface ImageHandle {

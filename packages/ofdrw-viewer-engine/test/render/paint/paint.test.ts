@@ -188,8 +188,8 @@ describe('PaintBinder：轴向渐变', () => {
   });
 });
 
-describe('PaintBinder：径向渐变降级', () => {
-  it('径向渐变 warning 并降级为平均色', () => {
+describe('PaintBinder：径向渐变', () => {
+  it('径向渐变归一化 stop 后原样交给渲染器，不降级也不 warning', () => {
     const warnings = warningCollector();
     const { resolved } = bind(
       {
@@ -207,11 +207,17 @@ describe('PaintBinder：径向渐变降级', () => {
       },
       { onWarning: warnings.warnings },
     );
-    expect(warnings.codes).toContain('W_RADIAL_UNSUPPORTED');
-    expect(resolved).toEqual({
-      kind: 'color',
-      rgba: { r: 128, g: 0, b: 128, a: 255 },
-    });
+    expect(warnings.codes).not.toContain('W_RADIAL_UNSUPPORTED');
+    expect(resolved?.kind).toBe('gradient');
+    const paint = resolved as Extract<ResolvedPaint, { kind: 'gradient' }>;
+    expect(paint.spec.kind).toBe('radial');
+    if (paint.spec.kind !== 'radial') throw new Error('应为径向渐变');
+    expect(paint.spec.start).toEqual({ x: 0, y: 0 });
+    expect(paint.spec.end).toEqual({ x: 10, y: 0 });
+    expect(paint.spec.startRadius).toBe(0);
+    expect(paint.spec.endRadius).toBe(10);
+    // 缺失 Position 的两段补齐为 0 / 1。
+    expect(paint.spec.segments.map((segment) => segment.position)).toEqual([0, 1]);
   });
 });
 

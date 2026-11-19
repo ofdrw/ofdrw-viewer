@@ -1,7 +1,7 @@
 /**
  * 模型 Paint → 渲染器可消费的 `PaintSpec`（纯函数，不依赖 Canvas/DOM）。
  *
- * 径向渐变 v1 降级为平均色；底纹只产出 `PatternSpec`，tile 由准备阶段构建。
+ * 轴向/径向渐变归一化为 `GradientSpec`；底纹只产出 `PatternSpec`，tile 由准备阶段构建。
  */
 
 import type { Rgba } from '../common/types';
@@ -39,7 +39,7 @@ function cloneRgba(color: Rgba): Rgba {
 }
 
 /**
- * 计算平均色，用于径向渐变降级。
+ * 计算平均色，用于渐变/底纹降级。
  *
  * @param segments 颜色段，颜色为 RGBA8。
  * @returns 平均 RGBA；无颜色段时返回黑色不透明。
@@ -91,8 +91,8 @@ function toPatternSpec(pattern: Pattern, styleRoot: ResolvedStyle): PaintSpec {
 /**
  * 把模型层 Paint 归一化为渲染器可绑定的 PaintSpec。
  *
- * 径向渐变 v1 降级：返回平均色并上报 `W_RADIAL_UNSUPPORTED`；
- * 底纹在此只生成 PatternSpec，tile 由 PaintBinder 填充。
+ * 轴向/径向渐变产出 `kind: 'gradient'` 的几何描述（坐标与半径位于对象空间，通常 mm；
+ * 角度单位度），由渲染器负责绘制；底纹在此只生成 PatternSpec，tile 由 PaintBinder 填充。
  *
  * @param paint 模型 Paint。
  * @param onWarning warning 回调。
@@ -130,10 +130,30 @@ export function resolvePaint(
       };
     }
     case 'radial': {
-      // v1 不实现径向渐变；按设计方案 13.3 用平均色降级，不用 Canvas 径向渐变近似。
       const shade = paint.shade;
-      onWarning?.('W_RADIAL_UNSUPPORTED', '径向渐变 v1 降级为平均色');
-      return { kind: 'color', rgba: cloneRgba(averageColor(shade.segments)) };
+      if (shade.segments.length === 0) {
+        onWarning?.('W_UNSUPPORTED_PAINT', '径向渐变没有颜色段，已忽略');
+        return undefined;
+      }
+      return {
+        kind: 'gradient',
+        spec: {
+          kind: 'radial',
+          start: { ...shade.start },
+          startRadius: shade.startRadius,
+          end: { ...shade.end },
+          endRadius: shade.endRadius,
+          eccentricity: shade.eccentricity,
+          angle: shade.angle,
+          mapType: shade.mapType,
+          ...(shade.mapUnit !== undefined ? { mapUnit: shade.mapUnit } : {}),
+          extend: shade.extend,
+          segments: shade.segments.map((segment) => ({
+            position: segment.position,
+            color: cloneRgba(segment.color),
+          })),
+        },
+      };
     }
     case 'gouraud': {
       const shade = paint.shade;

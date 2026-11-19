@@ -16,6 +16,7 @@ import {
   invertMatrix,
   multiplyMatrix,
   normalizeBox,
+  scaleMatrix,
   translateMatrix,
   transformPoint,
 } from '../common/matrix';
@@ -26,11 +27,13 @@ import type {
   DecodedImage,
   DrawStyle,
   FillRule,
+  GradientSpec,
   ImageDataLike,
   ImageHandle,
   Matrix,
   MeshShadingSpec,
   PatternPaint,
+  RadialGradientSpec,
   ResolvedPaint,
   Rgba,
   Viewport,
@@ -47,6 +50,7 @@ import type {
   Renderer,
 } from './types';
 import { rasterizeMeshShadingDevice } from './mesh';
+import { offsetRadialMatrix, rasterizeRadialShadingDevice, scaleRadialMatrix } from './radial';
 
 /** 当前绘制状态。 */
 interface DrawState {
@@ -343,6 +347,12 @@ const MAX_PATTERN_DEPTH = 8;
 
 /** 单个 tile 画布的像素上限。 */
 const MAX_TILE_PIXELS = 8_000_000;
+
+/** 径向渐变单图元像素上限；与 Gouraud 光栅化及 `mesh.ts` 保持一致。 */
+const RADIAL_MAX_PIXELS = 4_000_000;
+
+/** 描边掩码离屏画布的边长像素上限；超出时按该边长裁剪，避免细长路径撑爆内存。 */
+const STROKE_MASK_MAX_PIXELS = 4_000_000;
 
 /** 默认 H5 Canvas2D 渲染器；内部管理 scratch/pattern/group 画布。 */
 export class H5Canvas2DRenderer implements Renderer {
@@ -652,7 +662,7 @@ export class H5Canvas2DRenderer implements Renderer {
     const context = this.context;
     applyState(context, this.state);
     applyStrokeStyle(context, style, this.state.ctm);
-    this.strokeWithPaint(context, this.state, paint, this.path);
+    this.strokeWithPaint(context, this.state, paint, this.path, style);
   }
 
   /** @inheritdoc */
@@ -1000,9 +1010,7 @@ export class H5Canvas2DRenderer implements Renderer {
       case 'gradient': {
         const spec = paint.spec;
         if (spec.kind === 'radial') {
-          // v1 不实现径向渐变，避免用 Canvas 径向渐变偏离图 36 语义。
-          context.fillStyle = averageColorCss(spec.segments);
-          context.fill(rule);
+          this.fillWithRadial(context, state, spec, rule, path);
           return;
         }
         const gradient = createAxialGradient(context, spec, path.bounds);
@@ -1014,6 +1022,8 @@ export class H5Canvas2DRenderer implements Renderer {
           return;
         }
         context.fillStyle = gradient;
+        // Extend 的裁剪带在渲染器内完成：渐变坐标与当前用户空间（对象空间）一致，
+        // 因此直接用 spec.start/end 构造半平面裁剪即可（§8.3.4.2 表 29 Extend）。
         const band = gradientBand(spec);
         if (!band.needStart && !band.needEnd) {
           context.fill(rule);
@@ -1234,6 +1244,119 @@ export class H5Canvas2DRenderer implements Renderer {
   }
 
   /**
+   * 用径向渐变（OFD `RadialShd`）填充当前路径。
+   *
+   * Canvas 原生 `createRadialGradient` 无法表达离心率与倾斜，因此走与 Gouraud 相同的
+   * 「软件光栅化 + 离屏画布 clip 路径 + 贴图」路线：先在对象包围盒的设备像素范围内
+   * 逐像素求解颜色，再以 `path` 裁剪后贴回。
+   *
+   * @param context 目标上下文。
+   * @param state 目标状态。
+   * @param spec 径向渐变描述；坐标与半径位于当前用户空间（通常 mm），角度单位度。
+   * @param rule 填充规则。
+   * @param path 当前路径记录器。
+   */
+  private fillWithRadial(
+    context: CanvasRenderingContext2DLike,
+    state: DrawState,
+    spec: RadialGradientSpec,
+    rule: FillRule,
+    path: PathRecorder,
+  ): void {
+    const bounds = path.bounds;
+    if (!bounds || bounds.w <= 0 || bounds.h <= 0) return;
+    if (!spec.segments || spec.segments.length === 0) return;
+
+    const corners = [
+      transformPoint(state.ctm, { x: bounds.x, y: bounds.y }),
+      transformPoint(state.ctm, { x: bounds.x + bounds.w, y: bounds.y }),
+      transformPoint(state.ctm, { x: bounds.x, y: bounds.y + bounds.h }),
+      transformPoint(state.ctm, { x: bounds.x + bounds.w, y: bounds.y + bounds.h }),
+    ];
+    const offsetX = Math.floor(Math.min(...corners.map((corner) => corner.x)));
+    const offsetY = Math.floor(Math.min(...corners.map((corner) => corner.y)));
+    const width = Math.max(1, Math.ceil(Math.max(...corners.map((corner) => corner.x))) - offsetX);
+    const height = Math.max(1, Math.ceil(Math.max(...corners.map((corner) => corner.y))) - offsetY);
+
+    const canWritePixels =
+      typeof context.createImageData === 'function' && typeof context.putImageData === 'function';
+    if (!canWritePixels) {
+      this.degradeRadial(context, spec, rule);
+      return;
+    }
+
+    // 单图元像素上限：超出时按比例缩小缓冲，最后由 drawImage 拉伸回目标尺寸。
+    const scale = Math.min(1, Math.sqrt(RADIAL_MAX_PIXELS / Math.max(1, width * height)));
+    const rasterWidth = Math.max(1, Math.floor(width * scale));
+    const rasterHeight = Math.max(1, Math.floor(height * scale));
+    if (scale < 1) {
+      this.warnOnce('W_UNSUPPORTED_PAINT', `径向渐变 bbox ${width}×${height}px 超过 4MP，降采样后拉伸绘制`);
+    }
+
+    let scratch: CanvasFactoryEntry;
+    try {
+      scratch = this.canvasFactory.create(rasterWidth, rasterHeight);
+    } catch {
+      this.degradeRadial(context, spec, rule);
+      return;
+    }
+
+    try {
+      const scratchContext = scratch.context;
+      if (
+        typeof scratchContext.createImageData !== 'function' ||
+        typeof scratchContext.putImageData !== 'function'
+      ) {
+        this.degradeRadial(context, spec, rule);
+        return;
+      }
+
+      const raster = rasterizeRadialShadingDevice({
+        spec,
+        // 光栅化矩阵的输出原点必须是离屏画布左上角：CTM 的平移分量是页面绝对设备像素，
+        // 这里再减去 offsetX/offsetY，并叠加降采样比例。这些都是设备像素，直接改写 e/f
+        // （CTM 之后的平移），不能经 translateMatrix 作用在用户空间，否则会被 CTM 放大。
+        matrix: scaleRadialMatrix(state.ctm, offsetX, offsetY, scale),
+        width: rasterWidth,
+        height: rasterHeight,
+        maxPixels: RADIAL_MAX_PIXELS,
+      });
+      const imageData = scratchContext.createImageData(raster.width, raster.height);
+      imageData.data.set(raster.data);
+      scratchContext.putImageData(imageData, 0, 0);
+
+      context.save();
+      context.globalAlpha = clampUnit(state.alpha);
+      context.globalCompositeOperation = state.composite;
+      path.replay(context);
+      context.clip(rule);
+      context.setTransform(1, 0, 0, 1, 0, 0);
+      context.imageSmoothingEnabled = true;
+      context.drawImage(scratch.canvas, offsetX, offsetY, width, height);
+      context.restore();
+    } finally {
+      this.canvasFactory.destroy(scratch);
+    }
+  }
+
+  /**
+   * 径向渐变无法光栅化时的降级：按段平均色填充。
+   *
+   * @param context 目标上下文。
+   * @param spec 径向渐变描述。
+   * @param rule 填充规则。
+   */
+  private degradeRadial(
+    context: CanvasRenderingContext2DLike,
+    spec: RadialGradientSpec,
+    rule: FillRule,
+  ): void {
+    this.warnOnce('W_UNSUPPORTED_PAINT', '当前 Canvas2D 缺少像素读写能力，径向渐变按平均色降级');
+    context.fillStyle = averageColorCss(spec.segments);
+    context.fill(rule);
+  }
+
+  /**
    * 用 Gouraud/LaGouraud 填充当前路径。
    *
    * @param context 目标上下文。
@@ -1308,7 +1431,16 @@ export class H5Canvas2DRenderer implements Renderer {
 
       const raster = rasterizeMeshShadingDevice({
         spec,
-        matrix: translateMatrix(state.ctm, -offsetX, -offsetY),
+        // offsetX/offsetY 是设备像素，必须作为 CTM 之后的平移（先 CTM 再平移），
+        // 不能经 translateMatrix 作用在用户空间，否则会被 CTM 的缩放放大。
+        matrix: [
+          state.ctm[0],
+          state.ctm[1],
+          state.ctm[2],
+          state.ctm[3],
+          state.ctm[4] - offsetX,
+          state.ctm[5] - offsetY,
+        ],
         width,
         height,
         maxPixels: 4_000_000,
@@ -1354,56 +1486,245 @@ export class H5Canvas2DRenderer implements Renderer {
   /**
    * 按 ResolvedPaint 描边当前路径。
    *
+   * 渐变（轴向/径向）与网格渐变（Gouraud/LaGouraud）走 `strokeWithMask`：先把描边区域
+   * 栅格化为掩码，再用渐变填充掩码（GB/T 33190—2016 §8.3.4.1 允许渐变勾边）。
+   * 底纹描边需要逐像素平铺，仍按设计方案 13.6 用 tile 的估算主色近似。
+   *
    * @param context 目标上下文。
    * @param state 目标状态。
    * @param paint 已绑定 Paint。
    * @param path 当前路径记录器。
+   * @param style 最终线型；掩码路径需要自行应用线宽/端点/虚线。
    */
   private strokeWithPaint(
     context: CanvasRenderingContext2DLike,
     state: DrawState,
     paint: ResolvedPaint,
     path: PathRecorder,
+    style: DrawStyle,
   ): void {
     switch (paint.kind) {
       case 'color':
         context.strokeStyle = rgbaToCss(paint.rgba);
         context.stroke();
         return;
-      case 'gradient': {
-        const spec = paint.spec;
-        if (spec.kind === 'radial') {
-          context.strokeStyle = averageColorCss(spec.segments);
-          context.stroke();
-          return;
-        }
-        const gradient = createAxialGradient(context, spec, path.bounds);
-        if (!gradient) {
-          this.strokeAverage(context, spec.segments[0]?.color ?? TRANSPARENT);
-          return;
-        }
-        context.strokeStyle = gradient;
-        const band = gradientBand(spec);
-        if (!band.needStart && !band.needEnd) {
-          context.stroke();
-          return;
-        }
-        context.save();
-        applyGradientBand(context, spec, path.bounds, band.needStart, band.needEnd);
-        path.replay(context);
-        context.stroke();
-        context.restore();
+      case 'gradient':
+        this.strokeWithMask(context, state, paint, path, style);
         return;
-      }
       case 'pattern':
-        // v1：底纹描边降级为平均色（设计方案 13.6）。
         this.strokeAverage(context, estimateDisplayListColor(paint.tile));
         return;
       case 'shading':
-        // v1：网格渐变描边降级为平均色。
-        this.strokeAverage(context, averageMeshColor(paint.spec));
+        this.strokeWithMask(context, state, paint, path, style);
         return;
     }
+  }
+
+  /**
+   * 用渐变或网格渐变描边当前路径。
+   *
+   * 描边区域没有一个可直接裁剪的形状：描边像素落在路径外侧，用路径做 `clip()` 会把它们
+   * 裁掉。因此把描边区域先栅格化成 alpha 掩码，再用渐变填充掩码：
+   * ① 离屏画布按设备空间把路径描边掩码的包围盒（路径 bbox 外扩）铺上渐变/网格渐变；
+   * ② 用 `destination-in` 把描边形状（白色描边，已裁到包围盒内）与渐变层相乘；
+   * ③ 以设备坐标把结果贴回主目标，`globalAlpha`/`globalCompositeOperation` 由主目标
+   *    当前状态决定，与纯色描边一致。
+   *
+   * 掩码合成在离屏画布内完成，不经过主目标的裁剪栈，因此不会破坏已有的 Clip 与组透明度。
+   *
+   * @param context 目标上下文。
+   * @param state 目标状态。
+   * @param paint 渐变或网格渐变 Paint；`strokeBounds` 是采样范围（对象空间，通常 mm）。
+   * @param path 当前路径记录器。
+   * @param style 最终线型；线宽/端点/拐角/虚线均在此应用。
+   */
+  private strokeWithMask(
+    context: CanvasRenderingContext2DLike,
+    state: DrawState,
+    paint: Extract<ResolvedPaint, { kind: 'gradient' } | { kind: 'shading' }>,
+    path: PathRecorder,
+    style: DrawStyle,
+  ): void {
+    // 水平/竖直线段的包围盒有一个维度为 0，描边仍有像素，因此只看非零面积以外的情况。
+    const bounds = path.bounds;
+    if (!bounds || (bounds.w <= 0 && bounds.h <= 0)) return;
+    if (paint.kind === 'shading') {
+      if (paint.spec.points.length < 3) {
+        this.warnOnce('W_GOURAUD_APPROX', 'Gouraud 控制点少于 3 个，描边按透明处理');
+        return;
+      }
+    } else if (paint.spec.segments.length === 0) {
+      return;
+    }
+
+    // 用户空间线宽：hairline 与 applyStrokeStyle 一致，按 CTM 换算成 1 像素。
+    const deviceScale = matrixScale(state.ctm);
+    const lineWidth = style.lineWidth > 0 ? style.lineWidth : 1 / deviceScale;
+    // 斜接拐角最多伸出 min(miterLimit, 1/sin(θ/2)) 倍线宽；取上限 32 覆盖极端形状。
+    const miterLimit =
+      Number.isFinite(style.miterLimit) && style.miterLimit > 0 ? style.miterLimit : 10;
+    const joinReach =
+      style.lineJoin === 'Miter' ? lineWidth * Math.max(1, Math.min(miterLimit, 32)) : lineWidth;
+    // 描边区域的设备像素包围盒 = 路径 bbox 的设备包围盒外扩描边伸出量（像素）。
+    const padding = Math.max(2, Math.ceil(transformRadius(state.ctm, joinReach)) + 1);
+    const corners = [
+      transformPoint(state.ctm, { x: bounds.x, y: bounds.y }),
+      transformPoint(state.ctm, { x: bounds.x + bounds.w, y: bounds.y }),
+      transformPoint(state.ctm, { x: bounds.x, y: bounds.y + bounds.h }),
+      transformPoint(state.ctm, { x: bounds.x + bounds.w, y: bounds.y + bounds.h }),
+    ];
+    const left = Math.floor(Math.min(...corners.map((corner) => corner.x))) - padding;
+    const top = Math.floor(Math.min(...corners.map((corner) => corner.y))) - padding;
+    const right = Math.ceil(Math.max(...corners.map((corner) => corner.x))) + padding;
+    const bottom = Math.ceil(Math.max(...corners.map((corner) => corner.y))) + padding;
+
+    // 离屏像素 (0,0) 的设备中心是 (left + 0.5, top + 0.5)。几何按 left/top 整数平移，
+    // 设备坐标 d 就落在离屏的 d - left 处；贴回时平移 left/top 完全还原，不做半像素插值。
+    const offsetX = left;
+    const offsetY = top;
+    // 设备像素偏移只能作为 CTM 之后的平移，不能经 translateMatrix 作用在用户空间。
+    const localMatrix = offsetRadialMatrix(state.ctm, offsetX, offsetY);
+    // 单图元像素上限：宽高同比例缩小，保持描边形状比例不被拉伸。
+    const rawWidth = Math.max(1, right - left);
+    const rawHeight = Math.max(1, bottom - top);
+    const shrink = Math.min(1, Math.sqrt(STROKE_MASK_MAX_PIXELS / (rawWidth * rawHeight)));
+    const width = Math.max(1, Math.round(rawWidth * shrink));
+    const height = Math.max(1, Math.round(rawHeight * shrink));
+    const matrix = shrink < 1 ? scaleMatrix(localMatrix, shrink, shrink) : localMatrix;
+
+    let mask: CanvasFactoryEntry | null = null;
+    let layer: CanvasFactoryEntry | null = null;
+    try {
+      mask = this.canvasFactory.create(width, height);
+      layer = this.canvasFactory.create(width, height);
+
+      // ① 描边掩码：白色实心描边；离屏上下文不带主目标状态，线型必须显式应用。
+      const maskContext = mask.context;
+      maskContext.setTransform(
+        matrix[0],
+        matrix[1],
+        matrix[2],
+        matrix[3],
+        matrix[4],
+        matrix[5],
+      );
+      applyStrokeStyle(maskContext, style, state.ctm);
+      path.replay(maskContext);
+      maskContext.strokeStyle = '#ffffff';
+      maskContext.stroke();
+      // 只保留描边包围盒内的部分（虚线/端点可能把像素画到格子之外）。
+      maskContext.setTransform(1, 0, 0, 1, 0, 0);
+      maskContext.globalCompositeOperation = 'destination-in';
+      maskContext.fillStyle = '#ffffff';
+      maskContext.fillRect(0, 0, width, height);
+      maskContext.globalCompositeOperation = 'source-over';
+
+      // ② 渐变层：铺满整个描边包围盒，再与描边掩码相乘。
+      const layerContext = layer.context;
+      layerContext.setTransform(matrix[0], matrix[1], matrix[2], matrix[3], matrix[4], matrix[5]);
+      if (paint.kind === 'shading') {
+        this.drawShadingLayer(layerContext, matrix, paint.spec, width, height);
+      } else {
+        drawGradientLayer(
+          layerContext,
+          matrix,
+          paint.spec,
+          paint.strokeBounds ?? bounds,
+          width,
+          height,
+        );
+      }
+      // destination-in：保留渐变层中与描边掩码 alpha 重叠的部分，得到描边形状内的渐变。
+      layerContext.setTransform(1, 0, 0, 1, 0, 0);
+      layerContext.globalCompositeOperation = 'destination-in';
+      layerContext.drawImage(mask.canvas, 0, 0);
+      layerContext.globalCompositeOperation = 'source-over';
+      // ③ 贴回主目标：设备坐标 + 当前 alpha/composite，与纯色描边同一套合成语义。
+      context.save();
+      context.globalAlpha = clampUnit(state.alpha);
+      context.globalCompositeOperation = state.composite;
+      // 设备坐标：把离屏图按原始像素尺寸贴到 (left, top)，再用线性变换补上降采样比例。
+      context.imageSmoothingEnabled = true;
+      context.setTransform(
+        rawWidth / width,
+        0,
+        0,
+        rawHeight / height,
+        left + (rawWidth - width) / 2,
+        top + (rawHeight - height) / 2,
+      );
+      context.drawImage(layer.canvas, 0, 0, width, height);
+      context.restore();
+    } finally {
+      if (layer) this.canvasFactory.destroy(layer);
+      if (mask) this.canvasFactory.destroy(mask);
+    }
+  }
+
+  /**
+   * 在离屏上下文中绘制网格渐变层（描边掩码用）。
+   *
+   * 网格只覆盖三角形/网格单元本身：`Extend=0` 时单元之外的描边像素保持透明，
+   * `Extend=1` 时由 `rasterizeMeshShadingDevice` 预先铺满 `BackColor`（GB/T 33190—2016
+   * §8.3.4.4 表 31）。这与填充的语义一致，不做额外外推。
+   *
+   * @param layer 渐变层上下文，已设置为描边掩码的本地矩阵。
+   * @param localMatrix 用户空间 → 渐变层像素的矩阵。
+   * @param spec 网格渐变描述。
+   * @param width 渐变层宽，像素。
+   * @param height 渐变层高，像素。
+   */
+  private drawShadingLayer(
+    layer: CanvasRenderingContext2DLike,
+    localMatrix: Matrix,
+    spec: MeshShadingSpec,
+    width: number,
+    height: number,
+  ): void {
+    const canRasterize =
+      typeof layer.createImageData === 'function' && typeof layer.putImageData === 'function';
+    if (!canRasterize) {
+      layer.fillStyle = rgbaToCss(averageMeshColor(spec));
+      layer.fillRect(0, 0, width, height);
+      return;
+    }
+    const raster = rasterizeMeshShadingDevice({
+      spec,
+      matrix: localMatrix,
+      width,
+      height,
+      maxPixels: STROKE_MASK_MAX_PIXELS,
+    });
+    const createImageData = layer.createImageData;
+    const putImageData = layer.putImageData;
+    if (typeof createImageData !== 'function' || typeof putImageData !== 'function') return;
+    const imageData = createImageData.call(layer, raster.width, raster.height);
+    imageData.data.set(raster.data);
+    layer.setTransform(1, 0, 0, 1, 0, 0);
+    putImageData.call(layer, imageData, 0, 0);
+  }
+
+  /**
+   * 渐变/网格渐变描边无法绘制时的降级：纯色描边 + warning。
+   *
+   * @param context 目标上下文。
+   * @param paint 渐变或网格渐变 Paint。
+   */
+  private degradeStroke(
+    context: CanvasRenderingContext2DLike,
+    paint: Extract<ResolvedPaint, { kind: 'gradient' } | { kind: 'shading' }>,
+  ): void {
+    this.warnOnce('W_UNSUPPORTED_PAINT', '无法创建离屏画布，渐变描边按平均色降级');
+    if (paint.kind === 'shading') {
+      this.strokeAverage(context, averageMeshColor(paint.spec));
+      return;
+    }
+    this.strokeAverage(
+      context,
+      paint.spec.kind === 'radial'
+        ? averageRadialColor(paint.spec)
+        : parseRgbaCss(averageColorCss(paint.spec.segments)),
+    );
   }
 
   /**
@@ -1531,7 +1852,7 @@ export class H5Canvas2DRenderer implements Renderer {
         case 'stroke':
           applyState(context, state);
           applyStrokeStyle(context, command.style, state.ctm);
-          this.strokeWithPaint(context, state, command.paint, path);
+          this.strokeWithPaint(context, state, command.paint, path, command.style);
           break;
         case 'drawImage': {
           const image = this.resolveImage(command.image);
@@ -1689,6 +2010,137 @@ function clipHalfPlane(
 }
 
 /**
+ * 把渐变 Paint 画满一整个离屏画布（用于描边掩码的渐变层）。
+ *
+ * 轴向渐变直接创建 Canvas 线性渐变；径向渐变交给 `fillWithRadial` 的软件光栅化。
+ * 采样范围取 `strokeBounds`（路径 bbox 外扩线宽），保证 Repeat/Reflect 在描边像素上
+ * 仍有完整周期，而不是在路径外侧被 clamp 成端点色。
+ *
+ * @param layer 渐变层上下文，矩阵已设为 `localMatrix`。
+ * @param localMatrix 用户空间 → 渐变层像素的矩阵。
+ * @param spec 渐变描述；坐标位于当前用户空间（通常 mm）。
+ * @param area 渐变采样范围，当前用户空间单位（通常 mm）。
+ * @param width 渐变层宽，像素。
+ * @param height 渐变层高，像素。
+ */
+function drawGradientLayer(
+  layer: CanvasRenderingContext2DLike,
+  localMatrix: Matrix,
+  spec: GradientSpec,
+  area: Box,
+  width: number,
+  height: number,
+): void {
+  if (spec.kind === 'radial') {
+    fillRadialOnLayer(layer, localMatrix, spec, width, height);
+    return;
+  }
+  // 渐变按「当前用户空间」创建：它绑定的是创建时的 CTM，因此必须先设置好矩阵再用它填充。
+  const gradient = createAxialGradient(layer, spec, area);
+  const band = gradientBand(spec);
+  layer.save();
+  if (gradient && (band.needStart || band.needEnd)) {
+    // Extend=0/1/2 的 band 裁剪与填充一致，同样作用于描边像素。
+    applyGradientBand(layer, spec, area, band.needStart, band.needEnd);
+  }
+  layer.fillStyle = gradient ?? averageColorCss(spec.segments);
+  // 铺满整块离屏画布：渐变对象绑定创建时的 CTM，铺底范围必须换算回该坐标系，
+  // 直接填 0..width 在旋转/缩放下只会覆盖画布一角。
+  const inverse = invertMatrix(localMatrix);
+  if (inverse) {
+    const corners = [
+      transformPoint(inverse, { x: 0, y: 0 }),
+      transformPoint(inverse, { x: width, y: 0 }),
+      transformPoint(inverse, { x: 0, y: height }),
+      transformPoint(inverse, { x: width, y: height }),
+    ];
+    const minX = Math.min(...corners.map((corner) => corner.x));
+    const minY = Math.min(...corners.map((corner) => corner.y));
+    const maxX = Math.max(...corners.map((corner) => corner.x));
+    const maxY = Math.max(...corners.map((corner) => corner.y));
+    layer.fillRect(minX, minY, maxX - minX, maxY - minY);
+  } else {
+    layer.fillRect(area.x, area.y, area.w, area.h);
+  }
+  layer.restore();
+}
+
+/**
+ * 把径向渐变光栅化后写入离屏渐变层。
+ *
+ * @param layer 渐变层上下文。
+ * @param localMatrix 用户空间 → 渐变层像素的矩阵。
+ * @param spec 径向渐变描述；坐标与半径位于当前用户空间（通常 mm），角度单位度。
+ * @param width 渐变层宽，像素。
+ * @param height 渐变层高，像素。
+ */
+function fillRadialOnLayer(
+  layer: CanvasRenderingContext2DLike,
+  localMatrix: Matrix,
+  spec: RadialGradientSpec,
+  width: number,
+  height: number,
+): void {
+  if (typeof layer.createImageData !== 'function' || typeof layer.putImageData !== 'function') {
+    layer.fillStyle = averageColorCss(spec.segments);
+    layer.fillRect(0, 0, width, height);
+    return;
+  }
+  const raster = rasterizeRadialShadingDevice({
+    spec,
+    matrix: localMatrix,
+    width,
+    height,
+    maxPixels: STROKE_MASK_MAX_PIXELS,
+  });
+  const imageData = layer.createImageData(raster.width, raster.height);
+  imageData.data.set(raster.data);
+  layer.setTransform(1, 0, 0, 1, 0, 0);
+  layer.putImageData(imageData, 0, 0);
+}
+
+/**
+ * 计算矩阵平均缩放系数（面积比开方），用于把用户空间长度换算成像素。
+ *
+ * @param matrix 用户空间 → 设备像素的矩阵。
+ * @returns 平均缩放系数（无量纲）；矩阵退化时返回 1。
+ */
+function matrixScale(matrix: Matrix): number {
+  const determinant = Math.abs(matrix[0] * matrix[3] - matrix[1] * matrix[2]);
+  return Number.isFinite(determinant) && determinant > 0 ? Math.sqrt(determinant) : 1;
+}
+
+/**
+ * 把用户空间长度按矩阵换算成设备像素长度。
+ *
+ * @param matrix 用户空间 → 设备像素的矩阵。
+ * @param length 长度，当前用户空间单位（通常 mm）。
+ * @returns 长度，像素。
+ */
+function transformRadius(matrix: Matrix, length: number): number {
+  return length * matrixScale(matrix);
+}
+
+/**
+ * 解析 `rgba(r,g,b,a)` 字符串。
+ *
+ * @param css `rgba(r,g,b,a)` 形式的颜色；a 为 0..1。
+ * @returns RGBA8；解析失败时返回透明。
+ */
+function parseRgbaCss(css: string): Rgba {
+  const match = /rgba\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\)/.exec(
+    css,
+  );
+  if (!match) return TRANSPARENT;
+  return {
+    r: Number(match[1]),
+    g: Number(match[2]),
+    b: Number(match[3]),
+    a: Math.round(Number(match[4]) * 255),
+  };
+}
+
+/**
  * 创建轴向渐变。
  *
  * @param context 目标上下文。
@@ -1708,34 +2160,120 @@ function createAxialGradient(
   const length = Math.hypot(dx, dy);
   if (!Number.isFinite(length) || length < 1e-9) return null;
 
-  if (spec.mapType === 'Direct') {
-    const gradient = context.createLinearGradient(
-      spec.start.x,
-      spec.start.y,
-      spec.end.x,
-      spec.end.y,
-    );
+  // Stop 的 MapUnit 展开由样式/绑定层（render/paint.ts resolveAxialGradient）负责，
+  // 它产出覆盖整条轴线的 position∈[0,1] 最终 stop。渲染器只有在拿到**未展开** stop
+  // （直接构造 ResolvedPaint 的调用方）时才自行按 MapUnit 展开，判据是「非 Direct 且
+  // stop 的间距没有体现 MapUnit 周期」。两处都展开会造成周期被压缩为 1/periods。
+  const mapUnit = spec.mapUnit && spec.mapUnit > 0 ? spec.mapUnit : length;
+  const expanded =
+    spec.mapType === 'Direct' || isMapUnitExpanded(segments, length, mapUnit);
+  const axisEnd = expanded
+    ? spec.end
+    : extendAxis(spec, length, bounds, mapUnit);
+  const gradient = context.createLinearGradient(
+    spec.start.x,
+    spec.start.y,
+    axisEnd.x,
+    axisEnd.y,
+  );
+  if (expanded) {
     for (const segment of segments) {
       gradient.addColorStop(clamp01(segment.position), rgbaToCss(segment.color));
     }
     return gradient;
   }
+  // 未展开：把原始 stop 按 MapUnit 的周期数重铺（Repeat 正向、Reflect 镜像）。
+  return addPeriodStops(gradient, segments, length, mapUnit, spec.mapType);
+}
 
-  const ux = dx / length;
-  const uy = dy / length;
-  const mapUnit = spec.mapUnit && spec.mapUnit > 0 ? spec.mapUnit : length;
-  const axisExtent =
-    Math.max(length, Math.max(bounds?.w ?? 0, bounds?.h ?? 0) * Math.SQRT2 + length);
-  const periods = Math.min(512, Math.max(1, Math.ceil(axisExtent / mapUnit)));
-  const gradient = context.createLinearGradient(
-    spec.start.x,
-    spec.start.y,
-    spec.start.x + ux * mapUnit * periods,
-    spec.start.y + uy * mapUnit * periods,
-  );
+/**
+ * 判断 stop 列表是否已按 MapUnit 展开到整条轴线。
+ *
+ * 上游展开后，相邻 stop 的最小间距应等于 `MapUnit / 轴长`（归一化后的周期长度）；
+ * 若最小间距明显更大，说明是未展开的原始 stop，需要渲染器展开。
+ *
+ * @param segments 渐变 stop。
+ * @param axisLength 轴线长度，用户空间单位。
+ * @param mapUnit 一个渐变区间的长度，用户空间单位。
+ * @returns 是否已展开。
+ */
+function isMapUnitExpanded(
+  segments: readonly { position: number }[],
+  axisLength: number,
+  mapUnit: number,
+): boolean {
+  // 至少两个周期才算「已展开」；单个区间（最小 stop 间距≈1）说明是原始 stop。
+  if (segments.length <= 1 || mapUnit <= 0 || axisLength <= 0) return false;
+  const period = mapUnit / axisLength;
+  if (!Number.isFinite(period) || period <= 0 || period >= 1) return false;
+  if (axisLength / mapUnit <= 1.5) return false;
+  let smallest = Infinity;
+  for (let index = 1; index < segments.length; index += 1) {
+    const gap = segments[index]!.position - segments[index - 1]!.position;
+    if (gap > 1e-9) smallest = Math.min(smallest, gap);
+  }
+  return Number.isFinite(smallest) && smallest <= period * 1.5;
+}
 
+/**
+ * 计算 Repeat/Reflect 需要覆盖到的轴线终点。
+ *
+ * @param spec 轴向渐变描述。
+ * @param length 轴线长度，用户空间单位。
+ * @param bounds 当前路径边界，用户空间单位。
+ * @param mapUnit 一个渐变区间的长度，用户空间单位。
+ * @returns 轴线终点坐标。
+ */
+function extendAxis(
+  spec: AxialGradientSpec,
+  length: number,
+  bounds: Box | null,
+  mapUnit: number,
+): { x: number; y: number } {
+  const ux = (spec.end.x - spec.start.x) / length;
+  const uy = (spec.end.y - spec.start.y) / length;
+  // 需要覆盖的轴向范围：轴线终点到路径 bbox 在轴方向上的最远投影。
+  const corners = bounds
+    ? [
+        { x: bounds.x, y: bounds.y },
+        { x: bounds.x + bounds.w, y: bounds.y },
+        { x: bounds.x, y: bounds.y + bounds.h },
+        { x: bounds.x + bounds.w, y: bounds.y + bounds.h },
+      ]
+    : [{ x: spec.end.x, y: spec.end.y }];
+  let longest = length;
+  for (const corner of corners) {
+    const projection = (corner.x - spec.start.x) * ux + (corner.y - spec.start.y) * uy;
+    if (Number.isFinite(projection)) longest = Math.max(longest, projection);
+  }
+  const periods = Math.max(1, Math.ceil(longest / mapUnit));
+  return {
+    x: spec.start.x + ux * mapUnit * periods,
+    y: spec.start.y + uy * mapUnit * periods,
+  };
+}
+
+/**
+ * 把未展开的 stop 按 MapUnit 周期重铺到整条渐变轴。
+ *
+ * @param gradient Canvas 线性渐变。
+ * @param segments 原始 stop，position∈[0,1] 表示一个区间内的位置。
+ * @param axisLength 轴线长度，用户空间单位。
+ * @param mapUnit 一个渐变区间的长度，用户空间单位。
+ * @param mapType 映射方式。
+ * @returns 同一个渐变对象。
+ */
+function addPeriodStops(
+  gradient: ReturnType<CanvasRenderingContext2DLike['createLinearGradient']>,
+  segments: readonly { position: number; color: Rgba }[],
+  axisLength: number,
+  mapUnit: number,
+  mapType: AxialGradientSpec['mapType'],
+): ReturnType<CanvasRenderingContext2DLike['createLinearGradient']> {
+  if (mapType === 'Direct') return gradient;
+  const periods = Math.min(512, Math.max(1, axisLength / mapUnit));
   for (let period = 0; period < periods; period += 1) {
-    const reflect = spec.mapType === 'Reflect' && period % 2 === 1;
+    const reflect = mapType === 'Reflect' && Math.round(period) % 2 === 1;
     for (const segment of segments) {
       const position = reflect ? 1 - segment.position : segment.position;
       gradient.addColorStop(clamp01((period + position) / periods), rgbaToCss(segment.color));
@@ -1817,6 +2355,29 @@ function averageColorCss(segments: { color: Rgba }[]): string {
   }
   const count = segments.length;
   return rgbaToCss({ r: r / count, g: g / count, b: b / count, a: a / count });
+}
+
+/**
+ * 计算径向渐变的平均色，用于径向渐变描边降级。
+ *
+ * @param spec 径向渐变描述。
+ * @returns 平均色；无颜色段时返回透明。
+ */
+function averageRadialColor(spec: RadialGradientSpec): Rgba {
+  const segments = spec.segments;
+  if (!segments || segments.length === 0) return TRANSPARENT;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let a = 0;
+  for (const segment of segments) {
+    r += segment.color.r;
+    g += segment.color.g;
+    b += segment.color.b;
+    a += segment.color.a;
+  }
+  const count = segments.length;
+  return { r: r / count, g: g / count, b: b / count, a: a / count };
 }
 
 /**
