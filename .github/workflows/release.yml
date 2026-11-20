@@ -3,7 +3,7 @@ name: 发布
 # 推送 v* 标签触发完整发布；也可以在 Actions 页面手动指定已存在的 tag 重跑。
 # 手动触发时 publish=false 只构建、不发布，便于先验证产物。
 #
-# 发布步骤：
+# 发布步骤（详细规范见 docs/版本发布规范.md，含发布说明的撰写要求）：
 #   1. 四个包的 package.json 统一改成目标版本并提交到 main；
 #   2. 把面向用户的功能说明写成发布说明文件，用注释标签打标签，例如：
 #        git tag -a v0.1.3 -F release-notes-v0.1.3.md --cleanup=verbatim
