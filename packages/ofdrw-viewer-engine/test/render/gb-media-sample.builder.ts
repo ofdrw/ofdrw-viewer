@@ -21,6 +21,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { BUNDLED_CJK_FONT_PATH } from '../fixtures/fonts';
 import { buildOfdPackage, readPngSize, type MultiMediaSpec, type PageSpec } from './gb-standard-ofd';
 import { formatArray, formatNumber, type XmlElement } from './gb-standard-xml';
 
@@ -42,11 +43,11 @@ const AUDIO_RES_ID = 12;
 /** 字型资源 ID。 */
 const FONT_ID = 1;
 
-/** 内嵌字体路径：文泉驿微米黑，覆盖中文与拉丁字形。 */
-const FONT_PATH = '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc';
+/** 内嵌字体：随仓库提交的思源宋体（SIL OFL 1.1），覆盖中文与拉丁字形。 */
+const FONT_PATH = BUNDLED_CJK_FONT_PATH;
 
 /** 字型族名。 */
-const FONT_FAMILY = 'WenQuanYi Micro Hei';
+const FONT_FAMILY = 'Source Han Serif SC';
 
 /** 页面尺寸，单位 mm（A4 横向）。 */
 const PAGE = { width: 297, height: 210 };

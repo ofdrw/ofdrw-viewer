@@ -1,11 +1,13 @@
 /**
  * 字体 fixture 定位（测试 fixture 专用）。
  *
- * 优先使用系统 CJK 字体做合成测试；找不到时返回 null，由调用方 skip。
+ * 合成测试使用随仓库提交的思源宋体与思源黑体，结果不随机器环境变化；
+ * 仓库字体缺失时返回 null，由调用方 skip。
  * 也可以从本地 OFD 样本（不提交仓库）中提取内嵌字体，用于 T4 的字体解析测试。
  */
 
 import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { readZipEntries } from './zip-inspector';
 
 /** 字体 fixture。 */
@@ -18,23 +20,29 @@ export interface FontFixture {
   family: string;
 }
 
-/** 系统 CJK 字体候选路径（Linux 常见发行版；存在即用）。 */
-const SYSTEM_FONT_CANDIDATES: readonly string[] = Object.freeze([
-  '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-  '/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc',
-  '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
-  '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
-  '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
-  '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
+/** 随仓库提交的 CJK 字体：思源宋体简体中文（SIL OFL 1.1），覆盖中文与拉丁字形。 */
+export const BUNDLED_CJK_FONT_PATH = fileURLToPath(
+  new URL('./fonts/SourceHanSerifSC-Regular.otf', import.meta.url),
+);
+
+/** 随仓库提交的无衬线 CJK 字体：思源黑体简体中文（SIL OFL 1.1）。 */
+export const BUNDLED_SANS_FONT_PATH = fileURLToPath(
+  new URL('./fonts/SourceHanSansCN-Regular.otf', import.meta.url),
+);
+
+/** CJK 字体候选路径，按优先级排列：只用随仓库提交的字体。 */
+const CJK_FONT_CANDIDATES: readonly string[] = Object.freeze([
+  BUNDLED_CJK_FONT_PATH,
+  BUNDLED_SANS_FONT_PATH,
 ]);
 
 /**
- * 查找系统 CJK 字体。
+ * 查找可用的 CJK 字体。
  *
  * @param candidates 自定义候选路径；默认使用内置列表。
  * @returns 字体 fixture；均不存在时返回 null（调用方应 skip）。
  */
-export function findSystemCjkFont(candidates: readonly string[] = SYSTEM_FONT_CANDIDATES): FontFixture | null {
+export function findSystemCjkFont(candidates: readonly string[] = CJK_FONT_CANDIDATES): FontFixture | null {
   for (const path of candidates) {
     if (!existsSync(path)) continue;
     return { path, data: new Uint8Array(readFileSync(path)), family: familyFromPath(path) };

@@ -47,9 +47,15 @@ PAGE_HEIGHT_MM = 210
 ZIP_DATE_TIME = (2026, 11, 18, 0, 0, 0)
 ISO_DATE = "2026-11-18"
 
+#: 随仓库提交的中文字体；相对仓库根目录定位，保证素材生成不依赖本机字体环境。
+BUNDLED_CJK_FONT = os.path.join(
+    "packages", "ofdrw-viewer-engine", "test", "fixtures", "fonts",
+    "SourceHanSerifSC-Regular.otf",
+)
+
 #: 正文优先使用的中文字体候选（文件名 → 展示名）；均不存在时回退内置圆点字体。
 BODY_FONT_CANDIDATES = (
-    ("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", "WenQuanYi Micro Hei"),
+    (os.path.join(ROOT, BUNDLED_CJK_FONT), "Source Han Serif SC"),
     ("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc", "WenQuanYi Zen Hei"),
     ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "Noto Sans CJK SC"),
     ("/mnt/c/Windows/Fonts/simsun.ttc", "SimSun"),

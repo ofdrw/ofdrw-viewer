@@ -1,161 +1,55 @@
 /**
- * 黄金图 harness 的系统补充字体发现。
+ * 黄金图 harness 的补充字体来源。
  *
  * Node 测试环境没有浏览器系统字体回退；未注入字体时，非内嵌字体样本会全部
  * `W_FONT_MISSING` 并输出空白文字，导致“引擎缺陷”与“宿主未提供字体”无法区分。
- * 本模块只在测试侧发现主机字体文件，并以惰性 `data` getter 提供 `supplementaryFonts`；
- * 引擎首次解析字体时才读取字节，避免 `OFDDocument.open` 为每个样本预读数十 MiB 字体。
- * 不改变引擎公共 API，也不内置字体。
+ * 字体随仓库提交（思源宋体与思源黑体，SIL OFL 1.1），测试结果不依赖机器安装的字体。
+ * 以惰性 `data` getter 提供 `supplementaryFonts`，引擎首次解析字体时才读取字节，
+ * 避免 `OFDDocument.open` 为每个样本预读数十 MiB 字体。
+ * 不改变引擎公共 API，引擎产物不内置字体。
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { FontInput } from '@ofdrw/ofdrw-viewer-engine';
 
-/**
- * 系统字体候选组；每组按优先级取第一个可用文件。
- *
- * 第一组是 CJK 主字体（中文样本），第二组是西文衬线回退（Nimbus Roman，
- * 缺失时用 Noto Serif CJK），第三组是宿主 SimSun/宋体，第四组是宿主
- * FangSong/仿宋，第五组是宿主小标宋，第六组是真实 Times New Roman
- * （精确 family，避免 Nimbus 的 glyph191/Otilde 冒充 fi 连字）；存在才注入。
- * 各组都注入，按字体名评分选择，避免只取第一个导致特定 family 落空。
- */
-const FONT_CANDIDATE_GROUPS: ReadonlyArray<
-  ReadonlyArray<{ family: string; paths: readonly string[] }>
-> = [
-  [
-    {
-      family: 'Noto Sans CJK SC',
-      paths: [
-        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-        '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
-      ],
-    },
-    {
-      family: 'Droid Sans Fallback',
-      paths: ['/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf'],
-    },
-    {
-      family: 'WenQuanYi Micro Hei',
-      paths: ['/usr/share/fonts/truetype/wqy/wqy-microhei.ttc'],
-    },
-    {
-      family: 'PingFang SC',
-      paths: ['/System/Library/Fonts/PingFang.ttc'],
-    },
-    {
-      family: 'SimSun',
-      paths: ['C:\\Windows\\Fonts\\simsun.ttc'],
-    },
-  ],
-  [
-    {
-      family: 'Nimbus Roman',
-      paths: [
-        '/usr/share/fonts/opentype/urw-base35/NimbusRoman-Regular.otf',
-        '/usr/share/fonts/type1/urw-base35/NimbusRoman-Regular.t1',
-      ],
-    },
-    {
-      family: 'Noto Serif CJK SC',
-      paths: ['/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc'],
-    },
-  ],
-  [
-    {
-      family: 'SimSun',
-      paths: [
-        join(homedir(), '.local/share/fonts/SimSun.ttc'),
-        'C:\\Windows\\Fonts\\simsun.ttc',
-      ],
-    },
-  ],
-  [
-    {
-      family: 'FangSong',
-      paths: [
-        join(homedir(), '.local/share/fonts/simfang.ttf'),
-        join(homedir(), '.fonts/simfang.ttf'),
-        '/mnt/c/Windows/Fonts/simfang.ttf',
-        'C:\\Windows\\Fonts\\simfang.ttf',
-      ],
-    },
-  ],
-  [
-    {
-      family: '小标宋体',
-      paths: [
-        join(homedir(), '.local/share/fonts/HGXBS_CNKI.TTF'),
-        '/mnt/c/Windows/Fonts/HGXBS_CNKI.TTF',
-        'C:\\Windows\\Fonts\\HGXBS_CNKI.TTF',
-      ],
-    },
-  ],
-  [
-    {
-      family: 'Times New Roman',
-      paths: [
-        join(homedir(), '.local/share/fonts/times.ttf'),
-        '/mnt/c/Windows/Fonts/times.ttf',
-        'C:\\Windows\\Fonts\\times.ttf',
-        '/usr/share/fonts/truetype/msttcorefonts/Times_New_Roman.ttf',
-        '/usr/share/fonts/truetype/msttcorefonts/times.ttf',
-        '/usr/share/fonts/TTF/Times_New_Roman.ttf',
-      ],
-    },
-  ],
-  [
-    {
-      // 楷体：SignScaleError/v4signed 等样本的 FontName=楷体，必须注入真实 family；
-      // 否则引擎静默回退 Noto Sans，SSIM 低值会被误判为引擎字形缺陷。
-      family: 'KaiTi',
-      paths: [
-        '/mnt/c/Windows/Fonts/simkai.ttf',
-        'C:\\Windows\\Fonts\\simkai.ttf',
-        join(homedir(), '.local/share/fonts/simkai.ttf'),
-        '/usr/share/fonts/truetype/arphic/ukai.ttc',
-      ],
-    },
-  ],
-  [
-    {
-      // 华文楷体（STKaiti）作为 KaiTi 不可用时的第二候选；family 用于匹配 FontName=STKaiti。
-      family: 'STKaiti',
-      paths: [
-        '/mnt/c/Windows/Fonts/STKAITI.TTF',
-        'C:\\Windows\\Fonts\\STKAITI.TTF',
-        join(homedir(), '.local/share/fonts/STKAITI.TTF'),
-      ],
-    },
-  ],
-  [
-    {
-      family: 'Tahoma',
-      paths: [
-        '/mnt/c/Windows/Fonts/tahoma.ttf',
-        'C:\\Windows\\Fonts\\tahoma.ttf',
-        join(homedir(), '.local/share/fonts/tahoma.ttf'),
-      ],
-    },
-  ],
-  [
-    {
-      // Courier/Courier New：v4signed 等样本的等宽字体，避免回退到 Noto Sans Mono 后字宽失真。
-      family: 'Courier New',
-      paths: [
-        '/mnt/c/Windows/Fonts/cour.ttf',
-        'C:\\Windows\\Fonts\\cour.ttf',
-        join(homedir(), '.local/share/fonts/cour.ttf'),
-        '/usr/share/fonts/truetype/msttcorefonts/Courier_New.ttf',
-      ],
-    },
-  ],
-];
+/** 仓库字体目录。 */
+const FONT_DIRECTORY = fileURLToPath(new URL('../../fixtures/fonts/', import.meta.url));
 
-/** 可覆盖的补充字体文件路径环境变量。 */
-const FONT_PATH_ENV = 'GOLDEN_SUPPLEMENTARY_FONT';
+/** 思源宋体简体中文（SIL OFL 1.1）：衬线中文样本的主字体。 */
+export const BUNDLED_SERIF_FONT_PATH = fileURLToPath(
+  new URL('../../fixtures/fonts/SourceHanSerifSC-Regular.otf', import.meta.url),
+);
+
+/** 思源黑体简体中文（SIL OFL 1.1）：无衬线中文样本的主字体。 */
+export const BUNDLED_SANS_FONT_PATH = fileURLToPath(
+  new URL('../../fixtures/fonts/SourceHanSansCN-Regular.otf', import.meta.url),
+);
+
+/**
+ * 仓库内的补充字体及其匹配的字体族名。
+ *
+ * 同一字体文件会以多个族名注入：OFD 样本常按 SimSun、KaiTi、FangSong 等族名请求字体，
+ * 而测试只分发开源字体，因此用思源宋体的衬线字形承接这些衬线族名，用思源黑体承接无衬线族名。
+ * 这样引擎按族名匹配时总能命中真实字形，不会静默回退到默认字体。
+ */
+const BUNDLED_FONTS: ReadonlyArray<{ family: string; path: string }> = Object.freeze([
+  { family: 'Noto Serif CJK SC', path: BUNDLED_SERIF_FONT_PATH },
+  { family: 'SimSun', path: BUNDLED_SERIF_FONT_PATH },
+  { family: '宋体', path: BUNDLED_SERIF_FONT_PATH },
+  { family: 'FangSong', path: BUNDLED_SERIF_FONT_PATH },
+  { family: '仿宋', path: BUNDLED_SERIF_FONT_PATH },
+  { family: '小标宋体', path: BUNDLED_SERIF_FONT_PATH },
+  { family: 'Nimbus Roman', path: BUNDLED_SERIF_FONT_PATH },
+  { family: 'Times New Roman', path: BUNDLED_SERIF_FONT_PATH },
+  { family: 'Noto Sans CJK SC', path: BUNDLED_SANS_FONT_PATH },
+  { family: 'Droid Sans Fallback', path: BUNDLED_SANS_FONT_PATH },
+  { family: 'KaiTi', path: BUNDLED_SANS_FONT_PATH },
+  { family: 'STKaiti', path: BUNDLED_SANS_FONT_PATH },
+  { family: '楷体', path: BUNDLED_SANS_FONT_PATH },
+  { family: 'Tahoma', path: BUNDLED_SANS_FONT_PATH },
+  { family: 'Courier New', path: BUNDLED_SANS_FONT_PATH },
+]);
 
 /** 缓存：同一测试进程复用同一批惰性字体来源。 */
 let cachedFonts: FontInput[] | undefined;
@@ -165,7 +59,7 @@ let cachedDescription: string[] | undefined;
  * 创建惰性字体来源；`data` 首次被引擎读取时才加载文件。
  *
  * @param path 字体文件路径。
- * @param family 诊断/别名匹配使用的字体族名。
+ * @param family 诊断与别名匹配使用的字体族名。
  * @returns 可传给 `OFDDocument.open({ supplementaryFonts })` 的字体来源。
  */
 function createLazyFontInput(path: string, family: string): FontInput {
@@ -187,30 +81,19 @@ function createLazyFontInput(path: string, family: string): FontInput {
 }
 
 /**
- * 发现系统补充字体；只做文件存在性检查，不读取字体字节。
+ * 返回仓库内的补充字体；只做文件存在性检查，不读取字体字节。
  *
  * @returns 可直接传给 `OFDDocument.open({ supplementaryFonts })` 的字体来源；
- *          无可用字体时返回空数组。`data` 在首次解析字体时才读取。
+ *          仓库字体缺失时返回空数组。`data` 在首次解析字体时才读取。
  */
 export function loadSystemSupplementaryFonts(): FontInput[] {
   if (cachedFonts) return cachedFonts;
   const fonts: FontInput[] = [];
   const description: string[] = [];
-  const override = process.env[FONT_PATH_ENV];
-  if (override) {
-    if (existsSync(override)) {
-      fonts.push(createLazyFontInput(override, 'GOLDEN_SUPPLEMENTARY_FONT'));
-      description.push(override);
-    }
-  } else {
-    for (const group of FONT_CANDIDATE_GROUPS) {
-      const candidate = group.find((item) => item.paths.some((path) => existsSync(path)));
-      if (!candidate) continue;
-      const path = candidate.paths.find((item) => existsSync(item));
-      if (!path) continue;
-      fonts.push(createLazyFontInput(path, candidate.family));
-      description.push(path);
-    }
+  for (const item of BUNDLED_FONTS) {
+    if (!existsSync(item.path)) continue;
+    fonts.push(createLazyFontInput(item.path, item.family));
+    if (!description.includes(item.path)) description.push(item.path);
   }
   cachedFonts = fonts;
   cachedDescription = description;
@@ -218,9 +101,9 @@ export function loadSystemSupplementaryFonts(): FontInput[] {
 }
 
 /**
- * 返回本次发现到的字体文件路径（用于报告/诊断，不读字节）。
+ * 返回本次加载的字体文件路径（用于报告/诊断，不读字节）。
  *
- * @returns 发现到的字体文件路径；未注入时为空数组。
+ * @returns 字体文件路径；仓库字体缺失时为空数组。
  */
 export function systemSupplementaryFontDescription(): string[] {
   if (cachedDescription) return [...cachedDescription];
@@ -229,9 +112,9 @@ export function systemSupplementaryFontDescription(): string[] {
 }
 
 /**
- * 返回本次发现到的字体族名（用于宿主字体覆盖诊断）。
+ * 返回本次注入的字体族名（用于宿主字体覆盖诊断）。
  *
- * @returns 注入的 family 名列表；未发现字体时为空数组。
+ * @returns 注入的 family 名列表；仓库字体缺失时为空数组。
  */
 export function systemSupplementaryFontFamilies(): string[] {
   return loadSystemSupplementaryFonts()

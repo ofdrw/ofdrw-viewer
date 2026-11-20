@@ -5,7 +5,7 @@
  * Boundary 裁剪与 Clips 裁剪的组合。格子外周绘制灰色虚线参考框标出 Boundary，
  * 格子上方用无 CTM 的小号文字标注用例名，便于与 PDF 参考件逐格比对。
  *
- * 内嵌文泉驿微米黑：同时覆盖中文与拉丁字形，确保标注与文字内容在任意平台一致。
+ * 内嵌思源宋体（SIL OFL 1.1）：同时覆盖中文与拉丁字形，确保标注与文字内容在任意平台一致。
  *
  * 关键设计：每个格子的 CTM 平移量由「基础变换后的字形范围」反推，
  * 使字形在任何旋转/斜切下都精确落在格子内部，Boundary 再按字形范围外扩。
@@ -13,6 +13,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { BUNDLED_CJK_FONT_PATH } from '../fixtures/fonts';
 import { buildCtmOfd, type CtmClipSpec } from '../fixtures/ctm-ofd';
 
 /** 2×3 仿射矩阵。 */
@@ -73,11 +74,11 @@ const CELL_H = 26;
 const CELL_PAD_X = 4;
 const CELL_PAD_Y = 6;
 
-/** 内嵌字体路径：文泉驿微米黑，覆盖中文与拉丁字形。 */
-const FONT_PATH = '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc';
+/** 内嵌字体：随仓库提交的文泉驿微米黑，覆盖中文与拉丁字形。 */
+const FONT_PATH = BUNDLED_CJK_FONT_PATH;
 
 /** 字体族名，写入 OFD 字体资源。 */
-const FONT_FAMILY = 'WenQuanYi Micro Hei';
+const FONT_FAMILY = 'Source Han Serif SC';
 
 /** 默认文字内容（4 字）。 */
 const DEFAULT_TEXT = '变形文字';

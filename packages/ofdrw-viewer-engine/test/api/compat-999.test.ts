@@ -1,11 +1,10 @@
 /**
  * 999.ofd 兼容性回归：非内嵌字体补充、页面积回退与注释空外观 warning 语义。
  *
- * 字体用例依赖本机 Windows 字体目录；目录不存在时 skip，不伪造通过。
+ * 字体用例使用随仓库提交的思源宋体与思源黑体，不依赖本机安装的字体。
  */
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { OFDWarning } from '../../src/warnings';
@@ -16,19 +15,15 @@ const SAMPLE = fileURLToPath(
   new URL('../../../../ofd_pdf_match/999.ofd', import.meta.url),
 );
 
-/** 本机 Windows 字体目录（WSL 路径）。 */
-const WINDOWS_FONTS = '/mnt/c/Windows/Fonts';
+/** 仓库内的思源宋体（衬线）。 */
+const SERIF_FONT = fileURLToPath(
+  new URL('../fixtures/fonts/SourceHanSerifSC-Regular.otf', import.meta.url),
+);
 
-/** 引擎支持的字体扩展名。 */
-const FONT_FILE = /\.(ttf|otf|ttc|otc)$/i;
-
-/** 系统字体绝对路径；目录缺失时为空。 */
-const FONT_PATHS = existsSync(WINDOWS_FONTS)
-  ? readdirSync(WINDOWS_FONTS)
-      .filter((name) => FONT_FILE.test(name))
-      .sort()
-      .map((name) => join(WINDOWS_FONTS, name))
-  : [];
+/** 仓库内的思源黑体（无衬线）。 */
+const SANS_FONT = fileURLToPath(
+  new URL('../fixtures/fonts/SourceHanSansCN-Regular.otf', import.meta.url),
+);
 
 /** 读取样本字节。 */
 function sampleBytes(): Uint8Array {
@@ -85,8 +80,8 @@ describe('999.ofd 兼容性回归', () => {
     }
   });
 
-  it.skipIf(FONT_PATHS.length === 0)(
-    '非内嵌字体从补充字体目录加载后 W_FONT_MISSING 归零且文字可见',
+  it(
+    '非内嵌字体从补充字体加载后 W_FONT_MISSING 归零且文字可见',
     async () => {
       const withoutFonts = await openTestDocument(sampleBytes());
       let withoutPixels: Uint8ClampedArray;
@@ -97,10 +92,16 @@ describe('999.ofd 兼容性回归', () => {
       }
 
       const warnings: OFDWarning[] = [];
-      // engine 不再读取本地路径：测试宿主先读成字节，再交给 supplementaryFonts。
-      const supplementaryFonts = FONT_PATHS.map((path) => ({
-        data: new Uint8Array(readFileSync(path)),
-      }));
+      // engine 不读取本地路径：测试宿主先读成字节，再交给 supplementaryFonts。
+      // 999 请求楷体、宋体、黑体与 Courier New，用仓库字体按衬线/无衬线分别承接。
+      const serifData = new Uint8Array(readFileSync(SERIF_FONT));
+      const sansData = new Uint8Array(readFileSync(SANS_FONT));
+      const supplementaryFonts = [
+        { family: '宋体', data: serifData },
+        { family: '楷体', data: sansData },
+        { family: '黑体', data: sansData },
+        { family: 'Courier New', data: sansData },
+      ];
       const withFonts = await openTestDocument(sampleBytes(), {
         supplementaryFonts,
         onWarning: (warning) => warnings.push(warning),

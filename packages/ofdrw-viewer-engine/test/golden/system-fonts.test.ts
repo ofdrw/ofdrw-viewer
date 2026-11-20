@@ -1,47 +1,49 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  BUNDLED_SANS_FONT_PATH,
+  BUNDLED_SERIF_FONT_PATH,
   clearSystemSupplementaryFontCache,
   loadSystemSupplementaryFonts,
   systemSupplementaryFontDescription,
+  systemSupplementaryFontFamilies,
 } from './lib/system-fonts';
 
-/** 覆盖字体路径的环境变量名，与 system-fonts 实现一致。 */
-const FONT_PATH_ENV = 'GOLDEN_SUPPLEMENTARY_FONT';
-
-describe('黄金图 harness 补充字体懒加载', () => {
-  it('发现阶段只检查路径，不读取字体字节', () => {
-    const previous = process.env[FONT_PATH_ENV];
-    const directory = mkdtempSync(join(tmpdir(), 'ofd-lazy-font-'));
-    process.env[FONT_PATH_ENV] = directory;
+describe('黄金图 harness 补充字体', () => {
+  it('仓库自带思源宋体与思源黑体，不依赖机器安装的字体', () => {
+    expect(existsSync(BUNDLED_SERIF_FONT_PATH)).toBe(true);
+    expect(existsSync(BUNDLED_SANS_FONT_PATH)).toBe(true);
     clearSystemSupplementaryFontCache();
-    try {
-      // 目录被当作字体路径时 existsSync 仍为 true；若发现阶段读取会抛 EISDIR。
-      const fonts = loadSystemSupplementaryFonts();
-      expect(fonts).toHaveLength(1);
-      expect(fonts[0]?.family).toBe('GOLDEN_SUPPLEMENTARY_FONT');
-      expect(systemSupplementaryFontDescription()).toEqual([directory]);
-    } finally {
-      clearSystemSupplementaryFontCache();
-      if (previous === undefined) delete process.env[FONT_PATH_ENV];
-      else process.env[FONT_PATH_ENV] = previous;
-      rmSync(directory, { recursive: true, force: true });
-    }
+    const fonts = loadSystemSupplementaryFonts();
+    expect(fonts.length).toBeGreaterThan(0);
+    expect(systemSupplementaryFontDescription()).toEqual([
+      BUNDLED_SERIF_FONT_PATH,
+      BUNDLED_SANS_FONT_PATH,
+    ]);
   });
 
-  it('宿主无字体文件时安全降级为空列表', () => {
-    const previous = process.env[FONT_PATH_ENV];
-    process.env[FONT_PATH_ENV] = join(tmpdir(), 'ofd-not-exist-font.ttf');
+  it('衬线与无衬线族名都命中仓库字体', () => {
     clearSystemSupplementaryFontCache();
-    try {
-      expect(loadSystemSupplementaryFonts()).toEqual([]);
-      expect(systemSupplementaryFontDescription()).toEqual([]);
-    } finally {
-      clearSystemSupplementaryFontCache();
-      if (previous === undefined) delete process.env[FONT_PATH_ENV];
-      else process.env[FONT_PATH_ENV] = previous;
+    const families = systemSupplementaryFontFamilies();
+    expect(families).toContain('SimSun');
+    expect(families).toContain('FangSong');
+    expect(families).toContain('Times New Roman');
+    expect(families).toContain('Noto Sans CJK SC');
+    expect(families).toContain('KaiTi');
+    expect(families).toContain('Tahoma');
+  });
+
+  it('发现阶段只检查路径，不读取字体字节', () => {
+    clearSystemSupplementaryFontCache();
+    const fonts = loadSystemSupplementaryFonts();
+    // 惰性来源在读取前不持有字节；读取一次后才缓存。
+    for (const font of fonts) {
+      expect(font.family).toBeTruthy();
     }
+    const serif = fonts.find((font) => font.family === 'SimSun');
+    expect(serif).toBeDefined();
+    const first = serif!.data;
+    expect(first.byteLength).toBeGreaterThan(0);
+    expect(serif!.data).toBe(first);
   });
 });
