@@ -1018,9 +1018,38 @@
   text-align: center;
 }
 
+/*
+ * 印章命中层：与签章层同位，容器不接收指针事件，可点击区域只由其内印章盒自身的
+ * 边界决定，页面其余位置的文字选择不受影响。
+ */
+.ofd-page__signature-hit-layer {
+  /* 必须高于文字层（z-index: 1），否则印章盒会被文字层盖住而点不到。 */
+  z-index: 2;
+  pointer-events: none;
+}
+
+/*
+ * 印章盒：点击区域就是印章矩形本身。存在文本选区时整体让出——不接收点击、不显示
+ * 手形光标，选区内的文字可以正常继续拖选与复制。两条规则都用 `:where()` 保持零选择器
+ * 权重，再以 `.ofd-page` 前缀（权重 0,1,1）压过下方 `.ofd-signature-box`（0,1,0）的
+ * `pointer-events: auto` 与 `cursor: pointer`，不依赖样式表顺序。
+ */
+:where(.ofd-page) .ofd-signature-box {
+  pointer-events: auto;
+}
+
+:where(.ofd-page) .ofd-page__signature-hit-layer[data-hit-suspended='true'] .ofd-signature-box {
+  /* 存在选区时印章等同背景：不接收指针、不显示手形、hover/focus 高亮一律不生效。
+     `pointer-events: none` 只挡事件，`:hover` 仍会由祖先冒泡命中，所以显式清掉高亮。 */
+  pointer-events: none;
+  cursor: text;
+  border-color: transparent;
+  box-shadow: none;
+  outline: none;
+}
+
 .ofd-signature-box {
   position: absolute;
-  pointer-events: auto;
   /* 默认不可见；hover/focus 才显示阴影边框，避免在文档上形成伪造的可见印章框。 */
   border: 1px solid transparent;
   border-radius: 1px;

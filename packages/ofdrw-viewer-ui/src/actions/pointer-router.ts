@@ -6,7 +6,8 @@
  *
  * 判定流程：
  * ```
- * pointerdown → 记录起点
+ * pointerdown → 存在文本选区 ?          → 不记录起点，本次按下不派生动作
+ *             → 记录起点
  * pointerup   → 位移 > DRAG_THRESHOLD(4px) ? → 拖拽/选择，不触发
  *             → 存在活动文本选区 ?          → 不触发
  *             → DOM 目标是签章/媒体元素 ?   → 不触发（控件优先）
@@ -142,6 +143,8 @@ export class PointerRouter {
     if (!this.host.isFeatureEnabled('actions')) return;
     this.suppressed = isInteractiveTarget(event.target);
     if (this.suppressed) return;
+    // 存在文本选区时不记录起点：本次按下到抬起都不会派生动作，交给选区继续拖选/复制。
+    if (hasActiveSelection(this.host)) return;
     this.start = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
   }
 

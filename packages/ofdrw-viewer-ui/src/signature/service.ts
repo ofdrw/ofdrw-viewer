@@ -592,7 +592,7 @@ export class SignatureService implements ViewerSignatureService {
         const pageView = this.viewer.getPageView(pageNumber);
         if (!pageView) continue;
         const record = this.createOverlay(entry, stamp, pageNumber);
-        pageView.signatureLayer.appendChild(record.element);
+        pageView.signatureHitLayer.appendChild(record.element);
         this.applyOverlayGeometry(record);
         this.overlays.push(record);
       }
@@ -610,6 +610,9 @@ export class SignatureService implements ViewerSignatureService {
     const element = this.doc.createElement('button');
     element.type = 'button';
     element.className = 'ofd-signature-box';
+    // 印章盒整体不参与文字复制：落在印章上的拖选不会把下方整页文字并入选区。
+    element.style.userSelect = 'none';
+    element.style.setProperty('-webkit-user-select', 'none');
     element.dataset.signatureId = entry.id;
     element.dataset.pageNumber = String(pageNumber);
     if (stamp.id) element.dataset.stampId = stamp.id;

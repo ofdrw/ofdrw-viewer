@@ -110,8 +110,12 @@ export class PageView {
    * 开启命中。签章层因其后绘制仍盖在媒体之上，而媒体在文字层之上，视频可点击。
    */
   readonly mediaLayer: HTMLElement;
-  /** 签章覆盖层容器；由签章模块填充。 */
+  /** 签章覆盖层容器；由签章模块填充。不接收指针事件。 */
   readonly signatureLayer: HTMLElement;
+  /** 印章命中层；承载可点击的印章盒，容器不接收指针事件。 */
+  readonly signatureHitLayer: HTMLElement;
+  /** 命中层是否因存在文本选区而让出点击（让出时印章不响应点击与手形光标）。 */
+  private signatureHitSuspended = false;
 
   private readonly options: PageViewOptions;
   /** 96 DPI 下的页面单位尺寸（不含缩放倍率），单位 px。 */
@@ -248,6 +252,21 @@ export class PageView {
       pointerEvents: 'none',
     } satisfies Partial<CSSStyleDeclaration>);
     this.surface.appendChild(this.signatureLayer);
+
+    // 印章命中层：容器不接收指针事件，只有其内印章盒自身的边界可命中。印章盒不能直接
+    // 挂在签章层下——容器 pointer-events 为 none 时无法保证子元素收到点击。
+    this.signatureHitLayer = this.createElement('div', 'ofd-page__signature-hit-layer');
+    Object.assign(this.signatureHitLayer.style, {
+      position: 'absolute',
+      top: '0',
+      right: '0',
+      bottom: '0',
+      left: '0',
+      overflow: 'visible',
+      pointerEvents: 'none',
+    } satisfies Partial<CSSStyleDeclaration>);
+    this.signatureHitLayer.setAttribute('aria-hidden', 'true');
+    this.surface.appendChild(this.signatureHitLayer);
 
     // 页面加载层：骨架/spinner 只做视觉占位，状态由 `.ofd-page[aria-busy]`
     // 与隐藏文案共同表达，避免逐页创建 aria-live。
@@ -878,6 +897,22 @@ export class PageView {
    */
   setSignatureLayerVisible(visible: boolean): void {
     this.signatureLayer.hidden = !visible;
+    this.signatureHitLayer.hidden = !visible;
+  }
+
+  /**
+   * 设置印章命中层是否让出点击。
+   *
+   * 存在文本选区时让出：印章不响应点击、不显示手形光标，选区内的文字可以正常继续拖选
+   * 与复制；选区清空后恢复。
+   *
+   * @param suspended 是否让出。
+   */
+  setSignatureHitSuspended(suspended: boolean): void {
+    if (this.signatureHitSuspended === suspended) return;
+    this.signatureHitSuspended = suspended;
+    if (suspended) this.signatureHitLayer.dataset.hitSuspended = 'true';
+    else delete this.signatureHitLayer.dataset.hitSuspended;
   }
 
   /**
@@ -907,6 +942,7 @@ export class PageView {
     replaceChildren(this.textLayer);
     replaceChildren(this.mediaLayer);
     replaceChildren(this.signatureLayer);
+    replaceChildren(this.signatureHitLayer);
   }
 
   /** 显示 loading 层：首次渲染用骨架，重渲染用半透明遮罩。 */

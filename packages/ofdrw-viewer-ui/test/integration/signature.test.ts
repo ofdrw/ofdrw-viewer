@@ -56,13 +56,13 @@ async function waitForSignature(
   await vi.waitFor(() => expect(viewer.getSignatures()).toHaveLength(1));
   await vi.waitFor(() => {
     expect(
-      viewer.getPageView(pageNumber)!.signatureLayer.querySelectorAll('.ofd-signature-box')
+      viewer.getPageView(pageNumber)!.signatureHitLayer.querySelectorAll('.ofd-signature-box')
         .length,
     ).toBe(1);
   });
   return viewer
     .getPageView(pageNumber)!
-    .signatureLayer.querySelector<HTMLElement>('.ofd-signature-box')!;
+    .signatureHitLayer.querySelector<HTMLElement>('.ofd-signature-box')!;
 }
 
 describe('签章集成：真实 SignedValue', () => {

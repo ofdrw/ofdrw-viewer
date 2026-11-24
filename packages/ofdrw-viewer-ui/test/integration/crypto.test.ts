@@ -494,12 +494,12 @@ describe('验证面板与信任根', () => {
     await viewer.ready;
     await vi.waitFor(() => {
       expect(
-        viewer.getPageView(1)!.signatureLayer.querySelectorAll('.ofd-signature-box').length,
+        viewer.getPageView(1)!.signatureHitLayer.querySelectorAll('.ofd-signature-box').length,
       ).toBe(1);
     });
     const overlay = viewer
       .getPageView(1)!
-      .signatureLayer.querySelector<HTMLButtonElement>('.ofd-signature-box')!;
+      .signatureHitLayer.querySelector<HTMLButtonElement>('.ofd-signature-box')!;
     overlay.click();
     const popover = await vi.waitFor(() => {
       const element = document.querySelector<HTMLElement>('.ofd-signature-popover');
@@ -831,7 +831,7 @@ describe('t47 修复回归', () => {
     await viewer.ready;
     await vi.waitFor(() => {
       expect(
-        viewer.getPageView(1)!.signatureLayer.querySelectorAll('.ofd-signature-box').length,
+        viewer.getPageView(1)!.signatureHitLayer.querySelectorAll('.ofd-signature-box').length,
       ).toBe(1);
     });
     return viewer;
@@ -842,7 +842,7 @@ describe('t47 修复回归', () => {
     return (
       viewer
         .getPageView(1)!
-        .signatureLayer.querySelector<HTMLElement>('.ofd-signature-box')
+        .signatureHitLayer.querySelector<HTMLElement>('.ofd-signature-box')
         ?.getAttribute('aria-label') ?? ''
     );
   }
@@ -1102,7 +1102,7 @@ describe('t51 修复回归', () => {
     await viewer.ready;
     await vi.waitFor(() => {
       expect(
-        viewer.getPageView(1)!.signatureLayer.querySelectorAll('.ofd-signature-box').length,
+        viewer.getPageView(1)!.signatureHitLayer.querySelectorAll('.ofd-signature-box').length,
       ).toBe(1);
     });
     return viewer;
@@ -1113,7 +1113,7 @@ describe('t51 修复回归', () => {
     return (
       viewer
         .getPageView(1)!
-        .signatureLayer.querySelector<HTMLElement>('.ofd-signature-box')
+        .signatureHitLayer.querySelector<HTMLElement>('.ofd-signature-box')
         ?.getAttribute('aria-label') ?? ''
     );
   }
@@ -1126,7 +1126,7 @@ describe('t51 修复回归', () => {
     expect(panel.textContent).toContain('总体状态：有效');
     const overlay = viewer
       .getPageView(1)!
-      .signatureLayer.querySelector<HTMLButtonElement>('.ofd-signature-box')!;
+      .signatureHitLayer.querySelector<HTMLButtonElement>('.ofd-signature-box')!;
     overlay.click();
     await vi.waitFor(() =>
       expect(document.querySelector('.ofd-signature-popover')).not.toBeNull(),
@@ -1176,7 +1176,7 @@ describe('t51 修复回归', () => {
     });
     const overlay = viewer
       .getPageView(1)!
-      .signatureLayer.querySelector<HTMLButtonElement>('.ofd-signature-box')!;
+      .signatureHitLayer.querySelector<HTMLButtonElement>('.ofd-signature-box')!;
 
     overlay.click();
     await vi.waitFor(() =>
@@ -1219,7 +1219,7 @@ describe('t51 修复回归', () => {
     });
     const overlay = viewer
       .getPageView(1)!
-      .signatureLayer.querySelector<HTMLButtonElement>('.ofd-signature-box')!;
+      .signatureHitLayer.querySelector<HTMLButtonElement>('.ofd-signature-box')!;
 
     overlay.click();
     await vi.waitFor(() =>
@@ -1269,7 +1269,7 @@ describe('t51 修复回归', () => {
 
     const overlay = viewer
       .getPageView(1)!
-      .signatureLayer.querySelector<HTMLButtonElement>('.ofd-signature-box')!;
+      .signatureHitLayer.querySelector<HTMLButtonElement>('.ofd-signature-box')!;
     overlay.click();
     const popover = await vi.waitFor(() => {
       const element = document.querySelector<HTMLElement>('.ofd-signature-popover');

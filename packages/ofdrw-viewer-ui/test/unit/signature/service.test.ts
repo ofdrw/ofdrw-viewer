@@ -244,7 +244,7 @@ describe('SignatureService 覆盖层与详情', () => {
       '.ofd-signature-box[data-signature-id="s1"]',
     );
     expect(box).not.toBeNull();
-    expect(box!.parentElement?.classList.contains('ofd-page__signature-layer')).toBe(true);
+    expect(box!.parentElement?.classList.contains('ofd-page__signature-hit-layer')).toBe(true);
     expect(box!.dataset.pageNumber).toBe('1');
     expect(Number.parseFloat(box!.style.left)).toBeCloseTo((10 * 96) / 25.4, 2);
     expect(Number.parseFloat(box!.style.top)).toBeCloseTo((20 * 96) / 25.4, 2);

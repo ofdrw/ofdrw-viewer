@@ -952,6 +952,9 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
       features: this.featureGate.getStates(),
       layerVisibility: this.layerOverrides.clone(this.layerSession),
     });
+    // 存在文本选区时印章命中层让出点击：选区内的文字可继续拖选与复制，印章也不显示
+    // 手形光标；选区清空后恢复。
+    this.on('selectionchange', () => this.applySignatureHitSuspended());
     // 用户意向（本机字体开关）在构造时初始化：持久化选择优先于宿主默认值。
     this.initLocalFontsWanted();
     this.cryptoService = new CryptoService(this, this.options.crypto);
@@ -3545,6 +3548,7 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     }
     this.reflow();
     this.applyFeatureStates();
+    this.applySignatureHitSuspended();
   }
 
   /** 全屏 loading 的“取消”：中止本次打开并立即隐藏遮罩。 */
@@ -5530,6 +5534,22 @@ export class OFDViewer implements UIShellHost, CryptoServiceHost {
     this.elements.sidebar.dataset.open = open ? 'true' : 'false';
     this.elements.sidebar.setAttribute('aria-hidden', open ? 'false' : 'true');
     this.elements.sidebarMask.dataset.open = open ? 'true' : 'false';
+  }
+
+  /**
+   * 按是否存在文本选区切换印章命中层的让出状态。
+   *
+   * 让出期间印章不响应点击、不显示手形光标；仅在正常阅读（无选区）时印章才可交互。
+   */
+  private applySignatureHitSuspended(): void {
+    // 状态文本可能滞后于原生选区（例如刚拖选完、事件尚未提交），两者任一非空即让出。
+    const selection = this.ownerDocument.getSelection?.() ?? null;
+    const suspended =
+      this.state.view.selectedText.length > 0 ||
+      (selection !== null &&
+        !selection.isCollapsed &&
+        this.elements.main.contains(selection.anchorNode));
+    for (const pageView of this.pageViews) pageView.setSignatureHitSuspended(suspended);
   }
 
   /** 应用功能状态到核心 DOM。 */
