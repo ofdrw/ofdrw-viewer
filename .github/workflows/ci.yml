@@ -77,6 +77,18 @@ jobs:
       - name: cli 单元与端到端测试
         run: pnpm -C packages/ofdrw-viewer-cli test
 
+      # api-server 不依赖 cli 包，单独校验：类型检查、单元测试与真实起服务的 e2e。
+      # e2e 以配置 port: 0 启动并读取启动日志中的实际端口，不占用固定端口。
+      - name: api-server 单元与端到端测试
+        run: |
+          pnpm -C packages/ofdrw-viewer-api-server typecheck
+          pnpm -C packages/ofdrw-viewer-api-server test
+
+      # SEA 离线二进制是 api-server 的第二条安装路径，构建脚本要求 Node >= 25.5，
+      # 与上方 NODE_VERSION 一致。这里只构建不打包，冒烟测试由构建脚本内部完成。
+      - name: api-server SEA 构建
+        run: pnpm -C packages/ofdrw-viewer-api-server build:sea
+
       # 演示站部署在 GitHub Pages 根路径以外时由 pages.yml 注入 BASE_PATH，
       # 这里用根路径验证站点可构建。
       - name: 构建演示站
