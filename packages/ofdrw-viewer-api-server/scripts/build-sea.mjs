@@ -753,8 +753,8 @@ async function startAndProbe(executablePath, workspace, env) {
   });
 
   const exited = new Promise((resolveExit) => {
-    child.once('exit', (code) => resolveExit(code));
-    child.once('error', () => resolveExit(-1));
+    child.once('exit', (code, signal) => resolveExit({ code, signal }));
+    child.once('error', () => resolveExit({ code: -1, signal: null }));
   });
 
   try {
@@ -766,19 +766,41 @@ async function startAndProbe(executablePath, workspace, env) {
     const body = await response.json();
     return { url, ok: body.status === 'ok' };
   } finally {
-    child.kill('SIGTERM');
-    const code = await Promise.race([exited, delay(15_000).then(() => 'timeout')]);
-    if (code === 'timeout') {
+    const forced = await stopChild(child);
+    const result = await Promise.race([exited, delay(15_000).then(() => 'timeout')]);
+    if (result === 'timeout') {
       child.kill('SIGKILL');
-      throw new Error(`SEA 服务冒烟失败：SIGTERM 后未在 15 秒内退出\n${stderr}`);
+      throw new Error(`SEA 服务冒烟失败：关闭后未在 15 秒内退出\n${stderr}`);
     }
-    if (code !== 0) {
-      throw new Error(`SEA 服务冒烟失败：服务退出码 ${code}\n${stdout}\n${stderr}`);
+    // Unix 下服务自行处理 SIGTERM 后正常退出，退出码必须为 0；
+    // Windows 不实现 POSIX 信号，由 taskkill 强制终止，退出码无意义，只要求进程确已结束。
+    if (!forced && result.code !== 0) {
+      throw new Error(`SEA 服务冒烟失败：服务退出码 ${result.code}\n${stdout}\n${stderr}`);
     }
     if (stderr.includes('错误[')) {
       throw new Error(`SEA 服务冒烟失败：${stderr}`);
     }
   }
+}
+
+/**
+ * 请求子进程退出。
+ *
+ * Unix 下发送 SIGTERM，由服务自身完成优雅关闭并返回正常退出码；
+ * Windows 不实现 POSIX 信号，`child.kill()` 不会触发服务的关闭逻辑，
+ * 因此通过 `taskkill` 结束进程树，避免遗留进程占用端口。
+ *
+ * @param child 已启动的子进程
+ * @returns 是否为强制终止；强制终止时调用方不再校验退出码
+ */
+async function stopChild(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return false;
+  if (process.platform !== 'win32') {
+    child.kill('SIGTERM');
+    return false;
+  }
+  spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+  return true;
 }
 
 /**
