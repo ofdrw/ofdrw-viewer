@@ -15,13 +15,14 @@
 需 Node.js ≥ 22：
 
 ```bash
-npm install @ofdrw/ofdrw-viewer-engine     # 渲染引擎（浏览器 / Node.js / 小程序）
-npm install @ofdrw/ofdrw-viewer-crypto     # 密码工具（解密、签章与完整性验证）
-npm install @ofdrw/ofdrw-viewer-ui         # HTML5 OFD 阅读器
-npm install -g @ofdrw/ofdrw-viewer-cli     # 终端图片转换命令
+npm install @ofdrw/ofdrw-viewer-engine       # 渲染引擎（浏览器 / Node.js / 小程序）
+npm install @ofdrw/ofdrw-viewer-crypto       # 密码工具（解密、签章与完整性验证）
+npm install @ofdrw/ofdrw-viewer-ui           # HTML5 OFD 阅读器
+npm install -g @ofdrw/ofdrw-viewer-cli       # 终端图片转换命令
+npm install -g @ofdrw/ofdrw-viewer-api-server  # OFD HTTP 解析服务
 ```
 
-无需 Node.js 可使用二进制：从 [GitHub Releases](https://github.com/ofdrw/ofdrw-viewer/releases/latest) 下载 CLI 压缩包（Linux / macOS / Windows），解压即可运行；同页还有演示站静态包。
+无需 Node.js 可使用二进制：从 [GitHub Releases](https://github.com/ofdrw/ofdrw-viewer/releases/latest) 下载 CLI 或 API 服务的压缩包（Linux / macOS / Windows），解压即可运行；同页还有演示站静态包。
 
 国内访问 Gitee 镜像：<https://gitee.com/ofdrw/ofdrw-viewer>
 
@@ -45,6 +46,19 @@ CLI命令把 OFD 转换为图片格式（PNG/JPEG/WebP），并支持可导出�
 [![ofdrw-viewer-cli 演示](packages/ofdrw-viewer-cli/docs/img/demo.gif)](packages/ofdrw-viewer-cli/README.md)
 
 [*进入了解 ofdrw-viewer-cli*🔗](packages/ofdrw-viewer-cli/README.md)
+
+### 🌐 OFD HTTP 解析服务
+
+以 HTTP 服务对外提供 OFD 解析能力（转图片、文字空间坐标、文档信息、签名验证与作业管理），任何语言都能调用，前端与后端服务可直接接入；也可安装为自包含二进制，解压即用。
+
+```bash
+ofdrw-api-server --workdir /srv/ofd
+curl -s -X POST http://127.0.0.1:7860/api/convert -F file=@invoice.ofd -F pages=1 -F dpi=150 -o convert.json
+```
+
+接口文档：[docs/API.md](packages/ofdrw-viewer-api-server/docs/API.md) · OpenAPI：[docs/openapi.json](packages/ofdrw-viewer-api-server/docs/openapi.json)
+
+[*进入了解 ofdrw-viewer-api-server*🔗](packages/ofdrw-viewer-api-server/README.md)
 
 ### 🎨 OFD渲染引擎库
 
@@ -81,6 +95,7 @@ ofdrw-viewer 提供了系列智能体协作指南（SKILL），若你是智能�
 - 🔐 [**ofdrw-viewer-crypto** · SKILL](packages/ofdrw-viewer-crypto/skills/SKILL.md) — 检测并解密加密 OFD，解析电子印章与时间戳，校验签名、证书链以及文档是否被夹带篡改。
 - 🎨 [**ofdrw-viewer-engine** · SKILL](packages/ofdrw-viewer-engine/skills/SKILL.md) — 将 OFD 页面渲染到 Canvas，支持缩略图、图片导出、带坐标的文字层与文档信息读取，适用于浏览器、Node.js、小程序等环境。
 - 📖 [**ofdrw-viewer-ui** · SKILL](packages/ofdrw-viewer-ui/skills/SKILL.md) — 在网页中嵌入完整的 OFD 阅读器，具备滚动缩放、缩略图与大纲、文本搜索、打印导出、加密文档打开与签章验证等能力。
+- 🌐 [**ofdrw-viewer-api-server** · SKILL](packages/ofdrw-viewer-api-server/skills/SKILL.md) — 启动 OFD HTTP 服务，提交文档完成转图、取文字坐标、查文档信息与验签，支持小批量同步调用与大批量持久化作业。
 
 ## 🛠️ OFD 生成与编辑
 

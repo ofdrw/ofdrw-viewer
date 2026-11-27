@@ -29,7 +29,7 @@ packages/ofdrw-viewer-api-server/
 ├── api-server-config.yaml   出厂默认配置
 ├── src/
 │   ├── index.ts             入口：startApiServer / loadConfig / runCli
-│   ├── cli.ts               子命令参数解析（--config / -t）
+│   ├── cli.ts               `ofdrw-api-server` 命令行参数解析（--workdir / --config / -t）
 │   ├── config.ts            配置结构、YAML 加载、环境变量插值、zod 校验
 │   ├── server.ts            Fastify 装配、插件注册、错误处理、优雅退出
 │   ├── fastify-app.ts       Fastify 实例类型别名
@@ -63,7 +63,7 @@ packages/ofdrw-viewer-api-server/
 └── test/                    单元测试与 e2e
 ```
 
-子包不依赖 `@ofdrw/ofdrw-viewer-cli`；CLI 以 workspace 依赖调用 `startApiServer()`，依赖方向为 `cli → api-server`。子包也可独立运行。
+子包与 `@ofdrw/ofdrw-viewer-cli` 相互独立，互不依赖，也不挂在 CLI 的任何子命令下；服务由 `ofdrw-api-server` 可执行命令启动。
 
 | 依赖 | 用途 |
 | --- | --- |
@@ -265,13 +265,27 @@ pages=1-3,5
 
 ## 6. 工作区
 
-工作区是 API 服务器运行所需的完整目录，包含可执行程序、配置文件、日志与作业数据。工作区根按以下顺序确定：`--config` 指定文件所在目录 → 进程的工作目录（`process.cwd()`）；配置中的相对路径一律相对工作区根解析。默认布局：
+工作区是 API 服务器运行所需的完整目录，包含可执行程序、配置文件、日志与作业数据。配置中的相对路径一律相对工作区根解析。
+
+工作区根按以下顺序确定（`-t` 校验输出会标明来源）：
+
+| 启动方式 | 工作区根 |
+| --- | --- |
+| `--workdir /srv/ofd` | `/srv/ofd`（命令行指定，优先级最高） |
+| 配置文件里写 `workspace: ./inst-a` | 进程当前工作目录下的 `inst-a` |
+| `--config /srv/ofd/api-server-config.yaml` | `/srv/ofd`（配置文件所在目录） |
+| 不带以上参数启动，当前目录下有 `api-server-config.yaml` | 进程当前工作目录 |
+| 二进制发行包内启动（包内自带配置） | 可执行文件所在目录（配置文件同目录） |
+| npm 全局安装、未指定 `--workdir` | 进程当前工作目录（推荐显式写 `--workdir`） |
+
+SEA 二进制发行版首次启动会在可执行文件旁解压运行时依赖到 `.ofdrw-cache/`，该目录由工具自行管理，可随时删除，下次启动自动重建；npm 安装无此目录。默认布局：
 
 ```text
 <工作区>/
-├── api-server[.exe]              可执行程序；随包发布的默认配置置于同目录
-├── api-server-config.yaml        配置文件，启动时自动发现
-├── jobs/                         作业目录（jobs.workDir），持久化作业数据
+├── ofdrw-api-server[.exe]        可执行程序（二进制发行版；随包附默认配置）
+├── api-server-config.yaml        配置文件，启动时自动发现；缺失时首次启动生成
+├── .ofdrw-cache/                 运行时依赖（仅二进制发行版；可删除，下次启动重建）
+├── jobs/                         作业目录，固定为 <工作区>/jobs，持久化作业数据
 │   ├── .lock                     单实例锁
 │   ├── .tmp/                     写入中转
 │   ├── .trash/                   待删除
@@ -285,22 +299,25 @@ pages=1-3,5
 | --- | --- | --- | --- |
 | 可执行程序 | 工作区根，或与工作区根同级的安装目录 | 部署方 | 只读；启动时不改写自身 |
 | 配置文件 | 工作区根 `api-server-config.yaml` | 部署方 | 只读；`--config` 可指向任意路径 |
-| 作业目录 | `jobs.workDir`，默认 `<工作区>/jobs` | 服务独占 | 读写；按作业有效期清理 |
+| 作业目录 | 固定 `<工作区>/jobs` | 服务独占 | 读写；按作业有效期清理 |
 | 日志目录 | `logging.dir`，默认 `<工作区>/logs` | 服务独占 | 只写；按天轮转并保留 `keepDays` 天 |
 
 规则：
 
-- 工作区根一旦确定不再变化，配置中的相对路径（`jobs.workDir`、`logging.dir`、`render.fontDir`、`verify.roots`）都相对它解析，绝对路径原样使用；
-- 作业目录与日志目录由服务独占，二者不得互相包含；
+- 工作区根一旦确定不再变化，配置中的相对路径（`logging.dir`、`render.fontDir`、`verify.roots`）都相对它解析，绝对路径原样使用；作业目录固定为 `<工作区>/jobs`，不可配置；
+- 作业目录与日志目录由服务独占，二者不得互相包含，多实例部署须各用独立工作区；
+- 作业按 `ttlSec` 计算过期时间，运行期每 10 秒巡检删除过期作业；`ttlSec: -1` 永不过期，需自行 `DELETE`；
+- 作业目录总占用受 `jobs.maxTotalBytes` 约束，超出时先删最早结束的作业；
 - 服务只写作业目录与日志目录；可执行程序与配置文件只读；
-- 同步接口只在内存处理，不在工作区留下任何文件。
+- 同步接口只在内存处理，不在工作区留下任何文件；
+- 服务不记录文档内容、产物内容与任何凭据。
 
 ### 6.1 配置文件与启动
 
 ```bash
-ofdrw-viewer-cli api-server                       # 读默认配置
-ofdrw-viewer-cli api-server --config ./prod.yaml  # 指定配置
-ofdrw-viewer-cli api-server -t                    # 只校验配置，不启动
+ofdrw-api-server                       # 读默认配置
+ofdrw-api-server --config ./prod.yaml  # 指定配置
+ofdrw-api-server -t                    # 只校验配置，不启动
 ```
 
 - 配置只从 YAML 读取；查找顺序为 `--config` 指定路径 → 工作区根 `api-server-config.yaml` → 可执行文件同目录 `api-server-config.yaml` → 内置默认；
@@ -347,7 +364,7 @@ logging:
 
 ### 6.3 作业目录内容
 
-作业目录由 `jobs.workDir` 指定，是唯一持久化作业数据的位置：
+作业目录固定为 `<工作区>/jobs`，是唯一持久化作业数据的位置：
 
 ```text
 <工作区>/
@@ -393,7 +410,7 @@ logging:
 - 跨天自动切换；启动时扫描 `api-server.*.log`，删除修改时间早于 `keepDays` 的文件，其他文件不动；
 - 文件内为 JSON 行，含 `time`/`level`/`traceId`/`msg` 与结构化字段；stdout 输出人类可读版本；
 - POSIX 下目录 `0700`、文件 `0640`；
-- 多实例需各自配置不同的工作区或至少不同的 `jobs.workDir`、`logging.dir`。
+- 多实例需各自配置不同的工作区（`--workdir` 或配置里的 `workspace`）。
 
 ### 6.5 校验
 
@@ -521,7 +538,7 @@ logging:
 
 - 单元测试：配置加载与插值、字段校验、请求解析、三种输出、作业 ID、`meta.json` 读写、过期与恢复判定、日志轮转；
 - e2e：以配置 `port: 0` 起服务并读取启动日志中的实际端口，覆盖各路由成功与失败、加密文档拒绝、同步页数上限、作业创建→轮询→取文件→下载 ZIP→删除；
-- 独立性：子包不得 import `@ofdrw/ofdrw-viewer-cli`。
+- 独立性：子包不得 import `@ofdrw/ofdrw-viewer-cli`；`ofdrw-viewer-cli` 也不得提供 `api-server` 子命令。
 
 ```bash
 pnpm -C packages/ofdrw-viewer-api-server typecheck
