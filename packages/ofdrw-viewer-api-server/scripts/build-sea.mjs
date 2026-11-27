@@ -116,11 +116,6 @@ const TARGETS = {
     arch: 'x64',
     nativePackage: '@napi-rs/canvas-win32-x64-msvc',
   },
-  'win32-arm64': {
-    platform: 'win32',
-    arch: 'arm64',
-    nativePackage: '@napi-rs/canvas-win32-arm64-msvc',
-  },
 };
 
 /** 可执行文件在 Windows 上的扩展名。 */
