@@ -1,0 +1,71 @@
+{
+  "name": "@ofdrw/ofdrw-viewer-api-server",
+  "version": "0.2.1",
+  "description": "OFD HTTP 解析服务：转图片、空间文本、元信息查询与签名验证",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "ofdrw-api-server": "./dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "api-server-config.yaml",
+    "docs",
+    "skills",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "ofd",
+    "ofdrw",
+    "ofd-render",
+    "api-server",
+    "http",
+    "png",
+    "jpeg"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ofdrw/ofdrw-viewer.git",
+    "directory": "packages/ofdrw-viewer-api-server"
+  },
+  "homepage": "https://github.com/ofdrw/ofdrw-viewer#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "pnpm run clean && tsc -p tsconfig.build.json && node -e \"if(process.platform!=='win32')require('node:fs').chmodSync('dist/bin.js',0o755)\" && node scripts/gen-openapi-json.mjs",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build:sea": "node scripts/build-sea.mjs",
+    "package:sea": "node scripts/package-sea.mjs",
+    "release:sea": "pnpm run build:sea && pnpm run package:sea",
+    "prepack": "pnpm run build"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.4.3",
+    "@fastify/multipart": "^10.1.9",
+    "@napi-rs/canvas": "^1.0.13",
+    "@ofdrw/ofdrw-viewer-crypto": "workspace:*",
+    "@ofdrw/ofdrw-viewer-engine": "workspace:*",
+    "fastify": "^5.12.8",
+    "fflate": "^0.8.3",
+    "pino": "^10.4.0",
+    "pino-roll": "^4.0.0",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  }
+}

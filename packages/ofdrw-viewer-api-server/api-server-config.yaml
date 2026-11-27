@@ -1,0 +1,73 @@
+# OFD API 服务器默认配置
+#
+# 工作区根依次取：--workdir 参数 → 本文件的 workspace 项 →
+# 本文件所在目录 → 进程工作目录。作业目录固定为 <工作区根>/jobs。
+#
+# 启动时按以下顺序查找本文件：
+#   1. --config 指定路径
+#   2. 工作区根的 api-server-config.yaml
+#   3. 可执行文件同目录的 api-server-config.yaml
+#   4. 内置默认值
+#
+# 本文件全部为固定取值，服务不预置任何环境变量；需要时可在值里写
+# ${VAR} 或 ${VAR:-默认值} 从环境变量取值（未设置时替换为空串或默认值；
+# 空串不会被当作 0，数值字段为空串时报校验错误）。
+# 相对路径一律相对工作区根解析，绝对路径原样使用。
+
+# 工作区根；null 或省略表示按上方顺序自动确定，填路径则以其为准（相对路径相对进程工作目录）
+workspace: null
+
+server:
+  # 监听地址；仅本机可访问请保持 127.0.0.1
+  host: 127.0.0.1
+  # 监听端口；被占用时启动失败，不顺延
+  port: 7860
+  # 同步渲染的最大并发数
+  maxConcurrency: 4
+
+limits:
+  # 单个上传文档的大小上限，单位 byte；默认 256 MiB
+  maxUploadBytes: 268435456
+  # 单个作业允许的最大页数
+  maxJobPages: 5000
+
+jobs:
+  # 作业目录固定为 <工作区根>/jobs（原始文档、meta.json 与全部产物），不可单独配置
+  # 单个作业的超时时间，单位秒
+  timeoutSec: 600
+  # 作业结束后的默认保留时长，单位秒；请求可用 ttlSec:-1 指定永不过期
+  ttlSec: 300
+  # 同时执行的作业数
+  maxConcurrentJobs: 2
+  # 作业目录总占用上限，单位 byte；默认 20 GiB
+  maxTotalBytes: 21474836480
+
+output:
+  # 默认响应格式：json（base64 内嵌）| zip | multipart
+  format: json
+
+render:
+  # 默认图片格式：png | jpeg | webp
+  format: png
+  # 默认输出 DPI
+  dpi: 96
+  # 补充字体目录；null 表示不加载
+  fontDir: null
+  # 是否自动发现系统字体
+  systemFonts: true
+
+verify:
+  # 默认信任根证书文件；相对路径相对工作区根
+  roots: []
+  # 默认 SM2 签名 userId；null 表示使用标准值
+  sm2UserId: null
+
+logging:
+  # 日志级别：trace | debug | info | warn | error | fatal
+  level: info
+  # 日志目录；相对工作区根，按天轮转
+  dir: ./logs
+  # 日志保留天数
+  keepDays: 7
+  # 是否为每个请求记录访问日志
+  accessLog: true
