@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * 校验发布标签与四个包的版本号是否一致。
+ * 校验发布标签与五个包的版本号是否一致。
  *
- * 版本号以各包 `package.json` 为准：打标签前必须先把四个包统一改成目标版本，
+ * 版本号以各包 `package.json` 为准：打标签前必须先把五个包统一改成目标版本，
  * 避免出现“源码是旧版本、Release 是另一个版本”的情况。
  *
  * 用法：
@@ -97,7 +97,7 @@ async function main() {
     appendFileSync(outputFile, `version=${version}\n`, 'utf8');
   }
 
-  console.log(`标签 ${tag} 与四个包版本一致：${version}`);
+  console.log(`标签 ${tag} 与五个包版本一致：${version}`);
 }
 
 main().catch((error) => {
