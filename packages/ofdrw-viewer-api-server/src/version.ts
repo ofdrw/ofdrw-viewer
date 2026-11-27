@@ -6,4 +6,4 @@
  */
 
 /** 包版本号。 */
-export const VERSION = '0.2.1';
+export const VERSION = '0.3.0';

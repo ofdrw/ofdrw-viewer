@@ -1,6 +1,6 @@
 # @ofdrw/ofdrw-viewer-api-server 接口文档
 
-本文列出全部接口、请求参数、响应结构与状态码。安装、启动与工作空间说明见 [README.md](../README.md)，配置项见 [配置手册](CONFIG.md)，机器可读描述见 [openapi.json](openapi.json)，设计方案见 [`docs/API服务器设计方案.md`](../../../docs/API服务器设计方案.md)。
+本文列出全部接口、请求参数、响应结构与状态码。安装与启动见 [README.md](../README.md)，工作区说明见[设计方案 § 工作区](../../../docs/API服务器设计方案.md#6-工作区)，配置项见 [配置手册](CONFIG.md)，机器可读描述见 [openapi.json](openapi.json)。
 
 ## 1. 通用约定
 
@@ -84,9 +84,9 @@ format=png
 
 ```json
 {
-  "cli": "0.2.1",
-  "engine": "0.2.1",
-  "crypto": "0.2.1",
+  "cli": "0.3.0",
+  "engine": "0.3.0",
+  "crypto": "0.3.0",
   "node": "v22.14.0",
   "platform": "linux-x64",
   "apiVersion": "1",
@@ -345,6 +345,6 @@ format=png
 - 加密文档不受支持，上传即返回 `415 OFD_ENCRYPTED`；
 - 单请求体上限 `limits.maxUploadBytes`，默认 256 MiB；
 - `/api/convert` 不限页数，页数多时响应体较大；
-- 同步接口不限流，并发控制只作用于作业；
+- 同步接口不限流；作业并发默认不限制，可用 `jobs.maxConcurrentJobs` 设置上限，超出上限的作业排队等待；
 - 客户端断开时同步请求立即中止并释放资源；
 - 服务端不主动因超时断开连接，超时由调用方控制。

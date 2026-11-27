@@ -28,7 +28,7 @@ CDN 直出：`dist/ofdrw-viewer-engine.min.js`（或未压缩的 `dist/ofdrw-vie
 ```ts
 import { getVersion } from '@ofdrw/ofdrw-viewer-engine';
 
-console.log(getVersion()); // 例如 0.2.0
+console.log(getVersion()); // 例如 0.3.0
 ```
 
 `VERSION` 常量与 `getVersion()` 返回相同值；两者内置于产物，不依赖 `package.json`，浏览器、Node.js 与小程序可用。

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "@ofdrw/ofdrw-viewer-api-server",
-    "version": "0.2.1",
+    "version": "0.3.0",
     "description": "OFD 转图片、文本提取、信息查询与签名验证"
   },
   "servers": [

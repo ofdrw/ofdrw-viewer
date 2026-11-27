@@ -29,7 +29,7 @@ await viewer.ready;
 
 ### `VERSION` 与 `getVersions`
 
-`VERSION` 是 UI 包版本字符串，当前为 `0.2.0`。`getVersions()` 返回 UI、渲染引擎与密码能力包三个版本：
+`VERSION` 是 UI 包版本字符串，当前为 `0.3.0`。`getVersions()` 返回 UI、渲染引擎与密码能力包三个版本：
 
 ```ts
 interface ViewerVersions {

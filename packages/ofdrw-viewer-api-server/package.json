@@ -1,6 +1,6 @@
 {
   "name": "@ofdrw/ofdrw-viewer-api-server",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "OFD HTTP 解析服务：转图片、空间文本、元信息查询与签名验证",
   "license": "MIT",
   "type": "module",
@@ -21,7 +21,8 @@
     "api-server-config.yaml",
     "docs",
     "skills",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=22"
