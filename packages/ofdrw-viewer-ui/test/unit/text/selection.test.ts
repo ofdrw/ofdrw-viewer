@@ -1128,17 +1128,37 @@ describe('SelectionSnapshot 复制与高亮不依赖 DOM 存活性（t14）', ()
     textLayer.destroy();
   });
 
-  it('Shift/右键/滚动条/输入框点击保留快照（t17 例外）', async () => {
+  it('选中后任意左键点击都取消；Shift 扩选、右键、滚动条、输入框保留快照', async () => {
     const { host, manager, textLayer } = await setupSnapshot();
-    select(textNodeOf(host, 1, 0), 0, textNodeOf(host, 1, 0), 2);
-    document.dispatchEvent(new Event('selectionchange'));
-    await flushSelection();
-    expect(manager.getSelectionSnapshot()).not.toBeNull();
+    const reselect = async (): Promise<void> => {
+      select(textNodeOf(host, 1, 0), 0, textNodeOf(host, 1, 0), 2);
+      document.dispatchEvent(new Event('selectionchange'));
+      await flushSelection();
+      expect(manager.getSelectionSnapshot()).not.toBeNull();
+    };
 
+    // 点页面空白处（阅读器外）同样取消。
+    await reselect();
+    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+    expect(manager.getSelectionSnapshot()).toBeNull();
+
+    // 点文档文字取消。
+    await reselect();
+    textNodeOf(host, 1, 0).dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+    expect(manager.getSelectionSnapshot()).toBeNull();
+
+    // Shift 点击用于扩选，不取消选区（pointerdown 与 pointerup 均放行）。
+    await reselect();
     const shift = new MouseEvent('pointerdown', { bubbles: true, button: 0, shiftKey: true });
     textNodeOf(host, 1, 0).dispatchEvent(shift);
     expect(manager.getSelectionSnapshot()).not.toBeNull();
+    textNodeOf(host, 1, 0).dispatchEvent(
+      new MouseEvent('pointerup', { bubbles: true, button: 0, shiftKey: true }),
+    );
+    expect(manager.getSelectionSnapshot()).not.toBeNull();
 
+    // 以下属于正常操作，不取消选区。
+    await reselect();
     const right = new MouseEvent('pointerdown', { bubbles: true, button: 2 });
     textNodeOf(host, 1, 0).dispatchEvent(right);
     expect(manager.getSelectionSnapshot()).not.toBeNull();

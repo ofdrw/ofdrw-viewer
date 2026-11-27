@@ -221,13 +221,15 @@ export class SelectionManager {
       this.doc.addEventListener('copy', copyListener, true);
       this.doc.addEventListener('pointerdown', pointerListener, true);
       this.doc.addEventListener('keydown', keyListener, true);
-      this.doc.addEventListener('pointerup', pointerUpListener);
+      this.doc.addEventListener('pointerup', pointerUpListener, true);
+      this.doc.addEventListener('mouseup', pointerUpListener, true);
       this.cleanups.push(() => {
         this.doc?.removeEventListener('selectionchange', listener);
         this.doc?.removeEventListener('copy', copyListener, true);
         this.doc?.removeEventListener('pointerdown', pointerListener, true);
         this.doc?.removeEventListener('keydown', keyListener, true);
-        this.doc?.removeEventListener('pointerup', pointerUpListener);
+        this.doc?.removeEventListener('pointerup', pointerUpListener, true);
+        this.doc?.removeEventListener('mouseup', pointerUpListener, true);
       });
     }
     // 缩放/旋转、页数据变化、功能开关都可能改变文本层几何或可用性；按当前选区重绘高亮。
@@ -651,6 +653,21 @@ export class SelectionManager {
     );
   }
 
+  /**
+   * 当前位置是否存在选区。
+   *
+   * 原生选区非折叠且落在阅读器内时视为存在；原生选区为空或已折叠时，退回快照判断
+   * （快照在页淘汰、DOM 端点失效后仍可保留文本）。页外选区不算，避免影响页面其他文本。
+   *
+   * @returns 存在可取消的选区时 true。
+   */
+  private hasSelection(): boolean {
+    if (this.lastSnapshot) return true;
+    const selection = this.doc?.getSelection?.() ?? null;
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return false;
+    return this.isSelectionInsideViewer(selection) || this.isSelectionDetached(selection);
+  }
+
   /** 判断选区锚点/焦点是否落在阅读器根节点内。 */
   private isSelectionInsideViewer(selection: Selection): boolean {
     if (!this.root) return true;
@@ -825,17 +842,22 @@ export class SelectionManager {
    * @param removeNative 是否同时移除原生 Range；显式 clearSelection 才需要。
    */
   private clearSnapshot(reason: string, removeNative = false): void {
-    const hadSelection = this.lastSnapshot !== null || this.lastText !== '';
+    const selection = this.doc?.getSelection?.() ?? null;
+    // 只有阅读器内的原生选区、没有快照时也必须发布空文本：否则状态里的 selectedText 会残留。
+    // 阅读器之外的选区不参与，避免页外选择影响阅读器状态。
+    const hadNativeSelection =
+      !!selection &&
+      selection.rangeCount > 0 &&
+      !selection.isCollapsed &&
+      this.isSelectionInsideViewer(selection);
+    const hadSelection = this.lastSnapshot !== null || this.lastText !== '' || hadNativeSelection;
     this.lastSnapshot = null;
     this.snapshotClearedReason = reason;
     this.snapshotVersion += 1;
     // 跨帧抑制窗口只服务于仍然有效的快照；快照清空（用户取消或生命周期事件）后立即关闭，
     // 否则用户马上建立的新选区会被窗口误判为 DOM 副作用。
     this.suppressUntil = 0;
-    if (removeNative) {
-      const selection = this.doc?.getSelection?.() ?? null;
-      if (selection?.rangeCount) selection.removeAllRanges();
-    }
+    if (removeNative && selection?.rangeCount) selection.removeAllRanges();
     this.renderSelection(EMPTY_SELECTION_MODEL);
     if (hadSelection) {
       this.lastText = '';
@@ -904,9 +926,19 @@ export class SelectionManager {
     event.preventDefault();
   }
 
-  /** 点击（无 Shift）清空快照；滚动条拖动不算取消选择。 */
+  /**
+   * 按下指针：选中后任意左键点击都取消选区，不区分点在文字、空白还是选区自身。
+   *
+   * 取消条件是「存在选区」，而不是「存在快照」：快照可能因文本层几何未就绪、页被淘汰
+   * 或渲染阶段尚未完成而没有建立，但浏览器里的原生选区依然存在，此时点击同样必须取消。
+   *
+   * 以下情况不取消选区：Shift 点击（扩展选区）、右键（上下文菜单）、输入控件内点击
+   * （输入光标）与滚动条拖动（滚动）。它们都有各自的既定语义，不代表取消选择。
+   *
+   * @param event 指针按下事件；clientX/clientY 单位 px。
+   */
   private handlePointerDown(event: Event): void {
-    if (!this.lastSnapshot) return;
+    if (!this.hasSelection()) return;
     const mouse = event as MouseEvent;
     if (typeof mouse.button === 'number' && mouse.button !== 0) return;
     if (mouse.shiftKey) return;
@@ -916,18 +948,26 @@ export class SelectionManager {
   }
 
   /**
-   * 鼠标单击后的清理：pointerdown 已清空快照和 Range，但浏览器默认动作可能重新
-   * 建立折叠 Range。此时若没有新选区，清掉这个空 Range，保证原生选区也归零。
+   * 点击完成后的收尾。
    *
-   * @param event 指针抬起事件。
+   * `pointerdown` 取消选区后，浏览器的默认动作仍可能重建选区：点文字会留下折叠光标，
+   * 双击/三击会在文字上重新选中整段。这里统一在抬起阶段再清一次，保证点击之后
+   * 页面上不残留任何选区形态。
+   *
+   * @param event 指针抬起或鼠标抬起事件。
    */
   private handlePointerUp(event: Event): void {
     if (this.snapshotClearedReason !== 'pointerdown' || this.lastSnapshot) return;
     const mouse = event as MouseEvent;
     if (typeof mouse.button === 'number' && mouse.button !== 0) return;
+    if (mouse.shiftKey) return;
     if (this.isEditableElement(mouse.target)) return;
     const selection = this.doc?.getSelection?.() ?? null;
-    if (selection?.rangeCount && selection.isCollapsed) selection.removeAllRanges();
+    if (!selection || selection.rangeCount === 0) return;
+    // 只清理阅读器内的选区，避免影响页外文本。
+    if (!this.isSelectionInsideViewer(selection) && !this.isSelectionDetached(selection)) return;
+    selection.removeAllRanges();
+    this.renderSelection(EMPTY_SELECTION_MODEL);
   }
 
   /** Esc/方向键/可打印键取消选区；Ctrl/Meta/Alt 与 Shift 扩选不清空。 */
@@ -1024,13 +1064,22 @@ function isScrollbarPointerDown(event: MouseEvent, root: HTMLElement | null): bo
   for (let element: Element | null = event.target; element; element = element.parentElement) {
     if (!(element instanceof HTMLElement)) continue;
     const rect = element.getBoundingClientRect();
+    // 尺寸为 0 的容器（未布局或测试环境）没有可命中的滚动条区域。
+    if (rect.width <= 0 || rect.height <= 0) {
+      if (element === root) break;
+      continue;
+    }
     const vertical =
       event.clientX >= rect.left + element.clientWidth &&
       event.clientX <= rect.right &&
+      event.clientY >= rect.top &&
+      event.clientY <= rect.bottom &&
       element.scrollHeight > element.clientHeight;
     const horizontal =
       event.clientY >= rect.top + element.clientHeight &&
       event.clientY <= rect.bottom &&
+      event.clientX >= rect.left &&
+      event.clientX <= rect.right &&
       element.scrollWidth > element.clientWidth;
     if (vertical || horizontal) return true;
     if (element === root) break;
