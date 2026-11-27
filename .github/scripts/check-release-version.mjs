@@ -30,6 +30,7 @@ const PACKAGES = [
   { name: '@ofdrw/ofdrw-viewer-crypto', dir: 'packages/ofdrw-viewer-crypto' },
   { name: '@ofdrw/ofdrw-viewer-ui', dir: 'packages/ofdrw-viewer-ui' },
   { name: '@ofdrw/ofdrw-viewer-cli', dir: 'packages/ofdrw-viewer-cli' },
+  { name: '@ofdrw/ofdrw-viewer-api-server', dir: 'packages/ofdrw-viewer-api-server' },
 ];
 
 /** 合法标签：`v` + 语义化版本，可选预发布或构建后缀。捕获组 1 为不带 v 的版本号。 */
