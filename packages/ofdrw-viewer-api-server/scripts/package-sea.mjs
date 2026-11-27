@@ -7,6 +7,8 @@
  * `api-server-config.yaml`、`README.md`、`LICENSE`、`docs/` 与 `skills/`，
  * 解压后无需 Node.js 与网络即可运行 `ofdrw-api-server`。
  *
+ * `LICENSE` 取自本包目录，缺失时打包失败。
+ *
  * 仅支持在当前平台打包当前平台产物；跨平台构建/打包请使用对应原生 runner。
  */
 
@@ -30,9 +32,6 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 
 /** api-server 包根目录。 */
 const serverDir = resolve(scriptDir, '..');
-
-/** monorepo 根目录。 */
-const repoDir = resolve(serverDir, '..', '..');
 
 /** SEA 产物目录；与 scripts/build-sea.mjs 保持一致。 */
 const seaDir = join(serverDir, 'out', 'sea');
@@ -75,7 +74,7 @@ async function main() {
   await copyFile(executablePath, join(stageDir, executableName));
   await copyIfExists(join(serverDir, 'api-server-config.yaml'), join(stageDir, 'api-server-config.yaml'));
   await copyIfExists(join(serverDir, 'README.md'), join(stageDir, 'README.md'));
-  await copyIfExists(join(repoDir, 'LICENSE'), join(stageDir, 'LICENSE'));
+  await copyRequired(join(serverDir, 'LICENSE'), join(stageDir, 'LICENSE'));
   for (const directory of ['docs', 'skills']) {
     await copyTree(join(serverDir, directory), join(stageDir, directory));
   }
@@ -215,6 +214,22 @@ async function copyTree(source, target) {
  */
 async function sha256(filePath) {
   return createHash('sha256').update(await readFile(filePath)).digest('hex');
+}
+
+/**
+ * 复制必需文件，缺失时终止打包。
+ *
+ * @param source 源路径
+ * @param target 目标路径
+ * @returns 复制完成的 Promise
+ * @throws {Error} 源文件不存在时抛出
+ */
+async function copyRequired(source, target) {
+  try {
+    await copyFile(source, target);
+  } catch (error) {
+    throw new Error(`缺少发布必需文件：${source}`, { cause: error });
+  }
 }
 
 /**

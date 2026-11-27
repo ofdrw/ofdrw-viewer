@@ -2,7 +2,7 @@
 /**
  * 把 engine 与 crypto 的 CDN 构建产物打成单个压缩包。
  *
- * 产物：`release-assets/ofdrw-viewer-lib-<version>.zip`
+ * 产物：`release-assets/ofdrw-viewer-lib-<version>.zip`，压缩包根目录含 `LICENSE`。
  *
  * 前置条件：已执行 `pnpm --filter @ofdrw/ofdrw-viewer-engine build` 与
  * `pnpm --filter @ofdrw/ofdrw-viewer-crypto build`。
@@ -26,6 +26,9 @@ const CDN_FILES = [
   'packages/ofdrw-viewer-crypto/dist/ofdrw-viewer-crypto.min.js.map',
 ];
 
+/** 压缩包根目录附带的许可证文件（相对仓库根）。 */
+const LICENSE_FILE = 'LICENSE';
+
 /**
  * 读取 engine 包版本号。
  *
@@ -37,9 +40,10 @@ async function readVersion() {
 }
 
 /**
- * 确认产物文件都存在。
+ * 确认产物文件与许可证文件都存在。
  *
  * @returns {Promise<void>}
+ * @throws {Error} 存在缺失文件时抛出
  */
 async function assertArtifacts() {
   const missing = [];
@@ -53,16 +57,21 @@ async function assertArtifacts() {
   if (missing.length > 0) {
     throw new Error(`缺少 CDN 构建产物，请先构建 engine 与 crypto：\n${missing.join('\n')}`);
   }
+  try {
+    await access(join(REPO_ROOT, LICENSE_FILE));
+  } catch {
+    throw new Error(`缺少发布必需文件：${LICENSE_FILE}`);
+  }
 }
 
 /**
- * 调用系统 zip 命令打包。
+ * 调用系统 zip 命令打包，LICENSE 一并放入压缩包根目录。
  *
- * @param {string} archivePath 输出压缩包绝对路径
+ * @param archivePath 输出压缩包绝对路径
  * @returns {void}
  */
 function createZip(archivePath) {
-  const result = spawnSync('zip', ['-9', '-j', archivePath, ...CDN_FILES], {
+  const result = spawnSync('zip', ['-9', '-j', archivePath, ...CDN_FILES, LICENSE_FILE], {
     cwd: REPO_ROOT,
     stdio: 'inherit',
   });

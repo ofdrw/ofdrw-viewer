@@ -4,6 +4,7 @@
  *
  * 产物：`dist/release/ofdrw-viewer-cli-<version>-<target>.tar.gz`（Windows 为 `.zip`），
  * 同目录写 `<产物>.sha256`。压缩包只含可执行文件、README 与 LICENSE，不含 skills。
+ * `LICENSE` 取自本包目录，缺失时打包失败。
  *
  * 仅支持在当前平台打包当前平台产物；跨平台构建/打包请使用对应原生 runner。
  */
@@ -69,7 +70,7 @@ async function main() {
   await mkdir(stageDir, { recursive: true });
   await copyFile(executablePath, join(stageDir, executableName));
   await copyIfExists(join(repoDir, 'README.md'), join(stageDir, 'README.md'));
-  await copyIfExists(join(repoDir, 'LICENSE'), join(stageDir, 'LICENSE'));
+  await copyRequired(join(cliDir, 'LICENSE'), join(stageDir, 'LICENSE'));
 
   if (target.platform === 'win32') {
     await createZip(stageDir, archivePath);
@@ -184,6 +185,22 @@ async function sha256(filePath) {
 }
 
 /**
+ * 复制必需文件，缺失时终止打包。
+ *
+ * @param source 源路径
+ * @param target 目标路径
+ * @returns 复制完成的 Promise
+ * @throws {Error} 源文件不存在时抛出
+ */
+async function copyRequired(source, target) {
+  try {
+    await copyFile(source, target);
+  } catch (error) {
+    throw new Error(`缺少发布必需文件：${source}`, { cause: error });
+  }
+}
+
+/**
  * 复制存在的可选文件。
  *
  * @param source 源路径
@@ -195,7 +212,7 @@ async function copyIfExists(source, target) {
     await access(source);
     await copyFile(source, target);
   } catch {
-    // README/LICENSE 缺失时跳过，不阻断产物生成。
+    // README 缺失时跳过，不阻断产物生成。
   }
 }
 
