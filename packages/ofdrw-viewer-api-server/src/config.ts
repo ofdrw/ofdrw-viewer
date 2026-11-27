@@ -73,7 +73,7 @@ const configSchema = z
       .object({
         timeoutSec: numberConfig('timeoutSec 必须是数字').pipe(z.number().min(0)).default(600),
         ttlSec: numberConfig('ttlSec 必须是数字').pipe(z.number().int().min(-1)).default(300),
-        maxConcurrentJobs: numberConfig('maxConcurrentJobs 必须是数字').pipe(z.number().int().min(1)).default(2),
+        maxConcurrentJobs: numberConfig('maxConcurrentJobs 必须是数字').pipe(z.number().int().min(0)).default(0),
         maxTotalBytes: numberConfig('maxTotalBytes 必须是数字').pipe(z.number().int().min(0)).default(21_474_836_480),
       })
       .strict()
@@ -194,8 +194,8 @@ jobs:
   timeoutSec: 600
   # 作业结束后的默认保留时长，单位秒；请求可用 ttlSec:-1 指定永不过期
   ttlSec: 300
-  # 同时执行的作业数
-  maxConcurrentJobs: 2
+  # 同时执行的作业数；0 表示不限制
+  maxConcurrentJobs: 0
   # 作业目录总占用上限，单位 byte；默认 20 GiB
   maxTotalBytes: 21474836480
 
@@ -582,7 +582,7 @@ export function describeConfig(
     `工作区: ${workspaceRoot}（来源 ${WORKSPACE_SOURCE_TEXT[workspaceSource]}，相对路径基准）`,
     `服务器: http://${config.server.host}:${config.server.port}（并发 ${config.server.maxConcurrency}，请求不设服务端超时）`,
     `上传上限: ${formatBytes(config.limits.maxUploadBytes)}`,
-    `作业目录: ${jobDir}（超时 ${config.jobs.timeoutSec}s，默认有效期 ${config.jobs.ttlSec}s，并发 ${config.jobs.maxConcurrentJobs}，上限 ${formatBytes(config.jobs.maxTotalBytes)}）`,
+    `作业目录: ${jobDir}（超时 ${config.jobs.timeoutSec}s，默认有效期 ${config.jobs.ttlSec}s，并发 ${config.jobs.maxConcurrentJobs === 0 ? '不限' : String(config.jobs.maxConcurrentJobs)}，上限 ${formatBytes(config.jobs.maxTotalBytes)}）`,
     `输出: ${config.output.format}`,
     `日志目录: ${config.logging.dir}（级别 ${config.logging.level}，保留 ${config.logging.keepDays} 天，访问日志${config.logging.accessLog ? '开' : '关'}）`,
   ];

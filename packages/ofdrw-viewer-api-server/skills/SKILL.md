@@ -84,7 +84,6 @@ ofdrw-api-server -t                  # 只校验配置，不启动
 | `415` | 加密文档或请求体格式不支持 |
 | `422` | 文档损坏或不是 OFD |
 | `500` | 记录 `traceId` 反馈给用户 |
-| `503` | 并发已满，稍后重试 |
 
 `207` 表示部分页面失败，看响应体 `failures`。服务端不接收任何口令或私钥，日志不记录文档与产物内容。
 
@@ -104,6 +103,7 @@ curl -s -X POST "$BASE/verify"  -F file=@signed.ofd -F roots=@root-ca.pem
 ## 参考
 
 - 全部字段、响应样例、状态码：[API.md](../docs/API.md)
-- 安装、启动、工作空间说明：[README.md](../README.md)
+- 安装与启动：[README.md](../README.md)
+- 工作区与目录布局：[设计方案 § 工作区](../../../docs/API服务器设计方案.md#6-工作区)
 - 配置项与部署场景：[CONFIG.md](../docs/CONFIG.md)
 - 加密文档与单机转换：[ofdrw-viewer-cli](../../ofdrw-viewer-cli/skills/SKILL.md)

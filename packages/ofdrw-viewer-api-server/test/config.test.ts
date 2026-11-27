@@ -213,6 +213,29 @@ describe('loadConfig', () => {
       loadConfig({ cwd: root, configPath: join(root, 'nope.yaml') }),
     ).rejects.toThrow();
   });
+
+  it('作业并发默认不限制，配置文件可设置上限', async () => {
+    const { writeFile, mkdir } = await import('node:fs/promises');
+    const dir = join(root, 'jobs-concurrency');
+    await mkdir(dir, { recursive: true });
+
+    const unset = await loadConfig({ cwd: root, env: {} as NodeJS.ProcessEnv });
+    expect(unset.config.jobs.maxConcurrentJobs).toBe(0);
+
+    await writeFile(join(dir, 'api-server-config.yaml'), 'jobs:\n  maxConcurrentJobs: 5\n', 'utf8');
+    const limited = await loadConfig({ cwd: dir, env: {} as NodeJS.ProcessEnv });
+    expect(limited.errors).toEqual([]);
+    expect(limited.config.jobs.maxConcurrentJobs).toBe(5);
+  });
+
+  it('jobs.maxConcurrentJobs 为负数时报校验错误', async () => {
+    const { writeFile, mkdir } = await import('node:fs/promises');
+    const dir = join(root, 'jobs-concurrency-invalid');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'api-server-config.yaml'), 'jobs:\n  maxConcurrentJobs: -1\n', 'utf8');
+    const loaded = await loadConfig({ cwd: dir, env: {} as NodeJS.ProcessEnv });
+    expect(loaded.errors.join('\n')).toContain('CLI_CONFIG_INVALID');
+  });
 });
 
 describe('generateDefaultConfig', () => {

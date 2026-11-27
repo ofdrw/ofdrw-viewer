@@ -37,7 +37,7 @@ export interface JobManagerOptions {
   readonly timeoutSec: number;
   /** 默认有效期，单位秒。 */
   readonly defaultTtlSec: number;
-  /** 同时执行的作业数。 */
+  /** 同时执行的作业数上限，单位个；`0` 表示不限制。 */
   readonly maxConcurrentJobs: number;
   /** 作业根目录占用上限，单位 byte；`0` 表示不限制。 */
   readonly maxTotalBytes: number;
@@ -251,10 +251,14 @@ export class JobManager {
   }
 
   /**
-   * 按并发上限启动排队中的作业。
+   * 启动排队中的作业：未设上限时全部启动，设了上限则只启动到互不超限为止。
    */
   #drain(): void {
-    while (!this.#closed && this.#activeCount < this.#options.maxConcurrentJobs) {
+    const { maxConcurrentJobs } = this.#options;
+    while (
+      !this.#closed
+      && (maxConcurrentJobs === 0 || this.#activeCount < maxConcurrentJobs)
+    ) {
       const next = this.#queue.shift();
       if (next === undefined) return;
       this.#activeCount += 1;

@@ -52,7 +52,7 @@ workspace: ./inst-a        # 相对进程工作目录；也可写绝对路径
 
 若 `workspace` 指向的目录下有 `api-server-config.yaml`，以该文件为准（先读入本文件取得 `workspace`，再重新定位）。`workspace` 不参与接口行为，生效配置里只保留路径相关字段。
 
-作业目录**固定**为 `<工作区根>/jobs`，不提供单独配置项；配置中的 `logging.dir`、`render.fontDir`、`verify.roots` 相对工作区根解析，绝对路径原样使用。工作区的目录布局见 [README 工作空间说明](../README.md#-工作空间说明)。
+作业目录**固定**为 `<工作区根>/jobs`，不提供单独配置项；配置中的 `logging.dir`、`render.fontDir`、`verify.roots` 相对工作区根解析，绝对路径原样使用。工作区的目录布局见[设计方案 § 工作区](../../../docs/API服务器设计方案.md#6-工作区)。
 
 > 需要多实例并行时，给每个实例指定不同的 `--workdir`（或不同的 `workspace`）即可，无需复制配置文件。
 
@@ -80,7 +80,7 @@ jobs:
   workDir: ./jobs
   timeoutSec: 600
   ttlSec: 300
-  maxConcurrentJobs: 2
+  maxConcurrentJobs: 0            # 0 表示不限制
   maxTotalBytes: 21474836480
 
 output:
@@ -160,7 +160,7 @@ limits:
 | --- | --- | --- | --- |
 | `timeoutSec` | 数值 ≥ 0 | `600` | 单个作业的执行超时，单位秒；超时置为 `failed`（`CLI_JOB_TIMEOUT`） |
 | `ttlSec` | 整数 ≥ -1 | `300` | 作业结束后的默认保留时长，单位秒；`-1` 表示永不过期。请求可用 `ttlSec` 覆盖 |
-| `maxConcurrentJobs` | 整数 ≥ 1 | `2` | 同时执行的作业数 |
+| `maxConcurrentJobs` | 整数 ≥ 0 | `0` | 同时执行的作业数，单位个；`0` 表示不限制，超出上限的作业排队等待 |
 | `maxTotalBytes` | 整数 ≥ 0 | `21474836480`（20 GiB） | 作业目录总占用上限，单位 byte。超出时按创建时间删除旧作业，仍不足则拒绝新作业（`412 CLI_JOB_STORAGE_FULL`） |
 
 作业目录固定为 `<工作区根>/jobs`（持久化原始文档、`meta.json` 与全部产物），不可单独配置：
@@ -169,7 +169,7 @@ limits:
 jobs:
   timeoutSec: 600
   ttlSec: 300
-  maxConcurrentJobs: 2
+  maxConcurrentJobs: 0            # 0 表示不限制
   maxTotalBytes: 21474836480   # 20 GiB
 ```
 
@@ -287,7 +287,7 @@ ofdrw-api-server -t
 工作区: /opt/ofd-api（来源 可执行文件所在目录，相对路径基准）
 服务器: http://127.0.0.1:7860（并发 4，请求不设服务端超时）
 上传上限: 256 MiB
-作业目录: /opt/ofd-api/jobs（超时 600s，默认有效期 300s，并发 2，上限 20 GiB）
+作业目录: /opt/ofd-api/jobs（超时 600s，默认有效期 300s，并发 不限，上限 20 GiB）
 输出: json
 日志目录: /opt/ofd-api/logs（级别 info，保留 7 天，访问日志开）
 校验结果: 通过

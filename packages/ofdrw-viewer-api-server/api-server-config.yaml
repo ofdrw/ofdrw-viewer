@@ -37,8 +37,8 @@ jobs:
   timeoutSec: 600
   # 作业结束后的默认保留时长，单位秒；请求可用 ttlSec:-1 指定永不过期
   ttlSec: 300
-  # 同时执行的作业数
-  maxConcurrentJobs: 2
+  # 同时执行的作业数；0 表示不限制
+  maxConcurrentJobs: 0
   # 作业目录总占用上限，单位 byte；默认 20 GiB
   maxTotalBytes: 21474836480
 
