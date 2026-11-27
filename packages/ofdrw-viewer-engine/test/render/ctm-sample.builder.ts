@@ -1,5 +1,5 @@
 /**
- * 生成 `ofd_pdf_match/ctm-matrix.ofd` 样例文档（CTM / Boundary / Clips 对照页）。
+ * 生成 CTM / Boundary / Clips 对照样例文档。
  *
  * 每格放置一个独立的 TextObject，覆盖平移、缩放、旋转、斜切、镜像、复合变换、
  * Boundary 裁剪与 Clips 裁剪的组合。格子外周绘制灰色虚线参考框标出 Boundary，
